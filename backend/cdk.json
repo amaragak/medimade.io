@@ -1,0 +1,12 @@
+{
+  "app": "npx tsx bin/medimade.ts",
+  "watch": {
+    "include": ["**/*.ts"],
+    "exclude": ["README.md", "cdk.out", "node_modules", "lambdas/**/*.js"],
+    "command": "npx tsx bin/medimade.ts"
+  },
+  "context": {
+    "@aws-cdk/core:newStyleStackSynthesis": true,
+    "@aws-cdk/aws-apigateway:usagePlanKeyOrderInsensitiveId": true
+  }
+}

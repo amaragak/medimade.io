@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+:root {
+  /* Keep in sync with site header height (h-14) */
+  --site-header-h: 3.5rem;
+
+  --background: #f9f4ee;
+  --foreground: #2c2621;
+  --muted: #6f665e;
+  --card: #fffaf6;
+  --border: #ebe2d6;
+  --accent: #b86b48;
+  --accent-soft: #f0e0d6;
+  --gold: #c49a6c;
+  --deep: #1a1410;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-gold: var(--gold);
+  --color-deep: var(--deep);
+  --font-sans: var(--font-dm-sans);
+  --font-display: var(--font-fraunces);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #171311;
+    --foreground: #f4ebe3;
+    --muted: #a89b90;
+    --card: #221c18;
+    --border: #3d342c;
+    --accent: #d4916e;
+    --accent-soft: #3a2e27;
+    --gold: #d4b896;
+    --deep: #0f0c0a;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: var(--font-fraunces), Georgia, serif;
+}
+
+/* Readable casual script — not overly decorative */
+.font-hand {
+  font-family: var(--font-hand), "Segoe Print", "Bradley Hand", cursive;
+}
+
+.mesh-hero {
+  background:
+    radial-gradient(ellipse 80% 60% at 70% 20%, rgb(184 107 72 / 0.14), transparent 55%),
+    radial-gradient(ellipse 50% 50% at 20% 80%, rgb(196 154 108 / 0.18), transparent 50%),
+    var(--background);
+}
+
+@media (prefers-color-scheme: dark) {
+  .mesh-hero {
+    background:
+      radial-gradient(ellipse 80% 60% at 70% 20%, rgb(212 145 110 / 0.1), transparent 55%),
+      radial-gradient(ellipse 50% 50% at 20% 80%, rgb(212 184 150 / 0.08), transparent 50%),
+      var(--background);
+  }
+}

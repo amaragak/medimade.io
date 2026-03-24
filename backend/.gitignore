@@ -1,0 +1,18 @@
+# dependencies
+node_modules
+
+# cdk
+cdk.out
+.cdk.staging
+*.tabl.json
+
+# legacy sst (if any local artifacts remain)
+.sst
+.build
+.open-next
+
+# misc
+.DS_Store
+
+# local env files
+.env*.local

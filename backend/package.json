@@ -1,0 +1,26 @@
+{
+  "name": "backend",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "cdk": "cdk",
+    "bootstrap": "cdk bootstrap",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --all",
+    "destroy": "cdk destroy --all",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.699.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^20.14.0",
+    "aws-cdk": "2.1018.0",
+    "aws-cdk-lib": "2.201.0",
+    "constructs": "10.3.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
