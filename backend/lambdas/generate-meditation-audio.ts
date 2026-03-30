@@ -192,6 +192,11 @@ async function fishTtsMp3(params: {
         // Retry on transient failures (503/502/504/429).
         if ([429, 502, 503, 504].includes(upstream.status) && attempt < maxAttempts) {
           const backoffMs = 500 * attempt * attempt;
+          console.warn("Fish transient failure, retrying", {
+            attempt,
+            status: upstream.status,
+            backoffMs,
+          });
           await new Promise((r) => setTimeout(r, backoffMs));
           continue;
         }
@@ -213,12 +218,39 @@ async function fishTtsMp3(params: {
   throw new Error(lastErr ?? "Fish Audio request failed");
 }
 
+function sanitizeScriptForTts(markdown: string): string {
+  let t = markdown ?? "";
+  // Normalize newlines.
+  t = t.replace(/\r\n/g, "\n");
+
+  // Strip markdown heading markers like "# Title" (remove only prefix, keep the title).
+  t = t.replace(/^\s*#{1,6}\s+/gm, "");
+
+  // Convert bold **text** -> text (single-line only).
+  t = t.replace(/\*\*([^\n*]+)\*\*/g, "$1");
+  // Convert italics *text* -> text (single-line only).
+  t = t.replace(/\*([^\n*]+)\*/g, "$1");
+
+  // Remove any leftover literal delimiters that Fish would otherwise speak.
+  t = t.replace(/[*#]/g, "");
+
+  // Cleanup whitespace around lines; keep [pause] cues intact.
+  t = t.replace(/[ \t]+\n/g, "\n");
+  t = t.replace(/\n{3,}/g, "\n\n");
+  return t.trim();
+}
+
 export async function handler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
   if (event.requestContext.http.method !== "POST") {
     return json(405, { error: "Method not allowed" });
   }
+
+  console.log("generate-meditation-audio: start", {
+    reqMethod: event.requestContext?.http?.method,
+    devMode: DEV_MODE,
+  });
 
   let body: {
     transcript?: string;
@@ -246,6 +278,13 @@ export async function handler(
   const scriptText =
     typeof body.scriptText === "string" ? body.scriptText.trim() : "";
 
+  console.log("inputs", {
+    transcriptChars: transcript.length,
+    meditationStylePresent: Boolean(meditationStyle?.trim()),
+    scriptTextChars: scriptText.length,
+    reference_id: referenceId,
+  });
+
   const mediaBucketName = process.env.MEDIA_BUCKET_NAME;
   const mediaCloudFrontDomain = process.env.MEDIA_CLOUDFRONT_DOMAIN;
   if (!mediaBucketName) return json(500, { error: "MEDIA_BUCKET_NAME is not set" });
@@ -256,15 +295,22 @@ export async function handler(
   const shouldGenerateScript = !scriptTextUsed;
   try {
     if (shouldGenerateScript) {
+      console.log("generating script from Claude", {
+        meditationStylePresent: Boolean(meditationStyle?.trim()),
+      });
       const claudeKey = await getClaudeApiKey();
       scriptTextUsed = await generateScriptFromClaude({
         apiKey: claudeKey,
         meditationStyle,
         transcript,
       });
+      console.log("generated script", {
+        chars: scriptTextUsed.length,
+      });
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Script generation failed";
+    console.error("script generation failed", { msg });
     return json(500, { error: msg });
   }
 
@@ -277,23 +323,32 @@ export async function handler(
     fishKey = await getFishApiKey();
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Fish secret lookup failed";
+    console.error("fish secret lookup failed", { msg });
     return json(500, { error: msg });
   }
 
   let mp3Buf: Buffer;
+  const scriptForTts = sanitizeScriptForTts(scriptTextUsed);
   try {
+    console.log("calling Fish TTS", {
+      reference_id: referenceId,
+      textChars: scriptForTts.length,
+    });
     mp3Buf = await fishTtsMp3({
       apiKey: fishKey,
-      text: scriptTextUsed,
+      text: scriptForTts,
       reference_id: referenceId,
     });
+    console.log("Fish TTS success", { bytes: mp3Buf.byteLength });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Fish TTS failed";
+    console.error("Fish TTS failed", { msg });
     return json(500, { error: msg });
   }
 
   const key = `meditations/${randomUUID()}.mp3`;
   try {
+    console.log("putting to S3", { bucket: mediaBucketName, key, bytes: mp3Buf.byteLength });
     await s3.send(
       new PutObjectCommand({
         Bucket: mediaBucketName,
@@ -303,12 +358,15 @@ export async function handler(
         CacheControl: "no-store",
       }),
     );
+    console.log("S3 PutObject success", { key });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "S3 PutObject failed";
+    console.error("S3 PutObject failed", { msg });
     return json(500, { error: msg });
   }
 
   const audioUrl = `https://${mediaCloudFrontDomain}/${key}`;
+  console.log("done", { audioUrl });
   return json(200, { audioUrl, scriptTextUsed, audioKey: key });
 }
 
