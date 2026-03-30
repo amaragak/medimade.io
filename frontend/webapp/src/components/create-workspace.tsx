@@ -3,6 +3,20 @@
 import { useState } from "react";
 import Link from "next/link";
 import { FISH_SPEAKERS } from "@/lib/fish-speakers";
+import { ChatMarkdown } from "@/components/chat-markdown";
+import {
+  type MedimadeChatTurn,
+  streamMedimadeChat,
+  streamMeditationScript,
+  generateMeditationAudio,
+} from "@/lib/medimade-api";
+
+type ChatMessage = {
+  role: "assistant" | "user";
+  text: string;
+  /** Distinct styling for generated meditation script vs coach replies. */
+  variant?: "chat" | "script";
+};
 
 const soundPresets = ["Rain + soft pads", "Studio silence", "Forest dawn", "Ocean low"];
 const meditationStyles = [
@@ -12,18 +26,23 @@ const meditationStyles = [
   "Manifestation",
   "Affirmation loop",
 ];
-const voices = ["Warm alto", "Calm tenor", "Neutral guide", "Your clone (Pro)"];
 
-type Phase = "style" | "mood";
+type Phase = "style" | "feeling" | "claude";
 
 export function CreateWorkspace() {
   const [phase, setPhase] = useState<Phase>("style");
-  const [messages, setMessages] = useState<
-    { role: "assistant" | "user"; text: string }[]
-  >([
+  const [meditationStyle, setMeditationStyle] = useState<string | null>(null);
+  const [claudeThread, setClaudeThread] = useState<MedimadeChatTurn[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [scriptLoading, setScriptLoading] = useState(false);
+  const [audioLoading, setAudioLoading] = useState(false);
+  const [audioModalUrl, setAudioModalUrl] = useState<string | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
       text: "What style of meditation should we build? Pick one below or describe your own in the box.",
+      variant: "chat",
     },
   ]);
   const [input, setInput] = useState("");
@@ -31,41 +50,220 @@ export function CreateWorkspace() {
     FISH_SPEAKERS[0].modelId,
   );
 
+  async function generateScript() {
+    if (scriptLoading) return;
+    const transcript = messages
+      .map((m) => `${m.role === "user" ? "User" : "Guide"}: ${m.text}`)
+      .join("\n\n");
+    setScriptLoading(true);
+    try {
+      let acc = "";
+      let assistantBubbleStarted = false;
+      await streamMeditationScript(
+        { meditationStyle, transcript },
+        (d) => {
+          acc += d;
+          if (!assistantBubbleStarted) {
+            assistantBubbleStarted = true;
+            setMessages((m) => [
+              ...m,
+              { role: "assistant", text: acc, variant: "script" },
+            ]);
+          } else {
+            setMessages((m) => {
+              const next = [...m];
+              const last = next[next.length - 1];
+              if (
+                last?.role !== "assistant" ||
+                last.variant !== "script"
+              ) {
+                return m;
+              }
+              next[next.length - 1] = {
+                role: "assistant",
+                text: acc,
+                variant: "script",
+              };
+              return next;
+            });
+          }
+        },
+      );
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : "Could not generate script.";
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", text: `Sorry — ${msg}`, variant: "chat" },
+      ]);
+    } finally {
+      setScriptLoading(false);
+    }
+  }
+
   function pickStyle(label: string) {
     const trimmed = label.trim();
     if (!trimmed) return;
+    setMeditationStyle(trimmed);
     setMessages((m) => [...m, { role: "user", text: trimmed }]);
-    setPhase("mood");
+    setPhase("feeling");
     setInput("");
     setTimeout(() => {
       setMessages((m) => [
         ...m,
         {
           role: "assistant",
-          text: "How are you arriving today—and what do you want this meditation to hold space for?",
+          text: "How are you feeling today?",
         },
       ]);
     }, 400);
   }
 
-  function send() {
+  async function send() {
     const trimmed = input.trim();
-    if (!trimmed) return;
+    if (!trimmed || chatLoading || scriptLoading) return;
     if (phase === "style") {
       pickStyle(trimmed);
       return;
     }
+
+    const style = meditationStyle;
+    if (!style) return;
+
+    if (phase === "feeling") {
+      const nextMessages: MedimadeChatTurn[] = [
+        { role: "user", content: trimmed },
+      ];
+      setMessages((m) => [...m, { role: "user", text: trimmed }]);
+      setInput("");
+      setChatLoading(true);
+      try {
+        let acc = "";
+        let assistantBubbleStarted = false;
+        const text = await streamMedimadeChat(
+          { meditationStyle: style, messages: nextMessages },
+          (d) => {
+            acc += d;
+            if (!assistantBubbleStarted) {
+              assistantBubbleStarted = true;
+              setMessages((m) => [...m, { role: "assistant", text: acc }]);
+            } else {
+              setMessages((m) => {
+                const next = [...m];
+                const last = next[next.length - 1];
+                if (last?.role !== "assistant") return m;
+                next[next.length - 1] = { role: "assistant", text: acc };
+                return next;
+              });
+            }
+          },
+        );
+        setClaudeThread([
+          ...nextMessages,
+          { role: "assistant", content: text },
+        ]);
+        setPhase("claude");
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : "Could not reach the guide.";
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            text: `Sorry — ${msg}`,
+          },
+        ]);
+      } finally {
+        setChatLoading(false);
+      }
+      return;
+    }
+
+    const history: MedimadeChatTurn[] = [
+      ...claudeThread,
+      { role: "user", content: trimmed },
+    ];
     setMessages((m) => [...m, { role: "user", text: trimmed }]);
     setInput("");
-    setTimeout(() => {
+    setChatLoading(true);
+    try {
+      let acc = "";
+      let assistantBubbleStarted = false;
+      const text = await streamMedimadeChat(
+        { meditationStyle: style, messages: history },
+        (d) => {
+          acc += d;
+          if (!assistantBubbleStarted) {
+            assistantBubbleStarted = true;
+            setMessages((m) => [...m, { role: "assistant", text: acc }]);
+          } else {
+            setMessages((m) => {
+              const next = [...m];
+              const last = next[next.length - 1];
+              if (last?.role !== "assistant") return m;
+              next[next.length - 1] = { role: "assistant", text: acc };
+              return next;
+            });
+          }
+        },
+      );
+      setClaudeThread([
+        ...history,
+        { role: "assistant", content: text },
+      ]);
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : "Could not reach the guide.";
       setMessages((m) => [
         ...m,
         {
           role: "assistant",
-          text: "Noted. Try a variation tomorrow to stay on your generation tier—we can remix length, voice, and intention while keeping your thread.",
+          text: `Sorry — ${msg}`,
         },
       ]);
-    }, 500);
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
+  async function generateMeditationAudioAndShow() {
+    if (audioLoading) return;
+    setAudioError(null);
+    setAudioLoading(true);
+    try {
+      const last = messages[messages.length - 1];
+      const existingScript =
+        last?.role === "assistant" && last.variant === "script"
+          ? last.text
+          : null;
+
+      const transcript = messages
+        .filter((m) => !(m.role === "assistant" && m.variant === "script"))
+        .map((m) => `${m.role === "user" ? "User" : "Guide"}: ${m.text}`)
+        .join("\n\n");
+
+      const { audioUrl, scriptTextUsed } =
+        await generateMeditationAudio({
+          meditationStyle,
+          transcript,
+          scriptText: existingScript,
+          reference_id: speakerModelId,
+        });
+
+      if (!existingScript) {
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", text: scriptTextUsed, variant: "script" },
+        ]);
+      }
+
+      setAudioModalUrl(audioUrl);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Audio generation failed";
+      setAudioError(msg);
+    } finally {
+      setAudioLoading(false);
+    }
   }
 
   return (
@@ -75,34 +273,66 @@ export function CreateWorkspace() {
           Create a meditation
         </h1>
         <p className="mt-2 max-w-2xl text-muted">
-          The guide starts with your meditation style, then mood and intention;
-          panels on the right set audio, markers, and export options.
+          The guide starts with your meditation style, then asks how you feel;
+          after that you chat live with Claude Haiku to shape your sit. Panels on
+          the right set audio, markers, and export options.
         </p>
       </div>
 
       {/* Height comes from layout: body h-dvh → main flex-1 → this grid fills space under the title. */}
       <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-8 lg:h-full lg:min-h-0 lg:grid-cols-5 lg:grid-rows-[minmax(0,1fr)] lg:gap-8">
         <section className="row-start-1 flex min-h-0 h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm lg:col-span-2 lg:row-start-1">
-          <div className="shrink-0 border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold">Guide chat</h2>
-            <p className="text-xs text-muted">
-              Style first, then mood and day context
-            </p>
+          <div className="flex shrink-0 flex-wrap items-start justify-between gap-2 border-b border-border px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-semibold">Guide chat</h2>
+              <p className="text-xs text-muted">
+                Style → how you feel today → live coach chat
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void generateScript()}
+              disabled={scriptLoading}
+              className="shrink-0 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground shadow-sm transition-colors hover:border-accent/50 hover:bg-accent-soft/35 disabled:opacity-50"
+            >
+              {scriptLoading ? "…" : "Generate script"}
+            </button>
           </div>
           <div className="flex min-h-0 flex-1 flex-col p-4">
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
-              {messages.map((msg, i) => (
-                <div
-                  key={`${msg.role}-${i}`}
-                  className={`rounded-xl px-3 py-2 text-sm ${
-                    msg.role === "assistant"
-                      ? "bg-accent-soft/80 text-foreground"
-                      : "ml-6 bg-border/40 text-foreground"
-                  }`}
-                >
-                  {msg.text}
-                </div>
-              ))}
+              {messages.map((msg, i) => {
+                const isScript =
+                  msg.role === "assistant" && msg.variant === "script";
+                return (
+                  <div
+                    key={`${msg.role}-${i}-${msg.variant ?? "u"}`}
+                    className={
+                      msg.role === "user"
+                        ? "ml-6 rounded-xl bg-border/40 px-3 py-2 text-sm text-foreground"
+                        : isScript
+                          ? "rounded-xl border border-gold/45 bg-gold/5 px-3 py-2 text-foreground shadow-sm"
+                          : "rounded-xl bg-accent-soft/80 px-3 py-2 text-sm text-foreground"
+                    }
+                  >
+                    {isScript ? (
+                      <>
+                        <div className="mb-2 inline-flex items-center rounded-full border border-gold/40 bg-gold/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gold">
+                          Meditation script · ~5 min
+                        </div>
+                        <ChatMarkdown
+                          text={msg.text}
+                          className="font-serif text-[13px] leading-relaxed text-foreground/95"
+                        />
+                      </>
+                    ) : (
+                      <ChatMarkdown
+                        text={msg.text}
+                        className="text-sm leading-snug"
+                      />
+                    )}
+                  </div>
+                );
+              })}
               {phase === "style" && (
                 <div className="flex flex-wrap gap-2 pt-1">
                   {meditationStyles.map((s) => (
@@ -122,20 +352,24 @@ export function CreateWorkspace() {
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && send()}
+                onKeyDown={(e) => e.key === "Enter" && void send()}
+                disabled={chatLoading || scriptLoading}
                 placeholder={
                   phase === "style"
                     ? "Or type a style (e.g. Yoga nidra)…"
-                    : "e.g. Nervous before a showcase—want calm confidence…"
+                    : phase === "feeling"
+                      ? "Share how you feel today…"
+                      : "Reply to the guide…"
                 }
-                className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
+                className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2 disabled:opacity-60"
               />
               <button
                 type="button"
-                onClick={send}
-                className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white dark:text-deep"
+                onClick={() => void send()}
+                disabled={chatLoading || scriptLoading}
+                className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white dark:text-deep disabled:opacity-60"
               >
-                Send
+                {chatLoading ? "…" : "Send"}
               </button>
             </div>
           </div>
@@ -233,9 +467,11 @@ export function CreateWorkspace() {
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              className="flex-1 rounded-full bg-accent py-3 text-sm font-semibold text-white dark:text-deep"
+              onClick={() => void generateMeditationAudioAndShow()}
+              disabled={audioLoading}
+              className="flex-1 rounded-full bg-accent py-3 text-sm font-semibold text-white dark:text-deep disabled:opacity-60"
             >
-              Generate meditation (mock)
+              {audioLoading ? "Generating…" : "Generate meditation"}
             </button>
             <button
               type="button"
@@ -246,6 +482,47 @@ export function CreateWorkspace() {
           </div>
         </div>
       </div>
+
+      {audioModalUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-4 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">Meditation audio</div>
+                <div className="text-xs text-muted">
+                  Streaming from CloudFront (MP3)
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAudioModalUrl(null)}
+                className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground"
+              >
+                Close
+              </button>
+            </div>
+
+            {audioError ? (
+              <div className="mt-3 rounded-lg border border-border bg-background p-2 text-xs text-muted">
+                {audioError}
+              </div>
+            ) : null}
+
+            <audio controls src={audioModalUrl} className="mt-4 w-full" />
+
+            <div className="mt-3 flex gap-2">
+              <a
+                href={audioModalUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground hover:border-accent/50"
+              >
+                Download
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

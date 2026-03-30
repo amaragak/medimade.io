@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Deploy CDK stack and sync ApiUrl into frontend/webapp/.env as NEXT_PUBLIC_MEDIMADE_API_URL.
+# Usage (from anywhere):
+#   backend/scripts/deploy-back
+#   backend/scripts/deploy-back --profile mm
+#   backend/scripts/deploy-back MedimadeBackend --require-approval never --profile mm
+set -euo pipefail
+
+BACKEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$BACKEND_ROOT/.." && pwd)"
+WEBAPP_ENV="$REPO_ROOT/frontend/webapp/.env"
+OUTPUTS="$(mktemp)"
+cleanup() { rm -f "$OUTPUTS"; }
+trap cleanup EXIT
+
+cd "$BACKEND_ROOT"
+
+npx cdk deploy "$@" --outputs-file "$OUTPUTS"
+
+node "$BACKEND_ROOT/scripts/write-webapp-env-from-outputs.mjs" "$OUTPUTS" "$WEBAPP_ENV"
