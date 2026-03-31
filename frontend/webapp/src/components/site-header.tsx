@@ -2,6 +2,9 @@ import Link from "next/link";
 
 const nav = [
   { href: "/create", label: "Create" },
+  ...(process.env.NODE_ENV !== "production"
+    ? [{ href: "/analytics", label: "Analytics" }]
+    : []),
   { href: "/library", label: "Library" },
   { href: "/schedule", label: "Schedule" },
   { href: "/settings", label: "API" },

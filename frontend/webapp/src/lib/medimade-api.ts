@@ -148,17 +148,35 @@ export type GenerateMeditationAudioResponse = {
   audioKey: string;
 };
 
+export type BackgroundAudioItem = {
+  key: string;
+  name: string;
+  size: number | null;
+};
+
 /** Calls backend Lambda to generate script (if needed), synthesize with Fish, store in S3, and return CloudFront URL. */
 export async function generateMeditationAudio(params: {
   meditationStyle: string | null;
   transcript: string;
   scriptText?: string | null;
   reference_id: string;
+  speed?: number;
+  backgroundSoundKey?: string | null;
 }): Promise<GenerateMeditationAudioResponse> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
 
-  const res = await fetch(`${base}/meditation/audio`, {
+  const speed =
+    typeof params.speed === "number" && Number.isFinite(params.speed)
+      ? params.speed
+      : undefined;
+  const backgroundSoundKey =
+    typeof params.backgroundSoundKey === "string" &&
+    params.backgroundSoundKey.trim().length > 0
+      ? params.backgroundSoundKey.trim()
+      : undefined;
+
+  const createRes = await fetch(`${base}/meditation/audio/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -166,23 +184,87 @@ export async function generateMeditationAudio(params: {
       transcript: params.transcript,
       scriptText: params.scriptText ?? "",
       reference_id: params.reference_id,
+      ...(speed === undefined ? {} : { speed }),
+      ...(backgroundSoundKey === undefined
+        ? {}
+        : { backgroundSoundKey }),
     }),
   });
 
-  const data = (await res.json()) as Partial<GenerateMeditationAudioResponse> & {
+  const createData = (await createRes.json()) as {
+    jobId?: string;
     error?: string;
     detail?: string;
   };
 
-  if (!res.ok) {
+  if (!createRes.ok || !createData.jobId) {
     const msg =
-      data.detail ?? data.error ?? res.statusText ?? "Audio generation failed";
+      createData.detail ??
+      createData.error ??
+      createRes.statusText ??
+      "Audio job creation failed";
     throw new Error(msg);
   }
 
-  if (!data.audioUrl || !data.scriptTextUsed || !data.audioKey) {
-    throw new Error("Malformed response from audio generation endpoint");
-  }
+  const jobId = createData.jobId;
 
-  return data as GenerateMeditationAudioResponse;
+  // Poll job status until completion or failure.
+  const start = Date.now();
+  const timeoutMs = 10 * 60 * 1000; // 10 minutes
+  let delayMs = 1500;
+
+  while (true) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error("Audio generation timed out");
+    }
+
+    const statusRes = await fetch(`${base}/meditation/audio/jobs/${jobId}`);
+    const statusData = (await statusRes.json()) as {
+      status?: string;
+      audioUrl?: string;
+      scriptTextUsed?: string;
+      audioKey?: string;
+      error?: string;
+    };
+
+    if (!statusRes.ok) {
+      const msg =
+        statusData.error ?? statusRes.statusText ?? "Audio job status failed";
+      throw new Error(msg);
+    }
+
+    if (statusData.status === "completed") {
+      if (!statusData.audioUrl || !statusData.scriptTextUsed || !statusData.audioKey) {
+        throw new Error("Audio job completed with incomplete data");
+      }
+      return {
+        audioUrl: statusData.audioUrl,
+        scriptTextUsed: statusData.scriptTextUsed,
+        audioKey: statusData.audioKey,
+      };
+    }
+
+    if (statusData.status === "failed") {
+      throw new Error(statusData.error ?? "Audio generation failed");
+    }
+
+    await new Promise((r) => setTimeout(r, delayMs));
+    delayMs = Math.min(5000, delayMs + 500);
+  }
+}
+
+export async function listBackgroundAudio(): Promise<BackgroundAudioItem[]> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/media/background-audio`);
+  const data = (await res.json()) as {
+    items?: BackgroundAudioItem[];
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+  return data.items ?? [];
 }

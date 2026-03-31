@@ -8,6 +8,7 @@ import {
 } from "@aws-sdk/client-secrets-manager";
 
 const FISH_TTS_URL = "https://api.fish.audio/v1/tts";
+const FISH_TTS_MODEL = (process.env.FISH_TTS_MODEL || "s2-pro").trim() || "s2-pro";
 
 const secrets = new SecretsManagerClient({});
 let cachedApiKey: string | undefined;
@@ -73,12 +74,14 @@ export async function handler(
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      model: "s1",
+      model: FISH_TTS_MODEL,
     },
     body: JSON.stringify({
       text,
       reference_id,
       format: "mp3",
+      latency: "balanced",
+      normalize: true,
     }),
   });
 

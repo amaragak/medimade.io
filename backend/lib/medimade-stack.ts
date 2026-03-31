@@ -8,6 +8,8 @@ import * as s3 from "aws-cdk-lib/aws-s3";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import { LayerVersion } from "aws-cdk-lib/aws-lambda";
 import type { Construct } from "constructs";
 
 /** Create this secret in AWS Secrets Manager before calling the API (see DEPLOY.md). */
@@ -57,6 +59,17 @@ export class MedimadeStack extends cdk.Stack {
       },
     );
 
+    const meditationAnalyticsTable = new dynamodb.Table(
+      this,
+      "MeditationAnalyticsTable",
+      {
+        partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+        sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      },
+    );
+
     const fishTts = new lambda_nodejs.NodejsFunction(this, "FishTtsFunction", {
       entry: path.join(__dirname, "../lambdas/fish-tts.ts"),
       handler: "handler",
@@ -65,6 +78,7 @@ export class MedimadeStack extends cdk.Stack {
       memorySize: 512,
       environment: {
         FISH_AUDIO_SECRET_ARN: fishApiKeySecret.secretArn,
+        FISH_TTS_MODEL: "s2-pro",
       },
     });
     fishApiKeySecret.grantRead(fishTts);
@@ -128,33 +142,149 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
-    const meditationAudio = new lambda_nodejs.NodejsFunction(
+    // ffmpeg layer: account-local layer you deployed for background audio mixing.
+    // Using a fixed ARN keeps CDK self-contained and works seamlessly with backend/scripts/deploy.
+    const ffmpegLayer = LayerVersion.fromLayerVersionArn(
       this,
-      "MeditationAudioFunction",
+      "FfmpegLayer",
+      "arn:aws:lambda:ap-southeast-2:382309212161:layer:serverlessrepo-soundws-audio-tools-lambda-layer-LambdaLayer:1",
+    );
+
+    const meditationJobsTable = new dynamodb.Table(this, "MeditationJobsTable", {
+      partitionKey: { name: "jobId", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const meditationAudioWorker = new lambda_nodejs.NodejsFunction(
+      this,
+      "MeditationAudioWorkerFunction",
       {
         entry: path.join(__dirname, "../lambdas/generate-meditation-audio.ts"),
         handler: "handler",
         runtime: lambda.Runtime.NODEJS_20_X,
         timeout: cdk.Duration.seconds(180),
         memorySize: 1024,
+        layers: [ffmpegLayer],
         environment: {
           CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,
           FISH_AUDIO_SECRET_ARN: fishApiKeySecret.secretArn,
           MEDIA_BUCKET_NAME: mediaBucket.bucketName,
           MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
+          MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+          MEDITATION_JOBS_TABLE_NAME: meditationJobsTable.tableName,
+          FISH_TTS_MODEL: "s2-pro",
+          // Speech rate for Fish TTS; 1 = normal speed.
+          SPEECH_SPEED: "1",
         },
       },
     );
-    claudeApiKeySecret.grantRead(meditationAudio);
-    fishApiKeySecret.grantRead(meditationAudio);
-    mediaBucket.grantPut(meditationAudio);
+    claudeApiKeySecret.grantRead(meditationAudioWorker);
+    fishApiKeySecret.grantRead(meditationAudioWorker);
+    mediaBucket.grantPut(meditationAudioWorker);
+    mediaBucket.grantRead(meditationAudioWorker);
+    meditationAnalyticsTable.grantWriteData(meditationAudioWorker);
+    meditationJobsTable.grantReadWriteData(meditationAudioWorker);
+
+    const createMeditationJob = new lambda_nodejs.NodejsFunction(
+      this,
+      "CreateMeditationJobFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/create-meditation-job.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+        environment: {
+          MEDITATION_JOBS_TABLE_NAME: meditationJobsTable.tableName,
+          WORKER_FUNCTION_NAME: meditationAudioWorker.functionName,
+        },
+      },
+    );
+    meditationJobsTable.grantReadWriteData(createMeditationJob);
+    meditationAudioWorker.grantInvoke(createMeditationJob);
+
+    const getMeditationJob = new lambda_nodejs.NodejsFunction(
+      this,
+      "GetMeditationJobFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/get-meditation-job.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+        environment: {
+          MEDITATION_JOBS_TABLE_NAME: meditationJobsTable.tableName,
+        },
+      },
+    );
+    meditationJobsTable.grantReadData(getMeditationJob);
 
     httpApi.addRoutes({
-      path: "/meditation/audio",
+      path: "/meditation/audio/jobs",
       methods: [apigwv2.HttpMethod.POST],
       integration: new integrations.HttpLambdaIntegration(
-        "MeditationAudioIntegration",
-        meditationAudio,
+        "CreateMeditationJobIntegration",
+        createMeditationJob,
+      ),
+    });
+
+    httpApi.addRoutes({
+      path: "/meditation/audio/jobs/{jobId}",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration(
+        "GetMeditationJobIntegration",
+        getMeditationJob,
+      ),
+    });
+
+    const analyticsList = new lambda_nodejs.NodejsFunction(
+      this,
+      "AnalyticsListFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/analytics-list.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(15),
+        memorySize: 256,
+        environment: {
+          MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+        },
+      },
+    );
+    meditationAnalyticsTable.grantReadData(analyticsList);
+
+    httpApi.addRoutes({
+      path: "/analytics/meditations",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration(
+        "AnalyticsMeditationsListIntegration",
+        analyticsList,
+      ),
+    });
+
+    const listBackgroundAudio = new lambda_nodejs.NodejsFunction(
+      this,
+      "ListBackgroundAudioFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/list-background-audio.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+        environment: {
+          MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+        },
+      },
+    );
+    mediaBucket.grantRead(listBackgroundAudio);
+
+    httpApi.addRoutes({
+      path: "/media/background-audio",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration(
+        "ListBackgroundAudioIntegration",
+        listBackgroundAudio,
       ),
     });
 
@@ -179,6 +309,12 @@ export class MedimadeStack extends cdk.Stack {
     });
     new cdk.CfnOutput(this, "MediaCloudFrontDomain", {
       value: mediaDistribution.domainName,
+    });
+    new cdk.CfnOutput(this, "MediaBucketName", {
+      description:
+        "S3 bucket that stores generated meditations and background audio",
+      value: mediaBucket.bucketName,
+      exportName: "MediaBucketName",
     });
   }
 }

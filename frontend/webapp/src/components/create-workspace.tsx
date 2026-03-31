@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FISH_SPEAKERS } from "@/lib/fish-speakers";
 import { ChatMarkdown } from "@/components/chat-markdown";
@@ -9,6 +9,8 @@ import {
   streamMedimadeChat,
   streamMeditationScript,
   generateMeditationAudio,
+  listBackgroundAudio,
+  type BackgroundAudioItem,
 } from "@/lib/medimade-api";
 
 type ChatMessage = {
@@ -18,16 +20,57 @@ type ChatMessage = {
   variant?: "chat" | "script";
 };
 
-const soundPresets = ["Rain + soft pads", "Studio silence", "Forest dawn", "Ocean low"];
+const FALLBACK_SOUNDS = [
+  { key: "fallback/rain-soft-pads", name: "Rain + soft pads" },
+  { key: "fallback/studio-silence", name: "Studio silence" },
+  { key: "fallback/forest-dawn", name: "Forest dawn" },
+  { key: "fallback/ocean-low", name: "Ocean low" },
+];
 const meditationStyles = [
   "Body scan",
   "Visualization",
   "Breath-led",
   "Manifestation",
   "Affirmation loop",
+  "Sleep",
+  "Loving-kindness",
+  "Anxiety relief",
 ];
 
 type Phase = "style" | "feeling" | "claude";
+
+function getStyleFollowupQuestion(style: string): string {
+  const s = style.trim().toLowerCase();
+  if (s === "manifestation") {
+    return "What do you want to manifest—and what would a “win” look like in real life?";
+  }
+  if (s === "visualization") {
+    return "What do you want to visualize—where are you, and what’s the first vivid detail you can picture?";
+  }
+  if (s === "affirmation loop" || s === "affirmations" || s === "affirmation") {
+    return "How do you want to feel when you’re done—and what words would land gently for you right now?";
+  }
+  if (s === "sleep") {
+    return "What’s keeping you awake tonight—and how do you want to feel as you drift off?";
+  }
+  if (s === "loving-kindness" || s === "loving kindness" || s === "metta") {
+    return "Who would you like to send kindness to today—yourself, someone else, or both?";
+  }
+  if (s === "anxiety relief" || s === "anxiety") {
+    return "What’s the main worry or pressure right now—and what would feel like relief by the end of this session?";
+  }
+  if (s === "breath-led" || s === "breath led" || s === "breath") {
+    return "Do you want a breathwork-style session, or a simple “follow your breath” meditation?";
+  }
+  if (s === "body scan" || s === "bodyscan") {
+    return "Where are you holding the most tension right now—and what would you like to soften first?";
+  }
+  const trimmed = style.trim();
+  if (trimmed) {
+    return `How are you feeling today—and what do you want this “${trimmed}” meditation to support?`;
+  }
+  return "How are you feeling today—and what do you want this meditation to support?";
+}
 
 export function CreateWorkspace() {
   const [phase, setPhase] = useState<Phase>("style");
@@ -38,6 +81,14 @@ export function CreateWorkspace() {
   const [audioLoading, setAudioLoading] = useState(false);
   const [audioModalUrl, setAudioModalUrl] = useState<string | null>(null);
   const [audioError, setAudioError] = useState<string | null>(null);
+  const [lastUsedScript, setLastUsedScript] = useState<string | null>(null);
+  const isDev = process.env.NODE_ENV !== "production";
+  const [speechSpeed, setSpeechSpeed] = useState<number>(1);
+  const [backgroundSounds, setBackgroundSounds] =
+    useState<BackgroundAudioItem[]>([]);
+  const [backgroundSoundKey, setBackgroundSoundKey] = useState<string | null>(
+    null,
+  );
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
@@ -46,9 +97,10 @@ export function CreateWorkspace() {
     },
   ]);
   const [input, setInput] = useState("");
-  const [speakerModelId, setSpeakerModelId] = useState<string>(
-    FISH_SPEAKERS[0].modelId,
-  );
+  const [speakerModelId, setSpeakerModelId] = useState<string>(() => {
+    const emily = FISH_SPEAKERS.find((s) => s.name.toLowerCase() === "emily");
+    return emily?.modelId ?? FISH_SPEAKERS[0].modelId;
+  });
 
   async function generateScript() {
     if (scriptLoading) return;
@@ -113,7 +165,7 @@ export function CreateWorkspace() {
         ...m,
         {
           role: "assistant",
-          text: "How are you feeling today?",
+          text: getStyleFollowupQuestion(trimmed),
         },
       ]);
     }, 400);
@@ -123,7 +175,60 @@ export function CreateWorkspace() {
     const trimmed = input.trim();
     if (!trimmed || chatLoading || scriptLoading) return;
     if (phase === "style") {
-      pickStyle(trimmed);
+      const match = meditationStyles.find(
+        (s) => s.trim().toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (match) {
+        pickStyle(match);
+        return;
+      }
+      // Free-text: treat as initial chat message and use it as style label too.
+      setMeditationStyle(trimmed);
+      setPhase("claude");
+      const style = trimmed;
+      const history: MedimadeChatTurn[] = [{ role: "user", content: trimmed }];
+      setMessages((m) => [...m, { role: "user", text: trimmed }]);
+      setInput("");
+      setChatLoading(true);
+      try {
+        let acc = "";
+        let assistantBubbleStarted = false;
+        const text = await streamMedimadeChat(
+          { meditationStyle: style, messages: history },
+          (d) => {
+            acc += d;
+            if (!assistantBubbleStarted) {
+              assistantBubbleStarted = true;
+              setMessages((m) => [...m, { role: "assistant", text: acc }]);
+            } else {
+              setMessages((m) => {
+                const next = [...m];
+                const last = next[next.length - 1];
+                if (last?.role !== "assistant") return m;
+                next[next.length - 1] = { role: "assistant", text: acc };
+                return next;
+              });
+            }
+          },
+        );
+        setClaudeThread([
+          ...history,
+          { role: "assistant", content: text },
+        ]);
+        setPhase("claude");
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : "Could not reach the guide.";
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            text: `Sorry — ${msg}`,
+          },
+        ]);
+      } finally {
+        setChatLoading(false);
+      }
       return;
     }
 
@@ -248,6 +353,8 @@ export function CreateWorkspace() {
           transcript,
           scriptText: existingScript,
           reference_id: speakerModelId,
+          ...(isDev ? { speed: speechSpeed } : {}),
+          backgroundSoundKey: backgroundSoundKey ?? undefined,
         });
 
       if (!existingScript) {
@@ -258,6 +365,8 @@ export function CreateWorkspace() {
       }
 
       setAudioModalUrl(audioUrl);
+      // Ensure modal has access to the final script text used for synthesis.
+      setLastUsedScript(scriptTextUsed);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Audio generation failed";
       setAudioError(msg);
@@ -265,6 +374,30 @@ export function CreateWorkspace() {
       setAudioLoading(false);
     }
   }
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const items = await listBackgroundAudio();
+        if (cancelled) return;
+        if (items.length > 0) {
+          setBackgroundSounds(items);
+          setBackgroundSoundKey(items[0]?.key ?? null);
+        } else {
+          setBackgroundSounds(FALLBACK_SOUNDS as BackgroundAudioItem[]);
+          setBackgroundSoundKey(FALLBACK_SOUNDS[0]?.key ?? null);
+        }
+      } catch {
+        if (cancelled) return;
+        setBackgroundSounds(FALLBACK_SOUNDS as BackgroundAudioItem[]);
+        setBackgroundSoundKey(FALLBACK_SOUNDS[0]?.key ?? null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col px-4 py-6 sm:px-6">
@@ -377,9 +510,19 @@ export function CreateWorkspace() {
 
         <div className="row-start-2 flex min-h-0 flex-col gap-6 overflow-y-auto pb-12 lg:col-span-3 lg:row-start-1 lg:h-full lg:overflow-y-auto">
           <Panel title="Sound" subtitle="Bed and ambience">
-            <select className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm">
-              {soundPresets.map((s) => (
-                <option key={s}>{s}</option>
+            <select
+              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
+              value={backgroundSoundKey ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                setBackgroundSoundKey(v === "" ? null : v);
+              }}
+            >
+              <option value="">No background audio</option>
+              {backgroundSounds.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.name}
+                </option>
               ))}
             </select>
           </Panel>
@@ -397,6 +540,28 @@ export function CreateWorkspace() {
                   </option>
                 ))}
               </select>
+              {isDev ? (
+                <div className="mt-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="text-xs font-semibold text-muted">
+                      Speed
+                    </label>
+                    <span className="text-xs font-semibold text-foreground">
+                      {speechSpeed.toFixed(2)}×
+                    </span>
+                  </div>
+                  <input
+                    aria-label="Speech speed"
+                    type="range"
+                    min={0.7}
+                    max={1}
+                    step={0.01}
+                    value={speechSpeed}
+                    onChange={(e) => setSpeechSpeed(Number(e.target.value))}
+                    className="mt-2 h-2 w-full accent-foreground"
+                  />
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="mt-3 w-full rounded-xl border border-dashed border-gold/60 bg-gold/5 py-2 text-xs font-medium text-gold"
@@ -509,6 +674,17 @@ export function CreateWorkspace() {
             ) : null}
 
             <audio controls src={audioModalUrl} className="mt-4 w-full" />
+
+            {lastUsedScript && (
+              <details className="mt-3 rounded-lg border border-border bg-background p-3 text-xs">
+                <summary className="cursor-pointer font-semibold text-foreground">
+                  Show script used for this audio
+                </summary>
+                <div className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-muted">
+                  {lastUsedScript}
+                </div>
+              </details>
+            )}
 
             <div className="mt-3 flex gap-2">
               <a

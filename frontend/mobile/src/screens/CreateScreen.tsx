@@ -37,9 +37,45 @@ const meditationStyles = [
   "Breath-led",
   "Manifestation",
   "Affirmation loop",
+  "Sleep",
+  "Loving-kindness",
+  "Anxiety relief",
 ] as const;
 
 type Phase = "style" | "feeling" | "claude";
+
+function getStyleFollowupQuestion(style: string): string {
+  const s = style.trim().toLowerCase();
+  if (s === "manifestation") {
+    return "What do you want to manifest—and what would a “win” look like in real life?";
+  }
+  if (s === "visualization") {
+    return "What do you want to visualize—where are you, and what’s the first vivid detail you can picture?";
+  }
+  if (s === "affirmation loop" || s === "affirmations" || s === "affirmation") {
+    return "How do you want to feel when you’re done—and what words would land gently for you right now?";
+  }
+  if (s === "sleep") {
+    return "What’s keeping you awake tonight—and how do you want to feel as you drift off?";
+  }
+  if (s === "loving-kindness" || s === "loving kindness" || s === "metta") {
+    return "Who would you like to send kindness to today—yourself, someone else, or both?";
+  }
+  if (s === "anxiety relief" || s === "anxiety") {
+    return "What’s the main worry or pressure right now—and what would feel like relief by the end of this session?";
+  }
+  if (s === "breath-led" || s === "breath led" || s === "breath") {
+    return "Do you want a breathwork-style session, or a simple “follow your breath” meditation?";
+  }
+  if (s === "body scan" || s === "bodyscan") {
+    return "Where are you holding the most tension right now—and what would you like to soften first?";
+  }
+  const trimmed = style.trim();
+  if (trimmed) {
+    return `How are you feeling today—and what do you want this “${trimmed}” meditation to support?`;
+  }
+  return "How are you feeling today—and what do you want this meditation to support?";
+}
 
 export default function CreateScreen() {
   const [phase, setPhase] = useState<Phase>("style");
@@ -144,7 +180,7 @@ export default function CreateScreen() {
         ...m,
         {
           role: "assistant",
-          text: "How are you feeling today?",
+          text: getStyleFollowupQuestion(trimmed),
         },
       ]);
     }, 400);
@@ -155,7 +191,60 @@ export default function CreateScreen() {
     if (!trimmed || chatLoading || scriptLoading) return;
 
     if (phase === "style") {
-      pickStyle(trimmed);
+      const match = meditationStyles.find(
+        (s) => s.trim().toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (match) {
+        pickStyle(match);
+        return;
+      }
+      // Free-text: treat as initial chat message and use it as style label too.
+      setMeditationStyle(trimmed);
+      setPhase("claude");
+      const style = trimmed;
+      const history: MedimadeChatTurn[] = [{ role: "user", content: trimmed }];
+      setMessages((m) => [...m, { role: "user", text: trimmed }]);
+      setInput("");
+      setChatLoading(true);
+      try {
+        let acc = "";
+        let assistantBubbleStarted = false;
+        const text = await streamMedimadeChat(
+          { meditationStyle: style, messages: history },
+          (d) => {
+            acc += d;
+            if (!assistantBubbleStarted) {
+              assistantBubbleStarted = true;
+              setMessages((m) => [...m, { role: "assistant", text: acc }]);
+            } else {
+              setMessages((m) => {
+                const next = [...m];
+                const last = next[next.length - 1];
+                if (last?.role !== "assistant") return m;
+                next[next.length - 1] = { role: "assistant", text: acc };
+                return next;
+              });
+            }
+          },
+        );
+        setClaudeThread([
+          ...history,
+          { role: "assistant", content: text },
+        ]);
+        setPhase("claude");
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : "Could not reach the guide.";
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            text: `Sorry — ${msg}`,
+          },
+        ]);
+      } finally {
+        setChatLoading(false);
+      }
       return;
     }
 

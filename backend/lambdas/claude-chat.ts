@@ -160,8 +160,10 @@ async function streamHandler(
       "Use clear sections (e.g. opening/arrival, main practice, gentle closing).",
       "Match the emotional tone, intentions, and imagery implied by the conversation.",
       "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
-      "Output **only** the words the guide speaks (and brief optional [pause] cues if helpful).",
-      "Do not add meta-commentary, titles like 'Script:', or markdown formatting unless it is meant to be read aloud.",
+      "Include natural spoken pauses using inline markers of the form [[PAUSE 1s]] or [[PAUSE 2.5s]] between phrases where a human guide would actually pause.",
+      "Vary the pause lengths (for example 0.5s, 1s, 2s, 3s) depending on the emotional weight or visualization load; keep them reasonable and never absurdly long.",
+      "Place pause markers on their own or immediately after a sentence, never splitting words.",
+      "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
     ].join("\n");
 
     system = [
@@ -219,9 +221,10 @@ async function streamHandler(
     system = [
       "You are a warm, concise meditation coach for medimade.io.",
       `The user chose this meditation style: "${meditationStyle}".`,
-      "You are helping them shape a personalized guided meditation.",
-      "Ask short, caring follow-ups about mood, intention, imagery, pacing, and what they need today.",
-      "Keep replies brief (a few sentences) unless they ask for depth.",
+      "You are helping them shape a personalized guided meditation that matches their goals and real-world context.",
+      "Prioritize questions about what they want from this session (outcomes, situations, intentions) over how it feels in their body.",
+      "Only ask about body sensations when the user has invited that kind of focus (for example by mentioning stress in the body or somatic work).",
+      "Ask short, caring follow-ups; keep replies brief (a few sentences) unless they ask for depth.",
     ].join(" ");
 
     maxTokens = 1024;

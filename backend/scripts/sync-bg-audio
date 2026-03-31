@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Sync local bg_audio folder into the media S3 bucket under background-audio/.
+# Usage (from repo root or anywhere):
+#   backend/scripts/sync-bg-audio
+#   backend/scripts/sync-bg-audio --profile mm
+#
+# Requires:
+# - aws CLI configured and on PATH
+# - The MedimadeBackend stack deployed with a CfnOutput export "MediaBucketName"
+set -euo pipefail
+
+BACKEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$BACKEND_ROOT/.." && pwd)"
+BG_DIR="$REPO_ROOT/bg_audio"
+
+if ! command -v aws >/dev/null 2>&1; then
+  echo "aws CLI is required but not found on PATH." >&2
+  exit 1
+fi
+
+if [ ! -d "$BG_DIR" ]; then
+  echo "Expected bg_audio directory at: $BG_DIR" >&2
+  exit 1
+fi
+
+AWS_ARGS=("$@")
+
+echo "Resolving media bucket from CloudFormation export 'MediaBucketName'..."
+MEDIA_BUCKET_NAME="$(
+  aws cloudformation list-exports "${AWS_ARGS[@]}" \
+    --query "Exports[?Name=='MediaBucketName'].Value | [0]" \
+    --output text
+)"
+
+if [ -z "$MEDIA_BUCKET_NAME" ] || [ "$MEDIA_BUCKET_NAME" = "None" ]; then
+  echo "Could not resolve MediaBucketName CloudFormation export. Has the stack been deployed?" >&2
+  exit 1
+fi
+
+SRC="$BG_DIR/"
+DEST="s3://$MEDIA_BUCKET_NAME/background-audio/"
+
+echo "Syncing $SRC -> $DEST"
+aws s3 sync "$SRC" "$DEST" \
+  --exclude "*" \
+  --include "*.mp3" \
+  --include "*.wav" \
+  "${AWS_ARGS[@]}"
+
+echo "Done."
+
