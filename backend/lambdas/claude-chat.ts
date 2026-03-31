@@ -160,8 +160,8 @@ async function streamHandler(
       "Use clear sections (e.g. opening/arrival, main practice, gentle closing).",
       "Match the emotional tone, intentions, and imagery implied by the conversation.",
       "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
-      "Include natural spoken pauses using inline markers of the form [[PAUSE 1s]] or [[PAUSE 2.5s]] between phrases where a human guide would actually pause.",
-      "Vary the pause lengths (for example 0.5s, 1s, 2s, 3s) depending on the emotional weight or visualization load; keep them reasonable and never absurdly long.",
+      "Include natural spoken pauses using inline markers of the form [[PAUSE 1s]] or [[PAUSE 3s]] between phrases where a human guide would actually pause.",
+      "Vary the pause lengths (for example 1s, 2s, 3s, 4s, 5s) depending on the emotional weight or visualization load; err slightly on the side of longer, more spacious pauses rather than very short ones.",
       "Place pause markers on their own or immediately after a sentence, never splitting words.",
       "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
     ].join("\n");
