@@ -46,11 +46,20 @@ export async function handler(
     return json(404, { error: "Job not found" });
   }
 
-  const { status, audioUrl, scriptTextUsed, errorMessage, createdAt, updatedAt } =
+  const {
+    status,
+    audioUrl,
+    scriptTextUsed,
+    audioKey,
+    errorMessage,
+    createdAt,
+    updatedAt,
+  } =
     out.Item as {
       status?: string;
       audioUrl?: string;
       scriptTextUsed?: string;
+      audioKey?: string;
       errorMessage?: string;
       createdAt?: string;
       updatedAt?: string;
@@ -61,6 +70,7 @@ export async function handler(
     status,
     audioUrl,
     scriptTextUsed,
+    audioKey,
     error: errorMessage ?? undefined,
     createdAt,
     updatedAt,
