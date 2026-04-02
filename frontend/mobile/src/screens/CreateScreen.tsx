@@ -5,13 +5,12 @@ import {
   Pressable,
   Linking,
   ScrollView,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   View,
-  useWindowDimensions,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import Card from "../components/ui/Card";
 import ChatMarkdown from "../components/ChatMarkdown";
 import ModalDropdown from "../components/ui/ModalDropdown";
@@ -43,6 +42,13 @@ const meditationStyles = [
 ] as const;
 
 type Phase = "style" | "feeling" | "claude";
+
+const MOBILE_CREATE_STEPS = [
+  { key: "chat", label: "Chat" },
+  { key: "audio", label: "Audio" },
+  { key: "layout", label: "Layout" },
+  { key: "export", label: "Export" },
+] as const;
 
 function getStyleFollowupQuestion(style: string): string {
   const s = style.trim().toLowerCase();
@@ -96,6 +102,9 @@ export default function CreateScreen() {
   ]);
 
   const [input, setInput] = useState("");
+
+  /** Create flow step: Chat → Audio → Layout → Export */
+  const [mobileCreateStep, setMobileCreateStep] = useState(0);
 
   const [sound, setSound] = useState(soundPresets[0]);
   const [speakerModelId, setSpeakerModelId] = useState<string>(
@@ -394,230 +403,303 @@ export default function CreateScreen() {
         ? "Share how you feel today…"
         : "Reply to the guide…";
 
-  // Mobile-first layout: chat card has a window-proportional height.
-  // Options stack underneath and the whole page scrolls.
-  const { height: windowHeight } = useWindowDimensions();
-  const chatHeight = Math.max(340, Math.min(windowHeight * 0.46, 540));
+  const chatCardStyle = [styles.chatCard, styles.chatCardCompact];
 
-  return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
+  const titleBlock = (
+    <View style={styles.titleBlock}>
+      <Text style={styles.h1}>Create a meditation</Text>
+      <Text style={styles.subtitle}>
+        Chat with the guide, then use the steps to tune audio and export.
+      </Text>
+    </View>
+  );
+
+  const soundSpeakerPanel = (
+    <>
+      <Text style={styles.panelTitle}>Sound</Text>
+      <ModalDropdown
+        options={soundOptions}
+        value={sound}
+        onChange={(v) => setSound(v)}
+      />
+      <View style={styles.spacer} />
+      <Text style={styles.panelTitle}>Speaker</Text>
+      <ModalDropdown
+        options={speakerOptions}
+        value={speakerModelId}
+        onChange={(v) => setSpeakerModelId(v)}
+      />
+    </>
+  );
+
+  const layoutPanel = (
+    <>
+      <Text style={styles.panelTitle}>Optional video</Text>
+      <View style={styles.videoPlaceholder}>
+        <Text style={styles.videoPlaceholderText}>
+          Drop logo / short loop
+        </Text>
+        <Text style={styles.videoPlaceholderSub}>
+          MP4 / MOV · mock UI
+        </Text>
+      </View>
+      <View style={styles.spacer} />
+      <Text style={styles.panelTitle}>Markers</Text>
+      <View style={styles.markerList}>
+        {[
+          { label: "Opening chime", t: "0:00" },
+          { label: "Pause · body settle", t: "2:30" },
+          { label: "Section chime · visualization", t: "5:00" },
+        ].map((m) => (
+          <View key={m.t} style={styles.markerRow}>
+            <Text style={styles.markerLabel}>{m.label}</Text>
+            <Text style={styles.markerTime}>{m.t}</Text>
+          </View>
+        ))}
+      </View>
+      <Pressable style={styles.secondaryBtn} onPress={() => {}}>
+        <Text style={styles.secondaryBtnText}>+ Add marker</Text>
+      </Pressable>
+    </>
+  );
+
+  const exportPanel = (
+    <>
+      <Text style={styles.panelTitle}>Manifestation focus</Text>
+      <TextInput
+        multiline
+        numberOfLines={3}
+        placeholder="e.g. Walk on stage feeling grounded; hear the first phrase clearly…"
+        placeholderTextColor={colors.muted}
+        style={styles.textArea}
+      />
+      <View style={styles.bigSpacer} />
+      <Pressable
+        style={[styles.primaryBtn, audioLoading && { opacity: 0.55 }]}
+        disabled={audioLoading}
+        onPress={() => void generateMeditationAudioAndShow()}
       >
-        <View style={styles.header}>
-          <Text style={styles.brand}>medimade.io</Text>
+        <Text style={styles.primaryBtnText}>
+          {audioLoading ? "Generating…" : "Generate meditation"}
+        </Text>
+      </Pressable>
+      <Pressable style={styles.outlineBtn} onPress={() => {}}>
+        <Text style={styles.outlineBtnText}>Save draft</Text>
+      </Pressable>
+    </>
+  );
+
+  function renderGuideChatCard() {
+    return (
+      <Card style={chatCardStyle}>
+        <View style={styles.chatHeader}>
+          <View style={styles.chatHeaderRow}>
+            <View style={styles.chatHeaderTextBlock}>
+              <Text style={styles.chatHeaderTitle}>Guide chat</Text>
+              <Text style={styles.chatHeaderSubtitle}>
+                Style → how you feel today → live coach chat
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => void generateScript()}
+              disabled={scriptLoading}
+              style={({ pressed }) => [
+                styles.scriptBtn,
+                scriptLoading && { opacity: 0.5 },
+                pressed && { opacity: 0.9 },
+              ]}
+            >
+              <Text style={styles.scriptBtnText}>
+                {scriptLoading ? "…" : "Generate script"}
+              </Text>
+            </Pressable>
+          </View>
         </View>
 
         <ScrollView
-          style={{ flex: 1 }}
-          contentContainerStyle={styles.contentContainer}
+          style={styles.chatMessages}
+          contentContainerStyle={styles.chatMessagesInner}
           nestedScrollEnabled
-          keyboardShouldPersistTaps="handled"
         >
-          <View style={styles.content}>
-            <View style={styles.titleBlock}>
-              <Text style={styles.h1}>Create a meditation</Text>
-              <Text style={styles.subtitle}>
-                Style first, then how you feel — then a live coach chat (Claude
-                Haiku).
-              </Text>
-            </View>
-
-            <Card style={[styles.chatCard, { height: chatHeight }]}>
-              <View style={styles.chatHeader}>
-                <View style={styles.chatHeaderRow}>
-                  <View style={styles.chatHeaderTextBlock}>
-                    <Text style={styles.chatHeaderTitle}>Guide chat</Text>
-                    <Text style={styles.chatHeaderSubtitle}>
-                      Style → how you feel today → live coach chat
-                    </Text>
-                  </View>
-                  <Pressable
-                    onPress={() => void generateScript()}
-                    disabled={scriptLoading}
-                    style={({ pressed }) => [
-                      styles.scriptBtn,
-                      scriptLoading && { opacity: 0.5 },
-                      pressed && { opacity: 0.9 },
-                    ]}
-                  >
-                    <Text style={styles.scriptBtnText}>
-                      {scriptLoading ? "…" : "Generate script"}
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-
-              <ScrollView
-                style={styles.chatMessages}
-                contentContainerStyle={styles.chatMessagesInner}
-                nestedScrollEnabled
+          {messages.map((msg, idx) => {
+            const isScript =
+              msg.role === "assistant" && msg.variant === "script";
+            return (
+              <View
+                // eslint-disable-next-line react/no-array-index-key
+                key={`${msg.role}-${idx}-${msg.variant ?? "u"}`}
+                style={[
+                  styles.bubble,
+                  msg.role === "user"
+                    ? styles.bubbleUser
+                    : isScript
+                      ? styles.bubbleScript
+                      : styles.bubbleAssistant,
+                ]}
               >
-                {messages.map((msg, idx) => {
-                  const isScript =
-                    msg.role === "assistant" && msg.variant === "script";
-                  return (
-                    <View
-                      // eslint-disable-next-line react/no-array-index-key
-                      key={`${msg.role}-${idx}-${msg.variant ?? "u"}`}
-                      style={[
-                        styles.bubble,
-                        msg.role === "user"
-                          ? styles.bubbleUser
-                          : isScript
-                            ? styles.bubbleScript
-                            : styles.bubbleAssistant,
-                      ]}
-                    >
-                      {isScript ? (
-                        <>
-                          <View style={styles.scriptBadge}>
-                            <Text style={styles.scriptBadgeText}>
-                              Meditation script · ~5 min
-                            </Text>
-                          </View>
-                          <ChatMarkdown
-                            text={msg.text}
-                            textStyle={styles.scriptBodyText}
-                          />
-                        </>
-                      ) : (
-                        <ChatMarkdown
-                          text={msg.text}
-                          textStyle={styles.bubbleText}
-                        />
-                      )}
+                {isScript ? (
+                  <>
+                    <View style={styles.scriptBadge}>
+                      <Text style={styles.scriptBadgeText}>
+                        Meditation script · ~5 min
+                      </Text>
                     </View>
-                  );
-                })}
+                    <ChatMarkdown
+                      text={msg.text}
+                      textStyle={styles.scriptBodyText}
+                    />
+                  </>
+                ) : (
+                  <ChatMarkdown
+                    text={msg.text}
+                    textStyle={styles.bubbleText}
+                  />
+                )}
+              </View>
+            );
+          })}
 
-                {phase === "style" ? (
-                  <View style={styles.chipsRow}>
-                    {meditationStyles.map((s) => (
-                      <Pressable
-                        key={s}
-                        onPress={() => pickStyle(s)}
-                        style={({ pressed }) => [
-                          styles.chip,
-                          pressed && { opacity: 0.9 },
-                        ]}
-                      >
-                        <Text style={styles.chipText}>{s}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                ) : null}
-              </ScrollView>
-
-              <View style={styles.composer}>
-                <TextInput
-                  value={input}
-                  onChangeText={setInput}
-                  placeholder={placeholder}
-                  placeholderTextColor={colors.muted}
-                  style={styles.input}
-                  multiline={false}
-                  editable={!chatLoading && !scriptLoading}
-                  returnKeyType="send"
-                  onSubmitEditing={() => void send()}
-                />
+          {phase === "style" ? (
+            <View style={styles.chipsRow}>
+              {meditationStyles.map((s) => (
                 <Pressable
-                  onPress={() => void send()}
-                  disabled={chatLoading || scriptLoading}
-                  style={[
-                    styles.sendBtn,
-                    (chatLoading || scriptLoading) && { opacity: 0.55 },
+                  key={s}
+                  onPress={() => pickStyle(s)}
+                  style={({ pressed }) => [
+                    styles.chip,
+                    pressed && { opacity: 0.9 },
                   ]}
                 >
-                  <Text style={styles.sendBtnText}>
-                    {chatLoading ? "…" : "Send"}
+                  <Text style={styles.chipText}>{s}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </ScrollView>
+
+        <View style={styles.composer}>
+          <TextInput
+            value={input}
+            onChangeText={setInput}
+            placeholder={placeholder}
+            placeholderTextColor={colors.muted}
+            style={styles.input}
+            multiline={false}
+            editable={!chatLoading && !scriptLoading}
+            returnKeyType="send"
+            onSubmitEditing={() => void send()}
+          />
+          <Pressable
+            onPress={() => void send()}
+            disabled={chatLoading || scriptLoading}
+            style={[
+              styles.sendBtn,
+              (chatLoading || scriptLoading) && { opacity: 0.55 },
+            ]}
+          >
+            <Text style={styles.sendBtnText}>
+              {chatLoading ? "…" : "Send"}
+            </Text>
+          </Pressable>
+        </View>
+      </Card>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        keyboardVerticalOffset={0}
+      >
+        <View style={styles.compactRoot}>
+          <View style={styles.stepperBar}>
+            <View style={styles.stepperRow}>
+              {MOBILE_CREATE_STEPS.map((step, index) => (
+                <Pressable
+                  key={step.key}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: mobileCreateStep === index }}
+                  accessibilityLabel={step.label}
+                  onPress={() => setMobileCreateStep(index)}
+                  style={({ pressed }) => [
+                    styles.stepperSegment,
+                    mobileCreateStep === index && styles.stepperSegmentActive,
+                    pressed && { opacity: 0.92 },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.stepperIndex,
+                      mobileCreateStep === index && styles.stepperIndexActive,
+                    ]}
+                  >
+                    {index + 1}
+                  </Text>
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.stepperLabel,
+                      mobileCreateStep === index && styles.stepperLabelActive,
+                    ]}
+                  >
+                    {step.label}
                   </Text>
                 </Pressable>
-              </View>
-            </Card>
-
-            <View style={styles.optionsInner}>
-              <Text style={styles.panelTitle}>Sound</Text>
-              <ModalDropdown
-                options={soundOptions}
-                value={sound}
-                onChange={(v) => setSound(v)}
-              />
-
-              <View style={styles.spacer} />
-
-              <Text style={styles.panelTitle}>Speaker</Text>
-              <ModalDropdown
-                options={speakerOptions}
-                value={speakerModelId}
-                onChange={(v) => setSpeakerModelId(v)}
-              />
-
-              <View style={styles.spacer} />
-
-              <Text style={styles.panelTitle}>Optional video</Text>
-              <View style={styles.videoPlaceholder}>
-                <Text style={styles.videoPlaceholderText}>
-                  Drop logo / short loop
-                </Text>
-                <Text style={styles.videoPlaceholderSub}>
-                  MP4 / MOV · mock UI
-                </Text>
-              </View>
-
-              <View style={styles.spacer} />
-
-              <Text style={styles.panelTitle}>Markers</Text>
-              <View style={styles.markerList}>
-                {[
-                  { label: "Opening chime", t: "0:00" },
-                  { label: "Pause · body settle", t: "2:30" },
-                  { label: "Section chime · visualization", t: "5:00" },
-                ].map((m) => (
-                  <View key={m.t} style={styles.markerRow}>
-                    <Text style={styles.markerLabel}>{m.label}</Text>
-                    <Text style={styles.markerTime}>{m.t}</Text>
-                  </View>
-                ))}
-              </View>
-              <Pressable style={styles.secondaryBtn} onPress={() => {}}>
-                <Text style={styles.secondaryBtnText}>+ Add marker</Text>
-              </Pressable>
-
-              <View style={styles.spacer} />
-
-              <Text style={styles.panelTitle}>Manifestation focus</Text>
-              <TextInput
-                multiline
-                numberOfLines={3}
-                placeholder="e.g. Walk on stage feeling grounded; hear the first phrase clearly…"
-                placeholderTextColor={colors.muted}
-                style={styles.textArea}
-              />
-
-              <View style={styles.bigSpacer} />
-
-              <Pressable
-                style={[
-                  styles.primaryBtn,
-                  audioLoading && { opacity: 0.55 },
-                ]}
-                disabled={audioLoading}
-                onPress={() => void generateMeditationAudioAndShow()}
-              >
-                <Text style={styles.primaryBtnText}>
-                  {audioLoading ? "Generating…" : "Generate meditation"}
-                </Text>
-              </Pressable>
-
-              <Pressable style={styles.outlineBtn} onPress={() => {}}>
-                <Text style={styles.outlineBtnText}>Save draft</Text>
-              </Pressable>
+              ))}
             </View>
           </View>
-        </ScrollView>
+
+          {mobileCreateStep === 0 ? (
+            <View style={styles.compactStep0}>
+              {titleBlock}
+              {renderGuideChatCard()}
+            </View>
+          ) : null}
+
+          {mobileCreateStep === 1 ? (
+            <ScrollView
+              style={styles.compactStepScroll}
+              contentContainerStyle={styles.compactStepScrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.compactStepHeading}>Audio</Text>
+              <Text style={styles.compactStepSub}>
+                Background mix and narrator voice.
+              </Text>
+              <View style={styles.optionsInner}>{soundSpeakerPanel}</View>
+            </ScrollView>
+          ) : null}
+
+          {mobileCreateStep === 2 ? (
+            <ScrollView
+              style={styles.compactStepScroll}
+              contentContainerStyle={styles.compactStepScrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.compactStepHeading}>Layout</Text>
+              <Text style={styles.compactStepSub}>
+                Video placeholder and session markers.
+              </Text>
+              <View style={styles.optionsInner}>{layoutPanel}</View>
+            </ScrollView>
+          ) : null}
+
+          {mobileCreateStep === 3 ? (
+            <ScrollView
+              style={styles.compactStepScroll}
+              contentContainerStyle={styles.compactStepScrollContent}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={styles.compactStepHeading}>Export</Text>
+              <Text style={styles.compactStepSub}>
+                Focus notes and generate your meditation.
+              </Text>
+              <View style={styles.optionsInner}>{exportPanel}</View>
+            </ScrollView>
+          ) : null}
+        </View>
       </KeyboardAvoidingView>
 
       {audioModalUrl ? (
@@ -667,8 +749,6 @@ export default function CreateScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   container: { flex: 1 },
-
-  contentContainer: { paddingBottom: 30 },
 
   audioModalOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -744,21 +824,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
 
-  header: {
-    height: 56,
-    paddingHorizontal: 16,
-    justifyContent: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.background,
-  },
-  brand: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: colors.foreground,
-  },
-
-  content: { paddingHorizontal: 16, paddingTop: 14 },
   titleBlock: { marginBottom: 12 },
   h1: { fontSize: 26, fontWeight: "700", color: colors.foreground },
   subtitle: { marginTop: 6, color: colors.muted, fontSize: 14 },
@@ -767,6 +832,80 @@ const styles = StyleSheet.create({
 
   chatWrap: { flex: 1.15 },
   chatCard: { backgroundColor: colors.card },
+  chatCardCompact: {
+    flex: 1,
+    minHeight: 280,
+    overflow: "hidden",
+  },
+
+  compactRoot: { flex: 1, minHeight: 0 },
+  compactStep0: {
+    flex: 1,
+    minHeight: 0,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+  },
+  compactStepScroll: { flex: 1 },
+  compactStepScrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 30,
+  },
+  compactStepHeading: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: colors.foreground,
+  },
+  compactStepSub: {
+    marginTop: 6,
+    marginBottom: 4,
+    fontSize: 13,
+    color: colors.muted,
+    lineHeight: 18,
+  },
+
+  stepperBar: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.background,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  stepperRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
+  stepperSegment: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
+  },
+  stepperSegmentActive: {
+    borderBottomColor: colors.accent,
+  },
+  stepperIndex: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: colors.muted,
+  },
+  stepperIndexActive: {
+    color: colors.accent,
+  },
+  stepperLabel: {
+    marginTop: 4,
+    fontSize: 10,
+    fontWeight: "600",
+    color: colors.muted,
+    textAlign: "center",
+  },
+  stepperLabelActive: {
+    color: colors.foreground,
+    fontWeight: "800",
+  },
 
   chatHeader: {
     paddingHorizontal: 14,

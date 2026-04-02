@@ -306,6 +306,101 @@ async function generateScriptFromClaude(params: {
   return text;
 }
 
+/** Keep DynamoDB item under 400 KB (UTF-8 bytes, incl. other attributes). */
+const MAX_SCRIPT_BYTES_FOR_LIBRARY = 320_000;
+
+async function deriveLibraryMetadataFromClaude(params: {
+  apiKey: string;
+  meditationStyle: string;
+  transcript: string;
+  scriptPreview: string;
+}): Promise<{ title: string; meditationType: string }> {
+  const scriptPreview = params.scriptPreview.slice(0, 1200);
+  const userContent = [
+    "Infer a concise library title and a meditation category for this generated meditation.",
+    "",
+    `Creator style label (may be empty): ${params.meditationStyle.trim() || "(none)"}`,
+    "",
+    "### Planning / chat context",
+    params.transcript.trim().slice(0, 2500) || "(none)",
+    "",
+    "### Beginning of the final spoken script",
+    scriptPreview || "(empty)",
+    "",
+    "Respond with a single JSON object only (no markdown fences):",
+    '{"title":"max 10 words, evocative","meditationType":"short label e.g. Sleep, Body scan, Breath-led, Manifestation"}',
+  ].join("\n");
+
+  const system =
+    "You output only valid JSON objects. No prose, no code fences.";
+
+  const upstream = await fetch(ANTHROPIC_URL, {
+    method: "POST",
+    headers: {
+      "x-api-key": params.apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 256,
+      system,
+      messages: [{ role: "user", content: userContent } satisfies ChatTurn],
+    }),
+  });
+
+  const responseText = await upstream.text();
+  if (!upstream.ok) {
+    throw new Error(
+      `Anthropic metadata failed: ${responseText.slice(0, 500)}`,
+    );
+  }
+
+  let parsed: { content?: Array<{ type?: string; text?: string }> };
+  try {
+    parsed = JSON.parse(responseText);
+  } catch {
+    throw new Error("Invalid JSON from Anthropic (metadata)");
+  }
+
+  let raw =
+    parsed.content?.find((c) => c?.type === "text")?.text?.trim() ?? "";
+  raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
+  let obj: { title?: unknown; meditationType?: unknown };
+  try {
+    obj = JSON.parse(raw) as { title?: unknown; meditationType?: unknown };
+  } catch {
+    throw new Error("Metadata response was not JSON");
+  }
+
+  const title =
+    typeof obj.title === "string" && obj.title.trim()
+      ? obj.title.trim().slice(0, 120)
+      : "";
+  const meditationType =
+    typeof obj.meditationType === "string" && obj.meditationType.trim()
+      ? obj.meditationType.trim().slice(0, 80)
+      : "";
+
+  if (!title || !meditationType) {
+    throw new Error("Missing title or meditationType in metadata JSON");
+  }
+
+  return { title, meditationType };
+}
+
+function fallbackLibraryMetadata(params: {
+  meditationStyle: string;
+}): { title: string; meditationType: string } {
+  const style = params.meditationStyle.trim();
+  const type = style || "Meditation";
+  const title = style
+    ? `${style} · session`
+    : "Guided meditation";
+  return { title, meditationType: type };
+}
+
 async function fishTtsMp3(params: {
   apiKey: string;
   text: string;
@@ -724,7 +819,40 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   const audioUrl = `https://${mediaCloudFrontDomain}/${key}`;
   console.log("done", { audioUrl });
 
-  // Best-effort analytics write (don’t fail the main job if analytics fails).
+  let scriptForLibrary = scriptTextUsed;
+  let scriptTruncated = false;
+  while (
+    Buffer.byteLength(scriptForLibrary, "utf8") > MAX_SCRIPT_BYTES_FOR_LIBRARY &&
+    scriptForLibrary.length > 0
+  ) {
+    scriptForLibrary = scriptForLibrary.slice(
+      0,
+      Math.floor(scriptForLibrary.length * 0.9),
+    );
+    scriptTruncated = true;
+  }
+
+  let libraryTitle: string;
+  let libraryMeditationType: string;
+  try {
+    const claudeKey = await getClaudeApiKey();
+    const derived = await deriveLibraryMetadataFromClaude({
+      apiKey: claudeKey,
+      meditationStyle,
+      transcript,
+      scriptPreview: scriptTextUsed,
+    });
+    libraryTitle = derived.title;
+    libraryMeditationType = derived.meditationType;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "metadata derive failed";
+    console.warn("library metadata derive failed, using fallback", { msg });
+    const fb = fallbackLibraryMetadata({ meditationStyle });
+    libraryTitle = fb.title;
+    libraryMeditationType = fb.meditationType;
+  }
+
+  // Best-effort analytics / library index write (don’t fail the main job if this fails).
   try {
     const createdAt = new Date().toISOString();
     const id = randomUUID();
@@ -745,6 +873,11 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
           referenceId,
           meditationStyle: meditationStyle || null,
           scriptWasGenerated: shouldGenerateScript,
+          title: libraryTitle,
+          meditationType: libraryMeditationType,
+          scriptText: scriptForLibrary,
+          scriptTruncated,
+          rating: null,
         },
       }),
     );

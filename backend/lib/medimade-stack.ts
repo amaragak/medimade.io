@@ -9,6 +9,7 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as iam from "aws-cdk-lib/aws-iam";
 import { LayerVersion } from "aws-cdk-lib/aws-lambda";
 import type { Construct } from "constructs";
 
@@ -125,7 +126,9 @@ export class MedimadeStack extends cdk.Stack {
       corsPreflight: {
         allowHeaders: ["Content-Type", "Authorization"],
         allowMethods: [
+          apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.POST,
+          apigwv2.CorsHttpMethod.PATCH,
           apigwv2.CorsHttpMethod.OPTIONS,
         ],
         allowOrigins: ["*"],
@@ -260,6 +263,92 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "AnalyticsMeditationsListIntegration",
         analyticsList,
+      ),
+    });
+
+    const libraryList = new lambda_nodejs.NodejsFunction(
+      this,
+      "LibraryListFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/library-list.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(30),
+        memorySize: 512,
+        environment: {
+          MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+          MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+          MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
+        },
+      },
+    );
+    meditationAnalyticsTable.grantReadData(libraryList);
+    libraryList.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["s3:ListBucket"],
+        resources: [mediaBucket.bucketArn],
+        conditions: {
+          StringLike: { "s3:prefix": ["meditations/*"] },
+        },
+      }),
+    );
+
+    httpApi.addRoutes({
+      path: "/library/meditations",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration(
+        "LibraryListIntegration",
+        libraryList,
+      ),
+    });
+
+    const meditationRating = new lambda_nodejs.NodejsFunction(
+      this,
+      "MeditationRatingFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/meditation-rating.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+        environment: {
+          MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+        },
+      },
+    );
+    meditationAnalyticsTable.grantWriteData(meditationRating);
+
+    httpApi.addRoutes({
+      path: "/library/meditations/rating",
+      methods: [apigwv2.HttpMethod.PATCH],
+      integration: new integrations.HttpLambdaIntegration(
+        "MeditationRatingIntegration",
+        meditationRating,
+      ),
+    });
+
+    const meditationFavourite = new lambda_nodejs.NodejsFunction(
+      this,
+      "MeditationFavouriteFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/meditation-favourite.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+        environment: {
+          MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+        },
+      },
+    );
+    meditationAnalyticsTable.grantWriteData(meditationFavourite);
+
+    httpApi.addRoutes({
+      path: "/library/meditations/favourite",
+      methods: [apigwv2.HttpMethod.PATCH],
+      integration: new integrations.HttpLambdaIntegration(
+        "MeditationFavouriteIntegration",
+        meditationFavourite,
       ),
     });
 

@@ -178,3 +178,73 @@ export async function generateMeditationAudio(params: {
 
   return data as GenerateMeditationAudioResponse;
 }
+
+export type LibraryMeditationItem = {
+  id: string | null;
+  sk: string | null;
+  s3Key: string;
+  audioUrl: string;
+  title: string;
+  meditationType: string | null;
+  meditationStyle: string | null;
+  createdAt: string | null;
+  durationSeconds: number | null;
+  scriptText: string | null;
+  scriptTruncated: boolean;
+  rating: number | null;
+  favourite: boolean;
+  catalogued: boolean;
+  mp3Bytes: number | null;
+};
+
+export async function listLibraryMeditations(): Promise<LibraryMeditationItem[]> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/library/meditations`);
+  const data = (await res.json()) as {
+    items?: LibraryMeditationItem[];
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+  return data.items ?? [];
+}
+
+export async function patchMeditationRating(
+  sk: string,
+  rating: number | null,
+): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/library/meditations/rating`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sk, rating }),
+  });
+  const data = (await res.json()) as { error?: string; detail?: string };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+}
+
+export async function patchMeditationFavourite(
+  sk: string,
+  favourite: boolean,
+): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/library/meditations/favourite`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sk, favourite }),
+  });
+  const data = (await res.json()) as { error?: string; detail?: string };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+}
