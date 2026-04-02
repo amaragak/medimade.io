@@ -512,22 +512,16 @@ export default function LibraryView() {
     return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b));
   }, [sortedItems, favouritesOnly]);
 
-  const allCategoriesCount = useMemo(() => {
-    const base = sortedItems.filter((x) => x.catalogued);
-    const afterFav = favouritesOnly ? base.filter((x) => x.favourite) : base;
-    return afterFav.length;
-  }, [sortedItems, favouritesOnly]);
-
   const categoryItems = useMemo(() => {
-    const allLabel = `All Categories (${allCategoriesCount})`;
+    const allLabel = "All Categories";
     return [
       { value: "all", label: allLabel },
       ...categoryOptions.map(([cat, count]) => ({
         value: cat,
-        label: `${cat} (${count})`,
+        label: cat,
       })),
     ];
-  }, [allCategoriesCount, categoryOptions]);
+  }, [categoryOptions]);
 
   const selectedCategoryLabel = useMemo(() => {
     return categoryItems.find((x) => x.value === categoryFilter)?.label ?? categoryItems[0]?.label ?? "";
@@ -1027,7 +1021,7 @@ export default function LibraryView() {
                   aria-haspopup="listbox"
                   aria-expanded={sortDropdownOpen}
                   onClick={() => setSortDropdownOpen((v) => !v)}
-                  className="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground hover:border-accent/40"
+                  className="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground/80 hover:border-accent/40"
                   style={
                     sortButtonWidthPx
                       ? { width: `${sortButtonWidthPx}px` }
@@ -1074,7 +1068,7 @@ export default function LibraryView() {
                             setSortBy(it.value);
                             setSortDropdownOpen(false);
                           }}
-                          className={`w-full cursor-pointer px-3 py-2 text-left text-sm font-semibold text-black dark:text-foreground ${
+                          className={`w-full cursor-pointer px-3 py-2 text-left text-sm font-semibold text-foreground/80 dark:text-foreground/80 ${
                             selected ? "bg-accent/15 cursor-default" : "hover:bg-accent/15 bg-transparent"
                           }`}
                         >
