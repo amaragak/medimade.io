@@ -141,6 +141,27 @@ export type GenerateMeditationAudioResponse = {
   audioKey: string;
 };
 
+export type FishSpeaker = {
+  name: string;
+  modelId: string;
+};
+
+export async function listFishSpeakers(): Promise<FishSpeaker[]> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/fish/speakers`);
+  const data = (await res.json()) as {
+    speakers?: FishSpeaker[];
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+  return data.speakers ?? [];
+}
+
 export async function generateMeditationAudio(params: {
   meditationStyle: string | null;
   transcript: string;
@@ -187,6 +208,8 @@ export type LibraryMeditationItem = {
   title: string;
   meditationType: string | null;
   meditationStyle: string | null;
+  speakerModelId: string | null;
+  speakerName: string | null;
   description: string | null;
   createdAt: string | null;
   durationSeconds: number | null;

@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Animated,
   FlatList,
   Linking,
   Modal,
@@ -62,6 +63,57 @@ export default function LibraryScreen() {
   const [favouriteBusySk, setFavouriteBusySk] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>("newest");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [playingSk, setPlayingSk] = useState<string | null>(null);
+  const pulseOpacity = useRef(new Animated.Value(1)).current;
+
+  function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+    const t = hex.trim().replace(/^#/, "");
+    if (![3, 6].includes(t.length)) return null;
+    const full =
+      t.length === 3 ? t.split("").map((c) => `${c}${c}`).join("") : t;
+    const n = Number.parseInt(full, 16);
+    if (!Number.isFinite(n)) return null;
+    return {
+      r: (n >> 16) & 255,
+      g: (n >> 8) & 255,
+      b: n & 255,
+    };
+  }
+
+  const accentRgb = hexToRgb(colors.accent);
+  const pulseBorderColor = accentRgb
+    ? pulseOpacity.interpolate({
+        inputRange: [0.5, 1],
+        outputRange: [
+          `rgba(${accentRgb.r},${accentRgb.g},${accentRgb.b},0.35)`,
+          `rgba(${accentRgb.r},${accentRgb.g},${accentRgb.b},1)`,
+        ],
+      })
+    : undefined;
+
+  useEffect(() => {
+    if (!playingSk) {
+      pulseOpacity.setValue(1);
+      return;
+    }
+
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseOpacity, {
+          toValue: 0.5,
+          duration: 700,
+          useNativeDriver: false,
+        }),
+        Animated.timing(pulseOpacity, {
+          toValue: 1,
+          duration: 700,
+          useNativeDriver: false,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [playingSk, pulseOpacity]);
 
   const sortedItems = useMemo(() => {
     const next = [...items];
@@ -180,7 +232,12 @@ export default function LibraryScreen() {
   }
 
   const renderListItem = ({ item: m }: { item: LibraryMeditationItem }) => (
-    <View style={styles.listRow}>
+    <View
+      style={[
+        styles.listRow,
+        m.sk != null && playingSk === m.sk && styles.listRowNowPlaying,
+      ]}
+    >
       <View style={styles.listMain}>
         <View style={styles.listTitleRow}>
           <View style={styles.titleLenRow}>
@@ -222,12 +279,16 @@ export default function LibraryScreen() {
         </Text>
         <Text style={styles.listWhen}>
           {formatWhen(m.createdAt)}
+          {m.speakerName ? ` · ${m.speakerName}` : ""}
         </Text>
         {renderStars(m)}
         <View style={styles.listActions}>
           <Pressable
             style={styles.listPlayBtn}
-            onPress={() => void Linking.openURL(m.audioUrl)}
+            onPress={() => {
+              setPlayingSk(m.sk);
+              void Linking.openURL(m.audioUrl);
+            }}
           >
             <Ionicons name="play-circle" size={18} color="#fff" />
             <Text style={styles.listPlayText}>Play</Text>
@@ -243,12 +304,26 @@ export default function LibraryScreen() {
           ) : null}
         </View>
       </View>
+      {m.sk != null && playingSk === m.sk ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.listRowNowPlayingPulse,
+            pulseBorderColor ? { borderColor: pulseBorderColor } : null,
+          ]}
+        />
+      ) : null}
     </View>
   );
 
   const renderGridItem = ({ item: m }: { item: LibraryMeditationItem }) => (
     <View style={styles.gridCell}>
-      <View style={styles.card}>
+      <View
+        style={[
+          styles.card,
+          m.sk != null && playingSk === m.sk && styles.cardNowPlaying,
+        ]}
+      >
         <View style={styles.gridBadgeRow}>
           <Text style={styles.badge}>
             {m.meditationStyle || m.meditationType || "—"}
@@ -286,12 +361,16 @@ export default function LibraryScreen() {
         </Text>
         <Text style={styles.smallMeta}>
           {formatWhen(m.createdAt)}
+          {m.speakerName ? ` · ${m.speakerName}` : ""}
         </Text>
         {renderStars(m)}
         <View style={styles.actions}>
           <Pressable
             style={styles.primaryBtn}
-            onPress={() => void Linking.openURL(m.audioUrl)}
+            onPress={() => {
+              setPlayingSk(m.sk);
+              void Linking.openURL(m.audioUrl);
+            }}
           >
             <Text style={styles.primaryBtnText}>Play audio</Text>
           </Pressable>
@@ -304,6 +383,15 @@ export default function LibraryScreen() {
             </Pressable>
           ) : null}
         </View>
+        {m.sk != null && playingSk === m.sk ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.cardNowPlayingPulse,
+              pulseBorderColor ? { borderColor: pulseBorderColor } : null,
+            ]}
+          />
+        ) : null}
       </View>
     </View>
   );
@@ -581,10 +669,26 @@ const styles = StyleSheet.create({
   listRow: {
     marginBottom: 10,
     borderRadius: 16,
+    position: "relative",
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.card,
     padding: 14,
+  },
+  listRowNowPlaying: {
+    borderWidth: 2,
+    borderColor: colors.accent,
+  },
+  listRowNowPlayingPulse: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: colors.accent,
+    backgroundColor: "transparent",
   },
   listMain: { gap: 0 },
   listTitleRow: {
@@ -672,11 +776,27 @@ const styles = StyleSheet.create({
   listScriptText: { color: colors.foreground, fontWeight: "700", fontSize: 14 },
   card: {
     borderRadius: 16,
+    position: "relative",
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.card,
     padding: 14,
     flex: 1,
+  },
+  cardNowPlaying: {
+    borderWidth: 2,
+    borderColor: colors.accent,
+  },
+  cardNowPlayingPulse: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: colors.accent,
+    backgroundColor: "transparent",
   },
   badge: {
     fontSize: 10,

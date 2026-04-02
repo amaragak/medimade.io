@@ -64,7 +64,7 @@ function renderBoldInLine(line: string, keyPrefix: string): ReactNode[] {
   return out;
 }
 
-const PAUSE_RE = /\[\[PAUSE\s+(\d+)\]\]/g;
+const PAUSE_RE = /\[\[PAUSE\s+([^\]]+)\]\]/g;
 
 function renderBoldAndPausesInLine(line: string, keyPrefix: string): ReactNode[] {
   const out: ReactNode[] = [];
@@ -81,7 +81,7 @@ function renderBoldAndPausesInLine(line: string, keyPrefix: string): ReactNode[]
 
     out.push(
       <em key={`${keyPrefix}-pause-${k}`} className="italic font-medium">
-        {`PAUSE ${m[1]}`}
+        {`Pause ${m[1]}`}
       </em>,
     );
 

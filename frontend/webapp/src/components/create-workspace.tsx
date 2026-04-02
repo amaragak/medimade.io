@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { FISH_SPEAKERS } from "@/lib/fish-speakers";
 import { ChatMarkdown } from "@/components/chat-markdown";
@@ -10,6 +10,8 @@ import {
   streamMeditationScript,
   generateMeditationAudio,
   listBackgroundAudio,
+  listFishSpeakers,
+  type FishSpeaker,
   type BackgroundAudioItem,
 } from "@/lib/medimade-api";
 
@@ -89,6 +91,9 @@ export function CreateWorkspace() {
   const [backgroundSoundKey, setBackgroundSoundKey] = useState<string | null>(
     null,
   );
+  const [fishSpeakers, setFishSpeakers] = useState<FishSpeaker[]>(
+    FISH_SPEAKERS as unknown as FishSpeaker[],
+  );
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
@@ -96,11 +101,31 @@ export function CreateWorkspace() {
       variant: "chat",
     },
   ]);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const isAtBottomRef = useRef(true);
   const [input, setInput] = useState("");
   const [speakerModelId, setSpeakerModelId] = useState<string>(() => {
     const emily = FISH_SPEAKERS.find((s) => s.name.toLowerCase() === "emily");
     return emily?.modelId ?? FISH_SPEAKERS[0].modelId;
   });
+
+  useEffect(() => {
+    void listFishSpeakers()
+      .then((sp) => {
+        if (!sp || sp.length === 0) return;
+        setFishSpeakers(sp);
+        // If current selection isn't valid anymore, pick Emily, else first.
+        const emily = sp.find((s) => s.name.toLowerCase() === "emily");
+        setSpeakerModelId((current) => {
+          if (sp.some((s) => s.modelId === current)) return current;
+          return emily?.modelId ?? sp[0].modelId;
+        });
+      })
+      .catch(() => {
+        // Keep existing fallback constants if the endpoint isn't reachable.
+      });
+  }, []);
 
   async function generateScript() {
     if (scriptLoading) return;
@@ -153,6 +178,19 @@ export function CreateWorkspace() {
     }
   }
 
+  useEffect(() => {
+    // Only re-scroll when the user was already at the bottom.
+    // This keeps streaming Claude output visible without yanking the user if they scrolled up.
+    if (!isAtBottomRef.current) return;
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "auto",
+      block: "end",
+    });
+    // After we scroll, we know we're at the bottom again.
+    const el = chatScrollRef.current;
+    if (el) isAtBottomRef.current = true;
+  }, [messages.length]);
+
   function pickStyle(label: string) {
     const trimmed = label.trim();
     if (!trimmed) return;
@@ -160,15 +198,50 @@ export function CreateWorkspace() {
     setMessages((m) => [...m, { role: "user", text: trimmed }]);
     setPhase("feeling");
     setInput("");
-    setTimeout(() => {
-      setMessages((m) => [
-        ...m,
-        {
-          role: "assistant",
-          text: getStyleFollowupQuestion(trimmed),
-        },
-      ]);
-    }, 400);
+
+    const style = trimmed;
+    const history: MedimadeChatTurn[] = [{ role: "user", content: trimmed }];
+    let acc = "";
+    let assistantBubbleStarted = false;
+
+    setClaudeThread(history);
+    setChatLoading(true);
+
+    void streamMedimadeChat(
+      { meditationStyle: style, messages: history },
+      (d) => {
+        acc += d;
+        if (!assistantBubbleStarted) {
+          assistantBubbleStarted = true;
+          setMessages((m) => [...m, { role: "assistant", text: acc }]);
+        } else {
+          setMessages((m) => {
+            const next = [...m];
+            const last = next[next.length - 1];
+            if (last?.role !== "assistant") return m;
+            next[next.length - 1] = { role: "assistant", text: acc };
+            return next;
+          });
+        }
+      },
+    )
+      .then((text) => {
+        setClaudeThread([...history, { role: "assistant", content: text }]);
+      })
+      .catch((e) => {
+        const msg =
+          e instanceof Error ? e.message : "Could not reach the guide.";
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            text: `Sorry — ${msg}`,
+          },
+        ]);
+      })
+      .finally(() => {
+        setChatLoading(false);
+      });
   }
 
   async function send() {
@@ -236,9 +309,14 @@ export function CreateWorkspace() {
     if (!style) return;
 
     if (phase === "feeling") {
-      const nextMessages: MedimadeChatTurn[] = [
-        { role: "user", content: trimmed },
-      ];
+      const firstQuestion = getStyleFollowupQuestion(style);
+      const nextMessages: MedimadeChatTurn[] =
+        claudeThread.length > 0
+          ? [...claudeThread, { role: "user", content: trimmed }]
+          : [
+              { role: "assistant", content: firstQuestion },
+              { role: "user", content: trimmed },
+            ];
       setMessages((m) => [...m, { role: "user", text: trimmed }]);
       setInput("");
       setChatLoading(true);
@@ -432,7 +510,19 @@ export function CreateWorkspace() {
             </button>
           </div>
           <div className="flex min-h-0 flex-1 flex-col p-4">
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+            <div
+              ref={chatScrollRef}
+              className="min-h-0 flex-1 space-y-3 overflow-y-auto"
+              onScroll={() => {
+                const el = chatScrollRef.current;
+                if (!el) return;
+                const distanceFromBottom =
+                  el.scrollHeight - el.scrollTop - el.clientHeight;
+                // Consider within ~50px as "at bottom".
+                isAtBottomRef.current = distanceFromBottom < 50;
+              }}
+            >
+              {/* Track whether user is already at bottom so streaming doesn't yank scroll */}
               {messages.map((msg, i) => {
                 const isScript =
                   msg.role === "assistant" && msg.variant === "script";
@@ -480,6 +570,7 @@ export function CreateWorkspace() {
                   ))}
                 </div>
               )}
+              <div ref={messagesEndRef} />
             </div>
             <div className="mt-3 flex shrink-0 gap-2 border-t border-border pt-3">
               <input
@@ -534,7 +625,7 @@ export function CreateWorkspace() {
                 onChange={(e) => setSpeakerModelId(e.target.value)}
                 className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm"
               >
-                {FISH_SPEAKERS.map((s) => (
+                {fishSpeakers.map((s) => (
                   <option key={s.modelId} value={s.modelId}>
                     {s.name}
                   </option>

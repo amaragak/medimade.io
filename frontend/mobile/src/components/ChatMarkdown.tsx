@@ -90,7 +90,7 @@ function renderBoldInLine(
   return out;
 }
 
-const PAUSE_RE = /\[\[PAUSE\s+(\d+)\]\]/g;
+const PAUSE_RE = /\[\[PAUSE\s+([^\]]+)\]\]/g;
 
 function renderBoldAndPausesInLine(
   line: string,
@@ -112,7 +112,7 @@ function renderBoldAndPausesInLine(
 
     out.push(
       <Text key={`${keyPrefix}-pause-${k}`} style={[baseStyle, { fontStyle: "italic" }]}>
-        {`PAUSE ${m[1]}`}
+        {`Pause ${m[1]}`}
       </Text>,
     );
 

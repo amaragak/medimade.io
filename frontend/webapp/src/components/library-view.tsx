@@ -31,6 +31,19 @@ function formatWhen(iso: string | null): string {
   }
 }
 
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const t = hex.trim().replace(/^#/, "");
+  if (![3, 6].includes(t.length)) return null;
+  const full = t.length === 3 ? t.split("").map((c) => `${c}${c}`).join("") : t;
+  const n = Number.parseInt(full, 16);
+  if (!Number.isFinite(n)) return null;
+  return {
+    r: (n >> 16) & 255,
+    g: (n >> 8) & 255,
+    b: n & 255,
+  };
+}
+
 function IconList({ className }: { className?: string }) {
   return (
     <svg
@@ -73,9 +86,11 @@ function IconGrid({ className }: { className?: string }) {
 function IconHeart({
   filled,
   className,
+  strokeWidth = 2,
 }: {
   filled: boolean;
   className?: string;
+  strokeWidth?: number;
 }) {
   return (
     <svg
@@ -85,7 +100,7 @@ function IconHeart({
       height="20"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden
@@ -116,47 +131,97 @@ function downloadBasename(title: string): string {
   return `${safe.slice(0, 80)}.mp3`;
 }
 
+function stripPauseMarkers(text: string): string {
+  // Remove library script-only pause markers: `[[PAUSE xs]]`
+  return text.replace(/\[\[PAUSE\s+[^\]]+\]\]/g, "");
+}
+
 function LibraryAudioStrip({
   track,
   onDismiss,
+  playbackToggleNonce,
+  onPlayingChange,
+  onPlaybackTimeChange,
 }: {
   track: ActiveTrack | null;
   onDismiss: () => void;
+  playbackToggleNonce: number;
+  onPlayingChange?: (s3Key: string, playing: boolean) => void;
+  onPlaybackTimeChange?: (s3Key: string, timeSeconds: number) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const seekingRef = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
+  const lastToggleNonceRef = useRef(playbackToggleNonce);
+  const lastReportedTimeRef = useRef<number>(-Infinity);
+
+  const reportTime = useCallback(
+    (t: number) => {
+      if (!track) return;
+      if (!onPlaybackTimeChange) return;
+      // Throttle so we don't re-render the whole library on every `timeupdate`.
+      if (Math.abs(t - lastReportedTimeRef.current) < 0.25) return;
+      lastReportedTimeRef.current = t;
+      onPlaybackTimeChange(track.s3Key, t);
+    },
+    [track, onPlaybackTimeChange],
+  );
+
+  function togglePlayback() {
+    const el = audioRef.current;
+    if (!el) return;
+    if (el.paused) void el.play();
+    else el.pause();
+  }
 
   useEffect(() => {
     if (!track) return;
-    setCurrent(0);
-    setDuration(0);
-    setPlaying(false);
     seekingRef.current = false;
+    lastReportedTimeRef.current = -Infinity;
     const el = audioRef.current;
     if (!el) return;
     el.load();
     void el.play().catch(() => {
-      setPlaying(false);
+      // If autoplay fails, keep initial local state and let the card UI fall back to "Play".
     });
-  }, [track?.s3Key, track?.url]);
+  }, [track]);
+
+  useEffect(() => {
+    if (!track) return;
+    if (playbackToggleNonce === lastToggleNonceRef.current) return;
+    lastToggleNonceRef.current = playbackToggleNonce;
+    togglePlayback();
+  }, [playbackToggleNonce, track]);
 
   useEffect(() => {
     const el = audioRef.current;
     if (!el || !track) return;
 
     const onTime = () => {
-      if (!seekingRef.current) setCurrent(el.currentTime);
+      if (!seekingRef.current) {
+        const t = el.currentTime;
+        setCurrent(t);
+        reportTime(t);
+      }
     };
     const syncDuration = () => {
       const d = el.duration;
       if (Number.isFinite(d) && d > 0) setDuration(d);
     };
-    const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
-    const onEnded = () => setPlaying(false);
+    const onPlay = () => {
+      setPlaying(true);
+      onPlayingChange?.(track.s3Key, true);
+    };
+    const onPause = () => {
+      setPlaying(false);
+      onPlayingChange?.(track.s3Key, false);
+    };
+    const onEnded = () => {
+      setPlaying(false);
+      onPlayingChange?.(track.s3Key, false);
+    };
 
     el.addEventListener("timeupdate", onTime);
     el.addEventListener("durationchange", syncDuration);
@@ -173,7 +238,7 @@ function LibraryAudioStrip({
       el.removeEventListener("pause", onPause);
       el.removeEventListener("ended", onEnded);
     };
-  }, [track]);
+  }, [track, onPlayingChange, reportTime]);
 
   if (!track) return null;
 
@@ -301,6 +366,7 @@ function LibraryAudioStrip({
                   const v = Number(e.target.value);
                   if (el) el.currentTime = v;
                   setCurrent(v);
+                  reportTime(v);
                 }}
               />
               <span className="w-10 shrink-0 text-right tabular-nums text-xs text-muted">
@@ -372,8 +438,41 @@ export default function LibraryView() {
   const [favouritesOnly, setFavouritesOnly] = useState(false);
   const [favouriteBusySk, setFavouriteBusySk] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>("newest");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [nowPlaying, setNowPlaying] = useState<ActiveTrack | null>(null);
+  const [playingS3Key, setPlayingS3Key] = useState<string | null>(null);
+  const [playingTimeSeconds, setPlayingTimeSeconds] = useState(0);
+  const playingS3KeyRef = useRef<string | null>(null);
+  const [playbackToggleNonce, setPlaybackToggleNonce] = useState(0);
+  const [accentRgb, setAccentRgb] = useState<{
+    r: number;
+    g: number;
+    b: number;
+  } | null>(null);
+
+  // Keep a stable ref for throttled `timeupdate` callbacks.
+  playingS3KeyRef.current = playingS3Key;
+
+  useEffect(() => {
+    const readAccent = () => {
+      if (typeof window === "undefined") return;
+      const raw = getComputedStyle(document.documentElement)
+        .getPropertyValue("--accent")
+        .trim();
+      const rgb = hexToRgb(raw);
+      if (rgb) setAccentRgb(rgb);
+    };
+
+    readAccent();
+    if (typeof window === "undefined") return;
+
+    // If the user toggles dark mode, `--accent` swaps values.
+    const mql = window.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!mql) return;
+    mql.addEventListener?.("change", readAccent);
+    return () => mql.removeEventListener?.("change", readAccent);
+  }, []);
 
   const sortedItems = useMemo(() => {
     const next = [...items];
@@ -393,9 +492,163 @@ export default function LibraryView() {
   }, [items, sortBy]);
 
   const visibleItems = useMemo(() => {
-    const catalogued = sortedItems.filter((x) => x.catalogued);
-    return favouritesOnly ? catalogued.filter((x) => x.favourite) : catalogued;
+    const base = sortedItems.filter((x) => x.catalogued);
+    const afterFav = favouritesOnly ? base.filter((x) => x.favourite) : base;
+    if (categoryFilter === "all") return afterFav;
+    return afterFav.filter(
+      (x) => (x.meditationStyle || x.meditationType || "—") === categoryFilter,
+    );
+  }, [sortedItems, favouritesOnly, categoryFilter]);
+
+  const categoryOptions = useMemo(() => {
+    const base = sortedItems.filter((x) => x.catalogued);
+    const afterFav = favouritesOnly ? base.filter((x) => x.favourite) : base;
+    const counts: Record<string, number> = {};
+    for (const x of afterFav) {
+      const key = x.meditationStyle || x.meditationType || "—";
+      if (!key || key === "—") continue;
+      counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b));
   }, [sortedItems, favouritesOnly]);
+
+  const allCategoriesCount = useMemo(() => {
+    const base = sortedItems.filter((x) => x.catalogued);
+    const afterFav = favouritesOnly ? base.filter((x) => x.favourite) : base;
+    return afterFav.length;
+  }, [sortedItems, favouritesOnly]);
+
+  const categoryItems = useMemo(() => {
+    const allLabel = `All Categories (${allCategoriesCount})`;
+    return [
+      { value: "all", label: allLabel },
+      ...categoryOptions.map(([cat, count]) => ({
+        value: cat,
+        label: `${cat} (${count})`,
+      })),
+    ];
+  }, [allCategoriesCount, categoryOptions]);
+
+  const selectedCategoryLabel = useMemo(() => {
+    return categoryItems.find((x) => x.value === categoryFilter)?.label ?? categoryItems[0]?.label ?? "";
+  }, [categoryItems, categoryFilter]);
+
+  const longestCategoryLabel = useMemo(() => {
+    return categoryItems.reduce<string>((acc, cur) => (cur.label.length > acc.length ? cur.label : acc), selectedCategoryLabel);
+  }, [categoryItems, selectedCategoryLabel]);
+
+  const categoryDropdownRef = useRef<HTMLDivElement | null>(null);
+  const categoryButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const [categoryButtonWidthPx, setCategoryButtonWidthPx] = useState<number | null>(null);
+  const [categoryMenuWidthPx, setCategoryMenuWidthPx] = useState<number | null>(null);
+
+  useEffect(() => {
+    const btn = categoryButtonRef.current;
+    if (!btn) return;
+
+    if (!selectedCategoryLabel || !longestCategoryLabel) return;
+
+    const styles = window.getComputedStyle(btn);
+    const paddingLeft = parseFloat(styles.paddingLeft) || 0;
+    const paddingRight = parseFloat(styles.paddingRight) || 0;
+    const borderLeft = parseFloat(styles.borderLeftWidth) || 0;
+    const borderRight = parseFloat(styles.borderRightWidth) || 0;
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const font = `${styles.fontStyle} ${styles.fontWeight} ${styles.fontSize} ${styles.fontFamily}`;
+    ctx.font = font;
+
+    const selectedW = ctx.measureText(selectedCategoryLabel).width;
+    const longestW = ctx.measureText(longestCategoryLabel).width;
+
+    const caretBuffer = 26; // space for the chevron icon + gap
+    const buttonW = Math.ceil(
+      selectedW + paddingLeft + paddingRight + borderLeft + borderRight + caretBuffer,
+    );
+    const menuW = Math.ceil(longestW + paddingLeft + paddingRight + borderLeft + borderRight);
+
+    setCategoryButtonWidthPx(buttonW);
+    setCategoryMenuWidthPx(Math.max(menuW, buttonW));
+  }, [selectedCategoryLabel, longestCategoryLabel]);
+
+  useEffect(() => {
+    if (!categoryDropdownOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const root = categoryDropdownRef.current;
+      if (!root) return;
+      if (!root.contains(e.target as Node)) setCategoryDropdownOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [categoryDropdownOpen]);
+
+  const sortItems = useMemo(() => {
+    return [
+      { value: "newest" as SortBy, label: "Newest" },
+      { value: "oldest" as SortBy, label: "Oldest" },
+      { value: "title" as SortBy, label: "Title (A-Z)" },
+    ];
+  }, []);
+
+  const selectedSortLabel = useMemo(() => {
+    return sortItems.find((x) => x.value === sortBy)?.label ?? "";
+  }, [sortItems, sortBy]);
+
+  const longestSortLabel = useMemo(() => {
+    return sortItems.reduce<string>((acc, cur) => (cur.label.length > acc.length ? cur.label : acc), selectedSortLabel);
+  }, [sortItems, selectedSortLabel]);
+
+  const sortDropdownRef = useRef<HTMLDivElement | null>(null);
+  const sortButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [sortDropdownOpen, setSortDropdownOpen] = useState(false);
+  const [sortButtonWidthPx, setSortButtonWidthPx] = useState<number | null>(null);
+  const [sortMenuWidthPx, setSortMenuWidthPx] = useState<number | null>(null);
+
+  useEffect(() => {
+    const btn = sortButtonRef.current;
+    if (!btn) return;
+    if (!selectedSortLabel || !longestSortLabel) return;
+
+    const styles = window.getComputedStyle(btn);
+    const paddingLeft = parseFloat(styles.paddingLeft) || 0;
+    const paddingRight = parseFloat(styles.paddingRight) || 0;
+    const borderLeft = parseFloat(styles.borderLeftWidth) || 0;
+    const borderRight = parseFloat(styles.borderRightWidth) || 0;
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const font = `${styles.fontStyle} ${styles.fontWeight} ${styles.fontSize} ${styles.fontFamily}`;
+    ctx.font = font;
+
+    const selectedW = ctx.measureText(selectedSortLabel).width;
+    const longestW = ctx.measureText(longestSortLabel).width;
+
+    const caretBuffer = 26;
+    const buttonW = Math.ceil(
+      selectedW + paddingLeft + paddingRight + borderLeft + borderRight + caretBuffer,
+    );
+    const menuW = Math.ceil(longestW + paddingLeft + paddingRight + borderLeft + borderRight);
+
+    setSortButtonWidthPx(buttonW);
+    setSortMenuWidthPx(Math.max(menuW, buttonW));
+  }, [selectedSortLabel, longestSortLabel]);
+
+  useEffect(() => {
+    if (!sortDropdownOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const root = sortDropdownRef.current;
+      if (!root) return;
+      if (!root.contains(e.target as Node)) setSortDropdownOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [sortDropdownOpen]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -414,18 +667,28 @@ export default function LibraryView() {
     void load();
   }, [load]);
 
+  const nowKey = nowPlaying?.s3Key ?? null;
+  useEffect(() => {
+    if (!nowKey) setPlayingS3Key(null);
+  }, [nowKey]);
+
   async function setRating(item: LibraryMeditationItem, rating: number | null) {
     if (!item.sk) return;
+    const sk = item.sk;
+    const prevRating = item.rating;
     setRatingBusy(item.sk);
     try {
-      await patchMeditationRating(item.sk, rating);
+      // Optimistic UI update so the stars flip immediately.
       setItems((prev) =>
-        prev.map((x) =>
-          x.sk === item.sk ? { ...x, rating } : x,
-        ),
+        prev.map((x) => (x.sk === sk ? { ...x, rating } : x)),
       );
+      await patchMeditationRating(item.sk, rating);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save rating");
+      // Roll back on failure.
+      setItems((prev) =>
+        prev.map((x) => (x.sk === sk ? { ...x, rating: prevRating } : x)),
+      );
     } finally {
       setRatingBusy(null);
     }
@@ -436,16 +699,23 @@ export default function LibraryView() {
     favourite: boolean,
   ) {
     if (!item.sk) return;
-    setFavouriteBusySk(item.sk);
+    const sk = item.sk;
+    const prevFavourite = item.favourite;
+    setFavouriteBusySk(sk);
+    // Optimistic UI update so the heart flips immediately.
+    setItems((prev) =>
+      prev.map((x) => (x.sk === sk ? { ...x, favourite } : x)),
+    );
     try {
-      await patchMeditationFavourite(item.sk, favourite);
-      setItems((prev) =>
-        prev.map((x) =>
-          x.sk === item.sk ? { ...x, favourite } : x,
-        ),
-      );
+      await patchMeditationFavourite(sk, favourite);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save favourite");
+      // Roll back on failure.
+      setItems((prev) =>
+        prev.map((x) =>
+          x.sk === sk ? { ...x, favourite: prevFavourite } : x,
+        ),
+      );
     } finally {
       setFavouriteBusySk(null);
     }
@@ -453,12 +723,13 @@ export default function LibraryView() {
 
   function renderItem(m: LibraryMeditationItem) {
     const open = m.sk != null && expandedSk === m.sk;
+    const isSelected = nowPlaying?.s3Key === m.s3Key;
+    const isPlaying = playingS3Key === m.s3Key;
     const styleLine = m.meditationStyle || m.meditationType || "—";
     const lengthLine = formatDuration(m.durationSeconds);
 
     const stars = (
       <div className="flex items-center gap-0.5">
-        <span className="mr-1 hidden text-xs text-muted sm:inline">Rate</span>
         {[1, 2, 3, 4, 5].map((star) => (
           <button
             key={star}
@@ -470,7 +741,7 @@ export default function LibraryView() {
             className={`rounded px-0.5 text-base leading-none sm:text-lg ${
               m.rating != null && star <= m.rating
                 ? "text-gold"
-                : "text-muted/40 hover:text-gold/80"
+                : "text-gold opacity-40"
             } ${!m.sk ? "cursor-not-allowed opacity-40" : ""}`}
             title={
               m.sk
@@ -491,44 +762,86 @@ export default function LibraryView() {
         onClick={() => void setFavourite(m, !m.favourite)}
         disabled={favouriteDisabled}
         aria-label={m.favourite ? "Unfavourite meditation" : "Favourite meditation"}
-        className={`flex h-9 w-9 items-center justify-center rounded-full border bg-background/50 ${
+        className={`self-center items-center justify-center p-1 transition-opacity transition-colors ${
           m.favourite
-            ? "border-accent/40 text-accent hover:border-accent/60"
-            : "border-border text-muted hover:border-accent/40 hover:text-accent"
-        } ${favouriteDisabled ? "cursor-not-allowed opacity-50 hover:text-muted" : ""}`}
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
+        } ${
+          "text-accent"
+        } ${
+          favouriteDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+        }`}
       >
-        <IconHeart filled={m.favourite} />
+        <IconHeart filled={m.favourite} strokeWidth={2.5} />
       </button>
     );
 
-    const actions = (
-      <div className="flex flex-shrink-0 flex-wrap gap-2">
+    const scriptToggleBtn =
+      m.scriptText && m.sk != null ? (
         <button
           type="button"
           onClick={() =>
-            setNowPlaying({
-              url: m.audioUrl,
-              title: m.title,
-              s3Key: m.s3Key,
-            })
+            setExpandedSk((v) => (v === m.sk ? null : (m.sk ?? null)))
           }
-          className="rounded-xl bg-accent/90 px-4 py-2 text-center text-sm font-medium text-white dark:text-deep"
+          className={`ml-2 ${
+            open ? "inline-flex" : "hidden group-hover:inline-flex"
+          } items-center font-bold text-accent hover:text-accent/80 cursor-pointer`}
+          style={{ lineHeight: "1.35" }}
         >
-          Play
+          {open ? "hide script" : "show script"}
         </button>
-        {m.scriptText ? (
+      ) : null;
+
+    const actions = (
+      <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
+        {isPlaying ? (
+          <div className="flex items-center gap-2">
+            <span className="tabular-nums text-xs font-semibold text-muted">
+              {formatAudioClock(playingTimeSeconds)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPlaybackToggleNonce((v) => v + 1)}
+              className="self-center flex h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-white dark:text-deep cursor-pointer"
+              aria-label="Pause"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="22"
+                height="22"
+                fill="currentColor"
+                aria-hidden
+              >
+                <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
+              </svg>
+            </button>
+          </div>
+        ) : (
           <button
             type="button"
             onClick={() =>
-              setExpandedSk((v) =>
-                v === m.sk ? null : (m.sk ?? null),
-              )
+              isSelected
+                ? setPlaybackToggleNonce((v) => v + 1)
+                : setNowPlaying({
+                    url: m.audioUrl,
+                    title: m.title,
+                    s3Key: m.s3Key,
+                  })
             }
-            className="rounded-xl border border-border px-3 py-2 text-sm text-muted hover:border-accent/40"
+            className="flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-white dark:text-deep cursor-pointer opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
+            aria-label="Play"
           >
-            {open ? "Hide script" : "Script"}
+            <svg
+              viewBox="0 0 24 24"
+              width="22"
+              height="22"
+              fill="currentColor"
+              aria-hidden
+            >
+              <path d="M8 5v14l11-7L8 5z" />
+            </svg>
           </button>
-        ) : null}
+        )}
       </div>
     );
 
@@ -536,7 +849,7 @@ export default function LibraryView() {
       open && m.scriptText ? (
         <div className="max-h-64 overflow-y-auto rounded-xl border border-border bg-background/80 p-3">
           <ChatMarkdown
-            text={m.scriptText}
+            text={stripPauseMarkers(m.scriptText)}
             className="font-serif text-[13px] leading-relaxed text-foreground/95"
           />
           {m.scriptTruncated ? (
@@ -551,13 +864,30 @@ export default function LibraryView() {
       return (
         <li
           key={m.s3Key}
-          className="flex min-w-0 flex-col rounded-2xl border border-border bg-card p-5 shadow-sm"
+          className={`group relative flex min-w-0 flex-col overflow-hidden rounded-2xl border bg-card p-5 shadow-sm ${
+            isPlaying
+              ? "border-accent"
+              : "border-border hover:border-accent/80 transition-colors"
+          }`}
         >
+          {isPlaying ? (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent"
+              style={
+                accentRgb
+                  ? {
+                      animation: "borderAccentColorPulse 1.2s ease-in-out 0s 2",
+                      borderColor: `rgba(${accentRgb.r},${accentRgb.g},${accentRgb.b},0.35)`,
+                    }
+                  : undefined
+              }
+            />
+          ) : null}
           <div className="flex items-start justify-between gap-3">
             <p className="text-xs font-medium uppercase tracking-wide text-accent">
               {styleLine}
             </p>
-            {favouriteBtn}
           </div>
           <div className="mt-2 flex items-start gap-3">
             <h2 className="font-display text-lg font-medium leading-snug">
@@ -567,13 +897,24 @@ export default function LibraryView() {
               {lengthLine}
             </span>
           </div>
-          <p className="mt-1 text-sm text-muted">{m.description ?? "—"}</p>
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-            <span>{formatWhen(m.createdAt)}</span>
+          <div className="mt-1 text-sm text-muted">
+            {m.description ?? "—"}
+            {scriptToggleBtn}
           </div>
-          <div className="mt-4">{stars}</div>
-          <div className="mt-4 flex flex-wrap gap-2">{actions}</div>
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+            <span>
+              {formatWhen(m.createdAt)}
+              {m.speakerName ? ` · ${m.speakerName}` : ""}
+            </span>
+          </div>
           {scriptBlock ? <div className="mt-4">{scriptBlock}</div> : null}
+          <div className="mt-auto flex items-center justify-between gap-3 translate-y-2">
+            <div>{stars}</div>
+            <div className="flex items-center gap-2">
+              {actions}
+              {favouriteBtn}
+            </div>
+          </div>
         </li>
       );
     }
@@ -581,8 +922,26 @@ export default function LibraryView() {
     return (
       <li
         key={m.s3Key}
-        className="min-w-0 rounded-2xl border border-border bg-card p-4 shadow-sm"
+        className={`group relative min-w-0 overflow-hidden rounded-2xl border bg-card p-4 shadow-sm ${
+          isPlaying
+            ? "border-accent"
+            : "border-border hover:border-accent/80 transition-colors"
+        }`}
       >
+        {isPlaying ? (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent"
+            style={
+              accentRgb
+                ? {
+                    animation: "borderAccentColorPulse 1.2s ease-in-out 0s 2",
+                    borderColor: `rgba(${accentRgb.r},${accentRgb.g},${accentRgb.b},0.35)`,
+                  }
+                : undefined
+            }
+          />
+        ) : null}
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
@@ -599,16 +958,19 @@ export default function LibraryView() {
                   {styleLine}
                 </span>
               </div>
-              {favouriteBtn}
             </div>
-            <p className="mt-1 text-sm text-muted">{m.description ?? "—"}</p>
+            <div className="mt-1 text-sm text-muted">
+              {m.description ?? "—"}
+              {scriptToggleBtn}
+            </div>
             <p className="mt-2 text-xs text-muted">
               {formatWhen(m.createdAt)}
+              {m.speakerName ? ` · ${m.speakerName}` : ""}
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:flex-col lg:items-end xl:flex-row xl:items-center">
             {stars}
-            {actions}
+            <div className="flex items-center gap-2 lg:self-end">{actions}{favouriteBtn}</div>
           </div>
         </div>
         {scriptBlock ? <div className="mt-4 border-t border-border pt-4">{scriptBlock}</div> : null}
@@ -618,6 +980,15 @@ export default function LibraryView() {
 
   return (
     <>
+      {accentRgb ? (
+        <style>
+          {`@keyframes borderAccentColorPulse {
+            0% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.35); }
+            50% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 1); }
+            100% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 1); }
+          }`}
+        </style>
+      ) : null}
     <div
       className={`mx-auto w-full max-w-6xl min-w-0 px-4 py-10 sm:px-6 [scrollbar-gutter:stable] ${
         nowPlaying ? "pb-32 sm:pb-28" : ""
@@ -649,16 +1020,136 @@ export default function LibraryView() {
                 <IconHeart filled={favouritesOnly} />
                 <span className="hidden sm:inline">Favourites</span>
               </button>
-              <select
-                value={sortBy}
-                aria-label="Sort library"
-                onChange={(e) => setSortBy(e.target.value as SortBy)}
-                className="rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground hover:border-accent/40"
-              >
-                <option value="newest">Newest</option>
-                <option value="oldest">Oldest</option>
-                <option value="title">Title (A-Z)</option>
-              </select>
+              <div ref={sortDropdownRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  ref={sortButtonRef}
+                  aria-haspopup="listbox"
+                  aria-expanded={sortDropdownOpen}
+                  onClick={() => setSortDropdownOpen((v) => !v)}
+                  className="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground hover:border-accent/40"
+                  style={
+                    sortButtonWidthPx
+                      ? { width: `${sortButtonWidthPx}px` }
+                      : undefined
+                  }
+                >
+                  <span className="min-w-0 flex-1 whitespace-nowrap overflow-hidden text-ellipsis">
+                    {selectedSortLabel}
+                  </span>
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+                {sortDropdownOpen ? (
+                  <div
+                    role="listbox"
+                    aria-label="Sort library"
+                    className="absolute left-0 z-20 mt-2 overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+                    style={
+                      sortMenuWidthPx
+                        ? { width: `${sortMenuWidthPx}px` }
+                        : undefined
+                    }
+                  >
+                    {sortItems.map((it) => {
+                      const selected = sortBy === it.value;
+                      return (
+                        <button
+                          key={it.value}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => {
+                            setSortBy(it.value);
+                            setSortDropdownOpen(false);
+                          }}
+                          className={`w-full cursor-pointer px-3 py-2 text-left text-sm font-semibold text-black dark:text-foreground ${
+                            selected ? "bg-accent/15 cursor-default" : "hover:bg-accent/15 bg-transparent"
+                          }`}
+                        >
+                          {it.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+              <div ref={categoryDropdownRef} className="relative shrink-0">
+                <button
+                  type="button"
+                  ref={categoryButtonRef}
+                  aria-haspopup="listbox"
+                  aria-expanded={categoryDropdownOpen}
+                  onClick={() => setCategoryDropdownOpen((v) => !v)}
+                  className="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground hover:border-accent/40"
+                  style={
+                    categoryButtonWidthPx
+                      ? { width: `${categoryButtonWidthPx}px` }
+                      : undefined
+                  }
+                >
+                  <span className="min-w-0 flex-1 whitespace-nowrap overflow-hidden text-ellipsis">
+                    {selectedCategoryLabel}
+                  </span>
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M6 9l6 6 6-6" />
+                  </svg>
+                </button>
+                {categoryDropdownOpen ? (
+                  <div
+                    role="listbox"
+                    aria-label="Filter category"
+                    className="absolute left-0 z-20 mt-2 overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+                    style={
+                      categoryMenuWidthPx
+                        ? { width: `${categoryMenuWidthPx}px` }
+                        : undefined
+                    }
+                  >
+                    {categoryItems.map((it) => {
+                      const selected = categoryFilter === it.value;
+                      return (
+                        <button
+                          key={it.value}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => {
+                            setCategoryFilter(it.value);
+                            setCategoryDropdownOpen(false);
+                          }}
+                          className={`w-full cursor-pointer px-3 py-2 text-left text-sm font-semibold text-black dark:text-foreground ${
+                            selected ? "bg-accent/15 cursor-default" : "hover:bg-accent/15 bg-transparent"
+                          }`}
+                        >
+                          {it.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
             </div>
             <div
               className="inline-flex rounded-xl border border-border bg-card p-1"
@@ -727,8 +1218,17 @@ export default function LibraryView() {
       )}
     </div>
     <LibraryAudioStrip
+        key={nowPlaying?.s3Key ?? "none"}
       track={nowPlaying}
       onDismiss={() => setNowPlaying(null)}
+        playbackToggleNonce={playbackToggleNonce}
+        onPlayingChange={(s3Key, playing) =>
+          setPlayingS3Key(playing ? s3Key : null)
+        }
+        onPlaybackTimeChange={(s3Key, timeSeconds) => {
+          if (playingS3KeyRef.current !== s3Key) return;
+          setPlayingTimeSeconds(timeSeconds);
+        }}
     />
     </>
   );

@@ -302,6 +302,27 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    const fishSpeakersList = new lambda_nodejs.NodejsFunction(
+      this,
+      "FishSpeakersListFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/fish-speakers.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+      },
+    );
+
+    httpApi.addRoutes({
+      path: "/fish/speakers",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration(
+        "FishSpeakersListIntegration",
+        fishSpeakersList,
+      ),
+    });
+
     const meditationRating = new lambda_nodejs.NodejsFunction(
       this,
       "MeditationRatingFunction",

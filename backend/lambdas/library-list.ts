@@ -5,6 +5,7 @@ import type {
 import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { speakerNameForModelId } from "../lib/fish-speakers";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -108,6 +109,8 @@ export async function handler(
       rating: number | null;
       favourite: boolean;
       description: string | null;
+      speakerModelId: string | null;
+      speakerName: string | null;
       catalogued: boolean;
       mp3Bytes: number | null;
     };
@@ -127,6 +130,8 @@ export async function handler(
         typeof row.meditationType === "string" ? row.meditationType : null;
       const meditationStyle =
         typeof row.meditationStyle === "string" ? row.meditationStyle : null;
+      const referenceId =
+        typeof row.referenceId === "string" ? row.referenceId : null;
       const createdAt =
         typeof row.createdAt === "string" ? row.createdAt : null;
       const durationSeconds =
@@ -168,6 +173,8 @@ export async function handler(
         rating,
         favourite,
         description,
+        speakerModelId: referenceId,
+        speakerName: speakerNameForModelId(referenceId),
         catalogued: true,
         mp3Bytes,
       });
@@ -190,6 +197,8 @@ export async function handler(
         rating: null,
         favourite: false,
         description: null,
+        speakerModelId: null,
+        speakerName: null,
         catalogued: false,
         mp3Bytes: obj.size,
       });

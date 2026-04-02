@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -21,6 +21,8 @@ import {
   streamMedimadeChat,
   streamMeditationScript,
   generateMeditationAudio,
+  listFishSpeakers,
+  type FishSpeaker,
 } from "../lib/medimade-api";
 
 type ChatMessage = {
@@ -100,24 +102,48 @@ export default function CreateScreen() {
       variant: "chat",
     },
   ]);
+  const chatScrollRef = useRef<ScrollView | null>(null);
 
   const [input, setInput] = useState("");
+
+  useEffect(() => {
+    chatScrollRef.current?.scrollToEnd({ animated: true });
+  }, [messages.length]);
 
   /** Create flow step: Chat → Audio → Layout → Export */
   const [mobileCreateStep, setMobileCreateStep] = useState(0);
 
   const [sound, setSound] = useState(soundPresets[0]);
+  const [fishSpeakers, setFishSpeakers] = useState<FishSpeaker[]>(
+    FISH_SPEAKERS as unknown as FishSpeaker[],
+  );
   const [speakerModelId, setSpeakerModelId] = useState<string>(
     FISH_SPEAKERS[0].modelId,
   );
 
+  useEffect(() => {
+    void listFishSpeakers()
+      .then((sp) => {
+        if (!sp || sp.length === 0) return;
+        setFishSpeakers(sp);
+        const emily = sp.find((s) => s.name.toLowerCase() === "emily");
+        setSpeakerModelId((current) => {
+          if (sp.some((s) => s.modelId === current)) return current;
+          return emily?.modelId ?? sp[0].modelId;
+        });
+      })
+      .catch(() => {
+        // Keep fallback constant speakers if endpoint isn't reachable.
+      });
+  }, []);
+
   const speakerOptions = useMemo(
     () =>
-      FISH_SPEAKERS.map((s) => ({
+      fishSpeakers.map((s) => ({
         label: s.name,
         value: s.modelId,
       })),
-    [],
+    [fishSpeakers],
   );
 
   const soundOptions = useMemo(
@@ -184,15 +210,49 @@ export default function CreateScreen() {
     setPhase("feeling");
     setInput("");
 
-    setTimeout(() => {
-      setMessages((m) => [
-        ...m,
-        {
-          role: "assistant",
-          text: getStyleFollowupQuestion(trimmed),
-        },
-      ]);
-    }, 400);
+    const style = trimmed;
+    const history: MedimadeChatTurn[] = [{ role: "user", content: trimmed }];
+    let acc = "";
+    let assistantBubbleStarted = false;
+
+    setClaudeThread(history);
+    setChatLoading(true);
+
+    void streamMedimadeChat(
+      { meditationStyle: style, messages: history },
+      (d) => {
+        acc += d;
+        if (!assistantBubbleStarted) {
+          assistantBubbleStarted = true;
+          setMessages((m) => [...m, { role: "assistant", text: acc }]);
+        } else {
+          setMessages((m) => {
+            const next = [...m];
+            const last = next[next.length - 1];
+            if (last?.role !== "assistant") return m;
+            next[next.length - 1] = { role: "assistant", text: acc };
+            return next;
+          });
+        }
+      },
+    )
+      .then((text) => {
+        setClaudeThread([...history, { role: "assistant", content: text }]);
+      })
+      .catch((e) => {
+        const msg =
+          e instanceof Error ? e.message : "Could not reach the guide.";
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            text: `Sorry — ${msg}`,
+          },
+        ]);
+      })
+      .finally(() => {
+        setChatLoading(false);
+      });
   }
 
   async function send() {
@@ -261,9 +321,14 @@ export default function CreateScreen() {
     if (!style) return;
 
     if (phase === "feeling") {
-      const nextMessages: MedimadeChatTurn[] = [
-        { role: "user", content: trimmed },
-      ];
+      const firstQuestion = getStyleFollowupQuestion(style);
+      const nextMessages: MedimadeChatTurn[] =
+        claudeThread.length > 0
+          ? [...claudeThread, { role: "user", content: trimmed }]
+          : [
+              { role: "assistant", content: firstQuestion },
+              { role: "user", content: trimmed },
+            ];
       setMessages((m) => [...m, { role: "user", text: trimmed }]);
       setInput("");
       setChatLoading(true);
@@ -520,6 +585,7 @@ export default function CreateScreen() {
           style={styles.chatMessages}
           contentContainerStyle={styles.chatMessagesInner}
           nestedScrollEnabled
+          ref={chatScrollRef}
         >
           {messages.map((msg, idx) => {
             const isScript =
