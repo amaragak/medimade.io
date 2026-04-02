@@ -962,7 +962,7 @@ export default function LibraryView() {
               {m.speakerName ? ` · ${m.speakerName}` : ""}
             </p>
           </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:flex-col lg:items-end xl:flex-row xl:items-center">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:flex-col lg:items-end xl:flex-col xl:items-end">
             {stars}
             <div className="flex items-center gap-2 lg:self-end">{actions}{favouriteBtn}</div>
           </div>
