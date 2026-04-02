@@ -19,16 +19,18 @@ import {
   patchMeditationRating,
 } from "../lib/medimade-api";
 import { colors } from "../theme/colors";
+import ChatMarkdown from "../components/ChatMarkdown";
 
 type ViewMode = "list" | "grid";
+type SortBy = "newest" | "oldest" | "title";
 
 function formatDuration(seconds: number | null): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) {
     return "—";
   }
   const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
+  const s = Math.max(0, Math.floor(seconds % 60));
+  return `${m}m ${s}s`;
 }
 
 function formatWhen(iso: string | null): string {
@@ -58,19 +60,37 @@ export default function LibraryScreen() {
   const [ratingBusySk, setRatingBusySk] = useState<string | null>(null);
   const [favouritesOnly, setFavouritesOnly] = useState(false);
   const [favouriteBusySk, setFavouriteBusySk] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<SortBy>("newest");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
 
   const sortedItems = useMemo(() => {
-    return [...items].sort((a, b) => {
-      const ta = a.createdAt ?? "";
-      const tb = b.createdAt ?? "";
-      return tb.localeCompare(ta);
-    });
-  }, [items]);
+    const next = [...items];
+    if (sortBy === "title") {
+      next.sort((a, b) => (a.title ?? "").localeCompare(b.title ?? ""));
+    } else if (sortBy === "oldest") {
+      next.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+    } else {
+      // "newest"
+      next.sort(
+        (a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""),
+      );
+    }
+    return next;
+  }, [items, sortBy]);
 
   const visibleItems = useMemo(() => {
-    return favouritesOnly ? sortedItems.filter((x) => x.favourite) : sortedItems;
+    const catalogued = sortedItems.filter((x) => x.catalogued);
+    return favouritesOnly
+      ? catalogued.filter((x) => x.favourite)
+      : catalogued;
   }, [sortedItems, favouritesOnly]);
+
+  const sortLabel =
+    sortBy === "newest"
+      ? "Newest"
+      : sortBy === "oldest"
+        ? "Oldest"
+        : "Title A-Z";
 
   const fetchList = useCallback(async () => {
     setError(null);
@@ -163,12 +183,17 @@ export default function LibraryScreen() {
     <View style={styles.listRow}>
       <View style={styles.listMain}>
         <View style={styles.listTitleRow}>
-          <Text style={styles.listTitle} numberOfLines={2}>
-            {m.title}
-          </Text>
+          <View style={styles.titleLenRow}>
+            <Text style={styles.listTitle} numberOfLines={2}>
+              {m.title}
+            </Text>
+            <Text style={styles.listLength}>
+              {formatDuration(m.durationSeconds)}
+            </Text>
+          </View>
           <View style={styles.listTitleRight}>
             <Text style={styles.listBadge}>
-              {m.catalogued ? "Cat." : "S3"}
+              {m.meditationStyle || m.meditationType || "—"}
             </Text>
             <Pressable
               onPress={() => void setFavourite(m, !m.favourite)}
@@ -192,12 +217,11 @@ export default function LibraryScreen() {
             </Pressable>
           </View>
         </View>
-        <Text style={styles.listMeta} numberOfLines={1}>
-          {[m.meditationType, m.meditationStyle].filter(Boolean).join(" · ") ||
-            "—"}
+        <Text style={styles.descriptionText} numberOfLines={3}>
+          {m.description ?? ""}
         </Text>
         <Text style={styles.listWhen}>
-          {formatDuration(m.durationSeconds)} · {formatWhen(m.createdAt)}
+          {formatWhen(m.createdAt)}
         </Text>
         {renderStars(m)}
         <View style={styles.listActions}>
@@ -227,7 +251,7 @@ export default function LibraryScreen() {
       <View style={styles.card}>
         <View style={styles.gridBadgeRow}>
           <Text style={styles.badge}>
-            {m.catalogued ? "Catalogued" : "S3 only"}
+            {m.meditationStyle || m.meditationType || "—"}
           </Text>
           <Pressable
             onPress={() => void setFavourite(m, !m.favourite)}
@@ -249,15 +273,19 @@ export default function LibraryScreen() {
             />
           </Pressable>
         </View>
-        <Text style={styles.cardTitle} numberOfLines={3}>
-          {m.title}
-        </Text>
-        <Text style={styles.meta} numberOfLines={2}>
-          {[m.meditationType, m.meditationStyle].filter(Boolean).join(" · ") ||
-            "—"}
+        <View style={styles.cardTitleRow}>
+          <Text style={styles.cardTitle} numberOfLines={3}>
+            {m.title}
+          </Text>
+          <Text style={styles.cardLength}>
+            {formatDuration(m.durationSeconds)}
+          </Text>
+        </View>
+        <Text style={styles.descriptionText} numberOfLines={3}>
+          {m.description ?? ""}
         </Text>
         <Text style={styles.smallMeta}>
-          {formatDuration(m.durationSeconds)} · {formatWhen(m.createdAt)}
+          {formatWhen(m.createdAt)}
         </Text>
         {renderStars(m)}
         <View style={styles.actions}>
@@ -289,30 +317,43 @@ export default function LibraryScreen() {
           script for the full text.
         </Text>
         <View style={styles.viewToggleRow} accessibilityRole="toolbar">
-          <Pressable
-            onPress={() => setFavouritesOnly((v) => !v)}
-            style={[
-              styles.favFilterBtn,
-              favouritesOnly && styles.favFilterBtnOn,
-            ]}
-            accessibilityRole="button"
-            accessibilityState={{ selected: favouritesOnly }}
-            accessibilityLabel="Favourites filter"
-          >
-            <Ionicons
-              name={favouritesOnly ? "heart" : "heart-outline"}
-              size={22}
-              color={favouritesOnly ? "#fff" : colors.muted}
-            />
-            <Text
+          <View style={styles.favSortLeft}>
+            <Pressable
+              onPress={() => setFavouritesOnly((v) => !v)}
               style={[
-                styles.favFilterText,
-                favouritesOnly && styles.favFilterTextOn,
+                styles.favFilterBtn,
+                favouritesOnly && styles.favFilterBtnOn,
               ]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: favouritesOnly }}
+              accessibilityLabel="Favourites filter"
             >
-              Favourites
-            </Text>
-          </Pressable>
+              <Ionicons
+                name={favouritesOnly ? "heart" : "heart-outline"}
+                size={22}
+                color={favouritesOnly ? "#fff" : colors.muted}
+              />
+              <Text
+                style={[
+                  styles.favFilterText,
+                  favouritesOnly && styles.favFilterTextOn,
+                ]}
+              >
+                Favourites
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() =>
+                setSortBy((v) => (v === "newest" ? "oldest" : v === "oldest" ? "title" : "newest"))
+              }
+              style={styles.sortBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Sort order"
+            >
+              <Text style={styles.sortText}>{sortLabel}</Text>
+            </Pressable>
+          </View>
 
           <View style={styles.viewToggle} accessibilityRole="toolbar">
             <Pressable
@@ -406,9 +447,10 @@ export default function LibraryScreen() {
               </Pressable>
             </View>
             <ScrollView style={styles.modalScroll}>
-              <Text style={styles.scriptBody} selectable>
-                {scriptItem?.scriptText ?? ""}
-              </Text>
+              <ChatMarkdown
+                text={scriptItem?.scriptText ?? ""}
+                textStyle={styles.scriptBody}
+              />
               {scriptItem?.scriptTruncated ? (
                 <Text style={styles.truncNote}>
                   Script was truncated for storage.
@@ -438,6 +480,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
+  },
+  favSortLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
   },
   viewToggle: {
     flexDirection: "row",
@@ -470,6 +517,17 @@ const styles = StyleSheet.create({
     color: colors.muted,
   },
   favFilterTextOn: { color: "#fff" },
+  sortBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  sortText: { fontSize: 14, fontWeight: "800", color: colors.foreground },
   listTitleRight: { flexDirection: "row", alignItems: "center", gap: 8 },
   heartBtn: {
     width: 34,
@@ -540,6 +598,42 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: colors.foreground,
   },
+  titleLenRow: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+  },
+  listLength: {
+    marginTop: 6,
+    color: colors.muted,
+    fontWeight: "800",
+    fontSize: 12,
+    width: 58,
+    textAlign: "right",
+  },
+  descriptionText: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+  typePill: {
+    marginTop: 4,
+    backgroundColor: colors.accentSoft,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    alignSelf: "flex-start",
+  },
+  typePillText: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    color: colors.accent,
+    textTransform: "uppercase",
+  },
   listBadge: {
     fontSize: 10,
     fontWeight: "800",
@@ -596,6 +690,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
     color: colors.foreground,
+  },
+  cardTitleRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "flex-start",
+  },
+  cardLength: {
+    color: colors.muted,
+    fontWeight: "800",
+    fontSize: 12,
+    width: 64,
+    textAlign: "right",
+    marginTop: 6,
   },
   meta: { marginTop: 4, fontSize: 12, color: colors.muted },
   smallMeta: { marginTop: 6, fontSize: 11, color: colors.muted },

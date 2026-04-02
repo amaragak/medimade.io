@@ -90,6 +90,43 @@ function renderBoldInLine(
   return out;
 }
 
+const PAUSE_RE = /\[\[PAUSE\s+(\d+)\]\]/g;
+
+function renderBoldAndPausesInLine(
+  line: string,
+  baseStyle: object,
+  boldStyle: object,
+  keyPrefix: string,
+): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+
+  while ((m = PAUSE_RE.exec(line)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+
+    const before = line.slice(lastIndex, start);
+    if (before) out.push(...renderBoldInLine(before, baseStyle, boldStyle, `${keyPrefix}-pre-${k}`));
+
+    out.push(
+      <Text key={`${keyPrefix}-pause-${k}`} style={[baseStyle, { fontStyle: "italic" }]}>
+        {`PAUSE ${m[1]}`}
+      </Text>,
+    );
+
+    lastIndex = end;
+    k++;
+  }
+
+  const after = line.slice(lastIndex);
+  if (after)
+    out.push(...renderBoldInLine(after, baseStyle, boldStyle, `${keyPrefix}-post-${k}`));
+
+  return out;
+}
+
 export default function ChatMarkdown({
   text,
   textStyle,
@@ -125,7 +162,7 @@ export default function ChatMarkdown({
             const innerBase = { ...flat, fontSize };
             return (
               <Text key={idx} style={headingStyle}>
-                {renderBoldInLine(
+                {renderBoldAndPausesInLine(
                   hm[2],
                   innerBase,
                   { ...innerBase, fontWeight: "700" as const },
@@ -138,7 +175,12 @@ export default function ChatMarkdown({
 
         return (
           <Text key={idx} style={[textStyle, { minHeight: line === "" ? 4 : undefined }]}>
-            {renderBoldInLine(line, textStyle, boldStyle, `p-${idx}`)}
+            {renderBoldAndPausesInLine(
+              line,
+              textStyle,
+              boldStyle,
+              `p-${idx}`,
+            )}
           </Text>
         );
       })}

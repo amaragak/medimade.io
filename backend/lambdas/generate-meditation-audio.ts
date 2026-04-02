@@ -314,7 +314,11 @@ async function deriveLibraryMetadataFromClaude(params: {
   meditationStyle: string;
   transcript: string;
   scriptPreview: string;
-}): Promise<{ title: string; meditationType: string }> {
+}): Promise<{
+  title: string;
+  meditationType: string;
+  description: string;
+}> {
   const scriptPreview = params.scriptPreview.slice(0, 1200);
   const userContent = [
     "Infer a concise library title and a meditation category for this generated meditation.",
@@ -328,7 +332,7 @@ async function deriveLibraryMetadataFromClaude(params: {
     scriptPreview || "(empty)",
     "",
     "Respond with a single JSON object only (no markdown fences):",
-    '{"title":"max 10 words, evocative","meditationType":"short label e.g. Sleep, Body scan, Breath-led, Manifestation"}',
+    '{"title":"max 10 words, evocative","meditationType":"short label e.g. Sleep, Body scan, Breath-led, Manifestation","description":"200-300 characters, describing what the meditation is like, no quotes, no newlines"}',
   ].join("\n");
 
   const system =
@@ -369,7 +373,11 @@ async function deriveLibraryMetadataFromClaude(params: {
 
   let obj: { title?: unknown; meditationType?: unknown };
   try {
-    obj = JSON.parse(raw) as { title?: unknown; meditationType?: unknown };
+    obj = JSON.parse(raw) as {
+      title?: unknown;
+      meditationType?: unknown;
+      description?: unknown;
+    };
   } catch {
     throw new Error("Metadata response was not JSON");
   }
@@ -383,22 +391,51 @@ async function deriveLibraryMetadataFromClaude(params: {
       ? obj.meditationType.trim().slice(0, 80)
       : "";
 
+  let descriptionRaw = "";
+  const d = (obj as { description?: unknown }).description;
+  if (typeof d === "string") {
+    descriptionRaw = d.trim();
+  }
+  // Normalize whitespace and enforce the length range.
+  descriptionRaw = descriptionRaw.replace(/\s+/g, " ");
+  if (descriptionRaw.length > 300) {
+    descriptionRaw = descriptionRaw.slice(0, 300).trim();
+  }
+  if (descriptionRaw.length < 200) {
+    throw new Error("Missing or too-short description in metadata JSON");
+  }
+
   if (!title || !meditationType) {
     throw new Error("Missing title or meditationType in metadata JSON");
   }
 
-  return { title, meditationType };
+  return { title, meditationType, description: descriptionRaw };
 }
 
 function fallbackLibraryMetadata(params: {
   meditationStyle: string;
-}): { title: string; meditationType: string } {
+}): { title: string; meditationType: string; description: string } {
   const style = params.meditationStyle.trim();
   const type = style || "Meditation";
   const title = style
     ? `${style} · session`
     : "Guided meditation";
-  return { title, meditationType: type };
+
+  const base =
+    style
+      ? `A ${style} session with gentle guidance to help you soften tension, steady your breath, and reconnect with calm. Expect slow pacing, soothing reminders, and a grounded end-state you can carry into your day.`
+      : "A guided meditation designed to calm your mind and support relaxation. Expect gentle pacing, slow breath cues, and reassuring prompts that help you release tension and return to the present moment.";
+
+  let description = base.replace(/\s+/g, " ").trim();
+  if (description.length > 300) description = description.slice(0, 300).trim();
+  if (description.length < 200) {
+    description = `${description} Let the experience settle in. Breathe, notice, and relax.`
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 300);
+  }
+
+  return { title, meditationType: type, description };
 }
 
 async function fishTtsMp3(params: {
@@ -834,6 +871,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
 
   let libraryTitle: string;
   let libraryMeditationType: string;
+  let libraryDescription: string;
   try {
     const claudeKey = await getClaudeApiKey();
     const derived = await deriveLibraryMetadataFromClaude({
@@ -844,12 +882,14 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     });
     libraryTitle = derived.title;
     libraryMeditationType = derived.meditationType;
+    libraryDescription = derived.description;
   } catch (e) {
     const msg = e instanceof Error ? e.message : "metadata derive failed";
     console.warn("library metadata derive failed, using fallback", { msg });
     const fb = fallbackLibraryMetadata({ meditationStyle });
     libraryTitle = fb.title;
     libraryMeditationType = fb.meditationType;
+    libraryDescription = fb.description;
   }
 
   // Best-effort analytics / library index write (don’t fail the main job if this fails).
@@ -875,6 +915,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
           scriptWasGenerated: shouldGenerateScript,
           title: libraryTitle,
           meditationType: libraryMeditationType,
+          description: libraryDescription,
           scriptText: scriptForLibrary,
           scriptTruncated,
           rating: null,

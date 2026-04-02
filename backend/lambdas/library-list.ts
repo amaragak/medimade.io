@@ -107,6 +107,7 @@ export async function handler(
       scriptTruncated: boolean;
       rating: number | null;
       favourite: boolean;
+      description: string | null;
       catalogued: boolean;
       mp3Bytes: number | null;
     };
@@ -143,6 +144,10 @@ export async function handler(
           ? row.rating
           : null;
       const favourite = row.favourite === true;
+      const description =
+        typeof row.description === "string" && row.description.trim().length > 0
+          ? row.description.trim()
+          : null;
       const mp3Bytes =
         typeof row.mp3Bytes === "number" && Number.isFinite(row.mp3Bytes)
           ? row.mp3Bytes
@@ -162,6 +167,7 @@ export async function handler(
         scriptTruncated,
         rating,
         favourite,
+        description,
         catalogued: true,
         mp3Bytes,
       });
@@ -183,6 +189,7 @@ export async function handler(
         scriptTruncated: false,
         rating: null,
         favourite: false,
+        description: null,
         catalogued: false,
         mp3Bytes: obj.size,
       });

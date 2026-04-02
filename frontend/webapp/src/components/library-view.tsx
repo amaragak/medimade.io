@@ -8,14 +8,15 @@ import {
   patchMeditationFavourite,
   patchMeditationRating,
 } from "@/lib/medimade-api";
+import { ChatMarkdown } from "@/components/chat-markdown";
 
 function formatDuration(seconds: number | null): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) {
     return "—";
   }
   const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
+  const s = Math.max(0, Math.floor(seconds % 60));
+  return `${m}m ${s}s`;
 }
 
 function formatWhen(iso: string | null): string {
@@ -98,6 +99,7 @@ function IconHeart({
 }
 
 type ViewMode = "list" | "grid";
+type SortBy = "newest" | "oldest" | "title";
 
 type ActiveTrack = { url: string; title: string; s3Key: string };
 
@@ -369,19 +371,30 @@ export default function LibraryView() {
   const [ratingBusy, setRatingBusy] = useState<string | null>(null);
   const [favouritesOnly, setFavouritesOnly] = useState(false);
   const [favouriteBusySk, setFavouriteBusySk] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<SortBy>("newest");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [nowPlaying, setNowPlaying] = useState<ActiveTrack | null>(null);
 
   const sortedItems = useMemo(() => {
-    return [...items].sort((a, b) => {
-      const ta = a.createdAt ?? "";
-      const tb = b.createdAt ?? "";
-      return tb.localeCompare(ta);
-    });
-  }, [items]);
+    const next = [...items];
+    if (sortBy === "title") {
+      next.sort((a, b) => (a.title ?? "").localeCompare(b.title ?? ""));
+    } else if (sortBy === "oldest") {
+      next.sort(
+        (a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""),
+      );
+    } else {
+      // "newest"
+      next.sort(
+        (a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""),
+      );
+    }
+    return next;
+  }, [items, sortBy]);
 
   const visibleItems = useMemo(() => {
-    return favouritesOnly ? sortedItems.filter((x) => x.favourite) : sortedItems;
+    const catalogued = sortedItems.filter((x) => x.catalogued);
+    return favouritesOnly ? catalogued.filter((x) => x.favourite) : catalogued;
   }, [sortedItems, favouritesOnly]);
 
   const load = useCallback(async () => {
@@ -440,8 +453,8 @@ export default function LibraryView() {
 
   function renderItem(m: LibraryMeditationItem) {
     const open = m.sk != null && expandedSk === m.sk;
-    const typeLine =
-      [m.meditationType, m.meditationStyle].filter(Boolean).join(" · ") || "—";
+    const styleLine = m.meditationStyle || m.meditationType || "—";
+    const lengthLine = formatDuration(m.durationSeconds);
 
     const stars = (
       <div className="flex items-center gap-0.5">
@@ -522,9 +535,10 @@ export default function LibraryView() {
     const scriptBlock =
       open && m.scriptText ? (
         <div className="max-h-64 overflow-y-auto rounded-xl border border-border bg-background/80 p-3">
-          <pre className="whitespace-pre-wrap break-words font-sans text-xs leading-relaxed text-foreground">
-            {m.scriptText}
-          </pre>
+          <ChatMarkdown
+            text={m.scriptText}
+            className="font-serif text-[13px] leading-relaxed text-foreground/95"
+          />
           {m.scriptTruncated ? (
             <p className="mt-2 text-xs text-muted">
               Script was truncated for storage.
@@ -541,16 +555,20 @@ export default function LibraryView() {
         >
           <div className="flex items-start justify-between gap-3">
             <p className="text-xs font-medium uppercase tracking-wide text-accent">
-              {m.catalogued ? "Catalogued" : "S3 only"}
+              {styleLine}
             </p>
             {favouriteBtn}
           </div>
-          <h2 className="mt-2 font-display text-lg font-medium leading-snug">
-            {m.title}
-          </h2>
-          <p className="mt-1 text-sm text-muted">{typeLine}</p>
+          <div className="mt-2 flex items-start gap-3">
+            <h2 className="font-display text-lg font-medium leading-snug">
+              {m.title}
+            </h2>
+            <span className="mt-1.5 shrink-0 tabular-nums text-xs font-semibold text-muted">
+              {lengthLine}
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-muted">{m.description ?? "—"}</p>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-            <span>{formatDuration(m.durationSeconds)}</span>
             <span>{formatWhen(m.createdAt)}</span>
           </div>
           <div className="mt-4">{stars}</div>
@@ -569,18 +587,23 @@ export default function LibraryView() {
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 flex-wrap items-center gap-2 gap-y-1">
-                <h2 className="min-w-0 font-display text-lg font-medium leading-snug">
-                  {m.title}
-                </h2>
+                <div className="flex items-start gap-3">
+                  <h2 className="min-w-0 font-display text-lg font-medium leading-snug">
+                    {m.title}
+                  </h2>
+                  <span className="mt-1.5 shrink-0 tabular-nums text-xs font-semibold text-muted">
+                    {lengthLine}
+                  </span>
+                </div>
                 <span className="rounded-full bg-accent-soft/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
-                  {m.catalogued ? "Catalogued" : "S3 only"}
+                  {styleLine}
                 </span>
               </div>
               {favouriteBtn}
             </div>
-            <p className="mt-1 text-sm text-muted">{typeLine}</p>
+            <p className="mt-1 text-sm text-muted">{m.description ?? "—"}</p>
             <p className="mt-2 text-xs text-muted">
-              {formatDuration(m.durationSeconds)} · {formatWhen(m.createdAt)}
+              {formatWhen(m.createdAt)}
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:flex-col lg:items-end xl:flex-row xl:items-center">
@@ -612,6 +635,7 @@ export default function LibraryView() {
             </p>
           </div>
           <div className="mt-4 flex w-full items-center justify-between gap-3 sm:col-span-2 sm:row-start-2">
+            <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => setFavouritesOnly((v) => !v)}
@@ -625,37 +649,48 @@ export default function LibraryView() {
                 <IconHeart filled={favouritesOnly} />
                 <span className="hidden sm:inline">Favourites</span>
               </button>
-              <div
-                className="inline-flex rounded-xl border border-border bg-card p-1"
-                role="group"
-                aria-label="Library layout"
+              <select
+                value={sortBy}
+                aria-label="Sort library"
+                onChange={(e) => setSortBy(e.target.value as SortBy)}
+                className="rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground hover:border-accent/40"
               >
-                <button
-                  type="button"
-                  onClick={() => setViewMode("list")}
-                  aria-pressed={viewMode === "list"}
-                  className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
-                    viewMode === "list"
-                      ? "bg-accent text-white dark:text-deep"
-                      : "text-muted hover:text-foreground"
-                  }`}
-                >
-                  <IconList />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode("grid")}
-                  aria-pressed={viewMode === "grid"}
-                  className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
-                    viewMode === "grid"
-                      ? "bg-accent text-white dark:text-deep"
-                      : "text-muted hover:text-foreground"
-                  }`}
-                >
-                  <IconGrid />
-                </button>
-              </div>
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="title">Title (A-Z)</option>
+              </select>
             </div>
+            <div
+              className="inline-flex rounded-xl border border-border bg-card p-1"
+              role="group"
+              aria-label="Library layout"
+            >
+              <button
+                type="button"
+                onClick={() => setViewMode("list")}
+                aria-pressed={viewMode === "list"}
+                className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
+                  viewMode === "list"
+                    ? "bg-accent text-white dark:text-deep"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                <IconList />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("grid")}
+                aria-pressed={viewMode === "grid"}
+                className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
+                  viewMode === "grid"
+                    ? "bg-accent text-white dark:text-deep"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                <IconGrid />
+              </button>
+            </div>
+          </div>
           <Link
             href="/create"
             className="shrink-0 self-start rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white dark:text-deep sm:mt-0 sm:col-start-2 sm:row-start-1"

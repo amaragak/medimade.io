@@ -64,6 +64,37 @@ function renderBoldInLine(line: string, keyPrefix: string): ReactNode[] {
   return out;
 }
 
+const PAUSE_RE = /\[\[PAUSE\s+(\d+)\]\]/g;
+
+function renderBoldAndPausesInLine(line: string, keyPrefix: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+
+  while ((m = PAUSE_RE.exec(line)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+
+    const before = line.slice(lastIndex, start);
+    if (before) out.push(...renderBoldInLine(before, `${keyPrefix}-pre-${k}`));
+
+    out.push(
+      <em key={`${keyPrefix}-pause-${k}`} className="italic font-medium">
+        {`PAUSE ${m[1]}`}
+      </em>,
+    );
+
+    lastIndex = end;
+    k++;
+  }
+
+  const after = line.slice(lastIndex);
+  if (after) out.push(...renderBoldInLine(after, `${keyPrefix}-post-${k}`));
+
+  return out;
+}
+
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
 
 export function ChatMarkdown({
@@ -101,20 +132,20 @@ export function ChatMarkdown({
                 role="heading"
                 aria-level={level}
               >
-                {renderBoldInLine(hm[2], `h-${idx}`)}
+                {renderBoldAndPausesInLine(hm[2], `h-${idx}`)}
               </div>
             );
           } else {
             inner = (
               <span className="block min-h-[1em] whitespace-pre-wrap">
-                {renderBoldInLine(line, `p-${idx}`)}
+                {renderBoldAndPausesInLine(line, `p-${idx}`)}
               </span>
             );
           }
         } else {
           inner = (
             <span className="block min-h-[1em] whitespace-pre-wrap">
-              {renderBoldInLine(line, `tail-${idx}`)}
+              {renderBoldAndPausesInLine(line, `tail-${idx}`)}
             </span>
           );
         }

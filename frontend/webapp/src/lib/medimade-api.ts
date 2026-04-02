@@ -277,6 +277,7 @@ export type LibraryMeditationItem = {
   title: string;
   meditationType: string | null;
   meditationStyle: string | null;
+  description: string | null;
   createdAt: string | null;
   durationSeconds: number | null;
   scriptText: string | null;
