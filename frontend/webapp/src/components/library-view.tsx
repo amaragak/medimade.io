@@ -9,6 +9,7 @@ import {
   patchMeditationRating,
 } from "@/lib/medimade-api";
 import { ChatMarkdown } from "@/components/chat-markdown";
+import { useMobileOrTouchChrome } from "@/hooks/use-mobile-or-touch-chrome";
 
 function formatDuration(seconds: number | null): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) {
@@ -430,6 +431,7 @@ function LibraryAudioStrip({
 }
 
 export default function LibraryView() {
+  const alwaysShowRowChrome = useMobileOrTouchChrome();
   const [items, setItems] = useState<LibraryMeditationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -757,7 +759,7 @@ export default function LibraryView() {
         disabled={favouriteDisabled}
         aria-label={m.favourite ? "Unfavourite meditation" : "Favourite meditation"}
         className={`self-center items-center justify-center p-1 transition-opacity transition-colors ${
-          m.favourite
+          m.favourite || alwaysShowRowChrome
             ? "opacity-100 pointer-events-auto"
             : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
         } ${
@@ -778,7 +780,11 @@ export default function LibraryView() {
             setExpandedSk((v) => (v === m.sk ? null : (m.sk ?? null)))
           }
           className={`ml-2 ${
-            open ? "inline-flex" : "hidden group-hover:inline-flex"
+            open
+              ? "inline-flex"
+              : alwaysShowRowChrome
+                ? "inline-flex"
+                : "hidden group-hover:inline-flex"
           } items-center font-bold text-accent hover:text-accent/80 cursor-pointer`}
           style={{ lineHeight: "1.35" }}
         >
@@ -822,7 +828,11 @@ export default function LibraryView() {
                     s3Key: m.s3Key,
                   })
             }
-            className="flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-white dark:text-deep cursor-pointer opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
+            className={
+              alwaysShowRowChrome
+                ? "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-white dark:text-deep cursor-pointer opacity-100 pointer-events-auto transition-opacity"
+                : "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-white dark:text-deep cursor-pointer opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
+            }
             aria-label="Play"
           >
             <svg
