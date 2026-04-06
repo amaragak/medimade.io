@@ -1,0 +1,20 @@
+{
+  "name": "medimade-webapp-sst",
+  "private": true,
+  "scripts": {
+    "install-platform": "sst install",
+    "deploy:web": "bash ./deploy-web",
+    "dev": "sst dev",
+    "deploy": "sst deploy",
+    "remove": "sst remove",
+    "unlock": "sst unlock",
+    "install-platform:npx": "npx sst@latest install",
+    "dev:npx": "npx sst@latest dev",
+    "deploy:npx": "npx sst@latest deploy",
+    "remove:npx": "npx sst@latest remove",
+    "unlock:npx": "npx sst@latest unlock"
+  },
+  "devDependencies": {
+    "sst": "^4"
+  }
+}

@@ -11,6 +11,7 @@ export const FISH_SPEAKERS: FishSpeaker[] = [
   { name: "Emily", modelId: "a325095a7cc049cebf39b1de9464fc73" },
   { name: "Fairy", modelId: "c1ad4031b437493aaf2393d8f768b9a7" },
   { name: "Brit Monk", modelId: "9f2792501813486399fbc827c733d3f0" },
+  { name: "Alex", modelId: "3c13489c4ae34c9291cb902e81337899" },
 ];
 
 export function speakerNameForModelId(

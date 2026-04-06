@@ -767,7 +767,7 @@ export function CreateWorkspace() {
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col px-4 py-6 sm:px-6">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6">
       <div className="mb-6 shrink-0">
         <h1 className="font-display text-3xl font-medium tracking-tight">
           Create a meditation
@@ -779,9 +779,9 @@ export function CreateWorkspace() {
         </p>
       </div>
 
-      {/* Height comes from layout: body h-dvh → main flex-1 → this grid fills space under the title. */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,1fr)_auto] gap-8 lg:h-full lg:min-h-0 lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:gap-8">
-        <section className="row-start-1 flex min-h-0 h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm lg:row-start-1">
+      {/* Narrow: flex column — Script/chat first, Audio below (grid 1fr row was collapsing the chat). lg: two-column grid. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-8 lg:grid lg:h-full lg:min-h-0 lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:gap-8">
+        <section className="flex min-h-[42vh] w-full min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm lg:h-full lg:min-h-0">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
             <div className="min-w-0 flex-1">
               <h2 className="text-base font-semibold tracking-tight">
@@ -887,7 +887,7 @@ export function CreateWorkspace() {
           </div>
         </section>
 
-        <div className="row-start-2 flex min-h-0 flex-col gap-6 overflow-y-auto pb-12 lg:row-start-1 lg:h-full lg:overflow-y-auto">
+        <div className="flex w-full shrink-0 flex-col gap-6 pb-12 lg:min-h-0 lg:h-full lg:overflow-y-auto">
           <section className="rounded-2xl border border-border bg-card shadow-sm">
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
               <h2 className="text-base font-semibold tracking-tight">Audio</h2>

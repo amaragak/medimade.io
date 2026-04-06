@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Deploy the Next.js app in frontend/webapp/ to AWS via SST (OpenNext).
+#
+# Loads ../.env when present so NEXT_PUBLIC_* variables are available during `next build`.
+#
+# Usage (from repo root or anywhere):
+#   ./frontend/webapp/deploy/deploy-web
+#   ./frontend/webapp/deploy/deploy-web --stage prod --profile mm
+#
+#   --stage   Optional. Only "dev" or "prod" (default: dev).
+#   --profile Optional. Sets AWS_PROFILE for this deploy (AWS credential profile name).
+#
+# Prereqs:
+#   cd frontend/webapp/deploy && npm install && npm run install-platform
+set -euo pipefail
+
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WEBAPP_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
+ENV_FILE="$WEBAPP_DIR/.env"
+
+STAGE="dev"
+PROFILE=""
+
+usage() {
+  echo "Usage: $0 [--stage dev|prod] [--profile <aws-profile>]" >&2
+  echo "  --stage   default: dev; allowed: dev, prod" >&2
+  echo "  --profile optional; passed as AWS_PROFILE for this run" >&2
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --stage)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --stage requires a value" >&2
+        usage
+        exit 1
+      fi
+      STAGE="$2"
+      shift 2
+      ;;
+    --profile)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --profile requires a value" >&2
+        usage
+        exit 1
+      fi
+      PROFILE="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown argument: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "$STAGE" != "dev" && "$STAGE" != "prod" ]]; then
+  echo "error: --stage must be \"dev\" or \"prod\" (got: $STAGE)" >&2
+  exit 1
+fi
+
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+if [[ -n "$PROFILE" ]]; then
+  export AWS_PROFILE="$PROFILE"
+fi
+
+cd "$DEPLOY_DIR"
+
+SST_BIN="$DEPLOY_DIR/node_modules/.bin/sst"
+if [ -f "$SST_BIN" ]; then
+  exec "$SST_BIN" deploy --stage "$STAGE"
+else
+  exec npx --yes sst@latest deploy --stage "$STAGE"
+fi
