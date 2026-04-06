@@ -8,7 +8,8 @@
     "synth": "cdk synth",
     "deploy": "cdk deploy --all",
     "destroy": "cdk destroy --all",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "generate-speaker-samples": "tsx scripts/generate-speaker-samples.ts"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1019.0",

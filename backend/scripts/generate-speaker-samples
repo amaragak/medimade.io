@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Generate Fish TTS preview clips per voice speed and upload under speaker-samples/<modelId>/<speed>.mp3.
+# Runs the TypeScript entrypoint with tsx (no separate tsc build).
+#
+# Usage (from repo root or anywhere):
+#   backend/scripts/generate-speaker-samples
+#   backend/scripts/generate-speaker-samples --profile mm
+#   MEDIA_BUCKET_NAME=my-bucket backend/scripts/generate-speaker-samples
+#
+# Requires:
+# - npm install in backend/ (tsx is a devDependency)
+# - FISH_AUDIO_API_KEY or AWS creds + Secrets Manager (see scripts/generate-speaker-samples.ts)
+# - aws CLI if MEDIA_BUCKET_NAME is not set (resolves CloudFormation export MediaBucketName)
+set -euo pipefail
+
+BACKEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TSX="$BACKEND_ROOT/node_modules/.bin/tsx"
+ENTRY="$BACKEND_ROOT/scripts/generate-speaker-samples.ts"
+
+if [ ! -f "$TSX" ]; then
+  echo "tsx not found at $TSX — run: cd \"$BACKEND_ROOT\" && npm install" >&2
+  exit 1
+fi
+
+cd "$BACKEND_ROOT"
+exec "$TSX" "$ENTRY" "$@"

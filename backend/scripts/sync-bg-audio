@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Sync local bg_audio folder into the media S3 bucket under background-audio/.
+# Use subfolders nature/, music/, and drums/ under bg_audio so the create UI can list each category.
 # Usage (from repo root or anywhere):
 #   backend/scripts/sync-bg-audio
 #   backend/scripts/sync-bg-audio --profile mm

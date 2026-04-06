@@ -11,5 +11,5 @@
     "resolveJsonModule": true,
     "types": ["node", "aws-lambda"]
   },
-  "include": ["bin/**/*.ts", "lib/**/*.ts", "lambdas/**/*.ts"]
+  "include": ["bin/**/*.ts", "lib/**/*.ts", "lambdas/**/*.ts", "scripts/**/*.ts"]
 }

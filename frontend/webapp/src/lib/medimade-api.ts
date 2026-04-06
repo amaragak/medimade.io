@@ -16,6 +16,18 @@ export function getMedimadeChatUrl(): string | null {
   return t || null;
 }
 
+/**
+ * Public base URL for files in the media bucket (same host as library MP3s), no trailing slash.
+ * Set from CDK output `MediaCloudFrontDomain` as `https://<domain>`.
+ * Used for background preview when the list API does not include `baseUrl`.
+ */
+export function getMedimadeMediaBaseUrl(): string | null {
+  const u = process.env.NEXT_PUBLIC_MEDIMADE_MEDIA_BASE_URL;
+  if (!u || typeof u !== "string") return null;
+  const t = u.trim().replace(/\/$/, "");
+  return t || null;
+}
+
 async function streamChatRequest(
   body: Record<string, unknown>,
   onDelta: (chunk: string) => void,
@@ -154,6 +166,13 @@ export type BackgroundAudioItem = {
   size: number | null;
 };
 
+export type BackgroundAudioByCategory = {
+  baseUrl?: string;
+  nature: BackgroundAudioItem[];
+  music: BackgroundAudioItem[];
+  drums: BackgroundAudioItem[];
+};
+
 export type FishSpeaker = {
   name: string;
   modelId: string;
@@ -182,7 +201,14 @@ export async function generateMeditationAudio(params: {
   scriptText?: string | null;
   reference_id: string;
   speed?: number;
+  /** @deprecated use layered background keys + gains */
   backgroundSoundKey?: string | null;
+  backgroundNatureKey?: string | null;
+  backgroundMusicKey?: string | null;
+  backgroundDrumsKey?: string | null;
+  backgroundNatureGain?: number;
+  backgroundMusicGain?: number;
+  backgroundDrumsGain?: number;
 }): Promise<GenerateMeditationAudioResponse> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
@@ -197,19 +223,39 @@ export async function generateMeditationAudio(params: {
       ? params.backgroundSoundKey.trim()
       : undefined;
 
+  const trimBg = (v: string | null | undefined) =>
+    typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
+
+  const backgroundNatureKey = trimBg(params.backgroundNatureKey ?? null);
+  const backgroundMusicKey = trimBg(params.backgroundMusicKey ?? null);
+  const backgroundDrumsKey = trimBg(params.backgroundDrumsKey ?? null);
+
+  const jobBody: Record<string, unknown> = {
+    meditationStyle: params.meditationStyle ?? "",
+    transcript: params.transcript,
+    scriptText: params.scriptText ?? "",
+    reference_id: params.reference_id,
+    ...(speed === undefined ? {} : { speed }),
+    ...(backgroundSoundKey === undefined ? {} : { backgroundSoundKey }),
+    ...(backgroundNatureKey ? { backgroundNatureKey } : {}),
+    ...(backgroundMusicKey ? { backgroundMusicKey } : {}),
+    ...(backgroundDrumsKey ? { backgroundDrumsKey } : {}),
+  };
+
+  if (typeof params.backgroundNatureGain === "number") {
+    jobBody.backgroundNatureGain = params.backgroundNatureGain;
+  }
+  if (typeof params.backgroundMusicGain === "number") {
+    jobBody.backgroundMusicGain = params.backgroundMusicGain;
+  }
+  if (typeof params.backgroundDrumsGain === "number") {
+    jobBody.backgroundDrumsGain = params.backgroundDrumsGain;
+  }
+
   const createRes = await fetch(`${base}/meditation/audio/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      meditationStyle: params.meditationStyle ?? "",
-      transcript: params.transcript,
-      scriptText: params.scriptText ?? "",
-      reference_id: params.reference_id,
-      ...(speed === undefined ? {} : { speed }),
-      ...(backgroundSoundKey === undefined
-        ? {}
-        : { backgroundSoundKey }),
-    }),
+    body: JSON.stringify(jobBody),
   });
 
   const createData = (await createRes.json()) as {
@@ -274,11 +320,15 @@ export async function generateMeditationAudio(params: {
   }
 }
 
-export async function listBackgroundAudio(): Promise<BackgroundAudioItem[]> {
+export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const res = await fetch(`${base}/media/background-audio`);
   const data = (await res.json()) as {
+    baseUrl?: string;
+    nature?: BackgroundAudioItem[];
+    music?: BackgroundAudioItem[];
+    drums?: BackgroundAudioItem[];
     items?: BackgroundAudioItem[];
     error?: string;
     detail?: string;
@@ -287,7 +337,12 @@ export async function listBackgroundAudio(): Promise<BackgroundAudioItem[]> {
     const msg = data.detail ?? data.error ?? res.statusText;
     throw new Error(msg);
   }
-  return data.items ?? [];
+  return {
+    baseUrl: data.baseUrl,
+    nature: data.nature ?? [],
+    music: data.music ?? [],
+    drums: data.drums ?? [],
+  };
 }
 
 export type LibraryMeditationItem = {

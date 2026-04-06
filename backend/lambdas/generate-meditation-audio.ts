@@ -61,68 +61,87 @@ async function getMp3DurationSeconds(buf: Buffer): Promise<number | null> {
   }
 }
 
-async function mixSpeechWithBackground(params: {
+function clampGain(n: unknown): number {
+  if (typeof n !== "number" || !Number.isFinite(n)) return 0;
+  return Math.min(100, Math.max(0, n));
+}
+
+/**
+ * Mix speech (input 0) with one or more looped background beds.
+ * Each layer gain is 0–100; effective ffmpeg volume is 0.4 * (gain/100) per layer
+ * (same peak as the legacy single-track bed when gain=100).
+ */
+async function mixSpeechWithBackgrounds(params: {
   speechBuf: Buffer;
-  backgroundKey: string;
+  layers: { key: string; gain: number }[];
   durationSeconds: number | null;
   bucket: string;
 }): Promise<Buffer> {
-  if (!params.backgroundKey) return params.speechBuf;
+  const layers = params.layers.filter((l) => l.key?.trim());
+  if (layers.length === 0) return params.speechBuf;
   if (!process.env.AWS_EXECUTION_ENV) {
-    // Likely running locally without ffmpeg in PATH; skip mixing.
     return params.speechBuf;
   }
 
   try {
-    const bgObj = await s3.send(
-      new GetObjectCommand({
-        Bucket: params.bucket,
-        Key: params.backgroundKey,
-      }),
-    );
-    const bgBuf = Buffer.from(await bgObj.Body!.transformToByteArray());
-
     const id = randomUUID();
     const speechPath = `/tmp/speech-${id}.mp3`;
-    const bgPath = `/tmp/bg-${id}.mp3`;
     const outPath = `/tmp/mix-${id}.mp3`;
+    const bgPaths: string[] = [];
 
     fs.writeFileSync(speechPath, params.speechBuf);
-    fs.writeFileSync(bgPath, bgBuf);
 
-    const dur = params.durationSeconds && params.durationSeconds > 0
-      ? params.durationSeconds
-      : undefined;
+    for (let i = 0; i < layers.length; i++) {
+      const bgObj = await s3.send(
+        new GetObjectCommand({
+          Bucket: params.bucket,
+          Key: layers[i].key.trim(),
+        }),
+      );
+      const bgBuf = Buffer.from(await bgObj.Body!.transformToByteArray());
+      const p = `/tmp/bg-${id}-${i}.mp3`;
+      fs.writeFileSync(p, bgBuf);
+      bgPaths.push(p);
+    }
+
+    const dur =
+      params.durationSeconds && params.durationSeconds > 0
+        ? params.durationSeconds
+        : undefined;
 
     const fadeOut =
       dur !== undefined && dur > 0.06
         ? `,afade=t=out:st=${Math.max(0, dur - 0.03).toFixed(2)}:d=0.03`
         : "";
-    // Background: looped, quick fade in/out, modestly lower volume.
-    const bgChain =
-      `[1:a]aloop=loop=-1:size=2e+09,` +
-      `afade=t=in:st=0:d=0.03${fadeOut},` +
-      `volume=0.4[bg]`;
-    // Mix: keep speech as input 0 (dry or sox-processed), background as low bed.
-    const filter = `${bgChain};[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0`;
 
-    const args = [
-      "-y",
-      "-i",
-      speechPath,
-      "-i",
-      bgPath,
-      "-filter_complex",
-      filter,
-    ];
+    const vols = layers.map((l) => (0.4 * clampGain(l.gain)) / 100);
+    const chainParts: string[] = [];
+    const bedLabels: string[] = [];
+
+    for (let i = 0; i < layers.length; i++) {
+      const inp = i + 1;
+      const label = `b${i}`;
+      bedLabels.push(`[${label}]`);
+      chainParts.push(
+        `[${inp}:a]aloop=loop=-1:size=2e+09,afade=t=in:st=0:d=0.03${fadeOut},volume=${vols[i].toFixed(4)}[${label}]`,
+      );
+    }
+
+    let filter: string;
+    if (layers.length === 1) {
+      filter = `${chainParts.join(";")};[0:a][b0]amix=inputs=2:duration=first:dropout_transition=0`;
+    } else {
+      filter = `${chainParts.join(";")};${bedLabels.join("")}amix=inputs=${layers.length}:duration=longest:dropout_transition=0:normalize=1[bed];[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0`;
+    }
+
+    const args = ["-y", "-i", speechPath, ...bgPaths.flatMap((p) => ["-i", p]), "-filter_complex", filter];
     if (dur !== undefined) {
       args.push("-t", dur.toFixed(2));
     }
     args.push(outPath);
 
     await execFileAsync("ffmpeg", args);
-    const mixed = fs.readFileSync(outPath);
-    return mixed;
+    return fs.readFileSync(outPath);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "ffmpeg mix failed";
     console.warn("background mix failed, returning dry speech", { msg });
@@ -682,6 +701,12 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     referenceId?: string;
     speed?: number;
     backgroundSoundKey?: string;
+    backgroundNatureKey?: string;
+    backgroundMusicKey?: string;
+    backgroundDrumsKey?: string;
+    backgroundNatureGain?: number;
+    backgroundMusicGain?: number;
+    backgroundDrumsGain?: number;
   };
 
   let jobItem: JobItem | null = null;
@@ -714,6 +739,12 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     reference_id?: string;
     speed?: number;
     backgroundSoundKey?: string;
+    backgroundNatureKey?: string;
+    backgroundMusicKey?: string;
+    backgroundDrumsKey?: string;
+    backgroundNatureGain?: number;
+    backgroundMusicGain?: number;
+    backgroundDrumsGain?: number;
   } = {
     transcript: jobItem.transcript,
     meditationStyle: jobItem.meditationStyle,
@@ -721,6 +752,12 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     reference_id: jobItem.referenceId,
     speed: jobItem.speed,
     backgroundSoundKey: jobItem.backgroundSoundKey,
+    backgroundNatureKey: jobItem.backgroundNatureKey,
+    backgroundMusicKey: jobItem.backgroundMusicKey,
+    backgroundDrumsKey: jobItem.backgroundDrumsKey,
+    backgroundNatureGain: jobItem.backgroundNatureGain,
+    backgroundMusicGain: jobItem.backgroundMusicGain,
+    backgroundDrumsGain: jobItem.backgroundDrumsGain,
   };
 
   const referenceId =
@@ -751,6 +788,51 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       ? body.backgroundSoundKey.trim()
       : "";
 
+  const trimKey = (k: unknown) =>
+    typeof k === "string" && k.trim().length > 0 ? k.trim() : "";
+
+  const layeredBackground: { key: string; gain: number }[] = [];
+  const nk = trimKey(body.backgroundNatureKey);
+  if (nk) {
+    layeredBackground.push({
+      key: nk,
+      gain: clampGain(
+        typeof body.backgroundNatureGain === "number"
+          ? body.backgroundNatureGain
+          : 80,
+      ),
+    });
+  }
+  const mk = trimKey(body.backgroundMusicKey);
+  if (mk) {
+    layeredBackground.push({
+      key: mk,
+      gain: clampGain(
+        typeof body.backgroundMusicGain === "number"
+          ? body.backgroundMusicGain
+          : 70,
+      ),
+    });
+  }
+  const dk = trimKey(body.backgroundDrumsKey);
+  if (dk) {
+    layeredBackground.push({
+      key: dk,
+      gain: clampGain(
+        typeof body.backgroundDrumsGain === "number"
+          ? body.backgroundDrumsGain
+          : 55,
+      ),
+    });
+  }
+
+  const backgroundLayers =
+    layeredBackground.length > 0
+      ? layeredBackground
+      : backgroundSoundKey
+        ? [{ key: backgroundSoundKey, gain: 100 }]
+        : [];
+
   console.log("inputs", {
     transcriptChars: transcript.length,
     meditationStylePresent: Boolean(meditationStyle?.trim()),
@@ -758,7 +840,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     reference_id: referenceId,
     speechSpeed,
     speedWasOverridden: speedOverride !== undefined,
-    backgroundSoundKeyPresent: Boolean(backgroundSoundKey),
+    backgroundLayerCount: backgroundLayers.length,
   });
 
 
@@ -826,10 +908,10 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   const key = `meditations/${randomUUID()}.mp3`;
   const durationSeconds = await getMp3DurationSeconds(mp3Buf);
 
-  if (backgroundSoundKey) {
-    mp3Buf = await mixSpeechWithBackground({
+  if (backgroundLayers.length > 0) {
+    mp3Buf = await mixSpeechWithBackgrounds({
       speechBuf: mp3Buf,
-      backgroundKey: backgroundSoundKey,
+      layers: backgroundLayers,
       durationSeconds,
       bucket: mediaBucketName,
     });

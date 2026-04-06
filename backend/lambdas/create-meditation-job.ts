@@ -41,6 +41,12 @@ export async function handler(
     reference_id?: string;
     speed?: number;
     backgroundSoundKey?: string;
+    backgroundNatureKey?: string;
+    backgroundMusicKey?: string;
+    backgroundDrumsKey?: string;
+    backgroundNatureGain?: number;
+    backgroundMusicGain?: number;
+    backgroundDrumsGain?: number;
   };
   try {
     body = JSON.parse(event.body || "{}");
@@ -73,6 +79,18 @@ export async function handler(
       ? body.backgroundSoundKey.trim()
       : undefined;
 
+  const optTrim = (v: unknown) =>
+    typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
+  const optGain = (v: unknown) =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+
+  const backgroundNatureKey = optTrim(body.backgroundNatureKey);
+  const backgroundMusicKey = optTrim(body.backgroundMusicKey);
+  const backgroundDrumsKey = optTrim(body.backgroundDrumsKey);
+  const backgroundNatureGain = optGain(body.backgroundNatureGain);
+  const backgroundMusicGain = optGain(body.backgroundMusicGain);
+  const backgroundDrumsGain = optGain(body.backgroundDrumsGain);
+
   const jobId = randomUUID();
   const now = new Date().toISOString();
 
@@ -90,6 +108,18 @@ export async function handler(
         referenceId,
         speed,
         backgroundSoundKey,
+        ...(backgroundNatureKey ? { backgroundNatureKey } : {}),
+        ...(backgroundMusicKey ? { backgroundMusicKey } : {}),
+        ...(backgroundDrumsKey ? { backgroundDrumsKey } : {}),
+        ...(backgroundNatureGain !== undefined
+          ? { backgroundNatureGain }
+          : {}),
+        ...(backgroundMusicGain !== undefined
+          ? { backgroundMusicGain }
+          : {}),
+        ...(backgroundDrumsGain !== undefined
+          ? { backgroundDrumsGain }
+          : {}),
       },
     }),
   );

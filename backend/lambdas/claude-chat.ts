@@ -160,6 +160,7 @@ async function streamHandler(
       "Use clear sections (e.g. opening/arrival, main practice, gentle closing).",
       "Match the emotional tone, intentions, and imagery implied by the conversation.",
       "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
+      "Use gender-neutral language throughout; never assume anyone's gender. Avoid he/she/his/her—prefer 'you' or singular 'they' where needed.",
       "Include natural spoken pauses using inline markers of the form [[PAUSE 1s]] or [[PAUSE 3s]] between phrases where a human guide would actually pause.",
       "Vary the pause lengths (for example 1s, 2s, 3s, 4s, 5s) depending on the emotional weight or visualization load; err slightly on the side of longer, more spacious pauses rather than very short ones.",
       "Place pause markers on their own or immediately after a sentence, never splitting words.",
@@ -173,6 +174,7 @@ async function streamHandler(
     system = [
       "You are an expert meditation scriptwriter for medimade.io.",
       "You write speakable, production-ready guided meditation scripts.",
+      "You use gender-neutral language and never assume anyone's gender.",
     ].join(" ");
 
     messages = [{ role: "user", content: userContent }];
@@ -226,6 +228,7 @@ async function streamHandler(
       "You are a warm, concise meditation coach for medimade.io.",
       `The user chose this meditation style: "${meditationStyle}".`,
       "You are helping them shape a personalized guided meditation that matches their goals and real-world context.",
+      "Use gender-neutral language and never assume anyone's gender.",
       "You will be given a short conversation history in `messages` (alternating user/assistant turns).",
       "If there is already an assistant message in the history that functions as the FIRST meditation-direction / outcomes question, do NOT ask that same first-direction question again; only ask necessary follow-ups.",
       "If there is NO prior assistant message yet (i.e., this is the first assistant turn), ask EXACTLY ONE first meditation-direction/outcome question tailored to the chosen style.",

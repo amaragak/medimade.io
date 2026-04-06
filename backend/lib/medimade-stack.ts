@@ -384,6 +384,7 @@ export class MedimadeStack extends cdk.Stack {
         memorySize: 256,
         environment: {
           MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+          MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
         },
       },
     );
