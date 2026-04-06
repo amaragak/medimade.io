@@ -161,6 +161,7 @@ async function streamHandler(
       "Match the emotional tone, intentions, and imagery implied by the conversation.",
       "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
       "Use gender-neutral language throughout; never assume anyone's gender. Avoid he/she/his/her—prefer 'you' or singular 'they' where needed.",
+      "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
       "Include natural spoken pauses using inline markers of the form [[PAUSE 1s]] or [[PAUSE 3s]] between phrases where a human guide would actually pause.",
       "Vary the pause lengths (for example 1s, 2s, 3s, 4s, 5s) depending on the emotional weight or visualization load; err slightly on the side of longer, more spacious pauses rather than very short ones.",
       "Place pause markers on their own or immediately after a sentence, never splitting words.",
@@ -175,6 +176,7 @@ async function streamHandler(
       "You are an expert meditation scriptwriter for medimade.io.",
       "You write speakable, production-ready guided meditation scripts.",
       "You use gender-neutral language and never assume anyone's gender.",
+      "You phrase lines for natural TTS: avoid isolated one-word sentences; use multi-word phrases where possible.",
     ].join(" ");
 
     messages = [{ role: "user", content: userContent }];
