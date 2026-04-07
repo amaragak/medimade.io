@@ -511,9 +511,9 @@ export default function LibraryView({
   const [items, setItems] = useState<LibraryMeditationItem[]>(
     Array.isArray(initialItems) ? initialItems : [],
   );
-  const [pending, setPending] = useState<PendingLibraryGeneration[]>(() =>
-    loadPendingGenerations(),
-  );
+  // IMPORTANT: keep initial render consistent between SSR and client hydration.
+  // Pending generations are stored in localStorage (client-only), so we load them after mount.
+  const [pending, setPending] = useState<PendingLibraryGeneration[]>([]);
   const [loading, setLoading] = useState(!Array.isArray(initialItems));
   const [error, setError] = useState<string | null>(null);
   const [expandedSk, setExpandedSk] = useState<string | null>(null);
@@ -529,11 +529,17 @@ export default function LibraryView({
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [libraryTab, setLibraryTab] = useState<LibraryMainTab>("meditations");
+  const PAGE_SIZE = 24;
+  const [page, setPage] = useState(1);
   const [nowPlaying, setNowPlaying] = useState<ActiveTrack | null>(null);
   const [playingS3Key, setPlayingS3Key] = useState<string | null>(null);
   const [playingTimeSeconds, setPlayingTimeSeconds] = useState(0);
   const playingS3KeyRef = useRef<string | null>(null);
   const [playbackToggleNonce, setPlaybackToggleNonce] = useState(0);
+  const [pendingAutoplay, setPendingAutoplay] = useState<{
+    jobId: string;
+    audioKey: string;
+  } | null>(null);
   const [accentRgb, setAccentRgb] = useState<{
     r: number;
     g: number;
@@ -632,6 +638,58 @@ export default function LibraryView({
     // Always surface pending generations at the top of the meditations tab.
     return [...pendingRows, ...afterCat];
   }, [sortedItems, favouritesOnly, categoryFilter, libraryTab, pendingRows]);
+
+  useEffect(() => {
+    // When the user changes filters/sort/tabs, reset pagination so they don't land mid-list.
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortBy, favouritesOnly, categoryFilter, libraryTab]);
+
+  const nonPendingVisibleItems = useMemo(() => {
+    return visibleItems.filter((x) => !isPendingRow(x));
+  }, [visibleItems]);
+
+  const totalPages = useMemo(() => {
+    const count = Math.max(0, nonPendingVisibleItems.length);
+    return Math.max(1, Math.ceil(count / PAGE_SIZE));
+  }, [nonPendingVisibleItems.length]);
+
+  useEffect(() => {
+    // If results shrink (filtering, archiving) clamp the current page.
+    setPage((p) => Math.min(Math.max(1, p), totalPages));
+  }, [totalPages]);
+
+  const pagedVisibleItems: LibraryRow[] = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    const end = start + PAGE_SIZE;
+    if (libraryTab !== "meditations") {
+      return visibleItems.slice(start, end);
+    }
+    const pendingTop = visibleItems.filter((x) => isPendingRow(x));
+    return [...pendingTop, ...nonPendingVisibleItems.slice(start, end)];
+  }, [libraryTab, visibleItems, nonPendingVisibleItems, page]);
+
+  const pagination = useMemo(() => {
+    if (totalPages <= 1) return null;
+    const current = Math.min(Math.max(1, page), totalPages);
+    const windowSize = 5;
+    let start = Math.max(1, current - Math.floor(windowSize / 2));
+    let end = Math.min(totalPages, start + windowSize - 1);
+    start = Math.max(1, end - windowSize + 1);
+    const pages: number[] = [];
+    for (let p = start; p <= end; p++) pages.push(p);
+    return { current, pages, totalPages };
+  }, [page, totalPages]);
+
+  const skipScrollOnFirstPageEffect = useRef(true);
+  useEffect(() => {
+    if (skipScrollOnFirstPageEffect.current) {
+      skipScrollOnFirstPageEffect.current = false;
+      return;
+    }
+    // App layout scrolls inside <main>, not the window.
+    document.querySelector("main")?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [page]);
 
   const categoryOptions = useMemo(() => {
     const base = sortedItems.filter((x) => x.catalogued);
@@ -797,9 +855,12 @@ export default function LibraryView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep local pending generations in sync + poll status.
   useEffect(() => {
     setPending(loadPendingGenerations());
+  }, []);
+
+  // Keep local pending generations in sync + poll status.
+  useEffect(() => {
     if (pending.length === 0) return;
 
     let cancelled = false;
@@ -829,6 +890,9 @@ export default function LibraryView({
           }
           if (st.status === "completed") {
             changed = true;
+            if (st.audioKey) {
+              setPendingAutoplay({ jobId: p.jobId, audioKey: st.audioKey });
+            }
             continue; // drop from pending; the real item will appear via list refresh
           }
           if (st.status === "failed") {
@@ -920,6 +984,31 @@ export default function LibraryView({
   useEffect(() => {
     if (!nowKey) setPlayingS3Key(null);
   }, [nowKey]);
+
+  // If we were focused on a pending card, auto-switch focus to the real item and autoplay once it appears.
+  useEffect(() => {
+    if (!pendingAutoplay) return;
+    const found = items.find((x) => x.s3Key === pendingAutoplay.audioKey);
+    if (!found) return;
+
+    // Update URL so refresh/share lands on the actual item.
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("focus", found.s3Key);
+      url.searchParams.set("play", "1");
+      window.history.replaceState({}, "", url.toString());
+    } catch {
+      // ignore
+    }
+
+    // Scroll + autoplay.
+    const el = itemElsRef.current.get(found.s3Key);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setNowPlaying({ url: found.audioUrl, title: found.title, s3Key: found.s3Key });
+    setPendingAutoplay(null);
+    // allow focus effect to run again on updated query if needed
+    focusHandledRef.current = true;
+  }, [pendingAutoplay, items]);
 
   async function setRating(item: LibraryMeditationItem, rating: number | null) {
     if (!item.sk) return;
@@ -1675,9 +1764,9 @@ export default function LibraryView({
         </p>
       ) : null}
 
-      {loading && visibleItems.length === 0 ? (
+      {loading && pagedVisibleItems.length === 0 ? (
         <p className="mt-10 text-sm text-muted">Loading…</p>
-      ) : visibleItems.length === 0 ? (
+      ) : pagedVisibleItems.length === 0 ? (
         <p className="mt-10 w-full min-w-0 text-sm text-muted">
           {libraryTab === "drafts"
             ? "No drafts yet. On Create, use Save draft (audio step) to store your session; drafts only show here."
@@ -1693,9 +1782,87 @@ export default function LibraryView({
               : "mt-10 flex w-full min-w-0 max-w-full flex-col gap-3"
           }
         >
-          {visibleItems.map((m) => renderItem(m))}
+          {pagedVisibleItems.map((m) => renderItem(m))}
         </ul>
       )}
+
+      {pagination ? (
+        <div className="mt-8 flex w-full flex-wrap items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={pagination.current <= 1}
+            className="cursor-pointer rounded-full border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-accent/40 hover:bg-accent-soft/20 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Previous page"
+          >
+            ←
+          </button>
+
+          {pagination.pages[0] && pagination.pages[0] > 1 ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setPage(1)}
+                className={`cursor-pointer rounded-full border px-4 py-2 text-sm font-semibold shadow-sm transition-colors ${
+                  pagination.current === 1
+                    ? "border-accent bg-accent-soft/30 text-foreground"
+                    : "border-border bg-card text-foreground hover:border-accent/40 hover:bg-accent-soft/20"
+                }`}
+                aria-label="Page 1"
+              >
+                1
+              </button>
+              <span className="px-1 text-sm text-muted">…</span>
+            </>
+          ) : null}
+
+          {pagination.pages.map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPage(p)}
+              className={`cursor-pointer rounded-full border px-4 py-2 text-sm font-semibold shadow-sm transition-colors ${
+                pagination.current === p
+                  ? "border-accent bg-accent-soft/30 text-foreground"
+                  : "border-border bg-card text-foreground hover:border-accent/40 hover:bg-accent-soft/20"
+              }`}
+              aria-label={`Page ${p}`}
+              aria-current={pagination.current === p ? "page" : undefined}
+            >
+              {p}
+            </button>
+          ))}
+
+          {pagination.pages[pagination.pages.length - 1] &&
+          pagination.pages[pagination.pages.length - 1] < pagination.totalPages ? (
+            <>
+              <span className="px-1 text-sm text-muted">…</span>
+              <button
+                type="button"
+                onClick={() => setPage(pagination.totalPages)}
+                className={`cursor-pointer rounded-full border px-4 py-2 text-sm font-semibold shadow-sm transition-colors ${
+                  pagination.current === pagination.totalPages
+                    ? "border-accent bg-accent-soft/30 text-foreground"
+                    : "border-border bg-card text-foreground hover:border-accent/40 hover:bg-accent-soft/20"
+                }`}
+                aria-label={`Page ${pagination.totalPages}`}
+              >
+                {pagination.totalPages}
+              </button>
+            </>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
+            disabled={pagination.current >= pagination.totalPages}
+            className="cursor-pointer rounded-full border border-border bg-card px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-accent/40 hover:bg-accent-soft/20 disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Next page"
+          >
+            →
+          </button>
+        </div>
+      ) : null}
     </div>
     <LibraryAudioStrip
         key={nowPlaying?.s3Key ?? "none"}
@@ -1713,14 +1880,14 @@ export default function LibraryView({
 
     {archiveConfirm ? (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-        <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-4 shadow-xl">
-          <div className="text-sm font-semibold text-foreground">
+        <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 text-sm text-foreground shadow-xl">
+          <div className="text-base font-semibold">
             Archive meditation?
           </div>
-          <div className="mt-2 text-xs text-muted">
+          <div className="mt-2 text-sm text-muted">
             This will hide it from your Library list.
           </div>
-          <div className="mt-2 text-xs text-muted">
+          <div className="mt-2 text-sm text-muted">
             <span className="font-semibold text-foreground">“{archiveConfirm.title}”</span>
           </div>
 
@@ -1728,7 +1895,7 @@ export default function LibraryView({
             <button
               type="button"
               onClick={() => setArchiveConfirm(null)}
-              className="cursor-pointer rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground hover:border-accent/40"
+              className="cursor-pointer rounded-lg border border-border bg-background px-3 py-2 text-sm font-semibold hover:border-accent/40"
             >
               Cancel
             </button>
@@ -1740,7 +1907,7 @@ export default function LibraryView({
                 setArchiveConfirm(null);
                 if (item) void setArchived(item, true);
               }}
-              className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90 dark:text-deep"
+              className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 dark:text-deep"
             >
               Archive
             </button>

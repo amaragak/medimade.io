@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 const nav = [
   { href: "/create", label: "Create" },
@@ -11,6 +14,11 @@ const nav = [
 ];
 
 export function SiteHeader() {
+  const pathname = usePathname() || "/";
+  const isActive = (href: string) =>
+    href === "/"
+      ? pathname === "/"
+      : pathname === href || pathname.startsWith(`${href}/`);
   return (
     <header className="sticky top-0 z-50 border-b border-border/80 bg-background/85 backdrop-blur-md">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
@@ -25,7 +33,12 @@ export function SiteHeader() {
             <Link
               key={item.href}
               href={item.href}
-              className="rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:bg-card hover:text-foreground"
+              aria-current={isActive(item.href) ? "page" : undefined}
+              className={`rounded-lg px-3 py-2 text-sm transition-colors hover:bg-card hover:text-foreground ${
+                isActive(item.href)
+                  ? "bg-card text-foreground font-semibold"
+                  : "text-muted"
+              }`}
             >
               {item.label}
             </Link>
@@ -46,7 +59,10 @@ export function SiteHeader() {
               <Link
                 key={item.href}
                 href={item.href}
-                className="block px-4 py-2 text-sm hover:bg-accent-soft/50"
+                aria-current={isActive(item.href) ? "page" : undefined}
+                className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
+                  isActive(item.href) ? "font-semibold text-foreground" : ""
+                }`}
               >
                 {item.label}
               </Link>

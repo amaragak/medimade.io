@@ -412,7 +412,7 @@ export function CreateWorkspace({
     router.prefetch("/library");
   }, [router]);
 
-  const [phase, setPhase] = useState<Phase>("style");
+  const [phase, setPhase] = useState<Phase>("feeling");
   const [meditationStyle, setMeditationStyle] = useState<string | null>(null);
   const [claudeThread, setClaudeThread] = useState<MedimadeChatTurn[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
@@ -441,7 +441,7 @@ export function CreateWorkspace({
   const [backgroundMusicKey, setBackgroundMusicKey] = useState<string>("");
   const [backgroundDrumsKey, setBackgroundDrumsKey] = useState<string>("");
   const [backgroundNatureGain, setBackgroundNatureGain] = useState(50);
-  const [backgroundMusicGain, setBackgroundMusicGain] = useState(70);
+  const [backgroundMusicGain, setBackgroundMusicGain] = useState(50);
   const [backgroundDrumsGain, setBackgroundDrumsGain] = useState(70);
   const [playAllActive, setPlayAllActive] = useState(false);
   const [playing, setPlaying] = useState<Record<SoloTrack, boolean>>({
@@ -464,11 +464,7 @@ export function CreateWorkspace({
   // Speakers come from backend `GET /fish/speakers` (single source of truth).
   const [fishSpeakers, setFishSpeakers] = useState<FishSpeaker[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "assistant",
-      text: OPENING_STYLE,
-      variant: "chat",
-    },
+    { role: "assistant", text: "", variant: "chat" },
   ]);
   const [introTypingDone, setIntroTypingDone] = useState(false);
   const introTypingTimerRef = useRef<number | null>(null);
@@ -477,8 +473,9 @@ export function CreateWorkspace({
   const isAtBottomRef = useRef(true);
   const [input, setInput] = useState("");
   const chatInputRef = useRef<HTMLInputElement | null>(null);
+  const initialChatAutofocusDoneRef = useRef(false);
   const [speakerModelId, setSpeakerModelId] = useState<string>("");
-  const [journalMode, setJournalMode] = useState(false);
+  const [journalMode, setJournalMode] = useState(true);
   const [journalConfirmOpen, setJournalConfirmOpen] = useState(false);
   const pendingJournalModeRef = useRef<boolean | null>(null);
 
@@ -488,7 +485,18 @@ export function CreateWorkspace({
 
   const soundControlsDisabled =
     audioLoading && !isRedirectingToLibraryRef.current;
+  const chatControlsDisabled =
+    audioLoading && !isRedirectingToLibraryRef.current;
   const [draftLoadError, setDraftLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialChatAutofocusDoneRef.current) return;
+    if (chatControlsDisabled) return;
+    // On mobile, only focus when the chat step is visible.
+    if (!isLgViewport && mobileCreateStep !== "chat") return;
+    initialChatAutofocusDoneRef.current = true;
+    focusChatInput();
+  }, [chatControlsDisabled, isLgViewport, mobileCreateStep]);
 
   function buildDraftState(): MeditationDraftStateV1 {
     return {
@@ -1521,6 +1529,7 @@ export function CreateWorkspace({
                         type="checkbox"
                         checked={journalMode}
                         onChange={(e) => requestJournalToggle(e.target.checked)}
+                        disabled={chatControlsDisabled}
                         className="h-3.5 w-3.5 rounded border-border accent-foreground"
                         aria-label="Journal mode"
                       />
@@ -1546,6 +1555,7 @@ export function CreateWorkspace({
                       type="button"
                       onClick={resetChatKeepMode}
                       aria-label="Reset chat"
+                      disabled={chatControlsDisabled}
                       className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-muted transition-colors hover:bg-accent-soft/35 hover:text-foreground"
                       title="Reset chat"
                     >
@@ -1569,7 +1579,7 @@ export function CreateWorkspace({
             <button
               type="button"
               onClick={() => void generateScript()}
-              disabled={scriptLoading}
+              disabled={scriptLoading || chatControlsDisabled}
               className="ml-3 shrink-0 cursor-pointer rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground shadow-sm transition-colors hover:border-accent/50 hover:bg-accent-soft/35 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {scriptLoading ? "…" : "Preview script"}
@@ -1717,6 +1727,7 @@ export function CreateWorkspace({
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && void send()}
                 aria-busy={chatLoading || scriptLoading}
+                disabled={chatControlsDisabled}
                 placeholder={
                   journalMode
                     ? "Share how you're feeling..."
@@ -1731,7 +1742,7 @@ export function CreateWorkspace({
               <button
                 type="button"
                 onClick={() => void send()}
-                disabled={chatLoading || scriptLoading}
+                disabled={chatControlsDisabled || chatLoading || scriptLoading}
                 aria-label={chatLoading ? "Sending…" : "Send message"}
                 className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent text-white transition-opacity dark:text-deep disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -1763,7 +1774,7 @@ export function CreateWorkspace({
 
           <div className="flex h-full min-h-0 w-1/2 min-w-0 shrink-0 flex-col gap-6 overflow-y-auto pb-12 lg:contents lg:overflow-visible lg:pb-0">
         <div className="flex min-h-0 w-full flex-1 flex-col gap-6 pb-12 lg:h-full lg:min-h-0 lg:max-h-full lg:flex-1 lg:flex-col lg:gap-4 lg:overflow-hidden lg:pb-4 max-lg:min-h-0">
-          <section className="rounded-2xl border border-border bg-card shadow-sm lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-hidden">
+          <section className="rounded-2xl border border-border bg-card shadow-sm lg:flex lg:flex-col">
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
               <div className="min-w-0 flex-1">
                 <h2 className="text-base font-semibold tracking-tight">Audio</h2>
@@ -1884,62 +1895,6 @@ export function CreateWorkspace({
 
                 <div className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:gap-2">
                   <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
-                    Nature
-                  </span>
-                  <select
-                    className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
-                    value={backgroundNatureKey}
-                    onChange={(e) => {
-                      setBackgroundNatureKey(e.target.value);
-                    }}
-                    disabled={soundControlsDisabled}
-                  >
-                    <option value="">None</option>
-                    {backgroundNature.map((s) => (
-                      <option key={s.key} value={s.key}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
-                    <div className="flex items-center justify-between text-xs text-muted">
-                      <span>Level</span>
-                      <span className="tabular-nums">
-                        {backgroundNatureGain}%
-                      </span>
-                    </div>
-                    <input
-                      aria-label="Nature level"
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={backgroundNatureGain}
-                      onChange={(e) =>
-                        setBackgroundNatureGain(Number(e.target.value))
-                      }
-                      disabled={soundControlsDisabled || !backgroundNatureKey}
-                      className="h-2 w-full accent-foreground disabled:opacity-40"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void toggleRowPreview("nature")}
-                    disabled={soundControlsDisabled || !backgroundNatureKey}
-                    aria-label={
-                      playing.nature
-                        ? "Pause nature"
-                        : "Play nature"
-                    }
-                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <PreviewPlayPauseIcon
-                      playing={playing.nature}
-                    />
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:gap-2">
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
                     Music
                   </span>
                   <select
@@ -1990,6 +1945,62 @@ export function CreateWorkspace({
                   >
                     <PreviewPlayPauseIcon
                       playing={playing.music}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:gap-2">
+                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
+                    Nature
+                  </span>
+                  <select
+                    className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
+                    value={backgroundNatureKey}
+                    onChange={(e) => {
+                      setBackgroundNatureKey(e.target.value);
+                    }}
+                    disabled={soundControlsDisabled}
+                  >
+                    <option value="">None</option>
+                    {backgroundNature.map((s) => (
+                      <option key={s.key} value={s.key}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
+                    <div className="flex items-center justify-between text-xs text-muted">
+                      <span>Level</span>
+                      <span className="tabular-nums">
+                        {backgroundNatureGain}%
+                      </span>
+                    </div>
+                    <input
+                      aria-label="Nature level"
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={backgroundNatureGain}
+                      onChange={(e) =>
+                        setBackgroundNatureGain(Number(e.target.value))
+                      }
+                      disabled={soundControlsDisabled || !backgroundNatureKey}
+                      className="h-2 w-full accent-foreground disabled:opacity-40"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void toggleRowPreview("nature")}
+                    disabled={soundControlsDisabled || !backgroundNatureKey}
+                    aria-label={
+                      playing.nature
+                        ? "Pause nature"
+                        : "Play nature"
+                    }
+                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <PreviewPlayPauseIcon
+                      playing={playing.nature}
                     />
                   </button>
                 </div>
@@ -2051,23 +2062,10 @@ export function CreateWorkspace({
                 </div>
               </div>
 
-              {!mediaBaseUrl ? (
-                <p className="mt-6 text-xs text-muted">
-                  Sound preview is not available here. Your meditations still
-                  generate with the mix you choose.
-                </p>
-              ) : null}
-
-              <button
-                type="button"
-                className="mt-6 w-full cursor-pointer rounded-xl border border-dashed border-gold/60 bg-gold/5 py-2 text-xs font-medium text-gold"
-              >
-                Voice cloning setup (Pro)
-              </button>
             </div>
           </section>
 
-          <div className="mt-5 flex min-h-[3rem] w-full shrink-0 flex-nowrap items-center justify-between gap-4 px-0 lg:mt-0 lg:shrink-0">
+          <div className="mt-auto flex min-h-[3rem] w-full shrink-0 flex-nowrap items-center justify-between gap-4 px-0 pt-5 lg:pt-0">
             <button
               type="button"
               onClick={() => setMobileCreateStep("chat")}
@@ -2094,7 +2092,23 @@ export function CreateWorkspace({
                   audioLoading ? "animate-pulse" : ""
                 }`}
               >
-                {audioLoading ? "Generating…" : "Generate meditation"}
+                {audioLoading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span>Generating…</span>
+                    <svg
+                      className="h-4 w-4 animate-spin"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      aria-hidden
+                    >
+                      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                    </svg>
+                  </span>
+                ) : (
+                  "Generate meditation"
+                )}
               </button>
             </div>
           </div>
