@@ -6,6 +6,7 @@ import {
   GetSecretValueCommand,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
+import { loudnormMp3Buffer } from "../lib/ffmpeg-loudnorm";
 
 const FISH_TTS_URL = "https://api.fish.audio/v1/tts";
 const FISH_TTS_MODEL = (process.env.FISH_TTS_MODEL || "s2-pro").trim() || "s2-pro";
@@ -80,7 +81,7 @@ export async function handler(
       text,
       reference_id,
       format: "mp3",
-      latency: "balanced",
+      latency: "normal",
       normalize: true,
     }),
   });
@@ -93,7 +94,14 @@ export async function handler(
     });
   }
 
-  const buf = Buffer.from(await upstream.arrayBuffer());
+  let buf: Buffer = Buffer.from(await upstream.arrayBuffer());
+  try {
+    buf = await loudnormMp3Buffer(buf);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("loudnorm failed", msg);
+    return json(500, { error: "Audio loudness normalization failed", detail: msg });
+  }
   return {
     statusCode: 200,
     headers: {

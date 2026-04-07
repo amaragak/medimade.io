@@ -9,6 +9,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { parseBuffer } from "music-metadata";
+import { loudnormMp3Buffer } from "../lib/ffmpeg-loudnorm";
 import fs from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -23,6 +24,88 @@ const secrets = new SecretsManagerClient({});
 const s3 = new S3Client({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const execFileAsync = promisify(execFile);
+
+async function voiceFxWavViaS3(params: {
+  mp3: Buffer;
+  preset: string;
+  bucket: string;
+  jobId: string;
+}): Promise<Buffer> {
+  const base = process.env.MEDIMADE_API_URL?.trim().replace(/\/$/, "");
+  if (!base) {
+    throw new Error("MEDIMADE_API_URL is not set (needed for /audio/voice-fx)");
+  }
+
+  const inKey = `tmp/voice-fx/${params.jobId}/in.mp3`;
+  const outKey = `tmp/voice-fx/${params.jobId}/out.wav`;
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: params.bucket,
+      Key: inKey,
+      Body: params.mp3,
+      ContentType: "audio/mpeg",
+      CacheControl: "no-store",
+    }),
+  );
+
+  const res = await fetch(`${base}/audio/voice-fx`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      bucket: params.bucket,
+      s3KeyIn: inKey,
+      s3KeyOut: outKey,
+      preset: params.preset,
+      inputFormat: "mp3",
+    }),
+  });
+  const raw = await res.text();
+  let data: { s3KeyOut?: string; error?: string } | null = null;
+  try {
+    data = JSON.parse(raw) as { s3KeyOut?: string; error?: string };
+  } catch {
+    data = null;
+  }
+  if (!res.ok) {
+    const detail = data?.error ?? raw.slice(0, 2000);
+    throw new Error(`voice-fx HTTP ${res.status}: ${detail}`);
+  }
+
+  const fxObj = await s3.send(
+    new GetObjectCommand({ Bucket: params.bucket, Key: outKey }),
+  );
+  return Buffer.from(await fxObj.Body!.transformToByteArray());
+}
+
+async function wavToMp3Buffer(wavBuf: Buffer): Promise<Buffer> {
+  const id = randomUUID();
+  const inPath = `/tmp/voice-fx-${id}.wav`;
+  const outPath = `/tmp/voice-fx-${id}.mp3`;
+  try {
+    fs.writeFileSync(inPath, wavBuf);
+    await execFileAsync("ffmpeg", [
+      "-hide_banner",
+      "-y",
+      "-i",
+      inPath,
+      "-c:a",
+      "libmp3lame",
+      "-q:a",
+      "2",
+      outPath,
+    ]);
+    return fs.readFileSync(outPath);
+  } finally {
+    for (const p of [inPath, outPath]) {
+      try {
+        fs.unlinkSync(p);
+      } catch {
+        /* */
+      }
+    }
+  }
+}
 
 let cachedClaudeKey: string | undefined;
 let cachedFishKey: string | undefined;
@@ -252,7 +335,9 @@ async function generateScriptFromClaude(params: {
     "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
     "Include natural spoken pauses using inline markers of the form [[PAUSE 1s]] or [[PAUSE 3s]] between phrases where a human guide would actually pause.",
+    "Place **every** pause **intelligently**: each gap must fit the moment—what was just said, the emotional or somatic weight, the transition, and what comes next. Pauses are not filler; avoid random, uniform, or excessive markers that would break rhythm or feel mechanical.",
     "Vary the pause lengths (for example 1s, 2s, 3s, 4s, 5s) depending on the emotional weight or visualization load; err slightly on the side of longer, more spacious pauses rather than very short ones.",
+    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often 3s–8s, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
     "Place pause markers on their own or immediately after a sentence, never splitting words.",
     "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
   ].join("\n");
@@ -273,7 +358,9 @@ async function generateScriptFromClaude(params: {
     "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
     "Include natural spoken pauses using inline markers of the form [[PAUSE 1s]] or [[PAUSE 3s]] between phrases where a human guide would actually pause.",
+    "Place **every** pause **intelligently**: each gap must fit the moment—what was just said, the emotional or somatic weight, the transition, and what comes next. Pauses are not filler; avoid random, uniform, or excessive markers that would break rhythm or feel mechanical.",
     "Vary the pause lengths (for example 1s, 2s, 3s, 4s, 5s) depending on the emotional weight or visualization load; err slightly on the side of longer, more spacious pauses rather than very short ones.",
+    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often 3s–8s, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
     "Place pause markers on their own or immediately after a sentence, never splitting words.",
     "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
   ].join("\n");
@@ -285,6 +372,7 @@ async function generateScriptFromClaude(params: {
     "You are an expert meditation scriptwriter for medimade.io.",
     "You write speakable, production-ready guided meditation scripts.",
     "You phrase lines for natural TTS: avoid isolated one-word sentences; use multi-word phrases where possible.",
+    "You place pauses intelligently for the arc of the practice—generous where self-paced work needs room, never mechanical or padded.",
   ].join(" ");
 
   const upstream = await fetch(ANTHROPIC_URL, {
@@ -481,7 +569,7 @@ async function fishTtsMp3(params: {
           text: params.text,
           reference_id: params.reference_id,
           format: "mp3",
-          latency: "balanced",
+          latency: "normal",
           normalize: true,
           prosody: { speed: params.speed, normalize_loudness: true },
         }),
@@ -703,6 +791,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     scriptText?: string;
     referenceId?: string;
     speed?: number;
+    voiceFxPreset?: string;
     backgroundSoundKey?: string;
     backgroundNatureKey?: string;
     backgroundMusicKey?: string;
@@ -741,6 +830,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     scriptText?: string;
     reference_id?: string;
     speed?: number;
+    voiceFxPreset?: string;
     backgroundSoundKey?: string;
     backgroundNatureKey?: string;
     backgroundMusicKey?: string;
@@ -754,6 +844,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     scriptText: jobItem.scriptText,
     reference_id: jobItem.referenceId,
     speed: jobItem.speed,
+    voiceFxPreset: jobItem.voiceFxPreset,
     backgroundSoundKey: jobItem.backgroundSoundKey,
     backgroundNatureKey: jobItem.backgroundNatureKey,
     backgroundMusicKey: jobItem.backgroundMusicKey,
@@ -785,6 +876,10 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       ? clampSpeechSpeed(speedOverrideRaw)
       : undefined;
   const speechSpeed = speedOverride ?? DEFAULT_SPEECH_SPEED;
+  const voiceFxPreset =
+    typeof body.voiceFxPreset === "string" && body.voiceFxPreset.trim().length > 0
+      ? body.voiceFxPreset.trim()
+      : "";
   const backgroundSoundKey =
     typeof body.backgroundSoundKey === "string" &&
     body.backgroundSoundKey.trim().length > 0
@@ -876,6 +971,73 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     return json(500, { error: "No script text available to synthesize" });
   }
 
+  // Persist script early so the Library placeholder can show title/description before audio finishes.
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: jobsTableName,
+        Key: { jobId: event.jobId },
+        UpdateExpression:
+          "SET #status = :s, scriptTextUsed = :t, updatedAt = :u REMOVE errorMessage",
+        ExpressionAttributeNames: {
+          "#status": "status",
+        },
+        ExpressionAttributeValues: {
+          ":s": "running",
+          ":t": scriptTextUsed,
+          ":u": new Date().toISOString(),
+        },
+      }),
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "job early script update failed";
+    console.warn("job early script update failed", { jobId: event.jobId, msg });
+  }
+
+  // Derive library metadata as early as possible (script is ready; audio may take much longer).
+  // This is best-effort and must not fail the job.
+  let libraryTitle: string;
+  let libraryMeditationType: string;
+  let libraryDescription: string;
+  try {
+    const claudeKey = await getClaudeApiKey();
+    const derived = await deriveLibraryMetadataFromClaude({
+      apiKey: claudeKey,
+      meditationStyle,
+      transcript,
+      scriptPreview: scriptTextUsed,
+    });
+    libraryTitle = derived.title;
+    libraryMeditationType = derived.meditationType;
+    libraryDescription = derived.description;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "metadata derive failed";
+    console.warn("early library metadata derive failed, using fallback", { msg });
+    const fb = fallbackLibraryMetadata({ meditationStyle });
+    libraryTitle = fb.title;
+    libraryMeditationType = fb.meditationType;
+    libraryDescription = fb.description;
+  }
+
+  // Persist derived metadata early so the Library placeholder can populate quickly.
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: jobsTableName,
+        Key: { jobId: event.jobId },
+        UpdateExpression: "SET title = :title, description = :desc, updatedAt = :u",
+        ExpressionAttributeValues: {
+          ":title": libraryTitle,
+          ":desc": libraryDescription,
+          ":u": new Date().toISOString(),
+        },
+      }),
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "job metadata update failed";
+    console.warn("job metadata update failed", { jobId: event.jobId, msg });
+  }
+
   let fishKey: string;
   try {
     fishKey = await getFishApiKey();
@@ -901,6 +1063,36 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     mp3Buf = audio;
     scriptUtf8Bytes = utf8Bytes;
     console.log("Fish TTS success", { bytes: mp3Buf.byteLength });
+    try {
+      mp3Buf = await loudnormMp3Buffer(mp3Buf);
+      console.log("loudnorm -16 LUFS applied to speech", {
+        bytes: mp3Buf.byteLength,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "loudnorm failed";
+      console.error("loudnorm failed", { msg });
+      await markJobFailed(event.jobId, msg);
+      return json(500, { error: msg });
+    }
+
+    // Optional Pedalboard voice FX (triggered by UI). Requirement: FX runs AFTER loudnorm.
+    if (voiceFxPreset) {
+      try {
+        const fxWav = await voiceFxWavViaS3({
+          mp3: mp3Buf,
+          preset: voiceFxPreset,
+          bucket: mediaBucketName,
+          jobId: event.jobId,
+        });
+        mp3Buf = await wavToMp3Buffer(fxWav);
+        console.log("voice-fx applied", { preset: voiceFxPreset, bytes: mp3Buf.byteLength });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "voice-fx failed";
+        console.error("voice-fx failed", { msg });
+        await markJobFailed(event.jobId, msg);
+        return json(500, { error: msg });
+      }
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Fish TTS failed";
     console.error("Fish TTS failed", { msg });
@@ -919,6 +1111,19 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       bucket: mediaBucketName,
     });
   }
+
+  // Final loudness normalization for the actual delivered meditation MP3.
+  // This keeps the user-facing output consistently loud even after FX and/or bed mixing.
+  try {
+    mp3Buf = await loudnormMp3Buffer(mp3Buf);
+    console.log("loudnorm -16 LUFS applied to final output", { bytes: mp3Buf.byteLength });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "final loudnorm failed";
+    console.error("final loudnorm failed", { msg });
+    await markJobFailed(event.jobId, msg);
+    return json(500, { error: msg });
+  }
+
   try {
     console.log("putting to S3", { bucket: mediaBucketName, key, bytes: mp3Buf.byteLength });
     await s3.send(
@@ -954,28 +1159,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     scriptTruncated = true;
   }
 
-  let libraryTitle: string;
-  let libraryMeditationType: string;
-  let libraryDescription: string;
-  try {
-    const claudeKey = await getClaudeApiKey();
-    const derived = await deriveLibraryMetadataFromClaude({
-      apiKey: claudeKey,
-      meditationStyle,
-      transcript,
-      scriptPreview: scriptTextUsed,
-    });
-    libraryTitle = derived.title;
-    libraryMeditationType = derived.meditationType;
-    libraryDescription = derived.description;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "metadata derive failed";
-    console.warn("library metadata derive failed, using fallback", { msg });
-    const fb = fallbackLibraryMetadata({ meditationStyle });
-    libraryTitle = fb.title;
-    libraryMeditationType = fb.meditationType;
-    libraryDescription = fb.description;
-  }
+  // Library metadata was already derived above (best-effort) so the Library can show it early.
 
   // Best-effort analytics / library index write (don’t fail the main job if this fails).
   try {

@@ -40,6 +40,7 @@ export async function handler(
     scriptText?: string;
     reference_id?: string;
     speed?: number;
+    voiceFxPreset?: string;
     backgroundSoundKey?: string;
     backgroundNatureKey?: string;
     backgroundMusicKey?: string;
@@ -72,6 +73,10 @@ export async function handler(
   const speed =
     typeof body.speed === "number" && Number.isFinite(body.speed)
       ? body.speed
+      : undefined;
+  const voiceFxPreset =
+    typeof body.voiceFxPreset === "string" && body.voiceFxPreset.trim().length > 0
+      ? body.voiceFxPreset.trim()
       : undefined;
   const backgroundSoundKey =
     typeof body.backgroundSoundKey === "string" &&
@@ -107,6 +112,7 @@ export async function handler(
         scriptText,
         referenceId,
         speed,
+        ...(voiceFxPreset ? { voiceFxPreset } : {}),
         backgroundSoundKey,
         ...(backgroundNatureKey ? { backgroundNatureKey } : {}),
         ...(backgroundMusicKey ? { backgroundMusicKey } : {}),

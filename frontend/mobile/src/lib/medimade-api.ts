@@ -219,6 +219,8 @@ export type LibraryMeditationItem = {
   favourite: boolean;
   catalogued: boolean;
   mp3Bytes: number | null;
+  /** Present when item is a saved create-flow draft (web). */
+  isDraft?: boolean;
 };
 
 export async function listLibraryMeditations(): Promise<LibraryMeditationItem[]> {

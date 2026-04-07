@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Build the Pedalboard Lambda layer using Docker (linux/amd64 → matches default Lambda arch).
+# Run once (or when bumping pedalboard/requirements), then commit backend/layers/pedalboard/python/.
+# Normal `cdk deploy` does not need Docker after that.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+DOCKER_DIR="$ROOT/docker/pedalboard-layer"
+OUT="$ROOT/layers/pedalboard"
+IMAGE_TAG="medimade-pedalboard-layer:build"
+
+echo "==> Building Docker image ($IMAGE_TAG)..."
+docker build --platform linux/amd64 -t "$IMAGE_TAG" "$DOCKER_DIR"
+
+echo "==> Extracting python/ into $OUT ..."
+rm -rf "$OUT/python"
+mkdir -p "$OUT"
+CID="$(docker create --platform linux/amd64 "$IMAGE_TAG")"
+cleanup() { docker rm -f "$CID" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+docker cp "$CID:/asset/python" "$OUT/python"
+
+echo "==> Layer layout OK: $OUT/python/lib/python3.12/site-packages/"
+ls "$OUT/python/lib/python3.12/site-packages" | head
+
+echo "Done. Commit layers/pedalboard/python/ so deploys work without Docker."

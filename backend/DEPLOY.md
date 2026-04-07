@@ -56,6 +56,25 @@ cd backend
 npm install
 ```
 
+## Pedalboard layer (voice FX Lambda) — Docker **once**, then commit
+
+The **`VoiceFxFunction`** (`POST /audio/voice-fx`) uses Spotify **Pedalboard** via a Lambda **layer** built in Docker against **Amazon Linux (linux/amd64)**. You do **not** need Docker for normal `cdk deploy` after the layer exists in git.
+
+1. Install [Docker](https://docs.docker.com/get-docker/).
+2. From `backend/`:
+
+   ```bash
+   npm run build-pedalboard-layer
+   ```
+
+3. Commit **`layers/pedalboard/python/`** (large; expected).
+
+Bump Pedalboard or Python deps (`pyloudnorm`, `scipy` for **~-16 LUFS** normalization after the FX chain): edit `docker/pedalboard-layer/requirements.txt`, re-run the script, commit again. Details: `layers/pedalboard/README.md`.
+
+Fish TTS MP3s and meditation speech stems are normalized to **~-16 LUFS** in Node via **ffmpeg `loudnorm`** (requires the ffmpeg Lambda layer on `FishTtsFunction` and the meditation worker). Rebuild and redeploy the Pedalboard layer after pulling changes that add `pyloudnorm`/`scipy`.
+
+If `cdk synth` errors about a missing Pedalboard layer, run the step above first.
+
 ## Bootstrap (once per account/region)
 
 This project defaults to **`ap-southeast-2`** in `bin/medimade.ts`. Bootstrap that account + region once:
@@ -78,7 +97,7 @@ npx cdk deploy --all --profile mm
 
 Confirm changes when prompted, or add `--require-approval never` for CI.
 
-After deploy, note **CloudFormation outputs**: `ApiUrl`, `FishTtsUrl`, `MedimadeChatUrl`, `FishAudioSecretName`, `ClaudeSecretName`.
+After deploy, note **CloudFormation outputs**: `ApiUrl`, `FishTtsUrl`, `VoiceFxUrl`, `MedimadeChatUrl`, `FishAudioSecretName`, `ClaudeSecretName`.
 
 Set **`NEXT_PUBLIC_MEDIMADE_CHAT_URL`** in the webapp to **`MedimadeChatUrl`** (Lambda Function URL with response streaming). `scripts/deploy-back` writes both API base and chat URL into `frontend/webapp/.env`.
 
@@ -101,6 +120,14 @@ Public function URLs now require **both** `lambda:InvokeFunctionUrl` and `lambda
 `transcript` is the full UI chat log (plain text). Uses higher `max_tokens` for long scripts.
 
 - Success: `200`, **`text/event-stream`** (SSE). Each event is `data: {"d":"…token chunk…"}\n\n`; final event includes `"done":true`. Errors use JSON before the stream or `data: {"error":"…"}`.
+
+- **POST** `{ApiUrl}/audio/voice-fx` (Python + Pedalboard; **MP3 or WAV** in, **WAV** out as base64)  
+  Body: `{ "audioBase64": string, "preset"?: "neutral" | "warm" | "mixer", "inputFormat"?: "mp3" | "wav" | "auto" }`  
+  **`mixer`**: light delay + reverb (sound-mixer defaults; 2s tail pad before processing).  
+  `inputFormat` defaults to **`auto`** (detects RIFF/WAVE vs everything else such as Fish **MP3**).  
+  Success: `200` JSON `{ "format":"wav", "sampleRate", "channels", "audioBase64", "preset", "inputFormat" }`  
+
+Speaker preview **`*-fx.wav`** files (same Pedalboard chain) are produced by `npm run generate-speaker-samples` when `MEDIIMADE_API_URL` (or stack `ApiUrl`) is resolvable.
 
 ## Destroy
 

@@ -15,7 +15,6 @@ import Card from "../components/ui/Card";
 import ChatMarkdown from "../components/ChatMarkdown";
 import ModalDropdown from "../components/ui/ModalDropdown";
 import { colors } from "../theme/colors";
-import { FISH_SPEAKERS } from "../lib/fish-speakers";
 import {
   type MedimadeChatTurn,
   streamMedimadeChat,
@@ -114,12 +113,8 @@ export default function CreateScreen() {
   const [mobileCreateStep, setMobileCreateStep] = useState(0);
 
   const [sound, setSound] = useState(soundPresets[0]);
-  const [fishSpeakers, setFishSpeakers] = useState<FishSpeaker[]>(
-    FISH_SPEAKERS as unknown as FishSpeaker[],
-  );
-  const [speakerModelId, setSpeakerModelId] = useState<string>(
-    FISH_SPEAKERS[0].modelId,
-  );
+  const [fishSpeakers, setFishSpeakers] = useState<FishSpeaker[]>([]);
+  const [speakerModelId, setSpeakerModelId] = useState<string>("");
 
   useEffect(() => {
     void listFishSpeakers()

@@ -1,0 +1,4 @@
+# Pinned for reproducible layer builds. Bump after running scripts/build-pedalboard-layer.sh and re-commit layers/pedalboard/.
+pedalboard==0.9.16
+pyloudnorm==0.1.1
+scipy>=1.11,<1.15

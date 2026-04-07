@@ -1,30 +1,40 @@
 #!/usr/bin/env bash
-# Sync local bg_audio folder into the media S3 bucket under background-audio/.
-# Use subfolders nature/, music/, and drums/ under bg_audio so the create UI can list each category.
+# Sync local audio/bg-audio folder into the media S3 bucket.
+# Use subfolders nature/, music/, and drums/ under audio/bg-audio so the create UI can list each category.
 # Usage (from repo root or anywhere):
 #   backend/scripts/sync-bg-audio
 #   backend/scripts/sync-bg-audio --profile mm
+#   backend/scripts/sync-bg-audio --force-update --profile mm
 #
 # Requires:
 # - aws CLI configured and on PATH
 # - The MedimadeBackend stack deployed with a CfnOutput export "MediaBucketName"
+# - Background audio normalizer S3 trigger (uploads go to background-audio-raw/ and are normalized into background-audio/)
 set -euo pipefail
 
 BACKEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$BACKEND_ROOT/.." && pwd)"
-BG_DIR="$REPO_ROOT/bg_audio"
+BG_DIR="$REPO_ROOT/audio/bg-audio"
 
 if ! command -v aws >/dev/null 2>&1; then
   echo "aws CLI is required but not found on PATH." >&2
   exit 1
 fi
 
+FORCE_UPDATE="0"
+AWS_ARGS=()
+for a in "$@"; do
+  if [ "$a" = "--force-update" ]; then
+    FORCE_UPDATE="1"
+  else
+    AWS_ARGS+=("$a")
+  fi
+done
+
 if [ ! -d "$BG_DIR" ]; then
-  echo "Expected bg_audio directory at: $BG_DIR" >&2
+  echo "Expected audio/bg-audio directory at: $BG_DIR" >&2
   exit 1
 fi
-
-AWS_ARGS=("$@")
 
 echo "Resolving media bucket from CloudFormation export 'MediaBucketName'..."
 MEDIA_BUCKET_NAME="$(
@@ -39,14 +49,24 @@ if [ -z "$MEDIA_BUCKET_NAME" ] || [ "$MEDIA_BUCKET_NAME" = "None" ]; then
 fi
 
 SRC="$BG_DIR/"
-DEST="s3://$MEDIA_BUCKET_NAME/background-audio/"
+DEST_RAW="s3://$MEDIA_BUCKET_NAME/background-audio-raw/"
 
-echo "Syncing $SRC -> $DEST"
-aws s3 sync "$SRC" "$DEST" \
-  --exclude "*" \
-  --include "*.mp3" \
-  --include "*.wav" \
-  "${AWS_ARGS[@]}"
+if [ "$FORCE_UPDATE" = "1" ]; then
+  echo "Force upload (re-normalize via S3 trigger): $SRC -> $DEST_RAW"
+  aws s3 cp --recursive "$SRC" "$DEST_RAW" \
+    --exclude "*" \
+    --include "*.mp3" \
+    --include "*.wav" \
+    --metadata-directive REPLACE \
+    "${AWS_ARGS[@]}"
+else
+  echo "Syncing $SRC -> $DEST_RAW"
+  aws s3 sync "$SRC" "$DEST_RAW" \
+    --exclude "*" \
+    --include "*.mp3" \
+    --include "*.wav" \
+    "${AWS_ARGS[@]}"
+fi
 
 echo "Done."
 

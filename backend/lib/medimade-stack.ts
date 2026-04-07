@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as path from "path";
 import * as cdk from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
@@ -10,6 +11,7 @@ import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as s3n from "aws-cdk-lib/aws-s3-notifications";
 import { LayerVersion } from "aws-cdk-lib/aws-lambda";
 import type { Construct } from "constructs";
 
@@ -71,12 +73,39 @@ export class MedimadeStack extends cdk.Stack {
       },
     );
 
+    // ffmpeg: Fish TTS proxy loudnorm + meditation bed mixing (account-local layer).
+    const ffmpegLayer = LayerVersion.fromLayerVersionArn(
+      this,
+      "FfmpegLayer",
+      "arn:aws:lambda:ap-southeast-2:382309212161:layer:serverlessrepo-soundws-audio-tools-lambda-layer-LambdaLayer:1",
+    );
+
+    // Background-audio ingest: S3 trigger normalizes uploads from background-audio-raw/ into background-audio/
+    const bgAudioNormalize = new lambda_nodejs.NodejsFunction(this, "BgAudioNormalizeFunction", {
+      entry: path.join(__dirname, "../lambdas/bg-audio-normalize.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 1024,
+      layers: [ffmpegLayer],
+      environment: {
+        MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+      },
+    });
+    mediaBucket.grantReadWrite(bgAudioNormalize);
+    mediaBucket.addEventNotification(
+      s3.EventType.OBJECT_CREATED,
+      new s3n.LambdaDestination(bgAudioNormalize),
+      { prefix: "background-audio-raw/" },
+    );
+
     const fishTts = new lambda_nodejs.NodejsFunction(this, "FishTtsFunction", {
       entry: path.join(__dirname, "../lambdas/fish-tts.ts"),
       handler: "handler",
       runtime: lambda.Runtime.NODEJS_20_X,
       timeout: cdk.Duration.seconds(60),
       memorySize: 512,
+      layers: [ffmpegLayer],
       environment: {
         FISH_AUDIO_SECRET_ARN: fishApiKeySecret.secretArn,
         FISH_TTS_MODEL: "s2-pro",
@@ -145,14 +174,6 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
-    // ffmpeg layer: account-local layer you deployed for background audio mixing.
-    // Using a fixed ARN keeps CDK self-contained and works seamlessly with backend/scripts/deploy.
-    const ffmpegLayer = LayerVersion.fromLayerVersionArn(
-      this,
-      "FfmpegLayer",
-      "arn:aws:lambda:ap-southeast-2:382309212161:layer:serverlessrepo-soundws-audio-tools-lambda-layer-LambdaLayer:1",
-    );
-
     const meditationJobsTable = new dynamodb.Table(this, "MeditationJobsTable", {
       partitionKey: { name: "jobId", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -174,6 +195,7 @@ export class MedimadeStack extends cdk.Stack {
           FISH_AUDIO_SECRET_ARN: fishApiKeySecret.secretArn,
           MEDIA_BUCKET_NAME: mediaBucket.bucketName,
           MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
+          MEDIMADE_API_URL: httpApi.apiEndpoint,
           MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
           MEDITATION_JOBS_TABLE_NAME: meditationJobsTable.tableName,
           FISH_TTS_MODEL: "s2-pro",
@@ -302,6 +324,33 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    const libraryDraft = new lambda_nodejs.NodejsFunction(
+      this,
+      "LibraryDraftFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/library-draft.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(15),
+        memorySize: 256,
+        environment: {
+          MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+        },
+      },
+    );
+    meditationAnalyticsTable.grantReadWriteData(libraryDraft);
+
+    const libraryDraftIntegration = new integrations.HttpLambdaIntegration(
+      "LibraryDraftIntegration",
+      libraryDraft,
+    );
+
+    httpApi.addRoutes({
+      path: "/library/meditations/draft",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST],
+      integration: libraryDraftIntegration,
+    });
+
     const fishSpeakersList = new lambda_nodejs.NodejsFunction(
       this,
       "FishSpeakersListFunction",
@@ -373,6 +422,31 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    const meditationArchive = new lambda_nodejs.NodejsFunction(
+      this,
+      "MeditationArchiveFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/meditation-archive.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+        environment: {
+          MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+        },
+      },
+    );
+    meditationAnalyticsTable.grantWriteData(meditationArchive);
+
+    httpApi.addRoutes({
+      path: "/library/meditations/archive",
+      methods: [apigwv2.HttpMethod.PATCH],
+      integration: new integrations.HttpLambdaIntegration(
+        "MeditationArchiveIntegration",
+        meditationArchive,
+      ),
+    });
+
     const listBackgroundAudio = new lambda_nodejs.NodejsFunction(
       this,
       "ListBackgroundAudioFunction",
@@ -399,11 +473,60 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    // --- Python: voice FX (Pedalboard) — layer is pre-built with Docker, committed under layers/pedalboard/
+    const pedalboardLayerRoot = path.join(__dirname, "../layers/pedalboard");
+    const pedalboardPackageInit = path.join(
+      pedalboardLayerRoot,
+      "python/lib/python3.12/site-packages/pedalboard/__init__.py",
+    );
+    if (!fs.existsSync(pedalboardPackageInit)) {
+      throw new Error(
+        "Pedalboard Lambda layer missing. From backend/ run: ./scripts/build-pedalboard-layer " +
+          "(requires Docker), then commit layers/pedalboard/python/. See layers/pedalboard/README.md.",
+      );
+    }
+
+    const pedalboardLayer = new lambda.LayerVersion(this, "PedalboardLayer", {
+      code: lambda.Code.fromAsset(pedalboardLayerRoot),
+      compatibleRuntimes: [lambda.Runtime.PYTHON_3_12],
+      description:
+        "Spotify Pedalboard (rebuild: scripts/build-pedalboard-layer, commit layers/pedalboard/python)",
+    });
+
+    const voiceFx = new lambda.Function(this, "VoiceFxFunction", {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: "handler.handler",
+      code: lambda.Code.fromAsset(
+        path.join(__dirname, "../lambdas-python/voice-fx"),
+      ),
+      layers: [pedalboardLayer],
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 1024,
+      description: "Apply Pedalboard effects to voice WAV (base64 in/out)",
+      environment: {
+        MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+      },
+    });
+    mediaBucket.grantReadWrite(voiceFx);
+
+    httpApi.addRoutes({
+      path: "/audio/voice-fx",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration(
+        "VoiceFxIntegration",
+        voiceFx,
+      ),
+    });
+
     new cdk.CfnOutput(this, "ApiUrl", {
       value: httpApi.apiEndpoint,
     });
     new cdk.CfnOutput(this, "FishTtsUrl", {
       value: `${httpApi.apiEndpoint}/fish/tts`,
+    });
+    new cdk.CfnOutput(this, "VoiceFxUrl", {
+      description: "POST JSON { audioBase64, preset? } WAV → effected WAV",
+      value: `${httpApi.apiEndpoint}/audio/voice-fx`,
     });
     new cdk.CfnOutput(this, "MedimadeChatUrl", {
       description:

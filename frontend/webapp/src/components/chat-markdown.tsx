@@ -15,12 +15,13 @@ function renderBoldInLine(line: string, keyPrefix: string): ReactNode[] {
     if (line.startsWith("**", i)) {
       const close = line.indexOf("**", i + 2);
       if (close === -1) {
-        out.push(line.slice(i));
-        break;
+        // Unclosed marker while streaming: drop the marker and keep parsing.
+        i += 2;
+        continue;
       }
       if (close === i + 2) {
-        out.push("**");
-        i += 2;
+        // Empty bold marker: drop it.
+        i += 4;
         continue;
       }
       const inner = line.slice(i + 2, close);
@@ -33,27 +34,31 @@ function renderBoldInLine(line: string, keyPrefix: string): ReactNode[] {
       continue;
     }
 
-    const open = line.indexOf("*", i);
-    if (open === -1) {
-      if (i < line.length) {
+    const ch = line[i];
+    if (ch !== "*") {
+      const next = line.indexOf("*", i);
+      if (next === -1) {
         out.push(line.slice(i));
+        break;
       }
-      break;
-    }
-    if (open > i) {
-      out.push(line.slice(i, open));
-    }
-    const close = line.indexOf("*", open + 1);
-    if (close === -1) {
-      out.push(line.slice(open));
-      break;
-    }
-    if (close === open + 1) {
-      out.push("*");
-      i = open + 1;
+      out.push(line.slice(i, next));
+      i = next;
       continue;
     }
-    const inner = line.slice(open + 1, close);
+
+    // Single '*' marker
+    const close = line.indexOf("*", i + 1);
+    if (close === -1) {
+      // Unclosed marker while streaming: drop it.
+      i += 1;
+      continue;
+    }
+    if (close === i + 1) {
+      // "**" case is handled above; for "*/" empty marker, drop it.
+      i += 2;
+      continue;
+    }
+    const inner = line.slice(i + 1, close);
     out.push(
       <strong key={`${keyPrefix}-b-${k++}`} className="font-semibold">
         {inner}

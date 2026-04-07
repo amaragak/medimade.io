@@ -51,6 +51,8 @@ export async function handler(
     audioUrl,
     scriptTextUsed,
     audioKey,
+    title,
+    description,
     errorMessage,
     createdAt,
     updatedAt,
@@ -60,6 +62,8 @@ export async function handler(
       audioUrl?: string;
       scriptTextUsed?: string;
       audioKey?: string;
+      title?: string;
+      description?: string;
       errorMessage?: string;
       createdAt?: string;
       updatedAt?: string;
@@ -71,6 +75,8 @@ export async function handler(
     audioUrl,
     scriptTextUsed,
     audioKey,
+    title,
+    description,
     error: errorMessage ?? undefined,
     createdAt,
     updatedAt,

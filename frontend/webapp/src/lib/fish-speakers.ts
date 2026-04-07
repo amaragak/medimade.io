@@ -24,6 +24,14 @@ export const FISH_SPEAKERS = [
     name: "Alex",
     modelId: "3c13489c4ae34c9291cb902e81337899",
   },
+  {
+    name: "Deep Soothing",
+    modelId: "daffce3e2eb74bb59c0701f469d83177",
+  },
+  {
+    name: "Dina",
+    modelId: "b2e60b7079c3400d96f168a132336837",
+  },
 ] as const;
 
 export type FishSpeakerModelId = (typeof FISH_SPEAKERS)[number]["modelId"];

@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type LibraryMeditationItem,
   listLibraryMeditations,
+  getMeditationAudioJobStatus,
   patchMeditationFavourite,
+  patchMeditationArchived,
   patchMeditationRating,
 } from "@/lib/medimade-api";
 import { ChatMarkdown } from "@/components/chat-markdown";
@@ -116,8 +119,76 @@ function IconHeart({
 
 type ViewMode = "list" | "grid";
 type SortBy = "newest" | "oldest" | "title";
+type LibraryMainTab = "meditations" | "drafts";
 
 type ActiveTrack = { url: string; title: string; s3Key: string };
+
+type PendingLibraryGeneration = {
+  jobId: string;
+  createdAt: string;
+  title: string;
+  description: string | null;
+  meditationStyle: string | null;
+  speakerName: string | null;
+  speakerModelId: string | null;
+  status?: "pending" | "running" | "failed";
+  error?: string | null;
+};
+
+type PendingLibraryMeditationItem = {
+  kind: "pending";
+  pendingKey: string; // pending:<jobId>
+  jobId: string;
+  title: string;
+  description: string | null;
+  createdAt: string;
+  meditationStyle: string | null;
+  speakerName: string | null;
+  speakerModelId: string | null;
+  status: "pending" | "running" | "failed";
+  error: string | null;
+};
+
+type LibraryRow = LibraryMeditationItem | PendingLibraryMeditationItem;
+
+const PENDING_LIBRARY_GENERATIONS_LS_KEY = "mm_pending_library_generations_v1";
+
+function isPendingRow(x: LibraryRow): x is PendingLibraryMeditationItem {
+  return (x as PendingLibraryMeditationItem).kind === "pending";
+}
+
+function loadPendingGenerations(): PendingLibraryGeneration[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(PENDING_LIBRARY_GENERATIONS_LS_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw) as unknown;
+    if (!Array.isArray(data)) return [];
+    return data.filter((x): x is PendingLibraryGeneration => {
+      if (!x || typeof x !== "object") return false;
+      const o = x as Record<string, unknown>;
+      return (
+        typeof o.jobId === "string" &&
+        typeof o.createdAt === "string" &&
+        typeof o.title === "string"
+      );
+    });
+  } catch {
+    return [];
+  }
+}
+
+function savePendingGenerations(next: PendingLibraryGeneration[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      PENDING_LIBRARY_GENERATIONS_LS_KEY,
+      JSON.stringify(next.slice(0, 20)),
+    );
+  } catch {
+    // ignore
+  }
+}
 
 function formatAudioClock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
@@ -430,18 +501,34 @@ function LibraryAudioStrip({
   );
 }
 
-export default function LibraryView() {
+export default function LibraryView({
+  initialItems = null,
+}: {
+  initialItems?: LibraryMeditationItem[] | null;
+}) {
   const alwaysShowRowChrome = useMobileOrTouchChrome();
-  const [items, setItems] = useState<LibraryMeditationItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const searchParams = useSearchParams();
+  const [items, setItems] = useState<LibraryMeditationItem[]>(
+    Array.isArray(initialItems) ? initialItems : [],
+  );
+  const [pending, setPending] = useState<PendingLibraryGeneration[]>(() =>
+    loadPendingGenerations(),
+  );
+  const [loading, setLoading] = useState(!Array.isArray(initialItems));
   const [error, setError] = useState<string | null>(null);
   const [expandedSk, setExpandedSk] = useState<string | null>(null);
   const [ratingBusy, setRatingBusy] = useState<string | null>(null);
   const [favouritesOnly, setFavouritesOnly] = useState(false);
   const [favouriteBusySk, setFavouriteBusySk] = useState<string | null>(null);
+  const [archiveBusySk, setArchiveBusySk] = useState<string | null>(null);
+  const [archiveConfirm, setArchiveConfirm] = useState<{
+    sk: string;
+    title: string;
+  } | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>("newest");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
+  const [libraryTab, setLibraryTab] = useState<LibraryMainTab>("meditations");
   const [nowPlaying, setNowPlaying] = useState<ActiveTrack | null>(null);
   const [playingS3Key, setPlayingS3Key] = useState<string | null>(null);
   const [playingTimeSeconds, setPlayingTimeSeconds] = useState(0);
@@ -452,6 +539,19 @@ export default function LibraryView() {
     g: number;
     b: number;
   } | null>(null);
+
+  const indeterminateStyle = (
+    <style>{`
+      @keyframes mmIndeterminateBar {
+        0% { transform: translateX(-40%); }
+        50% { transform: translateX(120%); }
+        100% { transform: translateX(320%); }
+      }
+    `}</style>
+  );
+
+  const itemElsRef = useRef<Map<string, HTMLLIElement>>(new Map());
+  const focusHandledRef = useRef(false);
 
   // Keep a stable ref for throttled `timeupdate` callbacks.
   playingS3KeyRef.current = playingS3Key;
@@ -493,14 +593,45 @@ export default function LibraryView() {
     return next;
   }, [items, sortBy]);
 
-  const visibleItems = useMemo(() => {
-    const base = sortedItems.filter((x) => x.catalogued);
+  const pendingRows: PendingLibraryMeditationItem[] = useMemo(() => {
+    const next = [...pending];
+    next.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+    return next.map((p) => ({
+      kind: "pending",
+      pendingKey: `pending:${p.jobId}`,
+      jobId: p.jobId,
+      title: p.title,
+      description: p.description ?? null,
+      createdAt: p.createdAt,
+      meditationStyle: p.meditationStyle ?? null,
+      speakerName: p.speakerName ?? null,
+      speakerModelId: p.speakerModelId ?? null,
+      status: p.status ?? "pending",
+      error: p.error ?? null,
+    }));
+  }, [pending]);
+
+  const libraryRows: LibraryRow[] = useMemo(() => {
+    // Only show pending generations in the main meditations tab.
+    if (libraryTab !== "meditations") return sortedItems;
+    return [...pendingRows, ...sortedItems];
+  }, [libraryTab, pendingRows, sortedItems]);
+
+  const visibleItems: LibraryRow[] = useMemo(() => {
+    if (libraryTab === "drafts") {
+      return sortedItems.filter((x) => x.isDraft === true);
+    }
+    const base = sortedItems.filter((x) => x.catalogued && x.archived !== true);
     const afterFav = favouritesOnly ? base.filter((x) => x.favourite) : base;
-    if (categoryFilter === "all") return afterFav;
-    return afterFav.filter(
-      (x) => (x.meditationStyle || x.meditationType || "—") === categoryFilter,
-    );
-  }, [sortedItems, favouritesOnly, categoryFilter]);
+    const afterCat =
+      categoryFilter === "all"
+        ? afterFav
+        : afterFav.filter(
+            (x) => (x.meditationStyle || x.meditationType || "—") === categoryFilter,
+          );
+    // Always surface pending generations at the top of the meditations tab.
+    return [...pendingRows, ...afterCat];
+  }, [sortedItems, favouritesOnly, categoryFilter, libraryTab, pendingRows]);
 
   const categoryOptions = useMemo(() => {
     const base = sortedItems.filter((x) => x.catalogued);
@@ -660,8 +791,130 @@ export default function LibraryView() {
   }, []);
 
   useEffect(() => {
+    // If we already have SSR-prefetched items, avoid flashing a loading state;
+    // still refresh in the background so the list stays current.
     void load();
-  }, [load]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep local pending generations in sync + poll status.
+  useEffect(() => {
+    setPending(loadPendingGenerations());
+    if (pending.length === 0) return;
+
+    let cancelled = false;
+    const tick = async (opts: { refreshLibraryOnChange: boolean }) => {
+      if (cancelled) return;
+      const current = loadPendingGenerations();
+      if (current.length === 0) {
+        setPending([]);
+        return;
+      }
+      let changed = false;
+      const next: PendingLibraryGeneration[] = [];
+      for (const p of current) {
+        try {
+          const st = await getMeditationAudioJobStatus(p.jobId);
+          const nextTitle = (st.title ?? "").trim();
+          const nextDesc = (st.description ?? "").trim();
+          const nextP: PendingLibraryGeneration =
+            nextTitle || nextDesc ? { ...p } : p;
+          if (nextTitle && nextTitle !== p.title) {
+            changed = true;
+            nextP.title = nextTitle;
+          }
+          if (nextDesc && nextDesc !== (p.description ?? "")) {
+            changed = true;
+            nextP.description = nextDesc;
+          }
+          if (st.status === "completed") {
+            changed = true;
+            continue; // drop from pending; the real item will appear via list refresh
+          }
+          if (st.status === "failed") {
+            changed = true;
+            next.push({ ...nextP, status: "failed", error: st.error ?? "Generation failed" });
+            continue;
+          }
+          next.push({ ...nextP, status: st.status === "running" ? "running" : "pending" });
+        } catch (e) {
+          // Network errors shouldn't kill the placeholder; keep it.
+          next.push(p);
+        }
+      }
+      if (!cancelled) {
+        if (changed) {
+          savePendingGenerations(next);
+          setPending(next);
+          if (opts.refreshLibraryOnChange) {
+            void load();
+          }
+        } else {
+          setPending(next);
+        }
+      }
+    };
+
+    // Two-speed polling:
+    // - fast: update title/description ASAP (script/meta finish well before audio)
+    // - slow: refresh library list to pick up completed audio rows
+    const needMeta = () =>
+      loadPendingGenerations().some((p) => {
+        const t = (p.title ?? "").trim().toLowerCase();
+        const looksFallback = t === "generating meditation…" || t === "generating meditation...";
+        return looksFallback || !(p.description ?? "").trim();
+      });
+
+    void tick({ refreshLibraryOnChange: false });
+    const fastId = window.setInterval(() => {
+      if (!needMeta()) return;
+      void tick({ refreshLibraryOnChange: false });
+    }, 1200);
+
+    const slowId = window.setInterval(() => {
+      void tick({ refreshLibraryOnChange: true });
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(fastId);
+      window.clearInterval(slowId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending.length, load]);
+
+  // If navigated from Create → "View in Library", auto-scroll and start playing.
+  useEffect(() => {
+    if (loading) return;
+    if (focusHandledRef.current) return;
+    const focus = searchParams.get("focus")?.trim() || "";
+    if (!focus) return;
+    focusHandledRef.current = true;
+
+    // Ensure we show the meditations tab (not drafts) for a generated audio key.
+    setLibraryTab("meditations");
+
+    const found = visibleItems.find((x) => {
+      if (isPendingRow(x)) return x.pendingKey === focus;
+      return x.s3Key === focus;
+    });
+    if (!found) return;
+
+    // Scroll to the card.
+    const key = isPendingRow(found) ? found.pendingKey : found.s3Key;
+    const el = itemElsRef.current.get(key);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    // Start playing in the strip (autoplay is already attempted in LibraryAudioStrip).
+    const play = searchParams.get("play");
+    if (play === "1") {
+      if (!isPendingRow(found)) {
+        setNowPlaying({ url: found.audioUrl, title: found.title, s3Key: found.s3Key });
+      }
+    }
+  }, [loading, visibleItems, searchParams]);
 
   const nowKey = nowPlaying?.s3Key ?? null;
   useEffect(() => {
@@ -717,7 +970,153 @@ export default function LibraryView() {
     }
   }
 
-  function renderItem(m: LibraryMeditationItem) {
+  async function setArchived(item: LibraryMeditationItem, archived: boolean) {
+    if (!item.sk) return;
+    const sk = item.sk;
+    const prevArchived = item.archived;
+    setArchiveBusySk(sk);
+    // Optimistic UI update; archived items drop out of the visible list.
+    setItems((prev) => prev.map((x) => (x.sk === sk ? { ...x, archived } : x)));
+    try {
+      await patchMeditationArchived(sk, archived);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not archive meditation");
+      setItems((prev) =>
+        prev.map((x) => (x.sk === sk ? { ...x, archived: prevArchived } : x)),
+      );
+    } finally {
+      setArchiveBusySk(null);
+    }
+  }
+
+  function renderItem(m: LibraryRow) {
+    if (isPendingRow(m)) {
+      return (
+        <li
+          key={m.pendingKey}
+          ref={(el) => {
+            if (el) itemElsRef.current.set(m.pendingKey, el);
+            else itemElsRef.current.delete(m.pendingKey);
+          }}
+          className="relative min-w-0 overflow-hidden rounded-2xl border border-accent/35 bg-accent-soft/20 p-4 shadow-sm"
+        >
+          {/* Indeterminate linear progress (MUI-like) */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute left-0 top-0 h-1 w-full bg-accent/10"
+          >
+            <div
+              className="h-full w-1/3 bg-accent/60"
+              style={{
+                animation: "mmIndeterminateBar 1.4s ease-in-out infinite",
+              }}
+            />
+          </div>
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 animate-pulse bg-accent-soft/30"
+          />
+          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 flex-1">
+              <h2 className="font-display text-lg font-medium leading-snug">
+                {m.title}
+              </h2>
+              <p className="mt-1 text-sm text-muted">{m.description ?? "—"}</p>
+              <p className="mt-2 text-xs text-muted">
+                {formatWhen(m.createdAt)}
+                {m.speakerName ? ` · ${m.speakerName}` : ""}
+              </p>
+            </div>
+            <div className="flex flex-shrink-0 items-center gap-2">
+              <div
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-accent/15 text-accent"
+                aria-label="Generating"
+                title="Generating"
+              >
+                <svg
+                  className="h-5 w-5 animate-spin"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  aria-hidden
+                >
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        </li>
+      );
+    }
+    // From here, `m` is a real library item.
+    if (m.isDraft === true) {
+      const href =
+        m.sk != null
+          ? `/create?draftSk=${encodeURIComponent(m.sk)}`
+          : "/create";
+      const continueBtn = (
+        <Link
+          href={href}
+          className="inline-flex shrink-0 items-center justify-center rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 dark:text-deep"
+        >
+          Continue
+        </Link>
+      );
+      if (viewMode === "grid") {
+        return (
+          <li
+            key={m.s3Key}
+            className="group relative flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card p-5 shadow-sm"
+          >
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">
+              Draft
+            </p>
+            <h2 className="font-display mt-2 text-lg font-medium leading-snug">
+              {m.title}
+            </h2>
+            <p className="mt-1 text-sm text-muted">
+              {m.meditationStyle?.trim() ? m.meditationStyle : "—"}
+            </p>
+            <p className="mt-3 text-xs text-muted">
+              {formatWhen(m.createdAt)}
+            </p>
+            <div className="mt-auto pt-4">{continueBtn}</div>
+          </li>
+        );
+      }
+      return (
+        <li
+          key={m.s3Key}
+          ref={(el) => {
+            if (el) itemElsRef.current.set(m.s3Key, el);
+            else itemElsRef.current.delete(m.s3Key);
+          }}
+          className="group relative min-w-0 overflow-hidden rounded-2xl border border-border bg-card p-4 shadow-sm"
+        >
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0 flex-1">
+              <span className="inline-block rounded-full border border-border bg-accent-soft/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+                Draft
+              </span>
+              <h2 className="font-display mt-2 text-lg font-medium leading-snug">
+                {m.title}
+              </h2>
+              <p className="mt-1 text-sm text-muted">
+                {m.meditationStyle?.trim()
+                  ? m.meditationStyle
+                  : "Style not set yet"}
+              </p>
+              <p className="mt-2 text-xs text-muted">
+                Saved {formatWhen(m.createdAt)}
+              </p>
+            </div>
+            {continueBtn}
+          </div>
+        </li>
+      );
+    }
+
     const open = m.sk != null && expandedSk === m.sk;
     const isSelected = nowPlaying?.s3Key === m.s3Key;
     const isPlaying = playingS3Key === m.s3Key;
@@ -769,6 +1168,32 @@ export default function LibraryView() {
         }`}
       >
         <IconHeart filled={m.favourite} strokeWidth={2.5} />
+      </button>
+    );
+
+    const archiveDisabled =
+      !m.sk || archiveBusySk === m.sk || ratingBusy === m.sk || favouriteBusySk === m.sk;
+    const archiveBtn = (
+      <button
+        type="button"
+        onClick={() => {
+          if (!m.sk) return;
+          setArchiveConfirm({ sk: m.sk, title: m.title });
+        }}
+        disabled={archiveDisabled}
+        aria-label="Archive meditation"
+        className={`cursor-pointer text-xs font-semibold transition-opacity transition-colors ${
+          alwaysShowRowChrome
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
+        } ${
+          "text-muted hover:text-foreground"
+        } ${
+          archiveDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+        }`}
+        title="Archive"
+      >
+        Archive
       </button>
     );
 
@@ -868,6 +1293,10 @@ export default function LibraryView() {
       return (
         <li
           key={m.s3Key}
+          ref={(el) => {
+            if (el) itemElsRef.current.set(m.s3Key, el);
+            else itemElsRef.current.delete(m.s3Key);
+          }}
           className={`group relative flex min-w-0 flex-col overflow-hidden rounded-2xl border bg-card p-5 shadow-sm ${
             isPlaying
               ? "border-accent"
@@ -905,11 +1334,12 @@ export default function LibraryView() {
             {m.description ?? "—"}
             {scriptToggleBtn}
           </div>
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-            <span>
+          <div className="mt-3 flex w-full items-center gap-3 text-xs text-muted">
+            <span className="min-w-0 flex-1">
               {formatWhen(m.createdAt)}
               {m.speakerName ? ` · ${m.speakerName}` : ""}
             </span>
+            <span className="shrink-0">{archiveBtn}</span>
           </div>
           {scriptBlock ? <div className="mt-4">{scriptBlock}</div> : null}
           <div className="mt-auto flex items-center justify-between gap-3 translate-y-2">
@@ -967,15 +1397,21 @@ export default function LibraryView() {
               {m.description ?? "—"}
               {scriptToggleBtn}
             </div>
-            <p className="mt-2 text-xs text-muted">
-              {formatWhen(m.createdAt)}
-              {m.speakerName ? ` · ${m.speakerName}` : ""}
-            </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:flex-col lg:items-end xl:flex-col xl:items-end">
             {stars}
-            <div className="flex items-center gap-2 lg:self-end">{actions}{favouriteBtn}</div>
+            <div className="flex items-center gap-2 lg:self-end">
+              {actions}
+              {favouriteBtn}
+            </div>
           </div>
+        </div>
+        <div className="mt-2 flex w-full items-center gap-3 text-xs text-muted">
+          <span className="min-w-0 flex-1">
+            {formatWhen(m.createdAt)}
+            {m.speakerName ? ` · ${m.speakerName}` : ""}
+          </span>
+          <span className="shrink-0">{archiveBtn}</span>
         </div>
         {scriptBlock ? <div className="mt-4 border-t border-border pt-4">{scriptBlock}</div> : null}
       </li>
@@ -984,6 +1420,7 @@ export default function LibraryView() {
 
   return (
     <>
+      {indeterminateStyle}
       {accentRgb ? (
         <style>
           {`@keyframes borderAccentColorPulse {
@@ -1004,13 +1441,47 @@ export default function LibraryView() {
             <h1 className="font-display text-3xl font-medium tracking-tight">
               Library
             </h1>
+            <div
+              className="mt-4 inline-flex rounded-xl border border-border bg-background p-1"
+              role="tablist"
+              aria-label="Library section"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={libraryTab === "meditations"}
+                onClick={() => setLibraryTab("meditations")}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                  libraryTab === "meditations"
+                    ? "bg-accent text-white dark:text-deep"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                Meditations
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={libraryTab === "drafts"}
+                onClick={() => setLibraryTab("drafts")}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                  libraryTab === "drafts"
+                    ? "bg-accent text-white dark:text-deep"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                Drafts
+              </button>
+            </div>
             <p className="mt-2 w-full min-w-0 text-muted">
-              Meditations stored in your media bucket, with metadata from each
-              generation. Rate sessions and open the script when you need the text.
+              {libraryTab === "drafts"
+                ? "Work in progress from Create. Open a draft to keep editing; it stays here until you generate audio."
+                : "Your generated meditations, saved with details from each session. Rate them, and open the script whenever you need the text."}
             </p>
           </div>
           <div className="mt-4 flex w-full items-center justify-between gap-3 sm:col-span-2 sm:row-start-2">
             <div className="flex items-center gap-3">
+              {libraryTab === "meditations" ? (
               <button
                 type="button"
                 onClick={() => setFavouritesOnly((v) => !v)}
@@ -1024,6 +1495,7 @@ export default function LibraryView() {
                 <IconHeart filled={favouritesOnly} />
                 <span className="hidden sm:inline">Favourites</span>
               </button>
+              ) : null}
               <div ref={sortDropdownRef} className="relative shrink-0">
                 <button
                   type="button"
@@ -1089,6 +1561,7 @@ export default function LibraryView() {
                   </div>
                 ) : null}
               </div>
+              {libraryTab === "meditations" ? (
               <div ref={categoryDropdownRef} className="relative shrink-0">
                 <button
                   type="button"
@@ -1154,6 +1627,7 @@ export default function LibraryView() {
                   </div>
                 ) : null}
               </div>
+              ) : null}
             </div>
             <div
               className="inline-flex rounded-xl border border-border bg-card p-1"
@@ -1201,13 +1675,15 @@ export default function LibraryView() {
         </p>
       ) : null}
 
-      {loading ? (
+      {loading && visibleItems.length === 0 ? (
         <p className="mt-10 text-sm text-muted">Loading…</p>
       ) : visibleItems.length === 0 ? (
         <p className="mt-10 w-full min-w-0 text-sm text-muted">
-          {favouritesOnly
-            ? "No favourite meditations yet."
-            : "No meditation audio yet. Generate one from Create — it will appear here after upload."}
+          {libraryTab === "drafts"
+            ? "No drafts yet. On Create, use Save draft (audio step) to store your session; drafts only show here."
+            : favouritesOnly
+              ? "No favourite meditations yet."
+              : "No meditation audio yet. Generate one from Create — it will appear here after upload."}
         </p>
       ) : (
         <ul
@@ -1234,6 +1710,44 @@ export default function LibraryView() {
           setPlayingTimeSeconds(timeSeconds);
         }}
     />
+
+    {archiveConfirm ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-4 shadow-xl">
+          <div className="text-sm font-semibold text-foreground">
+            Archive meditation?
+          </div>
+          <div className="mt-2 text-xs text-muted">
+            This will hide it from your Library list.
+          </div>
+          <div className="mt-2 text-xs text-muted">
+            <span className="font-semibold text-foreground">“{archiveConfirm.title}”</span>
+          </div>
+
+          <div className="mt-4 flex justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setArchiveConfirm(null)}
+              className="cursor-pointer rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground hover:border-accent/40"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const sk = archiveConfirm.sk;
+                const item = items.find((x) => x.sk === sk);
+                setArchiveConfirm(null);
+                if (item) void setArchived(item, true);
+              }}
+              className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90 dark:text-deep"
+            >
+              Archive
+            </button>
+          </div>
+        </div>
+      </div>
+    ) : null}
     </>
   );
 }

@@ -39,3 +39,27 @@ export function speakerPreviewSampleKey(
 ): string {
   return `speaker-samples/${modelId}/${speechSpeedToSampleStem(speed)}.mp3`;
 }
+
+/** Loudness-normalized preview MP3 (~-16 LUFS integrated). */
+export function speakerPreviewLoudSampleKey(
+  modelId: string,
+  speed: number,
+): string {
+  return `speaker-samples/${modelId}/${speechSpeedToSampleStem(speed)}-loud.mp3`;
+}
+
+/** Processed preview (Pedalboard preset `mixer`) for the sound mixer; WAV on CDN. */
+export function speakerPreviewFxSampleKey(
+  modelId: string,
+  speed: number,
+): string {
+  return `speaker-samples/${modelId}/${speechSpeedToSampleStem(speed)}-fx.wav`;
+}
+
+/** FX preview derived from the loudness-normalized MP3 input. */
+export function speakerPreviewLoudFxSampleKey(
+  modelId: string,
+  speed: number,
+): string {
+  return `speaker-samples/${modelId}/${speechSpeedToSampleStem(speed)}-loud-fx.wav`;
+}

@@ -108,24 +108,34 @@ export async function handler(
       scriptTruncated: boolean;
       rating: number | null;
       favourite: boolean;
+      archived: boolean;
       description: string | null;
       speakerModelId: string | null;
       speakerName: string | null;
       catalogued: boolean;
       mp3Bytes: number | null;
+      isDraft: boolean;
     };
 
     const merged = new Map<string, OutItem>();
 
     for (const row of ddbItems) {
-      const s3Key = typeof row.s3Key === "string" ? row.s3Key : "";
-      if (!s3Key) continue;
-      const sk = typeof row.sk === "string" ? row.sk : null;
+      const isDraft = row.isDraft === true;
+      let s3Key = typeof row.s3Key === "string" ? row.s3Key : "";
       const id = typeof row.id === "string" ? row.id : null;
+      if (isDraft) {
+        if (!id) continue;
+        if (!s3Key) s3Key = `drafts/${id}`;
+      } else if (!s3Key) {
+        continue;
+      }
+      const sk = typeof row.sk === "string" ? row.sk : null;
       const title =
         typeof row.title === "string" && row.title.trim()
           ? row.title.trim()
-          : "Meditation";
+          : isDraft
+            ? "Draft"
+            : "Meditation";
       const meditationType =
         typeof row.meditationType === "string" ? row.meditationType : null;
       const meditationStyle =
@@ -149,6 +159,7 @@ export async function handler(
           ? row.rating
           : null;
       const favourite = row.favourite === true;
+      const archived = row.archived === true;
       const description =
         typeof row.description === "string" && row.description.trim().length > 0
           ? row.description.trim()
@@ -162,7 +173,9 @@ export async function handler(
         id,
         sk,
         s3Key,
-        audioUrl: `https://${cfDomain}/${s3Key}`,
+        audioUrl: isDraft
+          ? ""
+          : `https://${cfDomain}/${s3Key}`,
         title,
         meditationType,
         meditationStyle,
@@ -172,11 +185,13 @@ export async function handler(
         scriptTruncated,
         rating,
         favourite,
+        archived,
         description,
         speakerModelId: referenceId,
         speakerName: speakerNameForModelId(referenceId),
-        catalogued: true,
+        catalogued: !isDraft,
         mp3Bytes,
+        isDraft,
       });
     }
 
@@ -196,11 +211,13 @@ export async function handler(
         scriptTruncated: false,
         rating: null,
         favourite: false,
+        archived: false,
         description: null,
         speakerModelId: null,
         speakerName: null,
         catalogued: false,
         mp3Bytes: obj.size,
+        isDraft: false,
       });
     }
 
