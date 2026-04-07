@@ -524,16 +524,36 @@ async function deriveLibraryMetadataFromClaude(params: {
 
 function fallbackLibraryMetadata(params: {
   meditationStyle: string;
+  transcript: string;
 }): { title: string; meditationType: string; description: string } {
-  const style = params.meditationStyle.trim();
-  const type = style || "Meditation";
+  const rawStyle = params.meditationStyle.trim();
+  const style =
+    rawStyle && rawStyle.toLowerCase() !== "general" ? rawStyle : "";
+
+  // Heuristic: pull the first "User:" line from the transcript to avoid generic titles in Journal mode.
+  const firstUserLine = (() => {
+    const t = params.transcript || "";
+    const m = t.match(/(^|\n)User:\s*([^\n]+)/i);
+    return (m?.[2] ?? "").trim();
+  })();
+  const moodSnippet = firstUserLine
+    .replace(/\s+/g, " ")
+    .replace(/[“”"]/g, "")
+    .trim();
+  const shortMood =
+    moodSnippet.length > 0 ? moodSnippet.slice(0, 80).replace(/\s+$/g, "") : "";
+
+  const meditationType = style || (shortMood ? "Journal" : "Meditation");
   const title = style
     ? `${style} · session`
-    : "Guided meditation";
+    : shortMood
+      ? `Journal · ${shortMood}`
+      : "Guided meditation";
 
-  const base =
-    style
-      ? `A ${style} session with gentle guidance to help you soften tension, steady your breath, and reconnect with calm. Expect slow pacing, soothing reminders, and a grounded end-state you can carry into your day.`
+  const base = style
+    ? `A ${style} session with gentle guidance to help you soften tension, steady your breath, and reconnect with calm. Expect slow pacing, soothing reminders, and a grounded end-state you can carry into your day.`
+    : shortMood
+      ? `A gentle guided session shaped around your check-in: ${shortMood}. Expect slow pacing, supportive reminders, and an easy landing that helps you feel more grounded by the end.`
       : "A guided meditation designed to calm your mind and support relaxation. Expect gentle pacing, slow breath cues, and reassuring prompts that help you release tension and return to the present moment.";
 
   let description = base.replace(/\s+/g, " ").trim();
@@ -545,7 +565,7 @@ function fallbackLibraryMetadata(params: {
       .slice(0, 300);
   }
 
-  return { title, meditationType: type, description };
+  return { title, meditationType, description };
 }
 
 async function fishTtsMp3(params: {
@@ -1013,7 +1033,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   } catch (e) {
     const msg = e instanceof Error ? e.message : "metadata derive failed";
     console.warn("early library metadata derive failed, using fallback", { msg });
-    const fb = fallbackLibraryMetadata({ meditationStyle });
+    const fb = fallbackLibraryMetadata({ meditationStyle, transcript });
     libraryTitle = fb.title;
     libraryMeditationType = fb.meditationType;
     libraryDescription = fb.description;

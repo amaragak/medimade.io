@@ -86,24 +86,6 @@ function savePendingGenerations(next: PendingLibraryGeneration[]) {
   }
 }
 
-function deriveTitleAndDescriptionFromScript(script: string | null): {
-  title: string;
-  description: string | null;
-} {
-  const fallback = { title: "Generating meditation…", description: null };
-  if (!script) return fallback;
-  const lines = script
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean);
-  if (lines.length === 0) return fallback;
-  const first = lines[0].replace(/^#+\s*/, "").trim();
-  const title = first.length > 0 ? first.slice(0, 80) : fallback.title;
-  const descLine = lines.find((l) => l.length > 20 && l !== lines[0]) ?? null;
-  const description = descLine ? descLine.replace(/^[-*]\s+/, "").slice(0, 140) : null;
-  return { title, description };
-}
-
 function maybeScrollChatToBottom(
   isAtBottomRef: React.MutableRefObject<boolean>,
   messagesEndRef: React.MutableRefObject<HTMLDivElement | null>,
@@ -1096,7 +1078,6 @@ export function CreateWorkspace({
     stopAllAudioPreview();
     setAudioLoading(true);
     try {
-      const startedAt = Date.now();
       const last = messages[messages.length - 1];
       const existingScript =
         last?.role === "assistant" && last.variant === "script"
@@ -1135,41 +1116,48 @@ export function CreateWorkspace({
           : {}),
       });
 
-      // Wait until (a) at least 2s has elapsed AND (b) the script-derived metadata is ready.
-      // The backend generates the script first, then derives title/description, then does slow audio work.
-      let metaTitle: string | null = null;
-      let metaDesc: string | null = null;
-      const metaDeadlineMs = 30_000;
+      // Do not redirect until the worker has finished script + library metadata (title/description).
+      // Audio synthesis continues after that; the Library card should show real copy from the job, not client guesses.
+      const metaDeadlineMs = 5 * 60_000;
       const metaStart = Date.now();
+      let metaTitle = "";
+      let metaDesc = "";
       while (Date.now() - metaStart < metaDeadlineMs) {
+        let st: Awaited<ReturnType<typeof getMeditationAudioJobStatus>>;
         try {
-          const st = await getMeditationAudioJobStatus(jobId);
-          const t = (st.title ?? "").trim();
-          const d = (st.description ?? "").trim();
-          if (t) metaTitle = t;
-          if (d) metaDesc = d;
-          if (metaTitle && metaDesc) break;
-          // If we at least have a title, that's enough to avoid the fallback card.
-          if (metaTitle) break;
+          st = await getMeditationAudioJobStatus(jobId);
         } catch {
-          // ignore transient status errors
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
         }
-        await new Promise((r) => setTimeout(r, 350));
+        if (st.status === "failed") {
+          throw new Error(st.error ?? "Generation failed");
+        }
+        const scriptOk = (st.scriptTextUsed ?? "").trim().length > 0;
+        const t = (st.title ?? "").trim();
+        const d = (st.description ?? "").trim();
+        if (scriptOk && t && d) {
+          metaTitle = t;
+          metaDesc = d;
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 400));
       }
 
-      const fallback = deriveTitleAndDescriptionFromScript(
-        existingScript ?? lastUsedScript,
-      );
-      const title = metaTitle ?? fallback.title;
-      const description = metaDesc ?? fallback.description;
+      if (!metaTitle || !metaDesc) {
+        throw new Error(
+          "Timed out waiting for script and library details. Your job may still be running — open Library to check progress.",
+        );
+      }
+
       const speakerName =
         fishSpeakers.find((s) => s.modelId === speakerModelId)?.name ?? null;
 
       const pending: PendingLibraryGeneration = {
         jobId,
         createdAt: new Date().toISOString(),
-        title,
-        description,
+        title: metaTitle,
+        description: metaDesc,
         meditationStyle,
         speakerName,
         speakerModelId,
@@ -1179,12 +1167,6 @@ export function CreateWorkspace({
       );
       savePendingGenerations(nextPending);
 
-      // Keep the button in "Generating…" state for at least 2 seconds, then redirect to Library.
-      const elapsed = Date.now() - startedAt;
-      const remaining = Math.max(0, 2000 - elapsed);
-      if (remaining > 0) {
-        await new Promise((r) => setTimeout(r, remaining));
-      }
       isRedirectingToLibraryRef.current = true;
       router.push(`/library?focus=${encodeURIComponent(`pending:${jobId}`)}`);
     } catch (e) {
