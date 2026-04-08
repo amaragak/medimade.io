@@ -6,6 +6,7 @@ import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { speakerNameForModelId } from "../lib/fish-speakers";
+import { meditationPlaybackS3Key } from "../lib/playback-keys";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -129,6 +130,7 @@ export async function handler(
       } else if (!s3Key) {
         continue;
       }
+      const catalogS3Key = isDraft ? s3Key : meditationPlaybackS3Key(s3Key);
       const sk = typeof row.sk === "string" ? row.sk : null;
       const title =
         typeof row.title === "string" && row.title.trim()
@@ -169,13 +171,13 @@ export async function handler(
           ? row.mp3Bytes
           : null;
 
-      merged.set(s3Key, {
+      merged.set(catalogS3Key, {
         id,
         sk,
-        s3Key,
+        s3Key: catalogS3Key,
         audioUrl: isDraft
           ? ""
-          : `https://${cfDomain}/${s3Key}`,
+          : `https://${cfDomain}/${catalogS3Key}`,
         title,
         meditationType,
         meditationStyle,

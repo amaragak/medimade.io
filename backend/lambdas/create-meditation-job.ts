@@ -41,13 +41,17 @@ export async function handler(
     reference_id?: string;
     speed?: number;
     voiceFxPreset?: string;
+    /** True when the user used journal / “How I feel” flow (no real style label). */
+    journalMode?: boolean;
     backgroundSoundKey?: string;
     backgroundNatureKey?: string;
     backgroundMusicKey?: string;
     backgroundDrumsKey?: string;
+    backgroundNoiseKey?: string;
     backgroundNatureGain?: number;
     backgroundMusicGain?: number;
     backgroundDrumsGain?: number;
+    backgroundNoiseGain?: number;
   };
   try {
     body = JSON.parse(event.body || "{}");
@@ -92,9 +96,13 @@ export async function handler(
   const backgroundNatureKey = optTrim(body.backgroundNatureKey);
   const backgroundMusicKey = optTrim(body.backgroundMusicKey);
   const backgroundDrumsKey = optTrim(body.backgroundDrumsKey);
+  const backgroundNoiseKey = optTrim(body.backgroundNoiseKey);
   const backgroundNatureGain = optGain(body.backgroundNatureGain);
   const backgroundMusicGain = optGain(body.backgroundMusicGain);
   const backgroundDrumsGain = optGain(body.backgroundDrumsGain);
+  const backgroundNoiseGain = optGain(body.backgroundNoiseGain);
+
+  const journalMode = body.journalMode === true;
 
   const jobId = randomUUID();
   const now = new Date().toISOString();
@@ -112,11 +120,13 @@ export async function handler(
         scriptText,
         referenceId,
         speed,
+        ...(journalMode ? { journalMode: true } : {}),
         ...(voiceFxPreset ? { voiceFxPreset } : {}),
         backgroundSoundKey,
         ...(backgroundNatureKey ? { backgroundNatureKey } : {}),
         ...(backgroundMusicKey ? { backgroundMusicKey } : {}),
         ...(backgroundDrumsKey ? { backgroundDrumsKey } : {}),
+        ...(backgroundNoiseKey ? { backgroundNoiseKey } : {}),
         ...(backgroundNatureGain !== undefined
           ? { backgroundNatureGain }
           : {}),
@@ -125,6 +135,9 @@ export async function handler(
           : {}),
         ...(backgroundDrumsGain !== undefined
           ? { backgroundDrumsGain }
+          : {}),
+        ...(backgroundNoiseGain !== undefined
+          ? { backgroundNoiseGain }
           : {}),
       },
     }),

@@ -52,27 +52,35 @@ SRC="$BG_DIR/"
 DEST_RAW="s3://$MEDIA_BUCKET_NAME/background-audio-raw/"
 DEST_NORM="s3://$MEDIA_BUCKET_NAME/background-audio/"
 
+# Avoid indefinite hangs on bad networks.
+AWS_TIMEOUT_ARGS=(--cli-connect-timeout 10 --cli-read-timeout 120)
+
 if [ "$FORCE_UPDATE" = "1" ]; then
   echo "Force update: COMPLETE mirror of local -> S3."
-  echo "  1) Remove all objects under background-audio-raw/ and background-audio/"
-  echo "  2) Upload every .mp3 / .wav from $SRC (each Put triggers the normalizer Lambda)"
+  echo "  1) Mirror deletes/renames to background-audio-raw/ via sync --delete"
+  echo "  2) Re-upload all .mp3/.wav to raw to re-trigger the normalizer"
   echo ""
-  echo "Clearing raw prefix: $DEST_RAW"
-  aws s3 rm "$DEST_RAW" --recursive "${AWS_ARGS[@]}" || true
-  echo "Clearing normalized prefix: $DEST_NORM"
-  aws s3 rm "$DEST_NORM" --recursive "${AWS_ARGS[@]}" || true
-
-  count=0
-  while IFS= read -r -d '' f; do
-    rel="${f#"$BG_DIR"/}"
-    rel="${rel#/}"
-    echo "upload -> background-audio-raw/$rel"
-    aws s3 cp "$f" "s3://$MEDIA_BUCKET_NAME/background-audio-raw/$rel" "${AWS_ARGS[@]}"
-    count=$((count + 1))
-  done < <(find "$BG_DIR" -type f \( -iname '*.mp3' -o -iname '*.wav' \) -print0)
+  echo "Mirroring deletes/renames to raw with --delete: $SRC -> $DEST_RAW"
+  aws s3 sync "$SRC" "$DEST_RAW" \
+    --delete \
+    --exclude "*" \
+    --include "*.mp3" \
+    --include "*.wav" \
+    "${AWS_TIMEOUT_ARGS[@]}" \
+    "${AWS_ARGS[@]}"
 
   echo ""
-  echo "Uploaded $count file(s) to raw. Normalized copies will appear under background-audio/ as the Lambda runs."
+  echo "Re-uploading all files to raw (re-triggers normalization): $SRC -> $DEST_RAW"
+  aws s3 cp "$SRC" "$DEST_RAW" \
+    --recursive \
+    --exclude "*" \
+    --include "*.mp3" \
+    --include "*.wav" \
+    "${AWS_TIMEOUT_ARGS[@]}" \
+    "${AWS_ARGS[@]}"
+
+  echo ""
+  echo "Raw mirror + reupload complete. Normalized .wav + .mp3 per stem will appear under background-audio/ as the Lambda runs."
   echo "If background-audio/ stays empty, check CloudWatch logs for the bg-audio-normalize function and S3 event notifications on this bucket."
 else
   echo "Syncing $SRC -> $DEST_RAW"
@@ -80,6 +88,7 @@ else
     --exclude "*" \
     --include "*.mp3" \
     --include "*.wav" \
+    "${AWS_TIMEOUT_ARGS[@]}" \
     "${AWS_ARGS[@]}"
 fi
 

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useRef } from "react";
 
 const nav = [
   { href: "/create", label: "Create" },
@@ -15,6 +16,7 @@ const nav = [
 
 export function SiteHeader() {
   const pathname = usePathname() || "/";
+  const mobileMenuRef = useRef<HTMLDetailsElement | null>(null);
   const isActive = (href: string) =>
     href === "/"
       ? pathname === "/"
@@ -50,15 +52,33 @@ export function SiteHeader() {
             Pro
           </Link>
         </nav>
-        <details className="relative sm:hidden">
-          <summary className="cursor-pointer list-none rounded-lg border border-border px-3 py-2 text-sm">
-            Menu
+        <details ref={mobileMenuRef} className="relative sm:hidden">
+          <summary
+            aria-label="Menu"
+            className="cursor-pointer list-none rounded-lg border border-border p-2 text-sm"
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="20"
+              height="20"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              aria-hidden
+            >
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
           </summary>
           <div className="absolute right-0 mt-2 w-48 rounded-xl border border-border bg-card py-2 shadow-lg">
             {nav.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={() => {
+                  // Close the <details> menu after navigation.
+                  if (mobileMenuRef.current) mobileMenuRef.current.open = false;
+                }}
                 aria-current={isActive(item.href) ? "page" : undefined}
                 className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
                   isActive(item.href) ? "font-semibold text-foreground" : ""
@@ -69,6 +89,9 @@ export function SiteHeader() {
             ))}
             <Link
               href="/pro"
+              onClick={() => {
+                if (mobileMenuRef.current) mobileMenuRef.current.open = false;
+              }}
               className="block px-4 py-2 text-sm font-medium text-accent"
             >
               Pro

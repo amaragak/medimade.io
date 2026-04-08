@@ -119,6 +119,8 @@ export async function streamMedimadeChat(
   params: {
     meditationStyle: string;
     messages: MedimadeChatTurn[];
+    /** When true, style is a journal placeholder — do not lock coach/script to a preset technique. */
+    journalMode?: boolean;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
@@ -127,6 +129,7 @@ export async function streamMedimadeChat(
       mode: "chat",
       meditationStyle: params.meditationStyle,
       messages: params.messages,
+      ...(params.journalMode === true ? { journalMode: true } : {}),
     },
     onDelta,
     "Empty reply from guide",
@@ -140,6 +143,7 @@ export async function streamMeditationScript(
   params: {
     meditationStyle: string | null;
     transcript: string;
+    journalMode?: boolean;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
@@ -148,6 +152,7 @@ export async function streamMeditationScript(
       mode: "generate_script",
       meditationStyle: params.meditationStyle ?? "",
       transcript: params.transcript,
+      ...(params.journalMode === true ? { journalMode: true } : {}),
     },
     onDelta,
     "Empty script from model",
@@ -175,13 +180,25 @@ export type BackgroundAudioItem = {
   key: string;
   name: string;
   size: number | null;
+  /** Normalized WAV sibling for pro-tier / high-quality download when present. */
+  wavKey?: string;
 };
+
+/** Prefer CDN MP3 for previews and mixer jobs (`background-audio/…` beds). */
+export function backgroundAudioStreamingKey(key: string): string {
+  const k = key.trim();
+  if (!k) return k;
+  const lower = k.toLowerCase();
+  if (!lower.startsWith("background-audio/") || !lower.endsWith(".wav")) return k;
+  return `${k.slice(0, -4)}.mp3`;
+}
 
 export type BackgroundAudioByCategory = {
   baseUrl?: string;
   nature: BackgroundAudioItem[];
   music: BackgroundAudioItem[];
   drums: BackgroundAudioItem[];
+  noise: BackgroundAudioItem[];
 };
 
 export type FishSpeaker = {
@@ -257,9 +274,11 @@ export async function generateMeditationAudio(params: {
   backgroundNatureKey?: string | null;
   backgroundMusicKey?: string | null;
   backgroundDrumsKey?: string | null;
+  backgroundNoiseKey?: string | null;
   backgroundNatureGain?: number;
   backgroundMusicGain?: number;
   backgroundDrumsGain?: number;
+  backgroundNoiseGain?: number;
 }): Promise<GenerateMeditationAudioResponse> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
@@ -280,6 +299,7 @@ export async function generateMeditationAudio(params: {
   const backgroundNatureKey = trimBg(params.backgroundNatureKey ?? null);
   const backgroundMusicKey = trimBg(params.backgroundMusicKey ?? null);
   const backgroundDrumsKey = trimBg(params.backgroundDrumsKey ?? null);
+  const backgroundNoiseKey = trimBg(params.backgroundNoiseKey ?? null);
 
   const jobBody: Record<string, unknown> = {
     meditationStyle: params.meditationStyle ?? "",
@@ -292,6 +312,7 @@ export async function generateMeditationAudio(params: {
     ...(backgroundNatureKey ? { backgroundNatureKey } : {}),
     ...(backgroundMusicKey ? { backgroundMusicKey } : {}),
     ...(backgroundDrumsKey ? { backgroundDrumsKey } : {}),
+    ...(backgroundNoiseKey ? { backgroundNoiseKey } : {}),
   };
 
   if (typeof params.backgroundNatureGain === "number") {
@@ -302,6 +323,9 @@ export async function generateMeditationAudio(params: {
   }
   if (typeof params.backgroundDrumsGain === "number") {
     jobBody.backgroundDrumsGain = params.backgroundDrumsGain;
+  }
+  if (typeof params.backgroundNoiseGain === "number") {
+    jobBody.backgroundNoiseGain = params.backgroundNoiseGain;
   }
 
   const createRes = await fetch(`${base}/meditation/audio/jobs`, {
@@ -375,6 +399,8 @@ export async function generateMeditationAudio(params: {
 /** Creates an async meditation audio job and returns the job id (does not poll). */
 export async function createMeditationAudioJob(params: {
   meditationStyle: string | null;
+  /** When true, library metadata must infer preset `meditationType` from chat + script (journal flow). */
+  journalMode?: boolean;
   transcript: string;
   scriptText?: string | null;
   reference_id: string;
@@ -386,9 +412,11 @@ export async function createMeditationAudioJob(params: {
   backgroundNatureKey?: string | null;
   backgroundMusicKey?: string | null;
   backgroundDrumsKey?: string | null;
+  backgroundNoiseKey?: string | null;
   backgroundNatureGain?: number;
   backgroundMusicGain?: number;
   backgroundDrumsGain?: number;
+  backgroundNoiseGain?: number;
 }): Promise<{ jobId: string }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
@@ -409,18 +437,21 @@ export async function createMeditationAudioJob(params: {
   const backgroundNatureKey = trimBg(params.backgroundNatureKey ?? null);
   const backgroundMusicKey = trimBg(params.backgroundMusicKey ?? null);
   const backgroundDrumsKey = trimBg(params.backgroundDrumsKey ?? null);
+  const backgroundNoiseKey = trimBg(params.backgroundNoiseKey ?? null);
 
   const jobBody: Record<string, unknown> = {
     meditationStyle: params.meditationStyle ?? "",
     transcript: params.transcript,
     scriptText: params.scriptText ?? "",
     reference_id: params.reference_id,
+    ...(params.journalMode === true ? { journalMode: true } : {}),
     ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
     ...(speed === undefined ? {} : { speed }),
     ...(backgroundSoundKey === undefined ? {} : { backgroundSoundKey }),
     ...(backgroundNatureKey ? { backgroundNatureKey } : {}),
     ...(backgroundMusicKey ? { backgroundMusicKey } : {}),
     ...(backgroundDrumsKey ? { backgroundDrumsKey } : {}),
+    ...(backgroundNoiseKey ? { backgroundNoiseKey } : {}),
   };
 
   if (typeof params.backgroundNatureGain === "number") {
@@ -431,6 +462,9 @@ export async function createMeditationAudioJob(params: {
   }
   if (typeof params.backgroundDrumsGain === "number") {
     jobBody.backgroundDrumsGain = params.backgroundDrumsGain;
+  }
+  if (typeof params.backgroundNoiseGain === "number") {
+    jobBody.backgroundNoiseGain = params.backgroundNoiseGain;
   }
 
   const createRes = await fetch(`${base}/meditation/audio/jobs`, {
@@ -482,6 +516,7 @@ export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> 
     nature?: BackgroundAudioItem[];
     music?: BackgroundAudioItem[];
     drums?: BackgroundAudioItem[];
+    noise?: BackgroundAudioItem[];
     items?: BackgroundAudioItem[];
     error?: string;
     detail?: string;
@@ -495,7 +530,26 @@ export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> 
     nature: data.nature ?? [],
     music: data.music ?? [],
     drums: data.drums ?? [],
+    noise: data.noise ?? [],
   };
+}
+
+/**
+ * Library badge line: preset `meditationType` first; omit placeholder style "General"
+ * so journal-mode rows show the inferred category (e.g. Breath-led), not "General".
+ */
+export function libraryMeditationCategoryLabel(m: {
+  meditationType: string | null;
+  meditationStyle: string | null;
+}): string {
+  const type = m.meditationType?.trim() ?? "";
+  const rawStyle = m.meditationStyle?.trim() ?? "";
+  const styleOk =
+    rawStyle && rawStyle.toLowerCase() !== "general" ? rawStyle : "";
+  if (type && styleOk) return `${type} · ${styleOk}`;
+  if (type) return type;
+  if (styleOk) return styleOk;
+  return "—";
 }
 
 export type LibraryMeditationItem = {

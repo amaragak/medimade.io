@@ -4,6 +4,10 @@ import type {
 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  meditationPlaybackAudioUrl,
+  meditationPlaybackS3Key,
+} from "../lib/playback-keys";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
@@ -69,12 +73,19 @@ export async function handler(
       updatedAt?: string;
     };
 
+  const playbackKey =
+    typeof audioKey === "string" ? meditationPlaybackS3Key(audioKey) : audioKey;
+  const playbackUrl =
+    typeof audioUrl === "string"
+      ? meditationPlaybackAudioUrl(audioUrl)
+      : audioUrl;
+
   return json(200, {
     jobId,
     status,
-    audioUrl,
+    audioUrl: playbackUrl,
     scriptTextUsed,
-    audioKey,
+    audioKey: playbackKey,
     title,
     description,
     error: errorMessage ?? undefined,

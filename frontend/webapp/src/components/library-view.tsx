@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type LibraryMeditationItem,
+  libraryMeditationCategoryLabel,
   listLibraryMeditations,
   getMeditationAudioJobStatus,
   patchMeditationFavourite,
@@ -633,7 +634,7 @@ export default function LibraryView({
       categoryFilter === "all"
         ? afterFav
         : afterFav.filter(
-            (x) => (x.meditationStyle || x.meditationType || "—") === categoryFilter,
+            (x) => libraryMeditationCategoryLabel(x) === categoryFilter,
           );
     // Always surface pending generations at the top of the meditations tab.
     return [...pendingRows, ...afterCat];
@@ -696,7 +697,7 @@ export default function LibraryView({
     const afterFav = favouritesOnly ? base.filter((x) => x.favourite) : base;
     const counts: Record<string, number> = {};
     for (const x of afterFav) {
-      const key = x.meditationStyle || x.meditationType || "—";
+      const key = libraryMeditationCategoryLabel(x);
       if (!key || key === "—") continue;
       counts[key] = (counts[key] ?? 0) + 1;
     }
@@ -1209,7 +1210,7 @@ export default function LibraryView({
     const open = m.sk != null && expandedSk === m.sk;
     const isSelected = nowPlaying?.s3Key === m.s3Key;
     const isPlaying = playingS3Key === m.s3Key;
-    const styleLine = m.meditationStyle || m.meditationType || "—";
+    const styleLine = libraryMeditationCategoryLabel(m);
     const lengthLine = formatDuration(m.durationSeconds);
 
     const stars = (

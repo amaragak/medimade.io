@@ -3,6 +3,10 @@ import {
   GetSecretValueCommand,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
+import {
+  creatorChoseSpecificMeditationTechnique,
+  styleAdherenceBlockForPrompt,
+} from "../lib/meditation-types";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-haiku-4-5";
@@ -122,6 +126,8 @@ async function streamHandler(
     meditationStyle?: string;
     messages?: ChatTurn[];
     transcript?: string;
+    /** Web journal flow uses placeholder style; do not lock technique to that label. */
+    journalMode?: boolean;
   };
   try {
     body = JSON.parse(event.body || "{}");
@@ -144,12 +150,27 @@ async function streamHandler(
       typeof body.meditationStyle === "string"
         ? body.meditationStyle.trim()
         : "";
+    const journalMode = body.journalMode === true;
+    const styleLocked = creatorChoseSpecificMeditationTechnique({
+      journalMode,
+      meditationStyle: styleForScript,
+    });
     const styleHint = styleForScript
       ? `Preferred meditation style from the creator: "${styleForScript}".`
       : "The creator has not locked a style label yet — infer an appropriate approach from the chat.";
 
+    const lockBlock = styleLocked
+      ? [
+          "",
+          styleAdherenceBlockForPrompt(styleForScript),
+          "",
+          "The script must spend a substantial part of the practice on the chosen technique above (not a brief nod while the rest is a generic unrelated meditation), while still reflecting the user’s situation from the conversation.",
+        ].join("\n")
+      : "";
+
     const userContent = [
       styleHint,
+      lockBlock,
       "",
       "### Conversation between creator and guide (chronological)",
       transcript || "(No messages yet.)",
@@ -178,6 +199,8 @@ async function streamHandler(
       "You are an expert meditation scriptwriter for medimade.io.",
       "You write speakable, production-ready guided meditation scripts.",
       "Avoid self-referential product mentions. Do NOT mention Medimade/the app/this platform unless the user explicitly asks. If you must refer to it, use exactly: 'medimade.io' (lowercase) and nothing else.",
+      "If the user is joking or playful, it is OK to include whimsical / funny subject matter (e.g. a monkey eating ice cream on a volcano) BUT the meditation itself should remain genuinely calming, coherent, and high-quality—never 'silly writing' or comedy bits. Use playful imagery as a vehicle for grounding, breath, and emotional regulation.",
+      "Never generate hate/harassment, sexual content involving minors, non-consensual sexual content, graphic sexual content, instructions for wrongdoing, or glorification of self-harm. If the user asks for something socially unacceptable, refuse briefly and offer a safe alternative topic.",
       "You use gender-neutral language and never assume anyone's gender.",
       "You phrase lines for natural TTS: avoid isolated one-word sentences; use multi-word phrases where possible.",
       "You place pauses intelligently for the arc of the practice—generous where self-paced work needs room, never mechanical or padded.",
@@ -196,6 +219,12 @@ async function streamHandler(
       });
       return;
     }
+
+    const journalMode = body.journalMode === true;
+    const styleLocked = creatorChoseSpecificMeditationTechnique({
+      journalMode,
+      meditationStyle,
+    });
 
     const raw = body.messages;
     if (!Array.isArray(raw) || raw.length === 0) {
@@ -230,9 +259,20 @@ async function streamHandler(
       return;
     }
 
+    const styleLockLines = styleLocked
+      ? [
+          "STYLE COMMITMENT: The creator began by choosing a specific meditation type (not open journal mode).",
+          "Follow-up questions MUST help tailor THAT technique—probe details the chosen method needs (e.g. imagery for visualization, body areas for body scan, phrases for affirmation loop, movement context for movement meditation).",
+          "Do not steer them toward a different primary technique unless they clearly ask to change approach.",
+          "The script generated later from this chat must substantially deliver the chosen type; keep your questions aligned with that obligation.",
+          styleAdherenceBlockForPrompt(meditationStyle),
+        ].join(" ")
+      : "";
+
     system = [
       "You are a warm, concise meditation coach for medimade.io.",
       `The user chose this meditation style: "${meditationStyle}".`,
+      ...(styleLocked ? [styleLockLines] : []),
       "You are helping them shape a personalized guided meditation that matches their goals and real-world context.",
       "Be fairly succinct to keep the flow quick: give brief feedback on what they said, then ask a direct next question.",
       "Use newlines intentionally for visual separation in chat. Put each idea on its own line. If you ask a question, put the question on its own line (preferably the final line).",
@@ -240,6 +280,8 @@ async function streamHandler(
       "If you introduce a bullet list after a lead-in ending with ':' (for example 'Here’s what I’m sensing:'), do NOT put a blank line between the ':' line and the bullets—use a single newline so it stays visually grouped.",
       "Use gender-neutral language and never assume anyone's gender.",
       "Avoid self-referential product mentions. Do NOT mention Medimade/the app/this platform unless the user explicitly asks. If you must refer to it, use exactly: 'medimade.io' (lowercase).",
+      "If the user is joking or playful, it is OK to help them create a playful / whimsical meditation topic, but keep your coaching tone grounded and supportive—not stand-up comedy. Use imaginative imagery while still making something genuinely calming and useful.",
+      "Never generate hate/harassment, sexual content involving minors, non-consensual sexual content, graphic sexual content, instructions for wrongdoing, or glorification of self-harm. If the user asks for something socially unacceptable, refuse briefly and steer back to a safe alternative.",
       "Never mention the internal style label to the user. Do NOT say things like 'Since you chose X' or 'Because you selected X meditation'. Just continue naturally based on what they've shared.",
       "You will be given a short conversation history in `messages` (alternating user/assistant turns).",
       "If the conversation starts with a mood-intake opener like “What’s on your mind?” and the user's FIRST answer is vague/low-information (e.g. 'bad', 'not great', 'stressed', 'anxious', 'tired'), do NOT skim past it by immediately asking what kind of meditation they want. First ask ONE gentle clarifying question about what is making them feel that way (e.g. 'What feels most heavy about it right now?' or 'What’s been making you feel bad today?'). On the next turn (after they clarify), you can move on to meditation-direction/outcome questions.",

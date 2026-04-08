@@ -10,6 +10,14 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { parseBuffer } from "music-metadata";
 import { loudnormMp3Buffer } from "../lib/ffmpeg-loudnorm";
+import {
+  type KnownMeditationType,
+  creatorChoseSpecificMeditationTechnique,
+  inferPresetTypeFromScriptHeuristic,
+  knownMeditationTypesJsonArrayBlock,
+  normalizeMeditationType,
+  styleAdherenceBlockForPrompt,
+} from "../lib/meditation-types";
 import fs from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -151,8 +159,7 @@ function clampGain(n: unknown): number {
 
 /**
  * Mix speech (input 0) with one or more looped background beds.
- * Each layer gain is 0–100; effective ffmpeg volume is 0.4 * (gain/100) per layer
- * (same peak as the legacy single-track bed when gain=100).
+ * Each layer gain is 0–100; effective ffmpeg volume is (gain/100) per layer.
  */
 async function mixSpeechWithBackgrounds(params: {
   speechBuf: Buffer;
@@ -192,12 +199,23 @@ async function mixSpeechWithBackgrounds(params: {
         ? params.durationSeconds
         : undefined;
 
-    const fadeOut =
-      dur !== undefined && dur > 0.06
-        ? `,afade=t=out:st=${Math.max(0, dur - 0.03).toFixed(2)}:d=0.03`
+    // Desired structure:
+    // - 1s background-only intro
+    // - speech starts after 1s
+    // - 8s tail after speech ends, with background fading out over the tail
+    const introSeconds = 1;
+    const tailSeconds = 8;
+    const totalDurSeconds =
+      dur !== undefined ? dur + introSeconds + tailSeconds : undefined;
+    const bedFadeOut =
+      totalDurSeconds !== undefined && totalDurSeconds > tailSeconds + 0.06
+        ? `,afade=t=out:st=${Math.max(
+            0,
+            totalDurSeconds - tailSeconds,
+          ).toFixed(2)}:d=${tailSeconds.toFixed(2)}`
         : "";
 
-    const vols = layers.map((l) => (0.4 * clampGain(l.gain)) / 100);
+    const vols = layers.map((l) => clampGain(l.gain) / 100);
     const chainParts: string[] = [];
     const bedLabels: string[] = [];
 
@@ -206,20 +224,41 @@ async function mixSpeechWithBackgrounds(params: {
       const label = `b${i}`;
       bedLabels.push(`[${label}]`);
       chainParts.push(
-        `[${inp}:a]aloop=loop=-1:size=2e+09,afade=t=in:st=0:d=0.03${fadeOut},volume=${vols[i].toFixed(4)}[${label}]`,
+        `[${inp}:a]aloop=loop=-1:size=2e+09,afade=t=in:st=0:d=0.03${bedFadeOut},volume=${vols[i].toFixed(4)}[${label}]`,
       );
     }
 
     let filter: string;
     if (layers.length === 1) {
-      filter = `${chainParts.join(";")};[0:a][b0]amix=inputs=2:duration=first:dropout_transition=0`;
+      // Delay speech so background starts first.
+      // If we know the duration, trim/pad the delayed speech so the mixed output can extend into the tail.
+      const speechChain =
+        totalDurSeconds !== undefined
+          ? `[0:a]adelay=${(introSeconds * 1000).toFixed(0)}|${(
+              introSeconds * 1000
+            ).toFixed(0)},apad,atrim=0:${totalDurSeconds.toFixed(2)}[sp]`
+          : `[0:a]adelay=${(introSeconds * 1000).toFixed(0)}|${(
+              introSeconds * 1000
+            ).toFixed(0)}[sp]`;
+      // Use a limiter on the final bus to prevent clipping without auto-attenuating beds.
+      filter = `${chainParts.join(";")};${speechChain};[sp][b0]amix=inputs=2:duration=longest:dropout_transition=0,alimiter=limit=0.95`;
     } else {
-      filter = `${chainParts.join(";")};${bedLabels.join("")}amix=inputs=${layers.length}:duration=longest:dropout_transition=0:normalize=1[bed];[0:a][bed]amix=inputs=2:duration=first:dropout_transition=0`;
+      const speechChain =
+        totalDurSeconds !== undefined
+          ? `[0:a]adelay=${(introSeconds * 1000).toFixed(0)}|${(
+              introSeconds * 1000
+            ).toFixed(0)},apad,atrim=0:${totalDurSeconds.toFixed(2)}[sp]`
+          : `[0:a]adelay=${(introSeconds * 1000).toFixed(0)}|${(
+              introSeconds * 1000
+            ).toFixed(0)}[sp]`;
+      // IMPORTANT: don't use amix normalize=1 here — it makes beds quieter than the UI preview.
+      // Instead, mix at the intended per-layer volumes and apply a limiter.
+      filter = `${chainParts.join(";")};${bedLabels.join("")}amix=inputs=${layers.length}:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.95[bed];${speechChain};[sp][bed]amix=inputs=2:duration=longest:dropout_transition=0,alimiter=limit=0.95`;
     }
 
     const args = ["-y", "-i", speechPath, ...bgPaths.flatMap((p) => ["-i", p]), "-filter_complex", filter];
-    if (dur !== undefined) {
-      args.push("-t", dur.toFixed(2));
+    if (totalDurSeconds !== undefined) {
+      args.push("-t", totalDurSeconds.toFixed(2));
     }
     args.push(outPath);
 
@@ -306,6 +345,7 @@ async function generateScriptFromClaude(params: {
   meditationStyle?: string;
   transcript: string;
   speechSpeed: number;
+  journalMode: boolean;
 }): Promise<string> {
   // Adjust script word targets inversely with speech speed so total duration is similar.
   // If we slow down (speed < 1), reduce words proportionally.
@@ -319,10 +359,23 @@ async function generateScriptFromClaude(params: {
   const styleHint = styleForScript
     ? `Preferred meditation style from the creator: "${styleForScript}".`
     : "The creator has not locked a style label yet — infer an appropriate approach from the chat.";
+  const styleLocked = creatorChoseSpecificMeditationTechnique({
+    journalMode: params.journalMode,
+    meditationStyle: styleForScript,
+  });
+  const lockBlock = styleLocked
+    ? [
+        "",
+        styleAdherenceBlockForPrompt(styleForScript),
+        "",
+        "The script must spend a substantial part of the practice on the chosen technique above (not a brief nod while the rest is a generic unrelated meditation), while still reflecting the user’s situation from the conversation.",
+      ].join("\n")
+    : "";
 
   // Non-dev prompt (kept intact):
   const NON_DEV_USER_CONTENT = [
     styleHint,
+    lockBlock,
     "",
     "### Conversation between creator and guide (chronological)",
     params.transcript?.trim() || "(No messages yet.)",
@@ -371,6 +424,8 @@ async function generateScriptFromClaude(params: {
   const system = [
     "You are an expert meditation scriptwriter for medimade.io.",
     "You write speakable, production-ready guided meditation scripts.",
+    "If the creator is joking or playful, it is OK to include whimsical subject matter, but the meditation itself must remain genuinely calming, coherent, and high-quality—not a joke script. Use playful imagery as a vehicle for grounding, breath, and emotional regulation.",
+    "Never generate hate/harassment, sexual content involving minors, non-consensual sexual content, graphic sexual content, instructions for wrongdoing, or glorification of self-harm. If the creator asks for something socially unacceptable, refuse briefly and produce a safe alternative meditation topic.",
     "You phrase lines for natural TTS: avoid isolated one-word sentences; use multi-word phrases where possible.",
     "You place pauses intelligently for the arc of the practice—generous where self-paced work needs room, never mechanical or padded.",
   ].join(" ");
@@ -419,77 +474,27 @@ async function generateScriptFromClaude(params: {
 /** Keep DynamoDB item under 400 KB (UTF-8 bytes, incl. other attributes). */
 const MAX_SCRIPT_BYTES_FOR_LIBRARY = 320_000;
 
-async function deriveLibraryMetadataFromClaude(params: {
-  apiKey: string;
-  meditationStyle: string;
-  transcript: string;
-  scriptPreview: string;
-}): Promise<{
+function parseMetadataJsonFromAnthropicText(responseText: string): {
   title: string;
   meditationType: string;
   description: string;
-}> {
-  const scriptPreview = params.scriptPreview.slice(0, 1200);
-  const userContent = [
-    "Infer a concise library title and a meditation category for this generated meditation.",
-    "",
-    `Creator style label (may be empty): ${params.meditationStyle.trim() || "(none)"}`,
-    "",
-    "### Planning / chat context",
-    params.transcript.trim().slice(0, 2500) || "(none)",
-    "",
-    "### Beginning of the final spoken script",
-    scriptPreview || "(empty)",
-    "",
-    "Respond with a single JSON object only (no markdown fences):",
-    '{"title":"max 10 words, evocative","meditationType":"short label e.g. Sleep, Body scan, Breath-led, Manifestation","description":"200-300 characters, describing what the meditation is like, no quotes, no newlines"}',
-  ].join("\n");
-
-  const system =
-    "You output only valid JSON objects. No prose, no code fences.";
-
-  const upstream = await fetch(ANTHROPIC_URL, {
-    method: "POST",
-    headers: {
-      "x-api-key": params.apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 256,
-      system,
-      messages: [{ role: "user", content: userContent } satisfies ChatTurn],
-    }),
-  });
-
-  const responseText = await upstream.text();
-  if (!upstream.ok) {
-    throw new Error(
-      `Anthropic metadata failed: ${responseText.slice(0, 500)}`,
-    );
-  }
-
-  let parsed: { content?: Array<{ type?: string; text?: string }> };
+} {
+  let parsedApi: { content?: Array<{ type?: string; text?: string }> };
   try {
-    parsed = JSON.parse(responseText);
+    parsedApi = JSON.parse(responseText);
   } catch {
-    throw new Error("Invalid JSON from Anthropic (metadata)");
+    throw new Error("Invalid JSON from Anthropic (metadata transport)");
   }
 
   let raw =
-    parsed.content?.find((c) => c?.type === "text")?.text?.trim() ?? "";
+    parsedApi.content?.find((c) => c?.type === "text")?.text?.trim() ?? "";
   raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
-  let obj: { title?: unknown; meditationType?: unknown };
+  let obj: { title?: unknown; meditationType?: unknown; description?: unknown };
   try {
-    obj = JSON.parse(raw) as {
-      title?: unknown;
-      meditationType?: unknown;
-      description?: unknown;
-    };
+    obj = JSON.parse(raw);
   } catch {
-    throw new Error("Metadata response was not JSON");
+    throw new Error("Metadata assistant payload was not JSON");
   }
 
   const title =
@@ -502,30 +507,129 @@ async function deriveLibraryMetadataFromClaude(params: {
       : "";
 
   let descriptionRaw = "";
-  const d = (obj as { description?: unknown }).description;
-  if (typeof d === "string") {
-    descriptionRaw = d.trim();
+  if (typeof obj.description === "string") {
+    descriptionRaw = obj.description.trim();
   }
-  // Normalize whitespace and enforce the length range.
   descriptionRaw = descriptionRaw.replace(/\s+/g, " ");
   if (descriptionRaw.length > 300) {
     descriptionRaw = descriptionRaw.slice(0, 300).trim();
-  }
-  if (descriptionRaw.length < 200) {
-    throw new Error("Missing or too-short description in metadata JSON");
-  }
-
-  if (!title || !meditationType) {
-    throw new Error("Missing title or meditationType in metadata JSON");
   }
 
   return { title, meditationType, description: descriptionRaw };
 }
 
+async function callAnthropicMetadataJson(params: {
+  apiKey: string;
+  system: string;
+  user: string;
+}): Promise<string> {
+  const upstream = await fetch(ANTHROPIC_URL, {
+    method: "POST",
+    headers: {
+      "x-api-key": params.apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 512,
+      system: params.system,
+      messages: [{ role: "user", content: params.user } satisfies ChatTurn],
+    }),
+  });
+
+  const responseText = await upstream.text();
+  if (!upstream.ok) {
+    throw new Error(
+      `Anthropic metadata failed: ${responseText.slice(0, 500)}`,
+    );
+  }
+  return responseText;
+}
+
+async function deriveLibraryMetadataFromClaude(params: {
+  apiKey: string;
+  meditationStyle: string;
+  transcript: string;
+  scriptPreview: string;
+  /** Journal / free-form: no real style label — type must be inferred from chat + script only. */
+  journalMode: boolean;
+}): Promise<{
+  title: string;
+  meditationType: string;
+  description: string;
+}> {
+  const scriptPreview = params.scriptPreview.slice(0, 1200);
+  const allowedJson = knownMeditationTypesJsonArrayBlock();
+
+  const system = [
+    "You output exactly one JSON object and nothing else: keys title, meditationType, description.",
+    'Field "meditationType" MUST be identical to one string in the ALLOWED_MEDITATION_TYPES JSON array from the user message — copy it character-for-character (including spaces and hyphens).',
+    "Pick the **single best-matching** category for this meditation; if several fit, choose the strongest overall fit.",
+    "Never invent labels: no synonyms or paraphrases (e.g. not Mindfulness, Zen, Guided meditation, Calm, General).",
+    "No markdown code fences.",
+  ].join(" ");
+
+  const modeBlock = params.journalMode
+    ? [
+        "### Task",
+        "The creator used journal / free-form mode. Ignore placeholder style labels like “General”.",
+        "Read the chat + script, then choose the **single best-matching** meditationType from ALLOWED_MEDITATION_TYPES only (verbatim copy).",
+      ].join("\n")
+    : [
+        "### Task",
+        `Creator style label (tone/context only): ${params.meditationStyle.trim() || "(none)"}.`,
+        "Choose the **single best-matching** meditationType from ALLOWED_MEDITATION_TYPES for what the script actually does (verbatim copy).",
+        "If the style label exactly matches one allowed string and the script fits it, you may use that same string.",
+      ].join("\n");
+
+  const userMain = [
+    "### ALLOWED_MEDITATION_TYPES",
+    "You MUST set JSON key meditationType to EXACTLY one of these strings (copy from the array below, unchanged):",
+    allowedJson,
+    "",
+    modeBlock,
+    "",
+    "### Planning / chat context",
+    params.transcript.trim().slice(0, 2500) || "(none)",
+    "",
+    "### Beginning of the final spoken script",
+    scriptPreview || "(empty)",
+    "",
+    'Return: {"title":"~10 words, evocative","meditationType":"<one allowed string exactly>","description":"200-300 characters, one line, what the listener will experience"}',
+  ].join("\n");
+
+  let responseText = await callAnthropicMetadataJson({
+    apiKey: params.apiKey,
+    system,
+    user: userMain,
+  });
+
+  let { title, meditationType, description } =
+    parseMetadataJsonFromAnthropicText(responseText);
+
+  if (description.length < 200) {
+    throw new Error("Missing or too-short description in metadata JSON");
+  }
+  if (!title || !meditationType) {
+    throw new Error("Missing title or meditationType in metadata JSON");
+  }
+
+  const normalizedFromLlm = normalizeMeditationType(meditationType);
+  const normalizedType: KnownMeditationType =
+    normalizedFromLlm ??
+    inferPresetTypeFromScriptHeuristic(params.scriptPreview) ??
+    "Reflection";
+
+  return { title, meditationType: normalizedType, description };
+}
+
 function fallbackLibraryMetadata(params: {
   meditationStyle: string;
   transcript: string;
-}): { title: string; meditationType: string; description: string } {
+  scriptPreview: string;
+  journalMode: boolean;
+}): { title: string; meditationType: KnownMeditationType; description: string } {
   const rawStyle = params.meditationStyle.trim();
   const style =
     rawStyle && rawStyle.toLowerCase() !== "general" ? rawStyle : "";
@@ -543,7 +647,16 @@ function fallbackLibraryMetadata(params: {
   const shortMood =
     moodSnippet.length > 0 ? moodSnippet.slice(0, 80).replace(/\s+$/g, "") : "";
 
-  const meditationType = style || (shortMood ? "Journal" : "Meditation");
+  const fromScript =
+    params.journalMode || !style
+      ? inferPresetTypeFromScriptHeuristic(params.scriptPreview)
+      : null;
+
+  // Pick a reasonable known type when metadata inference is unavailable.
+  const meditationType: KnownMeditationType =
+    style && normalizeMeditationType(style)
+      ? (normalizeMeditationType(style) as KnownMeditationType)
+      : fromScript ?? "Reflection";
   const title = style
     ? `${style} · session`
     : shortMood
@@ -808,6 +921,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     jobId: string;
     transcript?: string;
     meditationStyle?: string;
+    journalMode?: boolean;
     scriptText?: string;
     referenceId?: string;
     speed?: number;
@@ -816,9 +930,11 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     backgroundNatureKey?: string;
     backgroundMusicKey?: string;
     backgroundDrumsKey?: string;
+    backgroundNoiseKey?: string;
     backgroundNatureGain?: number;
     backgroundMusicGain?: number;
     backgroundDrumsGain?: number;
+    backgroundNoiseGain?: number;
   };
 
   let jobItem: JobItem | null = null;
@@ -847,6 +963,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   const body: {
     transcript?: string;
     meditationStyle?: string;
+    journalMode?: boolean;
     scriptText?: string;
     reference_id?: string;
     speed?: number;
@@ -855,12 +972,15 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     backgroundNatureKey?: string;
     backgroundMusicKey?: string;
     backgroundDrumsKey?: string;
+    backgroundNoiseKey?: string;
     backgroundNatureGain?: number;
     backgroundMusicGain?: number;
     backgroundDrumsGain?: number;
+    backgroundNoiseGain?: number;
   } = {
     transcript: jobItem.transcript,
     meditationStyle: jobItem.meditationStyle,
+    journalMode: jobItem.journalMode,
     scriptText: jobItem.scriptText,
     reference_id: jobItem.referenceId,
     speed: jobItem.speed,
@@ -869,9 +989,11 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     backgroundNatureKey: jobItem.backgroundNatureKey,
     backgroundMusicKey: jobItem.backgroundMusicKey,
     backgroundDrumsKey: jobItem.backgroundDrumsKey,
+    backgroundNoiseKey: jobItem.backgroundNoiseKey,
     backgroundNatureGain: jobItem.backgroundNatureGain,
     backgroundMusicGain: jobItem.backgroundMusicGain,
     backgroundDrumsGain: jobItem.backgroundDrumsGain,
+    backgroundNoiseGain: jobItem.backgroundNoiseGain,
   };
 
   const referenceId =
@@ -888,6 +1010,12 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   const transcript = typeof body.transcript === "string" ? body.transcript : "";
   const meditationStyle =
     typeof body.meditationStyle === "string" ? body.meditationStyle : "";
+  const journalModeFromJob = body.journalMode === true;
+  const styleTrimmed = meditationStyle.trim();
+  const isJournalCatalog =
+    journalModeFromJob ||
+    !styleTrimmed ||
+    styleTrimmed.toLowerCase() === "general";
   const scriptText =
     typeof body.scriptText === "string" ? body.scriptText.trim() : "";
   const speedOverrideRaw = (body as { speed?: unknown })?.speed;
@@ -917,7 +1045,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       gain: clampGain(
         typeof body.backgroundNatureGain === "number"
           ? body.backgroundNatureGain
-          : 80,
+          : 25,
       ),
     });
   }
@@ -940,6 +1068,17 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
         typeof body.backgroundDrumsGain === "number"
           ? body.backgroundDrumsGain
           : 55,
+      ),
+    });
+  }
+  const zk = trimKey(body.backgroundNoiseKey);
+  if (zk) {
+    layeredBackground.push({
+      key: zk,
+      gain: clampGain(
+        typeof body.backgroundNoiseGain === "number"
+          ? body.backgroundNoiseGain
+          : 10,
       ),
     });
   }
@@ -975,6 +1114,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
         meditationStyle,
         transcript,
         speechSpeed,
+        journalMode: journalModeFromJob,
       });
       console.log("generated script", {
         chars: scriptTextUsed.length,
@@ -1026,6 +1166,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       meditationStyle,
       transcript,
       scriptPreview: scriptTextUsed,
+      journalMode: isJournalCatalog,
     });
     libraryTitle = derived.title;
     libraryMeditationType = derived.meditationType;
@@ -1033,7 +1174,12 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   } catch (e) {
     const msg = e instanceof Error ? e.message : "metadata derive failed";
     console.warn("early library metadata derive failed, using fallback", { msg });
-    const fb = fallbackLibraryMetadata({ meditationStyle, transcript });
+    const fb = fallbackLibraryMetadata({
+      meditationStyle,
+      transcript,
+      scriptPreview: scriptTextUsed,
+      journalMode: isJournalCatalog,
+    });
     libraryTitle = fb.title;
     libraryMeditationType = fb.meditationType;
     libraryDescription = fb.description;
@@ -1074,9 +1220,12 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     console.log("calling Fish TTS with pause-aware synthesis", {
       reference_id: referenceId,
     });
+    // Speak the meditation title first, then pause, then the script.
+    // Note: `scriptTextUsed` is stored/displayed without the title (script should not include it).
+    const ttsScript = `${libraryTitle}\n\n[[PAUSE 2.5s]]\n\n${scriptTextUsed}`;
     const { audio, utf8Bytes } = await synthesizeScriptWithPauses({
       apiKey: fishKey,
-      script: scriptTextUsed,
+      script: ttsScript,
       reference_id: referenceId,
       speed: speechSpeed,
     });
@@ -1200,7 +1349,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
           scriptUtf8Bytes,
           speechSpeed,
           referenceId,
-          meditationStyle: meditationStyle || null,
+          meditationStyle: isJournalCatalog ? null : styleTrimmed || null,
           scriptWasGenerated: shouldGenerateScript,
           title: libraryTitle,
           meditationType: libraryMeditationType,

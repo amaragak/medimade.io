@@ -40,6 +40,8 @@ const meditationStyles = [
   "Sleep",
   "Loving-kindness",
   "Anxiety relief",
+  "Movement meditation",
+  "Open awareness",
 ] as const;
 
 type Phase = "style" | "feeling" | "claude";
@@ -76,6 +78,12 @@ function getStyleFollowupQuestion(style: string): string {
   }
   if (s === "body scan" || s === "bodyscan") {
     return "Where are you holding the most tension right now—and what would you like to soften first?";
+  }
+  if (s === "movement meditation" || s === "walking meditation") {
+    return "Do you imagine moving in place, walking slowly, or something else—and what do you want your body to feel by the end?";
+  }
+  if (s === "open awareness") {
+    return "What tends to pull your attention away most—and how would you like to relate to that during this practice?";
   }
   const trimmed = style.trim();
   if (trimmed) {

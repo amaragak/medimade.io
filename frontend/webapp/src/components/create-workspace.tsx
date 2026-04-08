@@ -19,6 +19,7 @@ import {
   listBackgroundAudio,
   listFishSpeakers,
   saveMeditationDraft,
+  backgroundAudioStreamingKey,
   type FishSpeaker,
   type BackgroundAudioItem,
 } from "@/lib/medimade-api";
@@ -188,7 +189,7 @@ function IconPaperAirplane({ className }: { className?: string }) {
   );
 }
 
-type SoloTrack = "speaker" | "nature" | "music" | "drums";
+type SoloTrack = "speaker" | "nature" | "music" | "noise";
 
 function PreviewPlayPauseIcon({ playing }: { playing: boolean }) {
   return playing ? (
@@ -229,9 +230,13 @@ const meditationStyles = [
   "Breath-led",
   "Manifestation",
   "Affirmation loop",
+  "Story",
+  "Reflection",
   "Sleep",
   "Loving-kindness",
   "Anxiety relief",
+  "Movement meditation",
+  "Open awareness",
 ];
 
 const meditationStyleTooltip: Record<(typeof meditationStyles)[number], string> = {
@@ -245,12 +250,20 @@ const meditationStyleTooltip: Record<(typeof meditationStyles)[number], string> 
     "Intention-setting with vivid future focus; supportive, motivating tone.",
   "Affirmation loop":
     "Repetitive positive statements to reinforce belief, safety, and self-trust.",
+  Story:
+    "A calm, guided narrative with sensory detail and emotional resolution.",
+  Reflection:
+    "A gentle reflective practice to process experience and clarify what matters.",
   Sleep:
     "Gentle, slower pacing designed to help you wind down and drift off.",
   "Loving-kindness":
     "Warm, compassionate phrases for yourself and others (metta practice).",
   "Anxiety relief":
     "Grounding cues + reassurance to reduce anxious arousal and regain steadiness.",
+  "Movement meditation":
+    "Slow, mindful movement or walking—attention anchored in the body in motion.",
+  "Open awareness":
+    "Resting in a wide, receptive field—sounds, sensations, and thoughts without fixing on one object.",
 };
 
 type Phase = "style" | "feeling" | "claude";
@@ -307,7 +320,10 @@ function isDraftStateV1(raw: unknown): raw is MeditationDraftStateV1 {
   if (typeof o.speakerModelId !== "string") return false;
   if (typeof o.backgroundNatureKey !== "string") return false;
   if (typeof o.backgroundMusicKey !== "string") return false;
-  if (typeof o.backgroundDrumsKey !== "string") return false;
+  // Back-compat: older drafts stored drums; new drafts store noise.
+  const drumsKeyOk = typeof o.backgroundDrumsKey === "string";
+  const noiseKeyOk = typeof o.backgroundNoiseKey === "string";
+  if (!drumsKeyOk && !noiseKeyOk) return false;
   if (
     typeof o.backgroundNatureGain !== "number" ||
     !Number.isFinite(o.backgroundNatureGain)
@@ -320,12 +336,13 @@ function isDraftStateV1(raw: unknown): raw is MeditationDraftStateV1 {
   ) {
     return false;
   }
-  if (
-    typeof o.backgroundDrumsGain !== "number" ||
-    !Number.isFinite(o.backgroundDrumsGain)
-  ) {
-    return false;
-  }
+  const drumsGainOk =
+    typeof o.backgroundDrumsGain === "number" &&
+    Number.isFinite(o.backgroundDrumsGain);
+  const noiseGainOk =
+    typeof o.backgroundNoiseGain === "number" &&
+    Number.isFinite(o.backgroundNoiseGain);
+  if (!drumsGainOk && !noiseGainOk) return false;
   if (o.mobileCreateStep !== "chat" && o.mobileCreateStep !== "audio") {
     return false;
   }
@@ -367,6 +384,18 @@ function getStyleFollowupQuestion(style: string): string {
   }
   if (s === "body scan" || s === "bodyscan") {
     return "Where are you holding the most tension right now—and what would you like to soften first?";
+  }
+  if (s === "movement meditation" || s === "walking meditation") {
+    return "Do you imagine moving in place, walking slowly, or something else—and what do you want your body to feel by the end?";
+  }
+  if (s === "open awareness") {
+    return "What tends to pull your attention away most—and how would you like to relate to that during this practice?";
+  }
+  if (s === "story") {
+    return "What kind of journey or scene should this story hold—and what feeling do you want to land on by the end?";
+  }
+  if (s === "reflection") {
+    return "What are you processing or wondering about—and what would feel like a helpful insight or shift when you’re done?";
   }
   const trimmed = style.trim();
   if (trimmed) {
@@ -415,33 +444,33 @@ export function CreateWorkspace({
   const [backgroundMusic, setBackgroundMusic] = useState<BackgroundAudioItem[]>(
     [],
   );
-  const [backgroundDrums, setBackgroundDrums] = useState<BackgroundAudioItem[]>(
+  const [backgroundNoise, setBackgroundNoise] = useState<BackgroundAudioItem[]>(
     [],
   );
   const [mediaBaseUrl, setMediaBaseUrl] = useState<string | null>(null);
   const [backgroundNatureKey, setBackgroundNatureKey] = useState<string>("");
   const [backgroundMusicKey, setBackgroundMusicKey] = useState<string>("");
-  const [backgroundDrumsKey, setBackgroundDrumsKey] = useState<string>("");
-  const [backgroundNatureGain, setBackgroundNatureGain] = useState(50);
+  const [backgroundNoiseKey, setBackgroundNoiseKey] = useState<string>("");
+  const [backgroundNatureGain, setBackgroundNatureGain] = useState(25);
   const [backgroundMusicGain, setBackgroundMusicGain] = useState(50);
-  const [backgroundDrumsGain, setBackgroundDrumsGain] = useState(70);
+  const [backgroundNoiseGain, setBackgroundNoiseGain] = useState(10);
   const [playAllActive, setPlayAllActive] = useState(false);
   const [playing, setPlaying] = useState<Record<SoloTrack, boolean>>({
     speaker: false,
     nature: false,
     music: false,
-    drums: false,
+    noise: false,
   });
   const previewNatureRef = useRef<HTMLAudioElement | null>(null);
   const previewMusicRef = useRef<HTMLAudioElement | null>(null);
-  const previewDrumsRef = useRef<HTMLAudioElement | null>(null);
+  const previewNoiseRef = useRef<HTMLAudioElement | null>(null);
   const speakerSampleRef = useRef<HTMLAudioElement | null>(null);
   const speakerGapTimeoutRef = useRef<number | null>(null);
   const speakerRepeatWantedRef = useRef(false);
-  const lastBgKeysRef = useRef<{ nature: string; music: string; drums: string }>({
+  const lastBgKeysRef = useRef<{ nature: string; music: string; noise: string }>({
     nature: "",
     music: "",
-    drums: "",
+    noise: "",
   });
   // Speakers come from backend `GET /fish/speakers` (single source of truth).
   const [fishSpeakers, setFishSpeakers] = useState<FishSpeaker[]>([]);
@@ -490,12 +519,13 @@ export function CreateWorkspace({
       input,
       speechSpeed,
       speakerModelId,
-      backgroundNatureKey,
-      backgroundMusicKey,
-      backgroundDrumsKey,
+      backgroundNatureKey: backgroundAudioStreamingKey(backgroundNatureKey),
+      backgroundMusicKey: backgroundAudioStreamingKey(backgroundMusicKey),
+      // Stored as noise; old drafts used drums.
+      backgroundNoiseKey: backgroundAudioStreamingKey(backgroundNoiseKey),
       backgroundNatureGain,
       backgroundMusicGain,
-      backgroundDrumsGain,
+      backgroundNoiseGain,
       mobileCreateStep,
       lastUsedScript,
     };
@@ -551,12 +581,23 @@ export function CreateWorkspace({
         setInput(s.input);
         setSpeechSpeed(snapSpeakerSampleSpeed(s.speechSpeed));
         setSpeakerModelId(s.speakerModelId);
-        setBackgroundNatureKey(s.backgroundNatureKey);
-        setBackgroundMusicKey(s.backgroundMusicKey);
-        setBackgroundDrumsKey(s.backgroundDrumsKey);
+        setBackgroundNatureKey(
+          backgroundAudioStreamingKey(s.backgroundNatureKey),
+        );
+        setBackgroundMusicKey(
+          backgroundAudioStreamingKey(s.backgroundMusicKey),
+        );
+        // Back-compat: if noise wasn't saved yet, reuse drums selection.
+        setBackgroundNoiseKey(
+          backgroundAudioStreamingKey(
+            (s as any).backgroundNoiseKey ?? s.backgroundDrumsKey ?? "",
+          ),
+        );
         setBackgroundNatureGain(s.backgroundNatureGain);
         setBackgroundMusicGain(s.backgroundMusicGain);
-        setBackgroundDrumsGain(s.backgroundDrumsGain);
+        setBackgroundNoiseGain(
+          (s as any).backgroundNoiseGain ?? s.backgroundDrumsGain ?? 10,
+        );
         setMobileCreateStep(s.mobileCreateStep);
         setLastUsedScript(s.lastUsedScript);
         setDraftSk(row.sk);
@@ -602,7 +643,11 @@ export function CreateWorkspace({
       let acc = "";
       let assistantBubbleStarted = false;
       await streamMeditationScript(
-        { meditationStyle, transcript },
+        {
+          meditationStyle,
+          transcript,
+          journalMode: journalMode === true,
+        },
         (d) => {
           acc += d;
           if (!assistantBubbleStarted) {
@@ -675,7 +720,11 @@ export function CreateWorkspace({
     setChatLoading(true);
 
     void streamMedimadeChat(
-      { meditationStyle: style, messages: history },
+      {
+        meditationStyle: style,
+        messages: history,
+        journalMode: journalMode === true,
+      },
       (d) => {
         acc += d;
         if (!assistantBubbleStarted) {
@@ -874,7 +923,11 @@ export function CreateWorkspace({
         let acc = "";
         let assistantBubbleStarted = false;
         const text = await streamMedimadeChat(
-          { meditationStyle: styleHint, messages: history },
+          {
+            meditationStyle: styleHint,
+            messages: history,
+            journalMode: true,
+          },
           (d) => {
             acc += d;
             if (!assistantBubbleStarted) {
@@ -923,7 +976,11 @@ export function CreateWorkspace({
         let acc = "";
         let assistantBubbleStarted = false;
         const text = await streamMedimadeChat(
-          { meditationStyle: style, messages: history },
+          {
+            meditationStyle: style,
+            messages: history,
+            journalMode: journalMode === true,
+          },
           (d) => {
             acc += d;
             if (!assistantBubbleStarted) {
@@ -982,7 +1039,11 @@ export function CreateWorkspace({
         let acc = "";
         let assistantBubbleStarted = false;
         const text = await streamMedimadeChat(
-          { meditationStyle: style, messages: nextMessages },
+          {
+            meditationStyle: style,
+            messages: nextMessages,
+            journalMode: journalMode === true,
+          },
           (d) => {
             acc += d;
             if (!assistantBubbleStarted) {
@@ -1033,7 +1094,11 @@ export function CreateWorkspace({
       let acc = "";
       let assistantBubbleStarted = false;
       const text = await streamMedimadeChat(
-        { meditationStyle: style, messages: history },
+        {
+          meditationStyle: style,
+          messages: history,
+          journalMode: journalMode === true,
+        },
         (d) => {
           acc += d;
           if (!assistantBubbleStarted) {
@@ -1091,6 +1156,7 @@ export function CreateWorkspace({
 
       const { jobId } = await createMeditationAudioJob({
         meditationStyle,
+        journalMode: journalMode === true,
         transcript,
         scriptText: existingScript,
         reference_id: speakerModelId,
@@ -1098,20 +1164,26 @@ export function CreateWorkspace({
         voiceFxPreset: speakerFxPreviewOn ? "mixer" : null,
         ...(backgroundNatureKey
           ? {
-              backgroundNatureKey,
+              backgroundNatureKey: backgroundAudioStreamingKey(
+                backgroundNatureKey,
+              ),
               backgroundNatureGain,
             }
           : {}),
         ...(backgroundMusicKey
           ? {
-              backgroundMusicKey,
+              backgroundMusicKey: backgroundAudioStreamingKey(
+                backgroundMusicKey,
+              ),
               backgroundMusicGain,
             }
           : {}),
-        ...(backgroundDrumsKey
+        ...(backgroundNoiseKey
           ? {
-              backgroundDrumsKey,
-              backgroundDrumsGain,
+              backgroundNoiseKey: backgroundAudioStreamingKey(
+                backgroundNoiseKey,
+              ),
+              backgroundNoiseGain,
             }
           : {}),
       });
@@ -1189,14 +1261,14 @@ export function CreateWorkspace({
         if (cancelled) return;
         setBackgroundNature(data.nature);
         setBackgroundMusic(data.music);
-        setBackgroundDrums(data.drums);
+        setBackgroundNoise(data.noise);
         const fromApi = data.baseUrl?.trim();
         setMediaBaseUrl(fromApi || envMediaBase || null);
       } catch {
         if (cancelled) return;
         setBackgroundNature([]);
         setBackgroundMusic([]);
-        setBackgroundDrums([]);
+        setBackgroundNoise([]);
         setMediaBaseUrl(envMediaBase || null);
       }
     })();
@@ -1215,9 +1287,11 @@ export function CreateWorkspace({
     ) => {
       if (!el) return;
       el.loop = true;
+      // Match backend mixing: each bed layer uses (gain/100).
+      // (See `mixSpeechWithBackgrounds` in `backend/lambdas/generate-meditation-audio.ts`.)
       el.volume = Math.min(1, Math.max(0, gain / 100));
       if (base && key) {
-        const next = mediaFileUrl(base, key);
+        const next = mediaFileUrl(base, backgroundAudioStreamingKey(key));
         const prevKey = lastBgKeysRef.current[track];
         const keyChanged = prevKey !== key;
         if (el.src !== next) {
@@ -1246,18 +1320,18 @@ export function CreateWorkspace({
     };
     void sync(previewNatureRef.current, backgroundNatureKey, backgroundNatureGain, "nature");
     void sync(previewMusicRef.current, backgroundMusicKey, backgroundMusicGain, "music");
-    void sync(previewDrumsRef.current, backgroundDrumsKey, backgroundDrumsGain, "drums");
+    void sync(previewNoiseRef.current, backgroundNoiseKey, backgroundNoiseGain, "noise");
   }, [
     mediaBaseUrl,
     backgroundNatureKey,
     backgroundMusicKey,
-    backgroundDrumsKey,
+    backgroundNoiseKey,
     backgroundNatureGain,
     backgroundMusicGain,
-    backgroundDrumsGain,
+    backgroundNoiseGain,
     playing.nature,
     playing.music,
-    playing.drums,
+    playing.noise,
   ]);
 
   function clearSpeakerGapSchedule() {
@@ -1268,7 +1342,7 @@ export function CreateWorkspace({
   }
 
   const anyTrackPlaying =
-    playing.speaker || playing.nature || playing.music || playing.drums;
+    playing.speaker || playing.nature || playing.music || playing.noise;
 
   function stopTrack(track: SoloTrack) {
     setPlayAllActive(false);
@@ -1280,8 +1354,8 @@ export function CreateWorkspace({
       previewNatureRef.current?.pause();
     } else if (track === "music") {
       previewMusicRef.current?.pause();
-    } else if (track === "drums") {
-      previewDrumsRef.current?.pause();
+    } else if (track === "noise") {
+      previewNoiseRef.current?.pause();
     }
     setPlaying((p) => ({ ...p, [track]: false }));
   }
@@ -1291,16 +1365,16 @@ export function CreateWorkspace({
     speakerRepeatWantedRef.current = false;
     previewNatureRef.current?.pause();
     previewMusicRef.current?.pause();
-    previewDrumsRef.current?.pause();
+    previewNoiseRef.current?.pause();
     speakerSampleRef.current?.pause();
     setPlayAllActive(false);
-    setPlaying({ speaker: false, nature: false, music: false, drums: false });
+    setPlaying({ speaker: false, nature: false, music: false, noise: false });
   }
 
   useEffect(() => {
     return () => {
       clearSpeakerGapSchedule();
-      [previewNatureRef, previewMusicRef, previewDrumsRef].forEach((r) => {
+      [previewNatureRef, previewMusicRef, previewNoiseRef].forEach((r) => {
         const el = r.current;
         if (el) {
           el.pause();
@@ -1389,8 +1463,8 @@ export function CreateWorkspace({
     if (backgroundMusicKey && previewMusicRef.current?.src) {
       parts.push(previewMusicRef.current.play());
     }
-    if (backgroundDrumsKey && previewDrumsRef.current?.src) {
-      parts.push(previewDrumsRef.current.play());
+    if (backgroundNoiseKey && previewNoiseRef.current?.src) {
+      parts.push(previewNoiseRef.current.play());
     }
 
     if (parts.length === 0) return;
@@ -1400,7 +1474,7 @@ export function CreateWorkspace({
       speaker: Boolean(sp?.src),
       nature: Boolean(backgroundNatureKey && previewNatureRef.current?.src),
       music: Boolean(backgroundMusicKey && previewMusicRef.current?.src),
-      drums: Boolean(backgroundDrumsKey && previewDrumsRef.current?.src),
+      noise: Boolean(backgroundNoiseKey && previewNoiseRef.current?.src),
     });
 
     try {
@@ -1414,7 +1488,7 @@ export function CreateWorkspace({
     if (track === "speaker" && (!mediaBaseUrl || !speakerModelId)) return;
     if (track === "nature" && !backgroundNatureKey) return;
     if (track === "music" && !backgroundMusicKey) return;
-    if (track === "drums" && !backgroundDrumsKey) return;
+    if (track === "noise" && !backgroundNoiseKey) return;
 
     const el =
       track === "speaker"
@@ -1423,7 +1497,7 @@ export function CreateWorkspace({
           ? previewNatureRef.current
           : track === "music"
             ? previewMusicRef.current
-            : previewDrumsRef.current;
+            : previewNoiseRef.current;
 
     if (!el?.src) {
       return;
@@ -1473,7 +1547,7 @@ export function CreateWorkspace({
         <p className="mt-2 text-muted">
           Choose a style, share how you’re feeling, and chat with the guide to
           shape your script. Then, pick a voice, mix nature sounds, music, and
-          drums, and preview the blend before you create your meditation audio.
+          noise, and preview the blend before you create your meditation audio.
         </p>
       </div>
 
@@ -1512,7 +1586,7 @@ export function CreateWorkspace({
                         checked={journalMode}
                         onChange={(e) => requestJournalToggle(e.target.checked)}
                         disabled={chatControlsDisabled}
-                        className="h-3.5 w-3.5 rounded border-border accent-foreground"
+                        className="h-4 w-4 rounded border-border bg-background accent-accent"
                         aria-label="Journal mode"
                       />
                       <span>Journal mode</span>
@@ -1781,7 +1855,7 @@ export function CreateWorkspace({
             <div className="p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
               <audio ref={previewNatureRef} className="hidden" playsInline />
               <audio ref={previewMusicRef} className="hidden" playsInline />
-              <audio ref={previewDrumsRef} className="hidden" playsInline />
+              <audio ref={previewNoiseRef} className="hidden" playsInline />
               <audio ref={speakerSampleRef} className="hidden" playsInline />
 
               <div className="space-y-6">
@@ -1987,20 +2061,21 @@ export function CreateWorkspace({
                   </button>
                 </div>
 
+                {/* Drums fader removed for now; replaced by Noise. */}
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
                   <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
-                    Drums
+                    Noise
                   </span>
                   <select
                     className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
-                    value={backgroundDrumsKey}
+                    value={backgroundNoiseKey}
                     onChange={(e) => {
-                      setBackgroundDrumsKey(e.target.value);
+                      setBackgroundNoiseKey(e.target.value);
                     }}
                     disabled={soundControlsDisabled}
                   >
                     <option value="">None</option>
-                    {backgroundDrums.map((s) => (
+                    {backgroundNoise.map((s) => (
                       <option key={s.key} value={s.key}>
                         {s.name}
                       </option>
@@ -2010,35 +2085,35 @@ export function CreateWorkspace({
                     <div className="flex items-center justify-between text-xs text-muted">
                       <span>Level</span>
                       <span className="tabular-nums">
-                        {backgroundDrumsGain}%
+                        {backgroundNoiseGain}%
                       </span>
                     </div>
                     <input
-                      aria-label="Drums level"
+                      aria-label="Noise level"
                       type="range"
                       min={0}
                       max={100}
-                      value={backgroundDrumsGain}
+                      value={backgroundNoiseGain}
                       onChange={(e) =>
-                        setBackgroundDrumsGain(Number(e.target.value))
+                        setBackgroundNoiseGain(Number(e.target.value))
                       }
-                      disabled={soundControlsDisabled || !backgroundDrumsKey}
+                      disabled={soundControlsDisabled || !backgroundNoiseKey}
                       className="h-2 w-full accent-foreground disabled:opacity-40"
                     />
                   </div>
                   <button
                     type="button"
-                    onClick={() => void toggleRowPreview("drums")}
-                    disabled={soundControlsDisabled || !backgroundDrumsKey}
+                    onClick={() => void toggleRowPreview("noise")}
+                    disabled={soundControlsDisabled || !backgroundNoiseKey}
                     aria-label={
-                      playing.drums
-                        ? "Pause drums"
-                        : "Play drums"
+                      playing.noise
+                        ? "Pause noise"
+                        : "Play noise"
                     }
                     className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <PreviewPlayPauseIcon
-                      playing={playing.drums}
+                      playing={playing.noise}
                     />
                   </button>
                 </div>
@@ -2047,7 +2122,7 @@ export function CreateWorkspace({
             </div>
           </section>
 
-          <div className="mt-auto flex min-h-[3rem] w-full shrink-0 flex-nowrap items-center justify-between gap-4 px-0 pt-5 lg:pt-0">
+          <div className="relative z-20 mt-auto flex min-h-[3rem] w-full shrink-0 flex-nowrap items-center justify-between gap-4 bg-background px-0 pt-5 lg:pt-0">
             <button
               type="button"
               onClick={() => setMobileCreateStep("chat")}

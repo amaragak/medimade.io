@@ -7,7 +7,7 @@ import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
 const s3 = new S3Client({});
 const PREFIX = "background-audio/";
 
-const CATEGORIES = ["nature", "music", "drums"] as const;
+const CATEGORIES = ["nature", "music", "drums", "noise"] as const;
 type Category = (typeof CATEGORIES)[number];
 
 function json(
@@ -23,6 +23,8 @@ function json(
 
 function itemFromKey(key: string): { key: string; name: string; size: number | null } | null {
   if (!key || key.endsWith("/")) return null;
+  const lower = key.toLowerCase();
+  if (!lower.endsWith(".mp3") && !lower.endsWith(".wav")) return null;
   const withoutPrefix = key.startsWith(PREFIX) ? key.slice(PREFIX.length) : key;
   const firstSlash = withoutPrefix.indexOf("/");
   if (firstSlash <= 0) return null;
@@ -40,6 +42,45 @@ function itemFromKey(key: string): { key: string; name: string; size: number | n
     name: base || leaf,
     size: null,
   };
+}
+
+type ListedBgItem = {
+  key: string;
+  name: string;
+  size: number | null;
+  /** S3 key for normalized WAV when MP3 is used as `key` (streaming). */
+  wavKey?: string;
+};
+
+/** One row per stem: prefer MP3 for `key`; attach sibling `wavKey` when both exist. */
+function mergeByNamePreferMp3(
+  items: { key: string; name: string; size: number | null }[],
+): ListedBgItem[] {
+  const byName = new Map<
+    string,
+    { mp3?: (typeof items)[number]; wav?: (typeof items)[number] }
+  >();
+  for (const item of items) {
+    const lower = item.key.toLowerCase();
+    const rec = byName.get(item.name) ?? {};
+    if (lower.endsWith(".mp3")) rec.mp3 = item;
+    else if (lower.endsWith(".wav")) rec.wav = item;
+    byName.set(item.name, rec);
+  }
+  const out: ListedBgItem[] = [];
+  for (const [name, rec] of byName) {
+    if (rec.mp3) {
+      out.push({
+        key: rec.mp3.key,
+        name,
+        size: rec.mp3.size,
+        ...(rec.wav ? { wavKey: rec.wav.key } : {}),
+      });
+    } else if (rec.wav) {
+      out.push({ key: rec.wav.key, name, size: rec.wav.size });
+    }
+  }
+  return out;
 }
 
 export async function handler(
@@ -65,10 +106,11 @@ export async function handler(
       }),
     );
 
-    const buckets: Record<Category, { key: string; name: string; size: number | null }[]> = {
+    const buckets: Record<Category, ListedBgItem[]> = {
       nature: [],
       music: [],
       drums: [],
+      noise: [],
     };
 
     for (const o of out.Contents ?? []) {
@@ -84,6 +126,7 @@ export async function handler(
     }
 
     for (const c of CATEGORIES) {
+      buckets[c] = mergeByNamePreferMp3(buckets[c]);
       buckets[c].sort((a, b) => a.name.localeCompare(b.name));
     }
 
@@ -92,8 +135,9 @@ export async function handler(
       nature: buckets.nature,
       music: buckets.music,
       drums: buckets.drums,
-      /** @deprecated flat list; prefer nature/music/drums */
-      items: [...buckets.nature, ...buckets.music, ...buckets.drums],
+      noise: buckets.noise,
+      /** @deprecated flat list; prefer nature/music/drums/noise */
+      items: [...buckets.nature, ...buckets.music, ...buckets.drums, ...buckets.noise],
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "ListObjects failed";
