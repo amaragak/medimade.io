@@ -15,6 +15,86 @@ export function getMedimadeChatUrl(): string | null {
   return t || null;
 }
 
+export function getMedimadeMediaBaseUrl(): string | null {
+  const u = process.env.EXPO_PUBLIC_MEDIMADE_MEDIA_BASE_URL;
+  if (!u || typeof u !== "string") return null;
+  const t = u.trim().replace(/\/$/, "");
+  return t || null;
+}
+
+/** Prefer CDN MP3 for previews and mixer jobs (`background-audio/…` beds). */
+export function backgroundAudioStreamingKey(key: string): string {
+  const k = key.trim();
+  if (!k) return k;
+  const lower = k.toLowerCase();
+  if (!lower.startsWith("background-audio/") || !lower.endsWith(".wav")) return k;
+  return `${k.slice(0, -4)}.mp3`;
+}
+
+export type BackgroundAudioItem = {
+  key: string;
+  name: string;
+  size: number | null;
+  wavKey?: string;
+};
+
+export type BackgroundAudioByCategory = {
+  baseUrl?: string;
+  nature: BackgroundAudioItem[];
+  music: BackgroundAudioItem[];
+  drums: BackgroundAudioItem[];
+  noise: BackgroundAudioItem[];
+};
+
+export type FishSpeaker = {
+  name: string;
+  modelId: string;
+};
+
+export const VOICE_FX_PRESET_MEDITATION_MIXER = "mixer";
+
+export type MeditationAudioJobStatus = {
+  jobId: string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  audioUrl?: string;
+  scriptTextUsed?: string;
+  audioKey?: string;
+  title?: string;
+  description?: string;
+  error?: string;
+};
+
+export const MEDITATION_DRAFT_STATE_VERSION = 1 as const;
+
+export type MeditationDraftMessage = {
+  role: "assistant" | "user";
+  text: string;
+  variant?: "chat" | "script";
+  muted?: boolean;
+  kind?: "divider";
+};
+
+export type MeditationDraftStateV1 = {
+  v: typeof MEDITATION_DRAFT_STATE_VERSION;
+  phase: "style" | "feeling" | "claude";
+  journalMode?: boolean;
+  meditationStyle: string | null;
+  messages: MeditationDraftMessage[];
+  claudeThread: MedimadeChatTurn[];
+  input: string;
+  speechSpeed: number;
+  speakerModelId: string;
+  speakerFxPreviewOn?: boolean;
+  backgroundNatureKey: string;
+  backgroundMusicKey: string;
+  backgroundNoiseKey: string;
+  backgroundNatureGain: number;
+  backgroundMusicGain: number;
+  backgroundNoiseGain: number;
+  mobileCreateStep: "chat" | "audio";
+  lastUsedScript: string | null;
+};
+
 async function streamChatRequest(
   body: Record<string, unknown>,
   onDelta: (chunk: string) => void,
@@ -103,6 +183,7 @@ export async function streamMedimadeChat(
   params: {
     meditationStyle: string;
     messages: MedimadeChatTurn[];
+    journalMode?: boolean;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
@@ -111,6 +192,7 @@ export async function streamMedimadeChat(
       mode: "chat",
       meditationStyle: params.meditationStyle,
       messages: params.messages,
+      ...(params.journalMode === true ? { journalMode: true } : {}),
     },
     onDelta,
     "Empty reply from guide",
@@ -121,6 +203,7 @@ export async function streamMeditationScript(
   params: {
     meditationStyle: string | null;
     transcript: string;
+    journalMode?: boolean;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
@@ -129,22 +212,12 @@ export async function streamMeditationScript(
       mode: "generate_script",
       meditationStyle: params.meditationStyle ?? "",
       transcript: params.transcript,
+      ...(params.journalMode === true ? { journalMode: true } : {}),
     },
     onDelta,
     "Empty script from model",
   );
 }
-
-export type GenerateMeditationAudioResponse = {
-  audioUrl: string;
-  scriptTextUsed: string;
-  audioKey: string;
-};
-
-export type FishSpeaker = {
-  name: string;
-  modelId: string;
-};
 
 export async function listFishSpeakers(): Promise<FishSpeaker[]> {
   const base = getMedimadeApiBase();
@@ -162,42 +235,212 @@ export async function listFishSpeakers(): Promise<FishSpeaker[]> {
   return data.speakers ?? [];
 }
 
-export async function generateMeditationAudio(params: {
+export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/media/background-audio`);
+  const data = (await res.json()) as {
+    baseUrl?: string;
+    nature?: BackgroundAudioItem[];
+    music?: BackgroundAudioItem[];
+    drums?: BackgroundAudioItem[];
+    noise?: BackgroundAudioItem[];
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+  return {
+    baseUrl: data.baseUrl,
+    nature: data.nature ?? [],
+    music: data.music ?? [],
+    drums: data.drums ?? [],
+    noise: data.noise ?? [],
+  };
+}
+
+export async function createMeditationAudioJob(params: {
   meditationStyle: string | null;
+  journalMode?: boolean;
   transcript: string;
   scriptText?: string | null;
   reference_id: string;
-}): Promise<GenerateMeditationAudioResponse> {
+  speed?: number;
+  voiceFxPreset?: string | null;
+  backgroundSoundKey?: string | null;
+  backgroundNatureKey?: string | null;
+  backgroundMusicKey?: string | null;
+  backgroundDrumsKey?: string | null;
+  backgroundNoiseKey?: string | null;
+  backgroundNatureGain?: number;
+  backgroundMusicGain?: number;
+  backgroundDrumsGain?: number;
+  backgroundNoiseGain?: number;
+}): Promise<{ jobId: string }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
 
-  const res = await fetch(`${base}/meditation/audio`, {
+  const speed =
+    typeof params.speed === "number" && Number.isFinite(params.speed)
+      ? params.speed
+      : undefined;
+  const trimBg = (v: string | null | undefined) =>
+    typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
+
+  const backgroundNatureKey = trimBg(params.backgroundNatureKey ?? null);
+  const backgroundMusicKey = trimBg(params.backgroundMusicKey ?? null);
+  const backgroundDrumsKey = trimBg(params.backgroundDrumsKey ?? null);
+  const backgroundNoiseKey = trimBg(params.backgroundNoiseKey ?? null);
+  const backgroundSoundKey = trimBg(params.backgroundSoundKey ?? null);
+
+  const jobBody: Record<string, unknown> = {
+    meditationStyle: params.meditationStyle ?? "",
+    transcript: params.transcript,
+    scriptText: params.scriptText ?? "",
+    reference_id: params.reference_id,
+    ...(params.journalMode === true ? { journalMode: true } : {}),
+    ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
+    ...(speed === undefined ? {} : { speed }),
+    ...(backgroundSoundKey ? { backgroundSoundKey } : {}),
+    ...(backgroundNatureKey ? { backgroundNatureKey } : {}),
+    ...(backgroundMusicKey ? { backgroundMusicKey } : {}),
+    ...(backgroundDrumsKey ? { backgroundDrumsKey } : {}),
+    ...(backgroundNoiseKey ? { backgroundNoiseKey } : {}),
+  };
+
+  if (typeof params.backgroundNatureGain === "number") {
+    jobBody.backgroundNatureGain = params.backgroundNatureGain;
+  }
+  if (typeof params.backgroundMusicGain === "number") {
+    jobBody.backgroundMusicGain = params.backgroundMusicGain;
+  }
+  if (typeof params.backgroundDrumsGain === "number") {
+    jobBody.backgroundDrumsGain = params.backgroundDrumsGain;
+  }
+  if (typeof params.backgroundNoiseGain === "number") {
+    jobBody.backgroundNoiseGain = params.backgroundNoiseGain;
+  }
+
+  const createRes = await fetch(`${base}/meditation/audio/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      meditationStyle: params.meditationStyle ?? "",
-      transcript: params.transcript,
-      scriptText: params.scriptText ?? "",
-      reference_id: params.reference_id,
-    }),
+    body: JSON.stringify(jobBody),
   });
 
-  const data = (await res.json()) as Partial<GenerateMeditationAudioResponse> & {
+  const createData = (await createRes.json()) as {
+    jobId?: string;
     error?: string;
     detail?: string;
   };
 
-  if (!res.ok) {
+  if (!createRes.ok || !createData.jobId) {
     const msg =
-      data.detail ?? data.error ?? res.statusText ?? "Audio generation failed";
+      createData.detail ??
+      createData.error ??
+      createRes.statusText ??
+      "Audio job creation failed";
     throw new Error(msg);
   }
 
-  if (!data.audioUrl || !data.scriptTextUsed || !data.audioKey) {
-    throw new Error("Malformed response from audio generation endpoint");
-  }
+  return { jobId: createData.jobId };
+}
 
-  return data as GenerateMeditationAudioResponse;
+export async function getMeditationAudioJobStatus(
+  jobId: string,
+): Promise<MeditationAudioJobStatus> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const id = jobId.trim();
+  if (!id) throw new Error("jobId is required");
+
+  const res = await fetch(`${base}/meditation/audio/jobs/${encodeURIComponent(id)}`);
+  const data = (await res.json()) as MeditationAudioJobStatus;
+  if (!res.ok) {
+    throw new Error(data.error ?? res.statusText ?? "Audio job status failed");
+  }
+  return { ...data, jobId: data.jobId ?? id };
+}
+
+export async function saveMeditationDraft(params: {
+  sk?: string | null;
+  title?: string;
+  meditationStyle: string | null;
+  draftState: MeditationDraftStateV1;
+}): Promise<{ sk: string; id: string; createdAt: string; title: string }> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/library/meditations/draft`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sk: params.sk?.trim() || undefined,
+      title: params.title,
+      meditationStyle: params.meditationStyle,
+      draftState: params.draftState,
+    }),
+  });
+  const data = (await res.json()) as {
+    sk?: string;
+    id?: string;
+    createdAt?: string;
+    title?: string;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+  if (!data.sk || !data.id || !data.createdAt || !data.title) {
+    throw new Error("Save draft returned incomplete data");
+  }
+  return {
+    sk: data.sk,
+    id: data.id,
+    createdAt: data.createdAt,
+    title: data.title,
+  };
+}
+
+export async function getMeditationDraft(sk: string): Promise<{
+  sk: string;
+  id: string;
+  createdAt: string | null;
+  title: string | null;
+  meditationStyle: string | null;
+  draftState: unknown;
+}> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const q = new URLSearchParams({ sk });
+  const res = await fetch(`${base}/library/meditations/draft?${q.toString()}`);
+  const data = (await res.json()) as {
+    sk?: string;
+    id?: string;
+    createdAt?: string | null;
+    title?: string | null;
+    meditationStyle?: string | null;
+    draftState?: unknown;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+  if (!data.sk || !data.id) {
+    throw new Error("Load draft returned incomplete data");
+  }
+  return {
+    sk: data.sk,
+    id: data.id,
+    createdAt: data.createdAt ?? null,
+    title: data.title ?? null,
+    meditationStyle: data.meditationStyle ?? null,
+    draftState: data.draftState,
+  };
 }
 
 export type LibraryMeditationItem = {
@@ -217,11 +460,25 @@ export type LibraryMeditationItem = {
   scriptTruncated: boolean;
   rating: number | null;
   favourite: boolean;
+  archived?: boolean;
   catalogued: boolean;
   mp3Bytes: number | null;
-  /** Present when item is a saved create-flow draft (web). */
   isDraft?: boolean;
 };
+
+export function libraryMeditationCategoryLabel(m: {
+  meditationType: string | null;
+  meditationStyle: string | null;
+}): string {
+  const type = m.meditationType?.trim() ?? "";
+  const rawStyle = m.meditationStyle?.trim() ?? "";
+  const styleOk =
+    rawStyle && rawStyle.toLowerCase() !== "general" ? rawStyle : "";
+  if (type && styleOk) return `${type} · ${styleOk}`;
+  if (type) return type;
+  if (styleOk) return styleOk;
+  return "—";
+}
 
 export async function listLibraryMeditations(): Promise<LibraryMeditationItem[]> {
   const base = getMedimadeApiBase();
@@ -267,6 +524,24 @@ export async function patchMeditationFavourite(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sk, favourite }),
+  });
+  const data = (await res.json()) as { error?: string; detail?: string };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+}
+
+export async function patchMeditationArchived(
+  sk: string,
+  archived: boolean,
+): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/library/meditations/archive`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sk, archived }),
   });
   const data = (await res.json()) as { error?: string; detail?: string };
   if (!res.ok) {

@@ -63,7 +63,9 @@ export default function ModalDropdown({
             <Text style={styles.sheetTitle}>Choose one</Text>
             <FlatList
               data={options}
-              keyExtractor={(item) => item.value}
+              keyExtractor={(item, index) =>
+                item.value ? item.value : `__empty_${index}`
+              }
               renderItem={({ item }) => (
                 <Pressable
                   onPress={() => {

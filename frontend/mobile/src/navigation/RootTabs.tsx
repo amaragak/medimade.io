@@ -6,7 +6,7 @@ import LibraryScreen from "../screens/LibraryScreen";
 import { colors } from "../theme/colors";
 
 export type RootTabParamList = {
-  Create: undefined;
+  Create: { draftSk?: string } | undefined;
   Library: undefined;
 };
 
