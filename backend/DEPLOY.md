@@ -99,7 +99,7 @@ Confirm changes when prompted, or add `--require-approval never` for CI.
 
 After deploy, note **CloudFormation outputs**: `ApiUrl`, `FishTtsUrl`, `VoiceFxUrl`, `MedimadeChatUrl`, `FishAudioSecretName`, `ClaudeSecretName`.
 
-Set **`NEXT_PUBLIC_MEDIMADE_CHAT_URL`** in the webapp to **`MedimadeChatUrl`** (Lambda Function URL with response streaming). `scripts/deploy-back` writes both API base and chat URL into `frontend/webapp/.env`.
+Set **`NEXT_PUBLIC_MEDIMADE_CHAT_URL`** in the webapp to **`MedimadeChatUrl`** (Lambda Function URL with response streaming). `scripts/deploy-back` writes API base, chat URL, and (when present) media CDN base into **`frontend/webapp/.env`** (`NEXT_PUBLIC_*`) and **`frontend/mobile/.env`** (`EXPO_PUBLIC_*`).
 
 Public function URLs now require **both** `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` (URL-only) on the function policy; the stack adds both. If you still see **403 Forbidden**, redeploy and confirm `.env` points at **`MedimadeChatUrl`**, not the old API Gateway `/chat` path.
 

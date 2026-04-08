@@ -8,6 +8,7 @@ import {
   View,
 } from "react-native";
 import { colors } from "../../theme/colors";
+import { fonts } from "../../theme/fonts";
 
 type Option = {
   label: string;
@@ -97,8 +98,9 @@ export default function ModalDropdown({
 
 const styles = StyleSheet.create({
   label: {
+    fontFamily: fonts.sansSemiBold,
     fontSize: 12,
-    fontWeight: "700",
+    fontWeight: "600",
     color: colors.foreground,
     marginBottom: 8,
   },
@@ -111,10 +113,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   value: {
+    fontFamily: fonts.sans,
     fontSize: 14,
     color: colors.foreground,
   },
   placeholder: {
+    fontFamily: fonts.sans,
     fontSize: 14,
     color: colors.muted,
   },
@@ -133,8 +137,9 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   sheetTitle: {
+    fontFamily: fonts.sansSemiBold,
     fontSize: 12,
-    fontWeight: "800",
+    fontWeight: "600",
     color: colors.muted,
     marginBottom: 12,
     textTransform: "uppercase",
@@ -146,6 +151,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   optionText: {
+    fontFamily: fonts.sans,
     fontSize: 15,
     color: colors.foreground,
   },

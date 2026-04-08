@@ -1,25 +1,64 @@
+import Constants from "expo-constants";
+
 export type MedimadeChatTurn = { role: "user" | "assistant"; content: string };
 
+type MedimadeExtra = {
+  medimadeApiUrl?: string;
+  medimadeChatUrl?: string;
+  medimadeMediaBaseUrl?: string;
+};
+
+function medimadeExtra(): MedimadeExtra {
+  return (Constants.expoConfig?.extra ?? {}) as MedimadeExtra;
+}
+
+function firstNonEmpty(
+  ...vals: (string | null | undefined)[]
+): string | null {
+  for (const v of vals) {
+    if (typeof v !== "string") continue;
+    const t = v.trim();
+    if (t) return t;
+  }
+  return null;
+}
+
+const URL_SETUP_HINT =
+  "Add them to frontend/mobile/.env (copy from .env.example; same values as webapp but EXPO_PUBLIC_* names). Restart Expo after editing .env.";
+
 export function getMedimadeApiBase(): string | null {
-  const u = process.env.EXPO_PUBLIC_MEDIMADE_API_URL;
-  if (!u || typeof u !== "string") return null;
-  const t = u.trim();
-  if (!t) return null;
-  return t.endsWith("/") ? t.slice(0, -1) : t;
+  const u = firstNonEmpty(
+    process.env.EXPO_PUBLIC_MEDIMADE_API_URL,
+    medimadeExtra().medimadeApiUrl,
+  );
+  if (!u) return null;
+  return u.endsWith("/") ? u.slice(0, -1) : u;
 }
 
 export function getMedimadeChatUrl(): string | null {
-  const u = process.env.EXPO_PUBLIC_MEDIMADE_CHAT_URL;
-  if (!u || typeof u !== "string") return null;
-  const t = u.trim();
-  return t || null;
+  return firstNonEmpty(
+    process.env.EXPO_PUBLIC_MEDIMADE_CHAT_URL,
+    medimadeExtra().medimadeChatUrl,
+  );
 }
 
 export function getMedimadeMediaBaseUrl(): string | null {
-  const u = process.env.EXPO_PUBLIC_MEDIMADE_MEDIA_BASE_URL;
-  if (!u || typeof u !== "string") return null;
-  const t = u.trim().replace(/\/$/, "");
-  return t || null;
+  const u = firstNonEmpty(
+    process.env.EXPO_PUBLIC_MEDIMADE_MEDIA_BASE_URL,
+    medimadeExtra().medimadeMediaBaseUrl,
+  );
+  if (!u) return null;
+  return u.replace(/\/$/, "");
+}
+
+export function requireMedimadeApiBase(): string {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error(
+      `EXPO_PUBLIC_MEDIMADE_API_URL is not set. ${URL_SETUP_HINT}`,
+    );
+  }
+  return base;
 }
 
 /** Prefer CDN MP3 for previews and mixer jobs (`background-audio/…` beds). */
@@ -102,7 +141,9 @@ async function streamChatRequest(
 ): Promise<string> {
   const url = getMedimadeChatUrl();
   if (!url) {
-    throw new Error("EXPO_PUBLIC_MEDIMADE_CHAT_URL is not set");
+    throw new Error(
+      `EXPO_PUBLIC_MEDIMADE_CHAT_URL is not set. ${URL_SETUP_HINT}`,
+    );
   }
   const res = await fetch(url, {
     method: "POST",
@@ -220,8 +261,7 @@ export async function streamMeditationScript(
 }
 
 export async function listFishSpeakers(): Promise<FishSpeaker[]> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const base = requireMedimadeApiBase();
   const res = await fetch(`${base}/fish/speakers`);
   const data = (await res.json()) as {
     speakers?: FishSpeaker[];
@@ -236,8 +276,7 @@ export async function listFishSpeakers(): Promise<FishSpeaker[]> {
 }
 
 export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const base = requireMedimadeApiBase();
   const res = await fetch(`${base}/media/background-audio`);
   const data = (await res.json()) as {
     baseUrl?: string;
@@ -279,8 +318,7 @@ export async function createMeditationAudioJob(params: {
   backgroundDrumsGain?: number;
   backgroundNoiseGain?: number;
 }): Promise<{ jobId: string }> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const base = requireMedimadeApiBase();
 
   const speed =
     typeof params.speed === "number" && Number.isFinite(params.speed)
@@ -350,8 +388,7 @@ export async function createMeditationAudioJob(params: {
 export async function getMeditationAudioJobStatus(
   jobId: string,
 ): Promise<MeditationAudioJobStatus> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const base = requireMedimadeApiBase();
   const id = jobId.trim();
   if (!id) throw new Error("jobId is required");
 
@@ -369,8 +406,7 @@ export async function saveMeditationDraft(params: {
   meditationStyle: string | null;
   draftState: MeditationDraftStateV1;
 }): Promise<{ sk: string; id: string; createdAt: string; title: string }> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const base = requireMedimadeApiBase();
   const res = await fetch(`${base}/library/meditations/draft`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -412,8 +448,7 @@ export async function getMeditationDraft(sk: string): Promise<{
   meditationStyle: string | null;
   draftState: unknown;
 }> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const base = requireMedimadeApiBase();
   const q = new URLSearchParams({ sk });
   const res = await fetch(`${base}/library/meditations/draft?${q.toString()}`);
   const data = (await res.json()) as {
@@ -481,8 +516,7 @@ export function libraryMeditationCategoryLabel(m: {
 }
 
 export async function listLibraryMeditations(): Promise<LibraryMeditationItem[]> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const base = requireMedimadeApiBase();
   const res = await fetch(`${base}/library/meditations`);
   const data = (await res.json()) as {
     items?: LibraryMeditationItem[];
@@ -500,8 +534,7 @@ export async function patchMeditationRating(
   sk: string,
   rating: number | null,
 ): Promise<void> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const base = requireMedimadeApiBase();
   const res = await fetch(`${base}/library/meditations/rating`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -518,8 +551,7 @@ export async function patchMeditationFavourite(
   sk: string,
   favourite: boolean,
 ): Promise<void> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const base = requireMedimadeApiBase();
   const res = await fetch(`${base}/library/meditations/favourite`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -536,8 +568,7 @@ export async function patchMeditationArchived(
   sk: string,
   archived: boolean,
 ): Promise<void> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("EXPO_PUBLIC_MEDIMADE_API_URL is not set");
+  const base = requireMedimadeApiBase();
   const res = await fetch(`${base}/library/meditations/archive`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },

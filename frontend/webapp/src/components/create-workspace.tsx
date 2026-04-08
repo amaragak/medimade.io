@@ -1632,6 +1632,7 @@ export function CreateWorkspace({
                 </Tooltip.Root>
               </div>
             </Tooltip.Provider>
+            {/* Preview script — hidden for now
             <button
               type="button"
               onClick={() => void generateScript()}
@@ -1640,6 +1641,7 @@ export function CreateWorkspace({
             >
               {scriptLoading ? "…" : "Preview script"}
             </button>
+            */}
           </div>
           <div className="flex min-h-0 flex-1 flex-col p-4">
             <div
