@@ -7,6 +7,8 @@
 #   backend/scripts/generate-speaker-samples --profile mm
 #   MEDIA_BUCKET_NAME=my-bucket backend/scripts/generate-speaker-samples
 #
+# AWS profile: defaults to AWS_PROFILE=mm when unset and no --profile in arguments.
+#
 # Requires:
 # - npm install in backend/ (tsx is a devDependency)
 # - FISH_AUDIO_API_KEY or AWS creds + Secrets Manager (see scripts/generate-speaker-samples.ts)
@@ -14,8 +16,13 @@
 set -euo pipefail
 
 BACKEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
 TSX="$BACKEND_ROOT/node_modules/.bin/tsx"
 ENTRY="$BACKEND_ROOT/scripts/generate-speaker-samples.ts"
+
+# shellcheck source=lib/default-aws-profile.sh
+source "$SCRIPT_LIB/default-aws-profile.sh"
+medimade_default_aws_profile "$@"
 
 if [ ! -f "$TSX" ]; then
   echo "tsx not found at $TSX — run: cd \"$BACKEND_ROOT\" && npm install" >&2

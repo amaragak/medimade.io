@@ -6,9 +6,11 @@
 # Usage (from repo root or anywhere):
 #   ./frontend/webapp/deploy/deploy-web
 #   ./frontend/webapp/deploy/deploy-web --stage prod --profile mm
+#   ./frontend/webapp/deploy/deploy-web --stage production   # same as prod
 #
-#   --stage   Optional. Only "dev" or "prod" (default: dev).
-#   --profile Optional. Sets AWS_PROFILE for this deploy (AWS credential profile name).
+#   --stage   Optional. SST stage: dev | development | prod | production (default: dev).
+#             "production" / "development" are normalized to prod / dev.
+#   --profile Optional. Sets AWS_PROFILE for this deploy. If omitted and AWS_PROFILE is unset, uses mm.
 #
 # Prereqs:
 #   cd frontend/webapp/deploy && npm install && npm run install-platform
@@ -21,9 +23,20 @@ ENV_FILE="$WEBAPP_DIR/.env"
 STAGE="dev"
 PROFILE=""
 
+normalize_stage() {
+  local s
+  s="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$s" in
+    dev | development) echo "dev" ;;
+    prod | production) echo "prod" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 usage() {
-  echo "Usage: $0 [--stage dev|prod] [--profile <aws-profile>]" >&2
-  echo "  --stage   default: dev; allowed: dev, prod" >&2
+  echo "Usage: $0 [--stage <name>] [--profile <aws-profile>]" >&2
+  echo "  --stage   default: dev. Allowed: dev, development, prod, production" >&2
+  echo "            (SST always uses stage ids \"dev\" or \"prod\".)" >&2
   echo "  --profile optional; passed as AWS_PROFILE for this run" >&2
 }
 
@@ -35,7 +48,7 @@ while [[ $# -gt 0 ]]; do
         usage
         exit 1
       fi
-      STAGE="$2"
+      STAGE="$(normalize_stage "$2")"
       shift 2
       ;;
     --profile)
@@ -73,6 +86,8 @@ fi
 
 if [[ -n "$PROFILE" ]]; then
   export AWS_PROFILE="$PROFILE"
+elif [[ -z "${AWS_PROFILE:-}" ]]; then
+  export AWS_PROFILE=mm
 fi
 
 cd "$DEPLOY_DIR"

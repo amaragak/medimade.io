@@ -9,6 +9,7 @@ import { ChatMarkdown } from "@/components/chat-markdown";
 import {
   type MedimadeChatTurn,
   type MeditationDraftStateV1,
+  type MeditationTargetMinutes,
   MEDITATION_DRAFT_STATE_VERSION,
   streamMedimadeChat,
   streamMeditationScript,
@@ -24,15 +25,20 @@ import {
   type BackgroundAudioItem,
 } from "@/lib/medimade-api";
 import {
-  SPEAKER_SAMPLE_SPEED_MAX,
-  SPEAKER_SAMPLE_SPEED_MIN,
-  SPEAKER_SAMPLE_SPEED_STEP,
-  snapSpeakerSampleSpeed,
+  FIXED_SPEECH_PREVIEW_SPEED,
   speakerPreviewFxSampleKey,
   speakerPreviewLoudFxSampleKey,
   speakerPreviewLoudSampleKey,
-  speakerPreviewSampleKey,
 } from "@/lib/speaker-sample-speed";
+import {
+  JOURNAL_CREATE_FIRST_MESSAGE,
+  JOURNAL_MEDITATION_PAYLOAD_KEY,
+  buildJournalHandoffApiContent,
+  clearJournalMeditationHandoffJson,
+  formatJournalEntryDate,
+  parseJournalMeditationPayload,
+  peekJournalMeditationHandoffJson,
+} from "@/lib/journal-storage";
 
 function mediaFileUrl(base: string, key: string): string {
   const b = base.replace(/\/$/, "");
@@ -41,6 +47,11 @@ function mediaFileUrl(base: string, key: string): string {
 }
 
 const SPEAKER_SAMPLE_GAP_MS = 3000;
+
+function parseMeditationTargetMinutes(raw: unknown): MeditationTargetMinutes {
+  if (raw === 2 || raw === 5 || raw === 10) return raw;
+  return 5;
+}
 
 type PendingLibraryGeneration = {
   jobId: string;
@@ -215,6 +226,13 @@ function PreviewPlayPauseIcon({ playing }: { playing: boolean }) {
   );
 }
 
+type JournalHandoffSegment = {
+  entryId: string;
+  title: string;
+  bodyPlain: string;
+  createdAt?: string;
+};
+
 type ChatMessage = {
   role: "assistant" | "user";
   text: string;
@@ -222,6 +240,8 @@ type ChatMessage = {
   variant?: "chat" | "script";
   muted?: boolean;
   kind?: "divider";
+  /** When set on a user message, render expandable journal entry cards below `text`. */
+  journalSegments?: JournalHandoffSegment[];
 };
 
 const meditationStyles = [
@@ -272,6 +292,57 @@ const OPENING_STYLE =
   "What style of meditation should we build? Pick one below or describe your own.";
 const OPENING_JOURNAL = "What’s on your mind?";
 
+function chatMessageTranscriptLine(m: ChatMessage): string {
+  if (m.role === "user" && m.journalSegments?.length) {
+    return buildJournalHandoffApiContent(m.journalSegments);
+  }
+  return m.text;
+}
+
+function JournalHandoffEntryCards({
+  segments,
+}: {
+  segments: JournalHandoffSegment[];
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  return (
+    <ul className="mt-3 space-y-2 border-t border-border/70 pt-3">
+      {segments.map((s) => {
+        const open = openId === s.entryId;
+        return (
+          <li
+            key={s.entryId}
+            className="rounded-lg border border-border bg-background/90 px-3 py-2 text-left"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-foreground">{s.title}</div>
+                {s.createdAt ? (
+                  <div className="mt-0.5 text-xs text-muted">
+                    Created {formatJournalEntryDate(s.createdAt)}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenId(open ? null : s.entryId)}
+                className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-accent transition-colors hover:bg-accent-soft/40"
+              >
+                {open ? "Collapse" : "Expand"}
+              </button>
+            </div>
+            {open ? (
+              <p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-muted">
+                {s.bodyPlain.trim() ? s.bodyPlain : "(Empty entry)"}
+              </p>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function isMedimadeTurnLike(x: unknown): x is MedimadeChatTurn {
   if (!x || typeof x !== "object") return false;
   const o = x as Record<string, unknown>;
@@ -293,6 +364,17 @@ function isChatMessageLike(
     o.variant !== "script"
   ) {
     return false;
+  }
+  if (o.journalSegments != null) {
+    if (!Array.isArray(o.journalSegments)) return false;
+    for (const s of o.journalSegments) {
+      if (!s || typeof s !== "object") return false;
+      const q = s as Record<string, unknown>;
+      if (typeof q.entryId !== "string") return false;
+      if (typeof q.title !== "string") return false;
+      if (typeof q.bodyPlain !== "string") return false;
+      if (q.createdAt != null && typeof q.createdAt !== "string") return false;
+    }
   }
   return true;
 }
@@ -352,11 +434,18 @@ function isDraftStateV1(raw: unknown): raw is MeditationDraftStateV1 {
   if (o.lastUsedScript != null && typeof o.lastUsedScript !== "string") {
     return false;
   }
+  if (o.meditationTargetMinutes != null) {
+    if (o.meditationTargetMinutes !== 2 && o.meditationTargetMinutes !== 5 && o.meditationTargetMinutes !== 10) {
+      return false;
+    }
+  }
   return true;
 }
 
 type CreateWorkspaceProps = {
   initialDraftSk?: string | null;
+  /** When true, read journal → create handoff from sessionStorage once (if no draft). */
+  seedJournalContext?: boolean;
 };
 
 function getStyleFollowupQuestion(style: string): string {
@@ -406,6 +495,7 @@ function getStyleFollowupQuestion(style: string): string {
 
 export function CreateWorkspace({
   initialDraftSk = null,
+  seedJournalContext = false,
 }: CreateWorkspaceProps) {
   const router = useRouter();
   const isRedirectingToLibraryRef = useRef(false);
@@ -420,7 +510,7 @@ export function CreateWorkspace({
 
   // Reduce perceived navigation latency (and any browser "redirecting" UI) by prefetching Library.
   useEffect(() => {
-    router.prefetch("/library");
+    router.prefetch("/meditate/library");
   }, [router]);
 
   const [phase, setPhase] = useState<Phase>("feeling");
@@ -433,9 +523,9 @@ export function CreateWorkspace({
   const [audioModalKey, setAudioModalKey] = useState<string | null>(null);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [lastUsedScript, setLastUsedScript] = useState<string | null>(null);
-  const [speechSpeed, setSpeechSpeed] = useState<number>(() =>
-    snapSpeakerSampleSpeed(1),
-  );
+  const speechSpeed = FIXED_SPEECH_PREVIEW_SPEED;
+  const [meditationTargetMinutes, setMeditationTargetMinutes] =
+    useState<MeditationTargetMinutes>(5);
   /** When on, speaker row plays CDN `*-fx.wav` (Pedalboard preset mixer); when off, dry Fish `*.mp3`. */
   const [speakerFxPreviewOn, setSpeakerFxPreviewOn] = useState(true);
   const [backgroundNature, setBackgroundNature] = useState<
@@ -528,6 +618,7 @@ export function CreateWorkspace({
       backgroundNoiseGain,
       mobileCreateStep,
       lastUsedScript,
+      meditationTargetMinutes,
     };
   }
 
@@ -573,13 +664,15 @@ export function CreateWorkspace({
           );
           return;
         }
-        const s = row.draftState;
+        const s = row.draftState as MeditationDraftStateV1 & {
+          backgroundDrumsKey?: string;
+          backgroundDrumsGain?: number;
+        };
         setPhase(s.phase);
         setMeditationStyle(s.meditationStyle);
         setMessages(s.messages);
         setClaudeThread(s.claudeThread);
         setInput(s.input);
-        setSpeechSpeed(snapSpeakerSampleSpeed(s.speechSpeed));
         setSpeakerModelId(s.speakerModelId);
         setBackgroundNatureKey(
           backgroundAudioStreamingKey(s.backgroundNatureKey),
@@ -590,16 +683,17 @@ export function CreateWorkspace({
         // Back-compat: if noise wasn't saved yet, reuse drums selection.
         setBackgroundNoiseKey(
           backgroundAudioStreamingKey(
-            (s as any).backgroundNoiseKey ?? s.backgroundDrumsKey ?? "",
+            s.backgroundNoiseKey ?? s.backgroundDrumsKey ?? "",
           ),
         );
         setBackgroundNatureGain(s.backgroundNatureGain);
         setBackgroundMusicGain(s.backgroundMusicGain);
         setBackgroundNoiseGain(
-          (s as any).backgroundNoiseGain ?? s.backgroundDrumsGain ?? 10,
+          s.backgroundNoiseGain ?? s.backgroundDrumsGain ?? 10,
         );
         setMobileCreateStep(s.mobileCreateStep);
         setLastUsedScript(s.lastUsedScript);
+        setMeditationTargetMinutes(parseMeditationTargetMinutes(s.meditationTargetMinutes));
         setDraftSk(row.sk);
       } catch (e) {
         if (!cancelled) {
@@ -613,6 +707,122 @@ export function CreateWorkspace({
       cancelled = true;
     };
   }, [initialDraftSk]);
+
+  useEffect(() => {
+    if (!seedJournalContext) return;
+    const sk = initialDraftSk?.trim();
+    if (sk) {
+      try {
+        sessionStorage.removeItem(JOURNAL_MEDITATION_PAYLOAD_KEY);
+        clearJournalMeditationHandoffJson();
+      } catch {
+        /* ignore */
+      }
+      router.replace("/meditate/create");
+      return;
+    }
+
+    let rawJson: string | null = null;
+    try {
+      rawJson =
+        peekJournalMeditationHandoffJson() ??
+        sessionStorage.getItem(JOURNAL_MEDITATION_PAYLOAD_KEY);
+    } catch {
+      rawJson = null;
+    }
+
+    router.replace("/meditate/create");
+
+    const payload = parseJournalMeditationPayload(rawJson);
+    if (!payload?.segments.length) {
+      clearJournalMeditationHandoffJson();
+      try {
+        sessionStorage.removeItem(JOURNAL_MEDITATION_PAYLOAD_KEY);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    const styleHint = "General";
+    const journalCards: JournalHandoffSegment[] = payload.segments.map((s) => ({
+      entryId: s.entryId,
+      title: s.title,
+      bodyPlain: s.bodyPlain,
+      ...(s.createdAt ? { createdAt: s.createdAt } : {}),
+    }));
+    const apiUserContent = buildJournalHandoffApiContent(payload.segments);
+    const history: MedimadeChatTurn[] = [
+      { role: "assistant", content: OPENING_JOURNAL },
+      { role: "user", content: apiUserContent },
+    ];
+
+    setJournalMode(true);
+    setIntroTypingDone(true);
+    setPhase("claude");
+    setMeditationStyle(styleHint);
+    setClaudeThread([]);
+    setInput("");
+    setMessages([
+      {
+        role: "user",
+        text: JOURNAL_CREATE_FIRST_MESSAGE,
+        journalSegments: journalCards,
+      },
+    ]);
+    setChatLoading(true);
+
+    void (async () => {
+      try {
+        let acc = "";
+        let assistantBubbleStarted = false;
+        const text = await streamMedimadeChat(
+          {
+            meditationStyle: styleHint,
+            messages: history,
+            journalMode: true,
+            meditationTargetMinutes,
+          },
+          (d) => {
+            acc += d;
+            if (!assistantBubbleStarted) {
+              assistantBubbleStarted = true;
+              setMessages((m) => [...m, { role: "assistant", text: acc }]);
+              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
+            } else {
+              setMessages((m) => {
+                const next = [...m];
+                const last = next[next.length - 1];
+                if (last?.role !== "assistant") return m;
+                next[next.length - 1] = { role: "assistant", text: acc };
+                return next;
+              });
+              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
+            }
+          },
+        );
+        setClaudeThread([...history, { role: "assistant", content: text }]);
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : "Could not reach the guide.";
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", text: `Sorry — ${msg}` },
+        ]);
+      } finally {
+        clearJournalMeditationHandoffJson();
+        try {
+          sessionStorage.removeItem(JOURNAL_MEDITATION_PAYLOAD_KEY);
+        } catch {
+          /* ignore */
+        }
+        setChatLoading(false);
+        requestAnimationFrame(() => {
+          chatInputRef.current?.focus();
+        });
+      }
+    })();
+  }, [seedJournalContext, initialDraftSk, router]);
 
   useEffect(() => {
     void listFishSpeakers()
@@ -636,7 +846,10 @@ export function CreateWorkspace({
     // Treat mode switches as a new chat: ignore any muted history + dividers + prior scripts.
     const transcript = messages
       .filter((m) => !m.muted && m.kind !== "divider" && m.variant !== "script")
-      .map((m) => `${m.role === "user" ? "User" : "Guide"}: ${m.text}`)
+      .map(
+        (m) =>
+          `${m.role === "user" ? "User" : "Guide"}: ${chatMessageTranscriptLine(m)}`,
+      )
       .join("\n\n");
     setScriptLoading(true);
     try {
@@ -647,6 +860,8 @@ export function CreateWorkspace({
           meditationStyle,
           transcript,
           journalMode: journalMode === true,
+          meditationTargetMinutes,
+          speechSpeed,
         },
         (d) => {
           acc += d;
@@ -724,6 +939,7 @@ export function CreateWorkspace({
         meditationStyle: style,
         messages: history,
         journalMode: journalMode === true,
+        meditationTargetMinutes,
       },
       (d) => {
         acc += d;
@@ -927,6 +1143,7 @@ export function CreateWorkspace({
             meditationStyle: styleHint,
             messages: history,
             journalMode: true,
+            meditationTargetMinutes,
           },
           (d) => {
             acc += d;
@@ -980,6 +1197,7 @@ export function CreateWorkspace({
             meditationStyle: style,
             messages: history,
             journalMode: journalMode === true,
+            meditationTargetMinutes,
           },
           (d) => {
             acc += d;
@@ -1043,6 +1261,7 @@ export function CreateWorkspace({
             meditationStyle: style,
             messages: nextMessages,
             journalMode: journalMode === true,
+            meditationTargetMinutes,
           },
           (d) => {
             acc += d;
@@ -1098,6 +1317,7 @@ export function CreateWorkspace({
           meditationStyle: style,
           messages: history,
           journalMode: journalMode === true,
+          meditationTargetMinutes,
         },
         (d) => {
           acc += d;
@@ -1151,12 +1371,16 @@ export function CreateWorkspace({
 
       const transcript = messages
         .filter((m) => !(m.role === "assistant" && m.variant === "script"))
-        .map((m) => `${m.role === "user" ? "User" : "Guide"}: ${m.text}`)
+        .map(
+          (m) =>
+            `${m.role === "user" ? "User" : "Guide"}: ${chatMessageTranscriptLine(m)}`,
+        )
         .join("\n\n");
 
       const { jobId } = await createMeditationAudioJob({
         meditationStyle,
         journalMode: journalMode === true,
+        meditationTargetMinutes,
         transcript,
         scriptText: existingScript,
         reference_id: speakerModelId,
@@ -1240,7 +1464,9 @@ export function CreateWorkspace({
       savePendingGenerations(nextPending);
 
       isRedirectingToLibraryRef.current = true;
-      router.push(`/library?focus=${encodeURIComponent(`pending:${jobId}`)}`);
+      router.push(
+        `/meditate/library?focus=${encodeURIComponent(`pending:${jobId}`)}`,
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Audio generation failed";
       setAudioError(msg);
@@ -1734,6 +1960,15 @@ export function CreateWorkspace({
                               className="font-serif text-[14px] leading-relaxed text-foreground/95"
                             />
                           </>
+                        ) : msg.role === "user" &&
+                          msg.journalSegments &&
+                          msg.journalSegments.length > 0 ? (
+                          <div className="text-[15px] leading-snug">
+                            <p className="whitespace-pre-wrap">{msg.text}</p>
+                            <JournalHandoffEntryCards
+                              segments={msg.journalSegments}
+                            />
+                          </div>
                         ) : (
                           <ChatMarkdown
                             text={msg.text}
@@ -1903,29 +2138,6 @@ export function CreateWorkspace({
                     >
                       <Switch.Thumb className="block h-3 w-3 translate-x-[2px] rounded-full bg-white shadow transition-transform will-change-transform data-[state=checked]:translate-x-[18px]" />
                     </Switch.Root>
-                  </div>
-                  <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
-                    <div className="flex items-center justify-between text-xs text-muted">
-                      <span>Speed</span>
-                      <span className="tabular-nums">
-                        {speechSpeed.toFixed(2)}×
-                      </span>
-                    </div>
-                    <input
-                      aria-label="Voice speed"
-                      type="range"
-                      min={SPEAKER_SAMPLE_SPEED_MIN}
-                      max={SPEAKER_SAMPLE_SPEED_MAX}
-                      step={SPEAKER_SAMPLE_SPEED_STEP}
-                      value={speechSpeed}
-                      onChange={(e) =>
-                        setSpeechSpeed(
-                          snapSpeakerSampleSpeed(Number(e.target.value)),
-                        )
-                      }
-                      disabled={soundControlsDisabled}
-                      className="h-2 w-full accent-foreground disabled:opacity-40"
-                    />
                   </div>
                   <button
                     type="button"
@@ -2119,6 +2331,28 @@ export function CreateWorkspace({
                     />
                   </button>
                 </div>
+
+                <div className="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:items-center sm:gap-2">
+                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
+                    Length
+                  </span>
+                  <select
+                    className="h-9 min-w-0 w-full max-w-[11rem] shrink-0 rounded-lg border border-border bg-background px-2.5 text-sm sm:w-auto"
+                    value={meditationTargetMinutes}
+                    onChange={(e) =>
+                      setMeditationTargetMinutes(
+                        parseMeditationTargetMinutes(Number(e.target.value)),
+                      )
+                    }
+                    disabled={audioLoading}
+                    aria-label="Target meditation length"
+                    title="Coach + script target. Regenerate script if you already have one."
+                  >
+                    <option value={2}>2 min</option>
+                    <option value={5}>5 min</option>
+                    <option value={10}>10 min</option>
+                  </select>
+                </div>
               </div>
 
             </div>
@@ -2276,7 +2510,7 @@ export function CreateWorkspace({
               </a>
               {audioModalKey ? (
                 <Link
-                  href={`/library?focus=${encodeURIComponent(audioModalKey)}&play=1`}
+                  href={`/meditate/library?focus=${encodeURIComponent(audioModalKey)}&play=1`}
                   className="cursor-pointer rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground hover:border-accent/50"
                 >
                   View in Library

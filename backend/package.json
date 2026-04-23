@@ -10,13 +10,14 @@
     "destroy": "cdk destroy --all",
     "typecheck": "tsc --noEmit",
     "generate-speaker-samples": "tsx scripts/generate-speaker-samples.ts",
+    "migrate-meditation-legacy-partition": "tsx scripts/migrate-meditation-legacy-partition.ts",
     "build-pedalboard-layer": "bash scripts/build-pedalboard-layer"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1019.0",
+    "@aws-sdk/client-lambda": "^3.1019.0",
     "@aws-sdk/client-s3": "^3.1019.0",
     "@aws-sdk/client-secrets-manager": "^3.699.0",
-    "@aws-sdk/client-lambda": "^3.1019.0",
     "@aws-sdk/lib-dynamodb": "^3.1019.0",
     "music-metadata": "^11.7.1"
   },

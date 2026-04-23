@@ -61,6 +61,43 @@ export function requireMedimadeApiBase(): string {
   return base;
 }
 
+export type JournalTranscribeResult = {
+  text: string;
+  storage?: { audioKey: string; metaKey: string };
+};
+
+/** `POST /journal/transcribe` — OpenAI Whisper (secret `medimade/OPENAI_API_KEY`). */
+export async function transcribeJournalAudio(params: {
+  audioBase64: string;
+  mimeType?: string;
+}): Promise<JournalTranscribeResult> {
+  const base = requireMedimadeApiBase();
+  const res = await fetch(`${base}/journal/transcribe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      audioBase64: params.audioBase64,
+      mimeType: params.mimeType,
+    }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const text = typeof data.text === "string" ? data.text : "";
+  const storage = data.storage as JournalTranscribeResult["storage"] | undefined;
+  return { text, storage };
+}
+
 /** Prefer CDN MP3 for previews and mixer jobs (`background-audio/…` beds). */
 export function backgroundAudioStreamingKey(key: string): string {
   const k = key.trim();
@@ -220,11 +257,14 @@ async function streamChatRequest(
   return full;
 }
 
+export type MeditationTargetMinutes = 2 | 5 | 10;
+
 export async function streamMedimadeChat(
   params: {
     meditationStyle: string;
     messages: MedimadeChatTurn[];
     journalMode?: boolean;
+    meditationTargetMinutes?: MeditationTargetMinutes;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
@@ -234,6 +274,11 @@ export async function streamMedimadeChat(
       meditationStyle: params.meditationStyle,
       messages: params.messages,
       ...(params.journalMode === true ? { journalMode: true } : {}),
+      ...(params.meditationTargetMinutes === 2 ||
+      params.meditationTargetMinutes === 5 ||
+      params.meditationTargetMinutes === 10
+        ? { meditationTargetMinutes: params.meditationTargetMinutes }
+        : {}),
     },
     onDelta,
     "Empty reply from guide",
@@ -245,6 +290,8 @@ export async function streamMeditationScript(
     meditationStyle: string | null;
     transcript: string;
     journalMode?: boolean;
+    meditationTargetMinutes?: MeditationTargetMinutes;
+    speechSpeed?: number;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
@@ -254,6 +301,15 @@ export async function streamMeditationScript(
       meditationStyle: params.meditationStyle ?? "",
       transcript: params.transcript,
       ...(params.journalMode === true ? { journalMode: true } : {}),
+      ...(params.meditationTargetMinutes === 2 ||
+      params.meditationTargetMinutes === 5 ||
+      params.meditationTargetMinutes === 10
+        ? { meditationTargetMinutes: params.meditationTargetMinutes }
+        : {}),
+      ...(typeof params.speechSpeed === "number" &&
+      Number.isFinite(params.speechSpeed)
+        ? { speechSpeed: params.speechSpeed }
+        : {}),
     },
     onDelta,
     "Empty script from model",
@@ -303,6 +359,7 @@ export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> 
 export async function createMeditationAudioJob(params: {
   meditationStyle: string | null;
   journalMode?: boolean;
+  meditationTargetMinutes?: MeditationTargetMinutes;
   transcript: string;
   scriptText?: string | null;
   reference_id: string;
@@ -333,11 +390,19 @@ export async function createMeditationAudioJob(params: {
   const backgroundNoiseKey = trimBg(params.backgroundNoiseKey ?? null);
   const backgroundSoundKey = trimBg(params.backgroundSoundKey ?? null);
 
+  const meditationTargetMinutes: MeditationTargetMinutes =
+    params.meditationTargetMinutes === 2 ||
+    params.meditationTargetMinutes === 5 ||
+    params.meditationTargetMinutes === 10
+      ? params.meditationTargetMinutes
+      : 5;
+
   const jobBody: Record<string, unknown> = {
     meditationStyle: params.meditationStyle ?? "",
     transcript: params.transcript,
     scriptText: params.scriptText ?? "",
     reference_id: params.reference_id,
+    meditationTargetMinutes,
     ...(params.journalMode === true ? { journalMode: true } : {}),
     ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
     ...(speed === undefined ? {} : { speed }),

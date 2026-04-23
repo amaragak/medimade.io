@@ -4,6 +4,12 @@ import type {
 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { requireUserJson } from "../lib/medimade-auth-http";
+import {
+  LEGACY_MEDITATION_PARTITION_PK,
+  meditationGlobalUserPk,
+  meditationUserPk,
+} from "../lib/meditation-user-pk";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
@@ -25,6 +31,13 @@ export async function handler(
     return json(405, { error: "Method not allowed" });
   }
 
+  const auth = await requireUserJson(event);
+  if ("statusCode" in auth) return auth;
+  const sub = (auth as { sub: string }).sub;
+  const userPk = meditationUserPk(sub);
+  const globalPk = meditationGlobalUserPk();
+  const legacyPk = LEGACY_MEDITATION_PARTITION_PK;
+
   const tableName = process.env.MEDITATION_ANALYTICS_TABLE_NAME;
   if (!tableName) {
     return json(500, { error: "MEDITATION_ANALYTICS_TABLE_NAME is not set" });
@@ -36,18 +49,49 @@ export async function handler(
     Number.isFinite(limitN) && limitN > 0 ? Math.min(1000, Math.floor(limitN)) : 200;
 
   try {
-    const out = await ddb.send(
-      new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: { ":pk": "meditation" },
-        ScanIndexForward: false, // newest first (sk is ISO timestamp prefix)
-        Limit: limit,
-      }),
-    );
+    const [userOut, globalOut, legacyOut] = await Promise.all([
+      ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk",
+          ExpressionAttributeValues: { ":pk": userPk },
+          ScanIndexForward: false,
+          Limit: limit,
+        }),
+      ),
+      ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk",
+          ExpressionAttributeValues: { ":pk": globalPk },
+          ScanIndexForward: false,
+          Limit: limit,
+        }),
+      ),
+      ddb.send(
+        new QueryCommand({
+          TableName: tableName,
+          KeyConditionExpression: "pk = :pk",
+          ExpressionAttributeValues: { ":pk": legacyPk },
+          ScanIndexForward: false,
+          Limit: limit,
+        }),
+      ),
+    ]);
+
+    const merged = [
+      ...(userOut.Items ?? []),
+      ...(globalOut.Items ?? []),
+      ...(legacyOut.Items ?? []),
+    ] as Array<{ sk?: string }>;
+    merged.sort((a, b) => {
+      const sa = typeof a.sk === "string" ? a.sk : "";
+      const sb = typeof b.sk === "string" ? b.sk : "";
+      return sb.localeCompare(sa);
+    });
 
     return json(200, {
-      items: out.Items ?? [],
+      items: merged.slice(0, limit),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Analytics query failed";

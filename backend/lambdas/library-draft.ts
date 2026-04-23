@@ -9,10 +9,36 @@ import {
   PutCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
+import { requireUserJson } from "../lib/medimade-auth-http";
+import {
+  LEGACY_MEDITATION_PARTITION_PK,
+  meditationGlobalUserPk,
+  meditationUserPk,
+} from "../lib/meditation-user-pk";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 const MAX_DRAFT_STATE_BYTES = 350_000;
+
+async function getDraftRowWithPartition(
+  tableName: string,
+  partitionKeys: string[],
+  sk: string,
+): Promise<{ item: Record<string, unknown>; pk: string } | null> {
+  for (const pk of partitionKeys) {
+    const out = await ddb.send(
+      new GetCommand({
+        TableName: tableName,
+        Key: { pk, sk },
+      }),
+    );
+    const item = out.Item;
+    if (item && item.isDraft === true) {
+      return { item: item as Record<string, unknown>, pk };
+    }
+  }
+  return null;
+}
 
 function json(
   statusCode: number,
@@ -34,22 +60,25 @@ export async function handler(
     return json(500, { error: "Draft API is not configured" });
   }
 
+  const auth = await requireUserJson(event);
+  if ("statusCode" in auth) return auth;
+  const user = auth as { sub: string };
+  const userPk = meditationUserPk(user.sub);
+  const globalPk = meditationGlobalUserPk();
+  const legacyPk = LEGACY_MEDITATION_PARTITION_PK;
+  const readPartitions = [userPk, globalPk, legacyPk];
+
   if (method === "GET") {
     const skRaw = event.queryStringParameters?.sk?.trim();
     if (!skRaw) {
       return json(400, { error: "Query parameter `sk` is required" });
     }
     try {
-      const out = await ddb.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: { pk: "meditation", sk: skRaw },
-        }),
-      );
-      const item = out.Item;
-      if (!item || item.isDraft !== true) {
+      const found = await getDraftRowWithPartition(tableName, readPartitions, skRaw);
+      if (!found) {
         return json(404, { error: "Draft not found" });
       }
+      const item = found.item;
       let draftState: unknown;
       const raw = item.draftState;
       if (typeof raw === "string") {
@@ -126,31 +155,66 @@ export async function handler(
       typeof body.sk === "string" && body.sk.trim() ? body.sk.trim() : null;
 
     if (existingSk) {
-      const got = await ddb.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: { pk: "meditation", sk: existingSk },
-        }),
-      );
-      const prev = got.Item;
-      if (!prev || prev.isDraft !== true) {
+      const found = await getDraftRowWithPartition(tableName, readPartitions, existingSk);
+      if (!found) {
         return json(404, { error: "Draft not found or not a draft" });
       }
+      const prev = found.item;
+      const targetPk = found.pk;
       sk = existingSk;
       id = typeof prev.id === "string" ? prev.id : randomUUID();
       createdAt =
         typeof prev.createdAt === "string"
           ? prev.createdAt
           : new Date().toISOString();
-      s3Key =
-        typeof prev.s3Key === "string" && prev.s3Key.startsWith("drafts/")
-          ? prev.s3Key
-          : `drafts/${id}`;
-    } else {
+      const prevS3 = typeof prev.s3Key === "string" ? prev.s3Key : "";
+      if (prevS3.startsWith("drafts/")) {
+        s3Key = prevS3;
+      } else if (targetPk === globalPk) {
+        s3Key = `drafts/_/${id}`;
+      } else {
+        s3Key = `drafts/${user.sub}/${id}`;
+      }
+      await ddb.send(
+        new PutCommand({
+          TableName: tableName,
+          Item: {
+            pk: targetPk,
+            sk,
+            id,
+            createdAt,
+            isDraft: true,
+            s3Key,
+            title:
+              titleIn ??
+              (meditationStyle
+                ? `Draft · ${meditationStyle}`.slice(0, 200)
+                : "Draft"),
+            meditationStyle: meditationStyle ?? null,
+            draftState: draftStateStr,
+            rating: null,
+            favourite: false,
+          },
+        }),
+      );
+      return json(200, {
+        sk,
+        id,
+        createdAt,
+        title:
+          titleIn ??
+          (meditationStyle
+            ? `Draft · ${meditationStyle}`.slice(0, 200)
+            : "Draft"),
+      });
+    }
+
+    const targetPk = userPk;
+    {
       createdAt = new Date().toISOString();
       id = randomUUID();
       sk = `${createdAt}#${id}`;
-      s3Key = `drafts/${id}`;
+      s3Key = `drafts/${user.sub}/${id}`;
     }
 
     const title =
@@ -163,7 +227,7 @@ export async function handler(
       new PutCommand({
         TableName: tableName,
         Item: {
-          pk: "meditation",
+          pk: targetPk,
           sk,
           id,
           createdAt,

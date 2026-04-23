@@ -4,6 +4,8 @@
   "scripts": {
     "install-platform": "sst install",
     "deploy:web": "bash ./deploy-web",
+    "deploy:dev": "bash ./deploy-web --stage dev",
+    "deploy:prod": "bash ./deploy-web --stage prod",
     "dev": "sst dev",
     "deploy": "sst deploy",
     "remove": "sst remove",

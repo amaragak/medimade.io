@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Run DynamoDB migration for legacy library rows:
+#   pk "meditation"  →  pk "USER#_"
+#
+# Also (optionally) backfills `userId="_"` on meditation jobs that have no `userId`.
+#
+# Usage (from anywhere):
+#   backend/scripts/migrate-meditation-legacy-partition --dry-run
+#   backend/scripts/migrate-meditation-legacy-partition
+#
+# Required env:
+#   MEDITATION_ANALYTICS_TABLE_NAME=...
+# Optional env:
+#   MEDITATION_JOBS_TABLE_NAME=...
+#
+# AWS profile: defaults to AWS_PROFILE=mm when unset and no --profile in arguments.
+set -euo pipefail
+
+BACKEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+# shellcheck source=lib/default-aws-profile.sh
+source "$SCRIPT_LIB/default-aws-profile.sh"
+medimade_default_aws_profile "$@"
+
+cd "$BACKEND_ROOT"
+
+# Forward all args to the TSX runner via npm script (e.g. --dry-run).
+npm run -s migrate-meditation-legacy-partition -- "$@"
+

@@ -1,5 +1,28 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Deploy (AWS / SST)
+
+From `frontend/webapp/deploy/` (after `npm install` and `npm run install-platform`):
+
+```bash
+# Non-production (default stage: dev; AWS profile defaults to mm if AWS_PROFILE is unset)
+npm run deploy:dev
+# Override profile:
+npm run deploy:dev -- --profile other
+
+# Production (SST stage `prod`; resource removal policy is retain)
+npm run deploy:prod
+```
+
+Equivalent shell script (from repo root); `--stage` accepts `dev`, `development`, `prod`, or `production`. Profile defaults to `mm` unless you pass `--profile` or set `AWS_PROFILE`:
+
+```bash
+./frontend/webapp/deploy/deploy-web --stage production
+./frontend/webapp/deploy/deploy-web --stage production --profile other
+```
+
+`../.env` is sourced when present so `NEXT_PUBLIC_*` values are baked into the Next build.
+
 ## Getting Started
 
 First, run the development server:

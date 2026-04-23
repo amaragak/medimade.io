@@ -18,6 +18,17 @@ import {
   normalizeMeditationType,
   styleAdherenceBlockForPrompt,
 } from "../lib/meditation-types";
+import { FIXED_SPEECH_PREVIEW_SPEED } from "../lib/speaker-sample-speed";
+import {
+  GLOBAL_MEDITATION_USER_ID,
+  meditationUserPk,
+} from "../lib/meditation-user-pk";
+import { parseAnthropicMessageUsage } from "../lib/anthropic-pricing";
+import { estimateCoachChatTokensFromTranscript } from "../lib/claude-coach-chat-estimate";
+import {
+  getFleetScriptWordTargets,
+  scriptDurationPlanningAppendix,
+} from "../lib/script-duration-planning-prompt";
 import fs from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -126,20 +137,6 @@ const DEV_MODE =
   process.env.DEV_MODE === undefined
     ? true
     : !["false", "0"].includes(process.env.DEV_MODE);
-
-// Default Fish prosody speed; request may override (dev UI).
-const DEFAULT_SPEECH_SPEED = (() => {
-  const raw = process.env.SPEECH_SPEED;
-  if (!raw) return 1;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return 1;
-  // keep within Fish's documented range (0.5–2.0)
-  return Math.min(2, Math.max(0.5, n));
-})();
-
-function clampSpeechSpeed(n: number): number {
-  return Math.min(2, Math.max(0.5, n));
-}
 
 async function getMp3DurationSeconds(buf: Buffer): Promise<number | null> {
   try {
@@ -312,6 +309,28 @@ type ScriptSegment = {
   pauseSeconds: number;
 };
 
+/** Sum seconds from all `[[PAUSE …]]` markers (Fish / script convention). */
+function sumPauseMarkerSeconds(script: string): number {
+  if (!script) return 0;
+  const re = /\[\[PAUSE\s+([0-9]+(?:\.[0-9])?)s?\]\]/gi;
+  let total = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(script)) !== null) {
+    const p = parseFloat(m[1] ?? "0");
+    if (Number.isFinite(p) && p > 0) total += p;
+  }
+  return total;
+}
+
+/** Text Fish speaks excluding pause markers; normalized whitespace. */
+function spokenPlainWithoutPauses(script: string): string {
+  if (!script) return "";
+  return script
+    .replace(/\[\[PAUSE\s+([0-9]+(?:\.[0-9])?)s?\]\]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function parseScriptIntoSegments(script: string): ScriptSegment[] {
   const segments: ScriptSegment[] = [];
   if (!script) return segments;
@@ -346,14 +365,24 @@ async function generateScriptFromClaude(params: {
   transcript: string;
   speechSpeed: number;
   journalMode: boolean;
-}): Promise<string> {
-  // Adjust script word targets inversely with speech speed so total duration is similar.
-  // If we slow down (speed < 1), reduce words proportionally.
-  const wordScale = params.speechSpeed;
-  const devWordsMin = Math.round(140 * wordScale);
-  const devWordsMax = Math.round(220 * wordScale);
-  const nonDevWordsMin = Math.round(700 * wordScale);
-  const nonDevWordsMax = Math.round(950 * wordScale);
+  /** Guided length target (2, 5, or 10 minutes); scales word targets from the 5‑minute baseline. */
+  targetMinutes: number;
+}): Promise<{
+  script: string;
+  usage: { input_tokens: number; output_tokens: number } | null;
+}> {
+  const nonDevWords = getFleetScriptWordTargets({
+    targetMinutes: params.targetMinutes,
+    speechSpeed: params.speechSpeed,
+  });
+  const devWords = getFleetScriptWordTargets({
+    targetMinutes: 1,
+    speechSpeed: params.speechSpeed,
+  });
+  const nonDevWordsMin = nonDevWords.min;
+  const nonDevWordsMax = nonDevWords.max;
+  const devWordsMin = devWords.min;
+  const devWordsMax = devWords.max;
 
   const styleForScript = params.meditationStyle?.trim() ?? "";
   const styleHint = styleForScript
@@ -382,17 +411,20 @@ async function generateScriptFromClaude(params: {
     "",
     "### Your task",
     "Write the complete guided meditation script that a human guide would read aloud for recording.",
-    `Target length: about **5 minutes** at a calm, unhurried speaking pace (roughly ${nonDevWordsMin}–${nonDevWordsMax} words).`,
+    `Target length: about **${params.targetMinutes} minutes** at a calm, unhurried speaking pace (roughly ${nonDevWordsMin}–${nonDevWordsMax} words).`,
     "Use clear sections (e.g. opening/arrival, main practice, gentle closing).",
     "Match the emotional tone, intentions, and imagery implied by the conversation.",
     "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
-    "Include natural spoken pauses using inline markers of the form [[PAUSE 1s]] or [[PAUSE 3s]] between phrases where a human guide would actually pause.",
+    "Use **liberal** natural pauses with inline markers `[[PAUSE xs]]` (e.g. `[[PAUSE 2s]]`, `[[PAUSE 5s]]`): include them **often**—after most sentences or sense-units, at **every** meaningful transition (arrival → practice, shifts in technique or imagery, closing), and wherever a human guide would breathe or let a phrase land—not only at rare dramatic beats.",
     "Place **every** pause **intelligently**: each gap must fit the moment—what was just said, the emotional or somatic weight, the transition, and what comes next. Pauses are not filler; avoid random, uniform, or excessive markers that would break rhythm or feel mechanical.",
-    "Vary the pause lengths (for example 1s, 2s, 3s, 4s, 5s) depending on the emotional weight or visualization load; err slightly on the side of longer, more spacious pauses rather than very short ones.",
-    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often 3s–8s, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
+    "Vary pause lengths by context: **short** bridges can be ~1s–2s when momentum matters; **typical** gaps between lines are often **2s–4s**; use **4s–8s** (sometimes longer) after heavier invitations, imagery, or emotional lines. Default toward **longer and slightly more frequent** silence than a dense script—still never gratuitous.",
+    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often **4s–12s**, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
     "Place pause markers on their own or immediately after a sentence, never splitting words.",
     "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
+    scriptDurationPlanningAppendix(params.targetMinutes, {
+      speechSpeed: params.speechSpeed,
+    }),
   ].join("\n");
 
   // Dev prompt: generate a shorter (~1 minute) script that still covers the user’s topic,
@@ -410,12 +442,13 @@ async function generateScriptFromClaude(params: {
     "You may omit the usual generic beginning and ending for now. Skip arrival/closing boilerplate unless it is directly needed to cover the topic.",
     "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
-    "Include natural spoken pauses using inline markers of the form [[PAUSE 1s]] or [[PAUSE 3s]] between phrases where a human guide would actually pause.",
+    "Use **liberal** natural pauses with inline markers `[[PAUSE xs]]` (e.g. `[[PAUSE 2s]]`, `[[PAUSE 5s]]`): include them **often**—after most sentences or sense-units, at **every** meaningful transition (arrival → practice, shifts in technique or imagery, closing), and wherever a human guide would breathe or let a phrase land—not only at rare dramatic beats.",
     "Place **every** pause **intelligently**: each gap must fit the moment—what was just said, the emotional or somatic weight, the transition, and what comes next. Pauses are not filler; avoid random, uniform, or excessive markers that would break rhythm or feel mechanical.",
-    "Vary the pause lengths (for example 1s, 2s, 3s, 4s, 5s) depending on the emotional weight or visualization load; err slightly on the side of longer, more spacious pauses rather than very short ones.",
-    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often 3s–8s, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
+    "Vary pause lengths by context: **short** bridges can be ~1s–2s when momentum matters; **typical** gaps between lines are often **2s–4s**; use **4s–8s** (sometimes longer) after heavier invitations, imagery, or emotional lines. Default toward **longer and slightly more frequent** silence than a dense script—still never gratuitous.",
+    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often **4s–12s**, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
     "Place pause markers on their own or immediately after a sentence, never splitting words.",
     "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
+    scriptDurationPlanningAppendix(1, { speechSpeed: params.speechSpeed }),
   ].join("\n");
 
   // Choose prompt based on dev flag.
@@ -427,7 +460,7 @@ async function generateScriptFromClaude(params: {
     "If the creator is joking or playful, it is OK to include whimsical subject matter, but the meditation itself must remain genuinely calming, coherent, and high-quality—not a joke script. Use playful imagery as a vehicle for grounding, breath, and emotional regulation.",
     "Never generate hate/harassment, sexual content involving minors, non-consensual sexual content, graphic sexual content, instructions for wrongdoing, or glorification of self-harm. If the creator asks for something socially unacceptable, refuse briefly and produce a safe alternative meditation topic.",
     "You phrase lines for natural TTS: avoid isolated one-word sentences; use multi-word phrases where possible.",
-    "You place pauses intelligently for the arc of the practice—generous where self-paced work needs room, never mechanical or padded.",
+    "You place pauses **generously and often** for clarity and pacing—especially spacious where self-paced work needs room—while keeping each silence **motivated** (never mechanical fillers).",
   ].join(" ");
 
   const upstream = await fetch(ANTHROPIC_URL, {
@@ -468,7 +501,7 @@ async function generateScriptFromClaude(params: {
   if (!text) {
     return Promise.reject(new Error("Empty script returned by Anthropic"));
   }
-  return text;
+  return { script: text, usage: parseAnthropicMessageUsage(responseText) };
 }
 
 /** Keep DynamoDB item under 400 KB (UTF-8 bytes, incl. other attributes). */
@@ -522,7 +555,10 @@ async function callAnthropicMetadataJson(params: {
   apiKey: string;
   system: string;
   user: string;
-}): Promise<string> {
+}): Promise<{
+  responseText: string;
+  usage: { input_tokens: number; output_tokens: number } | null;
+}> {
   const upstream = await fetch(ANTHROPIC_URL, {
     method: "POST",
     headers: {
@@ -544,7 +580,10 @@ async function callAnthropicMetadataJson(params: {
       `Anthropic metadata failed: ${responseText.slice(0, 500)}`,
     );
   }
-  return responseText;
+  return {
+    responseText,
+    usage: parseAnthropicMessageUsage(responseText),
+  };
 }
 
 async function deriveLibraryMetadataFromClaude(params: {
@@ -558,6 +597,7 @@ async function deriveLibraryMetadataFromClaude(params: {
   title: string;
   meditationType: string;
   description: string;
+  claudeUsage: { input_tokens: number; output_tokens: number } | null;
 }> {
   const scriptPreview = params.scriptPreview.slice(0, 1200);
   const allowedJson = knownMeditationTypesJsonArrayBlock();
@@ -599,7 +639,7 @@ async function deriveLibraryMetadataFromClaude(params: {
     'Return: {"title":"~10 words, evocative","meditationType":"<one allowed string exactly>","description":"200-300 characters, one line, what the listener will experience"}',
   ].join("\n");
 
-  let responseText = await callAnthropicMetadataJson({
+  const { responseText, usage } = await callAnthropicMetadataJson({
     apiKey: params.apiKey,
     system,
     user: userMain,
@@ -621,7 +661,12 @@ async function deriveLibraryMetadataFromClaude(params: {
     inferPresetTypeFromScriptHeuristic(params.scriptPreview) ??
     "Reflection";
 
-  return { title, meditationType: normalizedType, description };
+  return {
+    title,
+    meditationType: normalizedType,
+    description,
+    claudeUsage: usage,
+  };
 }
 
 function fallbackLibraryMetadata(params: {
@@ -874,7 +919,6 @@ type JobBody = {
   meditationStyle?: string;
   scriptText?: string;
   referenceId: string;
-  speedOverride?: number;
   backgroundSoundKey?: string;
 };
 
@@ -919,9 +963,11 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   // Load full job record from Dynamo so the worker doesn't depend on the invoke payload.
   type JobItem = {
     jobId: string;
+    userId?: string;
     transcript?: string;
     meditationStyle?: string;
     journalMode?: boolean;
+    meditationTargetMinutes?: number;
     scriptText?: string;
     referenceId?: string;
     speed?: number;
@@ -960,10 +1006,16 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     return json(404, { error: msg });
   }
 
+  const jobUserId =
+    typeof jobItem.userId === "string" && jobItem.userId.trim()
+      ? jobItem.userId.trim()
+      : GLOBAL_MEDITATION_USER_ID;
+
   const body: {
     transcript?: string;
     meditationStyle?: string;
     journalMode?: boolean;
+    meditationTargetMinutes?: number;
     scriptText?: string;
     reference_id?: string;
     speed?: number;
@@ -981,6 +1033,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     transcript: jobItem.transcript,
     meditationStyle: jobItem.meditationStyle,
     journalMode: jobItem.journalMode,
+    meditationTargetMinutes: jobItem.meditationTargetMinutes,
     scriptText: jobItem.scriptText,
     reference_id: jobItem.referenceId,
     speed: jobItem.speed,
@@ -1011,6 +1064,11 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   const meditationStyle =
     typeof body.meditationStyle === "string" ? body.meditationStyle : "";
   const journalModeFromJob = body.journalMode === true;
+  const rawTargetMin = body.meditationTargetMinutes;
+  const targetMinutes =
+    rawTargetMin === 2 || rawTargetMin === 5 || rawTargetMin === 10
+      ? rawTargetMin
+      : 5;
   const styleTrimmed = meditationStyle.trim();
   const isJournalCatalog =
     journalModeFromJob ||
@@ -1018,12 +1076,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     styleTrimmed.toLowerCase() === "general";
   const scriptText =
     typeof body.scriptText === "string" ? body.scriptText.trim() : "";
-  const speedOverrideRaw = (body as { speed?: unknown })?.speed;
-  const speedOverride =
-    typeof speedOverrideRaw === "number" && Number.isFinite(speedOverrideRaw)
-      ? clampSpeechSpeed(speedOverrideRaw)
-      : undefined;
-  const speechSpeed = speedOverride ?? DEFAULT_SPEECH_SPEED;
+  const speechSpeed = FIXED_SPEECH_PREVIEW_SPEED;
   const voiceFxPreset =
     typeof body.voiceFxPreset === "string" && body.voiceFxPreset.trim().length > 0
       ? body.voiceFxPreset.trim()
@@ -1096,26 +1149,33 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     scriptTextChars: scriptText.length,
     reference_id: referenceId,
     speechSpeed,
-    speedWasOverridden: speedOverride !== undefined,
     backgroundLayerCount: backgroundLayers.length,
   });
 
 
   let scriptTextUsed = scriptText;
   const shouldGenerateScript = !scriptTextUsed;
+  let claudeWorkerInputTokens = 0;
+  let claudeWorkerOutputTokens = 0;
   try {
     if (shouldGenerateScript) {
       console.log("generating script from Claude", {
         meditationStylePresent: Boolean(meditationStyle?.trim()),
       });
       const claudeKey = await getClaudeApiKey();
-      scriptTextUsed = await generateScriptFromClaude({
+      const gen = await generateScriptFromClaude({
         apiKey: claudeKey,
         meditationStyle,
         transcript,
         speechSpeed,
         journalMode: journalModeFromJob,
+        targetMinutes,
       });
+      scriptTextUsed = gen.script;
+      if (gen.usage) {
+        claudeWorkerInputTokens += gen.usage.input_tokens;
+        claudeWorkerOutputTokens += gen.usage.output_tokens;
+      }
       console.log("generated script", {
         chars: scriptTextUsed.length,
       });
@@ -1171,6 +1231,10 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     libraryTitle = derived.title;
     libraryMeditationType = derived.meditationType;
     libraryDescription = derived.description;
+    if (derived.claudeUsage) {
+      claudeWorkerInputTokens += derived.claudeUsage.input_tokens;
+      claudeWorkerOutputTokens += derived.claudeUsage.output_tokens;
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "metadata derive failed";
     console.warn("early library metadata derive failed, using fallback", { msg });
@@ -1183,6 +1247,25 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     libraryTitle = fb.title;
     libraryMeditationType = fb.meditationType;
     libraryDescription = fb.description;
+  }
+
+  let claudeChatEstInputTokens: number | null = null;
+  let claudeChatEstOutputTokens: number | null = null;
+  try {
+    const ck = await getClaudeApiKey();
+    const est = await estimateCoachChatTokensFromTranscript({
+      apiKey: ck,
+      meditationStyle,
+      transcript,
+      journalMode: journalModeFromJob,
+    });
+    if (est) {
+      claudeChatEstInputTokens = est.inputTokens;
+      claudeChatEstOutputTokens = est.outputTokens;
+    }
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    console.warn("coach chat Claude token estimate skipped", { m });
   }
 
   // Persist derived metadata early so the Library placeholder can populate quickly.
@@ -1216,6 +1299,9 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
 
   let mp3Buf: Buffer;
   let scriptUtf8Bytes = 0;
+  let pauseSecondsTotal = 0;
+  let spokenUtf8Bytes = 0;
+  let spokenWordCount = 0;
   try {
     console.log("calling Fish TTS with pause-aware synthesis", {
       reference_id: referenceId,
@@ -1223,6 +1309,12 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     // Speak the meditation title first, then pause, then the script.
     // Note: `scriptTextUsed` is stored/displayed without the title (script should not include it).
     const ttsScript = `${libraryTitle}\n\n[[PAUSE 2.5s]]\n\n${scriptTextUsed}`;
+    pauseSecondsTotal = sumPauseMarkerSeconds(ttsScript);
+    const spokenPlain = spokenPlainWithoutPauses(ttsScript);
+    spokenUtf8Bytes = Buffer.byteLength(spokenPlain, "utf8");
+    spokenWordCount = spokenPlain
+      ? spokenPlain.split(/\s+/).filter(Boolean).length
+      : 0;
     const { audio, utf8Bytes } = await synthesizeScriptWithPauses({
       apiKey: fishKey,
       script: ttsScript,
@@ -1269,7 +1361,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     return json(500, { error: msg });
   }
 
-  const key = `meditations/${randomUUID()}.mp3`;
+  const key = `meditations/${jobUserId}/${randomUUID()}.mp3`;
   const durationSeconds = await getMp3DurationSeconds(mp3Buf);
 
   if (backgroundLayers.length > 0) {
@@ -1338,7 +1430,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       new PutCommand({
         TableName: analyticsTableName,
         Item: {
-          pk: "meditation",
+          pk: meditationUserPk(jobUserId),
           sk: `${createdAt}#${id}`,
           id,
           createdAt,
@@ -1347,6 +1439,18 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
           mp3Bytes: mp3Buf.byteLength,
           durationSeconds: durationSeconds ?? null,
           scriptUtf8Bytes,
+          pauseSecondsTotal,
+          spokenUtf8Bytes,
+          spokenWordCount,
+          claudeHaiku45WorkerInputTokens: claudeWorkerInputTokens,
+          claudeHaiku45WorkerOutputTokens: claudeWorkerOutputTokens,
+          ...(claudeChatEstInputTokens != null && claudeChatEstOutputTokens != null
+            ? {
+                claudeHaiku45ChatEstInputTokens: claudeChatEstInputTokens,
+                claudeHaiku45ChatEstOutputTokens: claudeChatEstOutputTokens,
+              }
+            : {}),
+          claudeModel: MODEL,
           speechSpeed,
           referenceId,
           meditationStyle: isJournalCatalog ? null : styleTrimmed || null,

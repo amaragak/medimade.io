@@ -6,6 +6,8 @@
 #   backend/scripts/sync-bg-audio --profile mm
 #   backend/scripts/sync-bg-audio --force-update --profile mm
 #
+# AWS profile: defaults to AWS_PROFILE=mm when unset and no --profile in passthrough args.
+#
 # Requires:
 # - aws CLI configured and on PATH
 # - The MedimadeBackend stack deployed with a CfnOutput export "MediaBucketName"
@@ -30,6 +32,8 @@ for a in "$@"; do
     AWS_ARGS+=("$a")
   fi
 done
+
+medimade_default_aws_profile "${AWS_ARGS[@]}"
 
 if [ ! -d "$BG_DIR" ]; then
   echo "Expected audio/bg-audio directory at: $BG_DIR" >&2

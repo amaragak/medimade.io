@@ -27,12 +27,7 @@ import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import ChatMarkdown from "../components/ChatMarkdown";
 import { colors } from "../theme/colors";
 import { fonts } from "../theme/fonts";
-import {
-  SPEAKER_SAMPLE_SPEED_MAX,
-  SPEAKER_SAMPLE_SPEED_MIN,
-  SPEAKER_SAMPLE_SPEED_STEP,
-  snapSpeakerSampleSpeed,
-} from "../lib/speaker-sample-speed";
+import { FIXED_SPEECH_PREVIEW_SPEED } from "../lib/speaker-sample-speed";
 import {
   type BackgroundAudioItem,
   type FishSpeaker,
@@ -373,9 +368,7 @@ export default function CreateScreen() {
   const [fishSpeakers, setFishSpeakers] = useState<FishSpeaker[]>([]);
   const [speakerModelId, setSpeakerModelId] = useState("");
   const [speakerFxPreviewOn, setSpeakerFxPreviewOn] = useState(true);
-  const [speechSpeed, setSpeechSpeed] = useState(() =>
-    snapSpeakerSampleSpeed(1),
-  );
+  const speechSpeed = FIXED_SPEECH_PREVIEW_SPEED;
 
   const [backgroundNature, setBackgroundNature] = useState<BackgroundAudioItem[]>(
     [],
@@ -627,7 +620,6 @@ export default function CreateScreen() {
     setMessages(s.messages);
     setClaudeThread(s.claudeThread);
     setInput(s.input);
-    setSpeechSpeed(snapSpeakerSampleSpeed(s.speechSpeed));
     setSpeakerModelId(s.speakerModelId);
     if (typeof s.speakerFxPreviewOn === "boolean") {
       setSpeakerFxPreviewOn(s.speakerFxPreviewOn);
@@ -697,6 +689,7 @@ export default function CreateScreen() {
           meditationStyle,
           transcript,
           journalMode: journalMode === true,
+          speechSpeed,
         },
         (d) => {
           acc += d;
@@ -1324,20 +1317,6 @@ export default function CreateScreen() {
                   trackColor={{ true: colors.accent, false: colors.border }}
                 />
               </View>
-              <View style={styles.speedCol}>
-                <LabeledSlider
-                  label="Speed"
-                  valueSuffix={`${speechSpeed.toFixed(2)}×`}
-                  value={speechSpeed}
-                  minimumValue={SPEAKER_SAMPLE_SPEED_MIN}
-                  maximumValue={SPEAKER_SAMPLE_SPEED_MAX}
-                  step={SPEAKER_SAMPLE_SPEED_STEP}
-                  onValueChange={(n) =>
-                    setSpeechSpeed(snapSpeakerSampleSpeed(n))
-                  }
-                  disabled={soundControlsDisabled}
-                />
-              </View>
             </View>
           </View>
 
@@ -1932,10 +1911,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.muted,
     marginBottom: 4,
-  },
-  speedCol: {
-    flex: 1,
-    minWidth: 0,
   },
   sliderBlock: { marginTop: 4 },
   sliderLabelRow: {

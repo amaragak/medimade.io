@@ -18,6 +18,9 @@ export function snapSpeakerSampleSpeed(n: number): number {
   return Math.round(v * 100) / 100;
 }
 
+/** Fish TTS prosody speed for previews and jobs (fixed; no UI control). */
+export const FIXED_SPEECH_PREVIEW_SPEED = snapSpeakerSampleSpeed(0.9);
+
 /** Filename stem before `.mp3`, e.g. `0.75`, `0.9`, `1.0`. */
 export function speechSpeedToSampleStem(speed: number): string {
   const n = snapSpeakerSampleSpeed(speed);

@@ -7,6 +7,7 @@ import {
   type LibraryMeditationItem,
   libraryMeditationCategoryLabel,
   listLibraryMeditations,
+  getMedimadeSessionJwt,
   getMeditationAudioJobStatus,
   patchMeditationFavourite,
   patchMeditationArchived,
@@ -840,6 +841,10 @@ export default function LibraryView({
     setLoading(true);
     setError(null);
     try {
+      if (!getMedimadeSessionJwt()) {
+        setItems([]);
+        return;
+      }
       const list = await listLibraryMeditations();
       setItems(list);
     } catch (e) {
@@ -855,6 +860,12 @@ export default function LibraryView({
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const on = () => void load();
+    window.addEventListener("medimade-session-changed", on);
+    return () => window.removeEventListener("medimade-session-changed", on);
+  }, [load]);
 
   useEffect(() => {
     setPending(loadPendingGenerations());
@@ -1143,8 +1154,8 @@ export default function LibraryView({
     if (m.isDraft === true) {
       const href =
         m.sk != null
-          ? `/create?draftSk=${encodeURIComponent(m.sk)}`
-          : "/create";
+          ? `/meditate/create?draftSk=${encodeURIComponent(m.sk)}`
+          : "/meditate/create";
       const continueBtn = (
         <Link
           href={href}
@@ -1751,7 +1762,7 @@ export default function LibraryView({
             </div>
           </div>
           <Link
-            href="/create"
+            href="/meditate/create"
             className="shrink-0 self-start rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white dark:text-deep sm:mt-0 sm:col-start-2 sm:row-start-1"
           >
             Create new
@@ -1769,11 +1780,20 @@ export default function LibraryView({
         <p className="mt-10 text-sm text-muted">Loading…</p>
       ) : pagedVisibleItems.length === 0 ? (
         <p className="mt-10 w-full min-w-0 text-sm text-muted">
-          {libraryTab === "drafts"
-            ? "No drafts yet. On Create, use Save draft (audio step) to store your session; drafts only show here."
-            : favouritesOnly
-              ? "No favourite meditations yet."
-              : "No meditation audio yet. Generate one from Create — it will appear here after upload."}
+          {!getMedimadeSessionJwt() ? (
+            <>
+              Sign in to see your library.{" "}
+              <Link href="/login" className="font-medium text-accent underline-offset-2 hover:underline">
+                Sign in
+              </Link>
+            </>
+          ) : libraryTab === "drafts" ? (
+            "No drafts yet. On Create, use Save draft (audio step) to store your session; drafts only show here."
+          ) : favouritesOnly ? (
+            "No favourite meditations yet."
+          ) : (
+            "No meditation audio yet. Generate one from Create — it will appear here after upload."
+          )}
         </p>
       ) : (
         <ul

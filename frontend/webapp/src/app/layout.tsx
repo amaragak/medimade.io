@@ -22,11 +22,11 @@ const caveat = Caveat({
 
 export const metadata: Metadata = {
   title: {
-    default: "medimade — meditations made just for you",
-    template: "%s · medimade",
+    default: "Consciously — live consciously with meditation & journal",
+    template: "%s · Consciously",
   },
   description:
-    "Create on-the-fly guided meditations with sound, voice, markers, and intentions. Pro tools for creators and schedulers for tomorrow’s practice.",
+    "Consciously at consciously.live: generate guided meditations, keep a personal library, and journal with smart insights—all in one place.",
 };
 
 export default function RootLayout({

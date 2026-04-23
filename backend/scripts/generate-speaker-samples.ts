@@ -7,7 +7,7 @@
  *
  * Usage (from repo root or anywhere):
  *   backend/scripts/generate-speaker-samples
- *   backend/scripts/generate-speaker-samples --profile mm
+ *   backend/scripts/generate-speaker-samples --profile other
  *   MEDIA_BUCKET_NAME=my-bucket backend/scripts/generate-speaker-samples
  *   backend/scripts/generate-speaker-samples --force-update --profile mm
  *   backend/scripts/generate-speaker-samples --force-fx-update --profile mm
@@ -116,7 +116,7 @@ function awsCliPassthroughFromArgv(): string[] {
 
 /**
  * So S3 / Secrets Manager SDK calls use the same account as the CLI when the user passes
- * `--profile` (SDK does not read CLI flags by default).
+ * `--profile` (SDK does not read CLI flags by default). If unset and no `--profile` flag, uses mm.
  */
 function applyAwsProfileFromCliArgs(args: string[]): void {
   if (process.env.AWS_PROFILE?.trim()) return;
@@ -131,6 +131,7 @@ function applyAwsProfileFromCliArgs(args: string[]): void {
       return;
     }
   }
+  process.env.AWS_PROFILE = "mm";
 }
 
 function resolveMedimadeApiBase(awsArgs: string[]): string | null {

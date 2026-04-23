@@ -35,3 +35,11 @@ export const FISH_SPEAKERS = [
 ] as const;
 
 export type FishSpeakerModelId = (typeof FISH_SPEAKERS)[number]["modelId"];
+
+export function speakerNameForModelId(
+  modelId: string | null | undefined,
+): string | null {
+  if (!modelId) return null;
+  const found = FISH_SPEAKERS.find((s) => s.modelId === modelId);
+  return found?.name ?? null;
+}

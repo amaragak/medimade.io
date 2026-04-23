@@ -44,7 +44,7 @@ export default function ProPage() {
           Upgrade (mock)
         </button>
         <Link
-          href="/create"
+          href="/meditate/create"
           className="inline-flex items-center rounded-full border border-border px-8 py-3 text-sm font-medium hover:border-accent/40"
         >
           Back to Create

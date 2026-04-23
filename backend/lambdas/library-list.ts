@@ -7,11 +7,15 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
 import { speakerNameForModelId } from "../lib/fish-speakers";
 import { meditationPlaybackS3Key } from "../lib/playback-keys";
+import { requireUserJson } from "../lib/medimade-auth-http";
+import {
+  LEGACY_MEDITATION_PARTITION_PK,
+  meditationGlobalUserPk,
+  meditationUserPk,
+} from "../lib/meditation-user-pk";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
-
-const MEDITATIONS_PREFIX = "meditations/";
 
 function json(
   statusCode: number,
@@ -30,7 +34,10 @@ type DdbMeditation = Record<string, unknown> & {
   id?: string;
 };
 
-async function queryAllMeditationItems(tableName: string): Promise<DdbMeditation[]> {
+async function queryAllMeditationItems(
+  tableName: string,
+  pk: string,
+): Promise<DdbMeditation[]> {
   const items: DdbMeditation[] = [];
   let lek: Record<string, unknown> | undefined;
   do {
@@ -38,7 +45,7 @@ async function queryAllMeditationItems(tableName: string): Promise<DdbMeditation
       new QueryCommand({
         TableName: tableName,
         KeyConditionExpression: "pk = :pk",
-        ExpressionAttributeValues: { ":pk": "meditation" },
+        ExpressionAttributeValues: { ":pk": pk },
         ScanIndexForward: false,
         ExclusiveStartKey: lek,
       }),
@@ -49,7 +56,10 @@ async function queryAllMeditationItems(tableName: string): Promise<DdbMeditation
   return items;
 }
 
-async function listMeditationMp3Keys(bucket: string): Promise<
+async function listMeditationMp3Keys(
+  bucket: string,
+  prefix: string,
+): Promise<
   Array<{ key: string; lastModified: string | null; size: number | null }>
 > {
   const out: Array<{ key: string; lastModified: string | null; size: number | null }> = [];
@@ -58,12 +68,42 @@ async function listMeditationMp3Keys(bucket: string): Promise<
     const res = await s3.send(
       new ListObjectsV2Command({
         Bucket: bucket,
-        Prefix: MEDITATIONS_PREFIX,
+        Prefix: prefix,
         ContinuationToken: token,
       }),
     );
     for (const o of res.Contents ?? []) {
       if (!o.Key || !o.Key.endsWith(".mp3")) continue;
+      out.push({
+        key: o.Key,
+        lastModified: o.LastModified?.toISOString() ?? null,
+        size: typeof o.Size === "number" ? o.Size : null,
+      });
+    }
+    token = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (token);
+  return out;
+}
+
+/** `meditations/<file>.mp3` (no extra path segment) — pre–per-user S3 layout. */
+async function listLegacyRootMeditationMp3Keys(
+  bucket: string,
+): Promise<
+  Array<{ key: string; lastModified: string | null; size: number | null }>
+> {
+  const out: Array<{ key: string; lastModified: string | null; size: number | null }> = [];
+  const legacyMp3 = /^meditations\/[^/]+\.mp3$/i;
+  let token: string | undefined;
+  do {
+    const res = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: "meditations/",
+        ContinuationToken: token,
+      }),
+    );
+    for (const o of res.Contents ?? []) {
+      if (!o.Key || !legacyMp3.test(o.Key)) continue;
       out.push({
         key: o.Key,
         lastModified: o.LastModified?.toISOString() ?? null,
@@ -82,6 +122,10 @@ export async function handler(
     return json(405, { error: "Method not allowed" });
   }
 
+  const auth = await requireUserJson(event);
+  if ("statusCode" in auth) return auth;
+  const user = auth as { sub: string };
+
   const tableName = process.env.MEDITATION_ANALYTICS_TABLE_NAME;
   const bucket = process.env.MEDIA_BUCKET_NAME;
   const cfDomain = process.env.MEDIA_CLOUDFRONT_DOMAIN;
@@ -89,11 +133,31 @@ export async function handler(
     return json(500, { error: "Library list is not configured" });
   }
 
+  const userPk = meditationUserPk(user.sub);
+  const globalPk = meditationGlobalUserPk();
+  const legacyPk = LEGACY_MEDITATION_PARTITION_PK;
+  const userMp3Prefix = `meditations/${user.sub}/`;
+  const globalMp3Prefix = `meditations/_/`;
+
   try {
-    const [ddbItems, s3Objects] = await Promise.all([
-      queryAllMeditationItems(tableName),
-      listMeditationMp3Keys(bucket),
-    ]);
+    const [userRows, globalRows, legacyRows, userS3, globalS3, legacyS3] =
+      await Promise.all([
+        queryAllMeditationItems(tableName, userPk),
+        queryAllMeditationItems(tableName, globalPk),
+        queryAllMeditationItems(tableName, legacyPk),
+        listMeditationMp3Keys(bucket, userMp3Prefix),
+        listMeditationMp3Keys(bucket, globalMp3Prefix),
+        listLegacyRootMeditationMp3Keys(bucket),
+      ]);
+    const ddbItems = [...userRows, ...globalRows, ...legacyRows];
+    const s3ByKey = new Map<
+      string,
+      { key: string; lastModified: string | null; size: number | null }
+    >();
+    for (const o of [...userS3, ...globalS3, ...legacyS3]) {
+      s3ByKey.set(o.key, o);
+    }
+    const s3Objects = [...s3ByKey.values()];
 
     type OutItem = {
       id: string | null;
@@ -126,7 +190,8 @@ export async function handler(
       const id = typeof row.id === "string" ? row.id : null;
       if (isDraft) {
         if (!id) continue;
-        if (!s3Key) s3Key = `drafts/${id}`;
+        // New per-user drafts store `drafts/<userId>/<id>`. Keep legacy fallback for old rows.
+        if (!s3Key) s3Key = `drafts/${user.sub}/${id}`;
       } else if (!s3Key) {
         continue;
       }

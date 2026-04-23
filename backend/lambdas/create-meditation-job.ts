@@ -6,6 +6,8 @@ import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { randomUUID } from "crypto";
+import { FIXED_SPEECH_PREVIEW_SPEED } from "../lib/speaker-sample-speed";
+import { requireUserJson } from "../lib/medimade-auth-http";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const lambdaClient = new LambdaClient({});
@@ -28,6 +30,10 @@ export async function handler(
     return json(405, { error: "Method not allowed" });
   }
 
+  const auth = await requireUserJson(event);
+  if ("statusCode" in auth) return auth;
+  const userId = (auth as { sub: string }).sub;
+
   const tableName = process.env.MEDITATION_JOBS_TABLE_NAME;
   const workerFn = process.env.WORKER_FUNCTION_NAME;
   if (!tableName || !workerFn) {
@@ -43,6 +49,8 @@ export async function handler(
     voiceFxPreset?: string;
     /** True when the user used journal / “How I feel” flow (no real style label). */
     journalMode?: boolean;
+    /** 2, 5, or 10 — guided meditation length target for coach + script. */
+    meditationTargetMinutes?: number;
     backgroundSoundKey?: string;
     backgroundNatureKey?: string;
     backgroundMusicKey?: string;
@@ -74,10 +82,7 @@ export async function handler(
     typeof body.meditationStyle === "string" ? body.meditationStyle : "";
   const scriptText =
     typeof body.scriptText === "string" ? body.scriptText.trim() : "";
-  const speed =
-    typeof body.speed === "number" && Number.isFinite(body.speed)
-      ? body.speed
-      : undefined;
+  const speed = FIXED_SPEECH_PREVIEW_SPEED;
   const voiceFxPreset =
     typeof body.voiceFxPreset === "string" && body.voiceFxPreset.trim().length > 0
       ? body.voiceFxPreset.trim()
@@ -104,6 +109,10 @@ export async function handler(
 
   const journalMode = body.journalMode === true;
 
+  const rawLen = body.meditationTargetMinutes;
+  const meditationTargetMinutes =
+    rawLen === 2 || rawLen === 5 || rawLen === 10 ? rawLen : 5;
+
   const jobId = randomUUID();
   const now = new Date().toISOString();
 
@@ -112,6 +121,7 @@ export async function handler(
       TableName: tableName,
       Item: {
         jobId,
+        userId,
         status: "pending",
         createdAt: now,
         updatedAt: now,
@@ -121,6 +131,7 @@ export async function handler(
         referenceId,
         speed,
         ...(journalMode ? { journalMode: true } : {}),
+        meditationTargetMinutes,
         ...(voiceFxPreset ? { voiceFxPreset } : {}),
         backgroundSoundKey,
         ...(backgroundNatureKey ? { backgroundNatureKey } : {}),

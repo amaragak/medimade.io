@@ -1,7 +1,8 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 // Ion-style config (SST v3+ / v4). Not compatible with legacy SST v2.
-// Deploy from repo root: `./frontend/webapp/deploy/deploy-web [--stage dev|prod] [--profile name]`
-// Stages: only dev (default) and prod; prod uses removal "retain".
+// Deploy from repo root: `./frontend/webapp/deploy/deploy-web [--stage …] [--profile name]`
+// Stage ids are only `dev` or `prod` (deploy-web accepts production/development as aliases).
+// prod uses removal "retain".
 
 function nextPublicEnvFromProcess(): Record<string, string> {
   const keys = [

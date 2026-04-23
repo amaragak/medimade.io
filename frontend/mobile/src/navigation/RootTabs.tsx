@@ -5,11 +5,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import CreateScreen from "../screens/CreateScreen";
 import LibraryScreen from "../screens/LibraryScreen";
+import JournalScreen from "../screens/JournalScreen";
+import PlanScreen from "../screens/PlanScreen";
 import { colors } from "../theme/colors";
 
 export type RootTabParamList = {
   Create: { draftSk?: string } | undefined;
   Library: undefined;
+  Journal: undefined;
+  Plan: undefined;
 };
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
@@ -60,6 +64,24 @@ export default function RootTabs() {
         options={{
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="library-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Journal"
+        component={JournalScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="book-outline" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Plan"
+        component={PlanScreen}
+        options={{
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="compass-outline" size={size} color={color} />
           ),
         }}
       />

@@ -1,3 +1,24 @@
+import type { JournalStoreV2 } from "./journal-storage";
+import { getMedimadeSessionJwt, setMedimadeSession } from "./auth-session";
+
+export {
+  clearMedimadeSession,
+  getMedimadeSessionDisplayName,
+  getMedimadeSessionEmail,
+  getMedimadeSessionJwt,
+  setMedimadeSession,
+} from "./auth-session";
+
+/** `Authorization: Bearer …` when a session JWT is stored (e.g. after magic-link verify). */
+export function medimadeApiAuthHeaders(): Record<string, string> {
+  const t = getMedimadeSessionJwt();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+function medimadeJsonHeaders(): Record<string, string> {
+  return { "Content-Type": "application/json", ...medimadeApiAuthHeaders() };
+}
+
 export type MedimadeChatTurn = { role: "user" | "assistant"; content: string };
 
 export function getMedimadeApiBase(): string | null {
@@ -6,6 +27,105 @@ export function getMedimadeApiBase(): string | null {
   const t = u.trim();
   if (!t) return null;
   return t.endsWith("/") ? t.slice(0, -1) : t;
+}
+
+/** Sends a one-time sign-in link to the given email (no auth required). */
+export async function requestMedimadeMagicLink(email: string): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const trimmed = email.trim().toLowerCase();
+  if (!trimmed) throw new Error("Email is required");
+  const res = await fetch(`${base}/auth/magic-link`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: trimmed }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+}
+
+export type MedimadeMagicLinkVerifyResult = {
+  token: string;
+  userId: string;
+  email: string;
+  needsProfileName: boolean;
+  displayName: string | null;
+};
+
+/**
+ * Exchanges a magic-link token for a session JWT. Does not write localStorage;
+ * callers should call `setMedimadeSession` after any required name step.
+ */
+export async function verifyMedimadeMagicLink(
+  token: string,
+): Promise<MedimadeMagicLinkVerifyResult> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const t = token.trim();
+  if (!t) throw new Error("Token is required");
+  const res = await fetch(`${base}/auth/magic-link/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: t }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    token?: string;
+    userId?: string;
+    email?: string;
+    needsProfileName?: unknown;
+    displayName?: unknown;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok || typeof data.token !== "string" || !data.token.trim()) {
+    throw new Error(data.detail ?? data.error ?? res.statusText ?? "Verification failed");
+  }
+  const displayName =
+    typeof data.displayName === "string" && data.displayName.trim()
+      ? data.displayName.trim()
+      : null;
+  const needsProfileName = data.needsProfileName === true;
+  return {
+    token: data.token.trim(),
+    userId: typeof data.userId === "string" ? data.userId : "",
+    email: typeof data.email === "string" ? data.email : "",
+    needsProfileName,
+    displayName,
+  };
+}
+
+/** Saves display name for the signed-in user and returns a fresh session JWT. */
+export async function saveMedimadeProfileDisplayName(
+  displayName: string,
+): Promise<{ token: string; displayName: string }> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/auth/profile/display-name`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ displayName: displayName.trim() }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    token?: string;
+    displayName?: string;
+    error?: string;
+    detail?: string;
+  };
+  if (
+    !res.ok ||
+    typeof data.token !== "string" ||
+    !data.token.trim() ||
+    typeof data.displayName !== "string" ||
+    !data.displayName.trim()
+  ) {
+    throw new Error(data.detail ?? data.error ?? res.statusText ?? "Could not save name");
+  }
+  return { token: data.token.trim(), displayName: data.displayName.trim() };
 }
 
 /** Full URL of the streaming chat Lambda (Function URL), not API Gateway /chat. */
@@ -26,6 +146,248 @@ export function getMedimadeMediaBaseUrl(): string | null {
   if (!u || typeof u !== "string") return null;
   const t = u.trim().replace(/\/$/, "");
   return t || null;
+}
+
+export type JournalTranscribeResult = {
+  text: string;
+  storage?: { audioKey: string; metaKey: string };
+};
+
+export type JournalVoiceUploadResult = {
+  key: string;
+  url: string;
+};
+
+export type JournalInsightsTopicId =
+  | "overview"
+  | "emotions"
+  | "stress"
+  | "health"
+  | "relationships"
+  | "identity"
+  | "worldview"
+  | "work"
+  | "projects"
+  | "ideas"
+  | "values"
+  | "habits"
+  | "decisions"
+  | "growth";
+
+export type JournalInsights = {
+  ownerId: string;
+  topics: Array<{
+    topicId: JournalInsightsTopicId;
+    summaryMarkdown: string;
+    updatedAt: string;
+  }>;
+  meta: {
+    lastRunAt: string;
+    lastProcessedMaxUpdatedAt: string | null;
+    model: string;
+    usage?: { input_tokens: number; output_tokens: number } | null;
+  };
+};
+
+/**
+ * Sends recorded audio (base64) to `POST /journal/transcribe` (OpenAI Whisper).
+ * Requires `NEXT_PUBLIC_MEDIMADE_API_URL` and AWS secret `medimade/OPENAI_API_KEY`.
+ */
+export async function transcribeJournalAudio(params: {
+  audioBase64: string;
+  mimeType?: string;
+}): Promise<JournalTranscribeResult> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await fetch(`${base}/journal/transcribe`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      audioBase64: params.audioBase64,
+      mimeType: params.mimeType,
+    }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const text = typeof data.text === "string" ? data.text : "";
+  const storage = data.storage as JournalTranscribeResult["storage"] | undefined;
+  return { text, storage };
+}
+
+/**
+ * Loads journal from `GET /journal/store` (DynamoDB-backed; same JSON shape as before).
+ * Requires a session JWT (`Authorization`); returns null if nothing saved yet.
+ */
+export async function fetchJournalStoreRemote(): Promise<JournalStoreV2 | null> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await fetch(`${base}/journal/store`, { headers: medimadeApiAuthHeaders() });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const store = data.store;
+  if (store == null) return null;
+  if (typeof store !== "object") return null;
+  return store as JournalStoreV2;
+}
+
+/**
+ * Saves full journal store to `PUT /journal/store` (DynamoDB per entry; use `uploadJournalVoice` for large audio).
+ */
+export async function putJournalStoreRemote(store: JournalStoreV2): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await fetch(`${base}/journal/store`, {
+    method: "PUT",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ store }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+}
+
+/**
+ * Uploads recorded audio to `POST /journal/voice` and returns a CloudFront URL for embedding in HTML.
+ */
+export async function uploadJournalVoice(params: {
+  audioBase64: string;
+  mimeType?: string;
+}): Promise<JournalVoiceUploadResult> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await fetch(`${base}/journal/voice`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      audioBase64: params.audioBase64,
+      mimeType: params.mimeType,
+    }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const key = typeof data.key === "string" ? data.key : "";
+  const url = typeof data.url === "string" ? data.url : "";
+  if (!key || !url) {
+    throw new Error("Upload response missing key or url");
+  }
+  return { key, url };
+}
+
+/**
+ * Loads saved rolling journal insights from `GET /journal/insights` (DynamoDB).
+ */
+export async function fetchJournalInsightsRemote(): Promise<JournalInsights | null> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await fetch(`${base}/journal/insights`, {
+    headers: medimadeApiAuthHeaders(),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const insights = data.insights;
+  if (!insights || typeof insights !== "object") return null;
+  return insights as JournalInsights;
+}
+
+/**
+ * Runs Claude to refresh rolling journal insights from entry deltas (`POST /journal/insights`).
+ */
+export async function runJournalInsightsRemote(opts?: {
+  mode?: "update" | "regenerate";
+}): Promise<JournalInsights> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await fetch(`${base}/journal/insights`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      ...(opts?.mode ? { mode: opts.mode } : {}),
+    }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const insights = data.insights;
+  if (!insights || typeof insights !== "object") {
+    throw new Error("Insights response missing insights object");
+  }
+  return insights as JournalInsights;
 }
 
 async function streamChatRequest(
@@ -121,6 +483,7 @@ export async function streamMedimadeChat(
     messages: MedimadeChatTurn[];
     /** When true, style is a journal placeholder — do not lock coach/script to a preset technique. */
     journalMode?: boolean;
+    meditationTargetMinutes?: MeditationTargetMinutes;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
@@ -130,6 +493,11 @@ export async function streamMedimadeChat(
       meditationStyle: params.meditationStyle,
       messages: params.messages,
       ...(params.journalMode === true ? { journalMode: true } : {}),
+      ...(params.meditationTargetMinutes === 2 ||
+      params.meditationTargetMinutes === 5 ||
+      params.meditationTargetMinutes === 10
+        ? { meditationTargetMinutes: params.meditationTargetMinutes }
+        : {}),
     },
     onDelta,
     "Empty reply from guide",
@@ -144,6 +512,9 @@ export async function streamMeditationScript(
     meditationStyle: string | null;
     transcript: string;
     journalMode?: boolean;
+    meditationTargetMinutes?: MeditationTargetMinutes;
+    /** Fish playback speed (1 = default); should match create job `speed` for consistent word targets. */
+    speechSpeed?: number;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
@@ -153,6 +524,15 @@ export async function streamMeditationScript(
       meditationStyle: params.meditationStyle ?? "",
       transcript: params.transcript,
       ...(params.journalMode === true ? { journalMode: true } : {}),
+      ...(params.meditationTargetMinutes === 2 ||
+      params.meditationTargetMinutes === 5 ||
+      params.meditationTargetMinutes === 10
+        ? { meditationTargetMinutes: params.meditationTargetMinutes }
+        : {}),
+      ...(typeof params.speechSpeed === "number" &&
+      Number.isFinite(params.speechSpeed)
+        ? { speechSpeed: params.speechSpeed }
+        : {}),
     },
     onDelta,
     "Empty script from model",
@@ -330,7 +710,7 @@ export async function generateMeditationAudio(params: {
 
   const createRes = await fetch(`${base}/meditation/audio/jobs`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: medimadeJsonHeaders(),
     body: JSON.stringify(jobBody),
   });
 
@@ -361,7 +741,9 @@ export async function generateMeditationAudio(params: {
       throw new Error("Audio generation timed out");
     }
 
-    const statusRes = await fetch(`${base}/meditation/audio/jobs/${jobId}`);
+    const statusRes = await fetch(`${base}/meditation/audio/jobs/${jobId}`, {
+      headers: medimadeApiAuthHeaders(),
+    });
     const statusData = (await statusRes.json()) as {
       status?: string;
       audioUrl?: string;
@@ -401,6 +783,8 @@ export async function createMeditationAudioJob(params: {
   meditationStyle: string | null;
   /** When true, library metadata must infer preset `meditationType` from chat + script (journal flow). */
   journalMode?: boolean;
+  /** Guided length for worker script generation when `scriptText` is empty. */
+  meditationTargetMinutes?: MeditationTargetMinutes;
   transcript: string;
   scriptText?: string | null;
   reference_id: string;
@@ -439,11 +823,19 @@ export async function createMeditationAudioJob(params: {
   const backgroundDrumsKey = trimBg(params.backgroundDrumsKey ?? null);
   const backgroundNoiseKey = trimBg(params.backgroundNoiseKey ?? null);
 
+  const meditationTargetMinutes: MeditationTargetMinutes =
+    params.meditationTargetMinutes === 2 ||
+    params.meditationTargetMinutes === 5 ||
+    params.meditationTargetMinutes === 10
+      ? params.meditationTargetMinutes
+      : 5;
+
   const jobBody: Record<string, unknown> = {
     meditationStyle: params.meditationStyle ?? "",
     transcript: params.transcript,
     scriptText: params.scriptText ?? "",
     reference_id: params.reference_id,
+    meditationTargetMinutes,
     ...(params.journalMode === true ? { journalMode: true } : {}),
     ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
     ...(speed === undefined ? {} : { speed }),
@@ -469,7 +861,7 @@ export async function createMeditationAudioJob(params: {
 
   const createRes = await fetch(`${base}/meditation/audio/jobs`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: medimadeJsonHeaders(),
     body: JSON.stringify(jobBody),
   });
 
@@ -499,7 +891,9 @@ export async function getMeditationAudioJobStatus(
   const id = jobId.trim();
   if (!id) throw new Error("jobId is required");
 
-  const res = await fetch(`${base}/meditation/audio/jobs/${encodeURIComponent(id)}`);
+  const res = await fetch(`${base}/meditation/audio/jobs/${encodeURIComponent(id)}`, {
+    headers: medimadeApiAuthHeaders(),
+  });
   const data = (await res.json()) as MeditationAudioJobStatus;
   if (!res.ok) {
     throw new Error(data.error ?? res.statusText ?? "Audio job status failed");
@@ -578,27 +972,40 @@ export type LibraryMeditationItem = {
 
 export const MEDITATION_DRAFT_STATE_VERSION = 1 as const;
 
+/** Creator-selected guided length (coach + script targets). */
+export type MeditationTargetMinutes = 2 | 5 | 10;
+
 export type MeditationDraftStateV1 = {
   v: typeof MEDITATION_DRAFT_STATE_VERSION;
   phase: "style" | "feeling" | "claude";
+  journalMode?: boolean;
   meditationStyle: string | null;
   messages: Array<{
     role: "assistant" | "user";
     text: string;
     variant?: "chat" | "script";
+    /** Journal → Create: expandable entry cards in the user bubble */
+    journalSegments?: Array<{
+      entryId: string;
+      title: string;
+      bodyPlain: string;
+      createdAt?: string;
+    }>;
   }>;
   claudeThread: MedimadeChatTurn[];
   input: string;
   speechSpeed: number;
   speakerModelId: string;
+  speakerFxPreviewOn?: boolean;
   backgroundNatureKey: string;
   backgroundMusicKey: string;
-  backgroundDrumsKey: string;
+  backgroundNoiseKey: string;
   backgroundNatureGain: number;
   backgroundMusicGain: number;
-  backgroundDrumsGain: number;
+  backgroundNoiseGain: number;
   mobileCreateStep: "chat" | "audio";
   lastUsedScript: string | null;
+  meditationTargetMinutes?: MeditationTargetMinutes;
 };
 
 export async function saveMeditationDraft(params: {
@@ -611,7 +1018,7 @@ export async function saveMeditationDraft(params: {
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const res = await fetch(`${base}/library/meditations/draft`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: medimadeJsonHeaders(),
     body: JSON.stringify({
       sk: params.sk?.trim() || undefined,
       title: params.title,
@@ -653,7 +1060,9 @@ export async function getMeditationDraft(sk: string): Promise<{
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const q = new URLSearchParams({ sk });
-  const res = await fetch(`${base}/library/meditations/draft?${q.toString()}`);
+  const res = await fetch(`${base}/library/meditations/draft?${q.toString()}`, {
+    headers: medimadeApiAuthHeaders(),
+  });
   const data = (await res.json()) as {
     sk?: string;
     id?: string;
@@ -685,7 +1094,7 @@ export async function getMeditationDraft(sk: string): Promise<{
 export async function listLibraryMeditations(): Promise<LibraryMeditationItem[]> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/library/meditations`);
+  const res = await fetch(`${base}/library/meditations`, { headers: medimadeApiAuthHeaders() });
   const data = (await res.json()) as {
     items?: LibraryMeditationItem[];
     error?: string;
@@ -706,7 +1115,7 @@ export async function patchMeditationRating(
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const res = await fetch(`${base}/library/meditations/rating`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: medimadeJsonHeaders(),
     body: JSON.stringify({ sk, rating }),
   });
   const data = (await res.json()) as { error?: string; detail?: string };
@@ -724,7 +1133,7 @@ export async function patchMeditationFavourite(
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const res = await fetch(`${base}/library/meditations/favourite`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: medimadeJsonHeaders(),
     body: JSON.stringify({ sk, favourite }),
   });
   const data = (await res.json()) as { error?: string; detail?: string };
@@ -742,7 +1151,7 @@ export async function patchMeditationArchived(
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const res = await fetch(`${base}/library/meditations/archive`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: medimadeJsonHeaders(),
     body: JSON.stringify({ sk, archived }),
   });
   const data = (await res.json()) as { error?: string; detail?: string };

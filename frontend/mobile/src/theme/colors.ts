@@ -23,4 +23,3 @@ export const colorsLight = {
 } as const;
 
 export const colors = colorsLight;
-

@@ -6,9 +6,15 @@
 #   backend/scripts/deploy-back
 #   backend/scripts/deploy-back --profile mm
 #   backend/scripts/deploy-back MedimadeBackend --require-approval never --profile mm
+#
+# AWS profile: defaults to AWS_PROFILE=mm when unset and no --profile in arguments.
 set -euo pipefail
 
 BACKEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
+# shellcheck source=lib/default-aws-profile.sh
+source "$SCRIPT_LIB/default-aws-profile.sh"
+medimade_default_aws_profile "$@"
 REPO_ROOT="$(cd "$BACKEND_ROOT/.." && pwd)"
 WEBAPP_ENV="$REPO_ROOT/frontend/webapp/.env"
 MOBILE_ENV="$REPO_ROOT/frontend/mobile/.env"
@@ -18,6 +24,46 @@ trap cleanup EXIT
 
 cd "$BACKEND_ROOT"
 
-npx cdk deploy "$@" --outputs-file "$OUTPUTS"
+extra_args=()
+
+# Auth (magic-link) deploy-time context.
+# Provide these as env vars so deploys work like other helper scripts.
+# - MEDIMADE_AUTH_EMAIL_FROM: sender email (must be allowed in Brevo)
+# - MEDIMADE_AUTH_WEBAPP_ORIGIN: where the magic-link should send the user (e.g. https://app.yourdomain.com)
+has_context() {
+  local key="$1"
+  shift
+  local i
+  for ((i = 1; i <= $#; i++)); do
+    local a="${!i}"
+    if [[ "$a" == "-c" ]]; then
+      local j=$((i + 1))
+      local next="${!j:-}"
+      if [[ "$next" == "$key="* ]]; then
+        return 0
+      fi
+    fi
+    if [[ "$a" == -c*"$key="* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+auth_from="${MEDIMADE_AUTH_EMAIL_FROM:-${AUTH_EMAIL_FROM:-}}"
+auth_origin="${MEDIMADE_AUTH_WEBAPP_ORIGIN:-${AUTH_WEBAPP_ORIGIN:-}}"
+
+if [[ -n "${auth_from:-}" ]] && ! has_context "authEmailFrom" "$@"; then
+  extra_args+=(-c "authEmailFrom=$auth_from")
+fi
+if [[ -n "${auth_origin:-}" ]] && ! has_context "authWebappOrigin" "$@"; then
+  extra_args+=(-c "authWebappOrigin=$auth_origin")
+fi
+
+if ((${#extra_args[@]})); then
+  npx cdk deploy "${extra_args[@]}" "$@" --outputs-file "$OUTPUTS"
+else
+  npx cdk deploy "$@" --outputs-file "$OUTPUTS"
+fi
 
 node "$BACKEND_ROOT/scripts/write-webapp-env-from-outputs.mjs" "$OUTPUTS" "$WEBAPP_ENV" "$MOBILE_ENV"

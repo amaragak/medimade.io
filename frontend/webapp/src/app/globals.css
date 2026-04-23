@@ -73,3 +73,37 @@ body {
       var(--background);
   }
 }
+
+/* Journal voice clips — warm mesh + native audio tint (matches app palette) */
+.journal-voice-clip-card {
+  position: relative;
+  background-color: var(--card);
+  background-image:
+    radial-gradient(
+      ellipse 90% 70% at 100% 0%,
+      color-mix(in srgb, var(--accent) 10%, transparent),
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse 60% 50% at 0% 100%,
+      color-mix(in srgb, var(--gold) 12%, transparent),
+      transparent 46%
+    );
+}
+
+@media (prefers-color-scheme: dark) {
+  .journal-voice-clip-card {
+    background-image:
+      radial-gradient(
+        ellipse 90% 70% at 100% 0%,
+        color-mix(in srgb, var(--accent) 9%, transparent),
+        transparent 50%
+      ),
+      radial-gradient(
+        ellipse 60% 50% at 0% 100%,
+        color-mix(in srgb, var(--gold) 8%, transparent),
+        transparent 46%
+      );
+  }
+}
+
