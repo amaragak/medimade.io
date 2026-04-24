@@ -21,6 +21,7 @@ import {
   loadJournalStore,
   newJournalEntry,
   saveJournalStore,
+  shouldPreferRemoteJournalStore,
   stripHtmlToText,
   type JournalEntry,
   type JournalMeditationPayloadV1,
@@ -38,29 +39,6 @@ function entryPreview(html: string): string {
 function sidebarEntryTitle(title: string): string {
   const t = title.trim();
   return t || "Untitled entry";
-}
-
-function maxEntryUpdatedAt(entries: JournalEntry[]): number {
-  if (!entries.length) return 0;
-  return Math.max(...entries.map((e) => new Date(e.updatedAt).getTime()), 0);
-}
-
-/** Prefer cloud copy when it is newer, or when local is a single empty stub and cloud has data. */
-function shouldPreferRemoteJournal(
-  remote: JournalStoreV2,
-  localEntries: JournalEntry[],
-): boolean {
-  if (!remote.entries?.length) return false;
-  const remoteMax = maxEntryUpdatedAt(remote.entries);
-  const localMax = maxEntryUpdatedAt(localEntries);
-  if (remoteMax > localMax) return true;
-  if (localEntries.length === 1) {
-    const e = localEntries[0];
-    if (e.title.trim()) return false;
-    const plain = stripHtmlToText(e.contentHtml).trim();
-    if (plain.length === 0 && remote.entries.length > 0) return true;
-  }
-  return false;
 }
 
 export function JournalView() {
@@ -149,7 +127,7 @@ export function JournalView() {
         const remote = await fetchJournalStoreRemote();
         if (cancelled || !remote) return;
         const localEntries = entriesRef.current;
-        if (!shouldPreferRemoteJournal(remote, localEntries)) return;
+        if (!shouldPreferRemoteJournalStore(remote, localEntries)) return;
         skipCloudPushRef.current = true;
         const nextActive =
           remote.activeEntryId &&

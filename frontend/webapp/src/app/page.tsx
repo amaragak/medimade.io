@@ -71,6 +71,26 @@ export default function HomePage() {
         <HeroVisual />
       </section>
 
+      <section className="border-t border-border/50 py-16 sm:py-20">
+        <div className="mx-auto max-w-6xl px-4 sm:px-6">
+          <p className="text-xs font-medium uppercase tracking-widest text-muted">
+            What Consciously is
+          </p>
+          <div className="mt-6 grid gap-8 text-lg leading-relaxed text-foreground/85 sm:text-xl sm:leading-relaxed lg:mt-8 lg:grid-cols-2 lg:gap-12">
+            <p>
+              Consciously is a companion for using technology in a healthier
+              way—fewer endless loops, more intentional pauses—so screens can
+              support attention instead of draining it.
+            </p>
+            <p>
+              The same thread runs through meditation, library, and journal:
+              everyday life nudged toward greater awareness, with tools that
+              make room for consciousness rather than crowding it out.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section className="border-t border-border/60 bg-card/40 py-16">
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
           <h2 className="font-display text-2xl font-medium sm:text-3xl">

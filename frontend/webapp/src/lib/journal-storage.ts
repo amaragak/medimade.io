@@ -338,6 +338,38 @@ export type JournalSidebarGroup = {
 
 const MS_DAY = 86_400_000;
 
+/** True if the entry has a non-empty title or body (after stripping HTML). */
+export function journalEntryHasMeaningfulContent(e: JournalEntry): boolean {
+  if (e.title.trim().length > 0) return true;
+  return stripHtmlToText(e.contentHtml).trim().length > 0;
+}
+
+function maxJournalEntryUpdatedAt(entries: JournalEntry[]): number {
+  if (!entries.length) return 0;
+  return Math.max(...entries.map((entry) => new Date(entry.updatedAt).getTime()), 0);
+}
+
+/**
+ * Prefer cloud copy when it is newer, or when local is a single empty stub and
+ * cloud has data (same rules as the Journal page).
+ */
+export function shouldPreferRemoteJournalStore(
+  remote: JournalStoreV2,
+  localEntries: JournalEntry[],
+): boolean {
+  if (!remote.entries?.length) return false;
+  const remoteMax = maxJournalEntryUpdatedAt(remote.entries);
+  const localMax = maxJournalEntryUpdatedAt(localEntries);
+  if (remoteMax > localMax) return true;
+  if (localEntries.length === 1) {
+    const e = localEntries[0];
+    if (e.title.trim()) return false;
+    const plain = stripHtmlToText(e.contentHtml).trim();
+    if (plain.length === 0 && remote.entries.length > 0) return true;
+  }
+  return false;
+}
+
 export function groupJournalEntriesForSidebar(
   entries: JournalEntry[],
   now = new Date(),

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as Switch from "@radix-ui/react-switch";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { ChatMarkdown } from "@/components/chat-markdown";
@@ -16,7 +16,10 @@ import {
   createMeditationAudioJob,
   getMeditationAudioJobStatus,
   getMeditationDraft,
+  getMedimadeApiBase,
   getMedimadeMediaBaseUrl,
+  getMedimadeSessionJwt,
+  fetchJournalStoreRemote,
   listBackgroundAudio,
   listFishSpeakers,
   saveMeditationDraft,
@@ -35,9 +38,17 @@ import {
   JOURNAL_MEDITATION_PAYLOAD_KEY,
   buildJournalHandoffApiContent,
   clearJournalMeditationHandoffJson,
+  deriveEntryTitle,
   formatJournalEntryDate,
+  journalEntryHasMeaningfulContent,
+  journalEntryPlainForHandoff,
+  loadJournalStore,
   parseJournalMeditationPayload,
   peekJournalMeditationHandoffJson,
+  saveJournalStore,
+  shouldPreferRemoteJournalStore,
+  stripHtmlToText,
+  type JournalEntry,
 } from "@/lib/journal-storage";
 
 function mediaFileUrl(base: string, key: string): string {
@@ -134,19 +145,6 @@ function IconResetArrow({ className }: { className?: string }) {
   );
 }
 
-/** Tailwind `lg` breakpoint (1024px); SSR defaults false (mobile-first slide). */
-function useLgViewport(): boolean {
-  return useSyncExternalStore(
-    (onStoreChange) => {
-      const mq = window.matchMedia("(min-width: 1024px)");
-      mq.addEventListener("change", onStoreChange);
-      return () => mq.removeEventListener("change", onStoreChange);
-    },
-    () => window.matchMedia("(min-width: 1024px)").matches,
-    () => false,
-  );
-}
-
 function IconChevronRight({ className }: { className?: string }) {
   return (
     <svg
@@ -181,6 +179,79 @@ function IconChevronLeft({ className }: { className?: string }) {
       aria-hidden
     >
       <path d="M15 18l-6-6 6-6" />
+    </svg>
+  );
+}
+
+/**
+ * Lucide “flower-2” (lucide-static v0.460, ISC) — creation picker, pick a style.
+ * @see https://lucide.dev/icons/flower-2
+ */
+function IconMeditationStyle({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1" />
+      <circle cx="12" cy="8" r="2" />
+      <path d="M12 10v12" />
+      <path d="M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z" />
+      <path d="M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z" />
+    </svg>
+  );
+}
+
+/**
+ * Lucide “messages-square” (lucide-static v0.460, ISC) — free-flow chat card.
+ * @see https://lucide.dev/icons/messages-square
+ */
+function IconChatBubbles({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z" />
+      <path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" />
+    </svg>
+  );
+}
+
+/**
+ * Lucide “book-open-text” (lucide-static v0.460, ISC) — journal → meditation card.
+ * @see https://lucide.dev/icons/book-open-text
+ */
+function IconJournalReflect({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 7v14" />
+      <path d="M16 12h2" />
+      <path d="M16 8h2" />
+      <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+      <path d="M6 12h2" />
+      <path d="M6 8h2" />
     </svg>
   );
 }
@@ -286,11 +357,38 @@ const meditationStyleTooltip: Record<(typeof meditationStyles)[number], string> 
     "Resting in a wide, receptive field—sounds, sensations, and thoughts without fixing on one object.",
 };
 
-type Phase = "style" | "feeling" | "claude";
+type Phase = "style" | "feeling" | "claude" | "journalPick";
+
+/** Before chat: user picks style-first vs free-flow vs journal-reflect creation. */
+type CreationPath = "pending" | "style" | "freeflow" | "journalReflect";
+
+function inferCreationPathFromDraft(
+  s: MeditationDraftStateV1,
+): "style" | "freeflow" {
+  if (s.journalMode === true) return "freeflow";
+  if (s.journalMode === false) return "style";
+  if (s.phase === "style") return "style";
+  const st = s.meditationStyle?.trim();
+  if (st && st !== "General") return "style";
+  return "freeflow";
+}
 
 const OPENING_STYLE =
   "What style of meditation should we build? Pick one below or describe your own.";
 const OPENING_JOURNAL = "What’s on your mind?";
+
+const JOURNAL_REFLECT_PICK_INTRO =
+  "Choose one or more journal entries below. The guide will use them as context for your meditation.";
+
+function reflectableJournalEntriesForPicker(entries: JournalEntry[]): JournalEntry[] {
+  return entries
+    .filter(journalEntryHasMeaningfulContent)
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+    )
+    .slice(0, 25);
+}
 
 function chatMessageTranscriptLine(m: ChatMessage): string {
   if (m.role === "user" && m.journalSegments?.length) {
@@ -499,21 +597,22 @@ export function CreateWorkspace({
 }: CreateWorkspaceProps) {
   const router = useRouter();
   const isRedirectingToLibraryRef = useRef(false);
-  const isLgViewport = useLgViewport();
   const [mobileCreateStep, setMobileCreateStep] = useState<"chat" | "audio">(
     "chat",
   );
-
-  useEffect(() => {
-    if (isLgViewport) setMobileCreateStep("chat");
-  }, [isLgViewport]);
+  /** 0 = chooser, 1 = script/chat, 2 = audio — same horizontal strip at every viewport width. */
+  const [createStripStep, setCreateStripStep] = useState<0 | 1 | 2>(() =>
+    seedJournalContext ? 1 : 0,
+  );
 
   // Reduce perceived navigation latency (and any browser "redirecting" UI) by prefetching Library.
   useEffect(() => {
     router.prefetch("/meditate/library");
   }, [router]);
 
-  const [phase, setPhase] = useState<Phase>("feeling");
+  const [phase, setPhase] = useState<Phase>(() =>
+    seedJournalContext ? "claude" : "style",
+  );
   const [meditationStyle, setMeditationStyle] = useState<string | null>(null);
   const [claudeThread, setClaudeThread] = useState<MedimadeChatTurn[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
@@ -576,9 +675,34 @@ export function CreateWorkspace({
   const chatInputRef = useRef<HTMLInputElement | null>(null);
   const initialChatAutofocusDoneRef = useRef(false);
   const [speakerModelId, setSpeakerModelId] = useState<string>("");
-  const [journalMode, setJournalMode] = useState(true);
-  const [journalConfirmOpen, setJournalConfirmOpen] = useState(false);
-  const pendingJournalModeRef = useRef<boolean | null>(null);
+  const [journalMode, setJournalMode] = useState(() => Boolean(seedJournalContext));
+  const [creationPath, setCreationPath] = useState<CreationPath>(() =>
+    seedJournalContext ? "freeflow" : "pending",
+  );
+  /** Which full-width section to show; pending path always maps to chooser (avoids strip/chat flash races). */
+  const workspaceSectionStep: 0 | 1 | 2 =
+    creationPath === "pending" ? 0 : createStripStep;
+
+  useEffect(() => {
+    if (creationPath === "pending") {
+      setMobileCreateStep("chat");
+      return;
+    }
+    setMobileCreateStep(createStripStep === 2 ? "audio" : "chat");
+  }, [creationPath, createStripStep]);
+
+  /** On the first screen: which path is selected before tapping “Script”. */
+  const [pendingModeChoice, setPendingModeChoice] = useState<
+    null | "style" | "freeflow" | "journalReflect"
+  >(null);
+  /** Journal list for Create chooser + in-chat reflect picker (local + optional cloud). */
+  const [journalPickerEntries, setJournalPickerEntries] = useState<JournalEntry[]>(
+    [],
+  );
+  const [journalPickerListReady, setJournalPickerListReady] = useState(false);
+  const [journalReflectSelectedIds, setJournalReflectSelectedIds] = useState(
+    () => new Set<string>(),
+  );
 
   const [draftSk, setDraftSk] = useState<string | null>(null);
   const [draftSaving, setDraftSaving] = useState(false);
@@ -589,20 +713,27 @@ export function CreateWorkspace({
   const chatControlsDisabled =
     audioLoading && !isRedirectingToLibraryRef.current;
   const [draftLoadError, setDraftLoadError] = useState<string | null>(null);
+  /**
+   * When `?draftSk=` is present, stays false until the draft fetch finishes (shows “Loading draft…”).
+   * Starts false always so the first paint matches `useSearchParams()` resolving: if `draftSk` appears
+   * only after mount, we never briefly show the chooser then jump to chat.
+   */
+  const [draftHydrated, setDraftHydrated] = useState(false);
 
   useEffect(() => {
     if (initialChatAutofocusDoneRef.current) return;
     if (chatControlsDisabled) return;
-    // On mobile, only focus when the chat step is visible.
-    if (!isLgViewport && mobileCreateStep !== "chat") return;
+    if (workspaceSectionStep !== 1) return;
     initialChatAutofocusDoneRef.current = true;
     focusChatInput();
-  }, [chatControlsDisabled, isLgViewport, mobileCreateStep]);
+  }, [chatControlsDisabled, workspaceSectionStep]);
 
   function buildDraftState(): MeditationDraftStateV1 {
+    const phaseForDraft: MeditationDraftStateV1["phase"] =
+      phase === "journalPick" ? "feeling" : phase;
     return {
       v: MEDITATION_DRAFT_STATE_VERSION,
-      phase,
+      phase: phaseForDraft,
       meditationStyle,
       messages,
       claudeThread,
@@ -619,6 +750,7 @@ export function CreateWorkspace({
       mobileCreateStep,
       lastUsedScript,
       meditationTargetMinutes,
+      journalMode: journalMode === true,
     };
   }
 
@@ -651,7 +783,11 @@ export function CreateWorkspace({
 
   useEffect(() => {
     const sk = initialDraftSk?.trim();
-    if (!sk) return;
+    if (!sk) {
+      setDraftHydrated(true);
+      return;
+    }
+    setDraftHydrated(false);
     let cancelled = false;
     setDraftLoadError(null);
     void (async () => {
@@ -662,6 +798,7 @@ export function CreateWorkspace({
           setDraftLoadError(
             "This draft could not be loaded (unrecognized format).",
           );
+          if (!cancelled) setDraftHydrated(true);
           return;
         }
         const s = row.draftState as MeditationDraftStateV1 & {
@@ -694,12 +831,18 @@ export function CreateWorkspace({
         setMobileCreateStep(s.mobileCreateStep);
         setLastUsedScript(s.lastUsedScript);
         setMeditationTargetMinutes(parseMeditationTargetMinutes(s.meditationTargetMinutes));
+        const path = inferCreationPathFromDraft(s);
+        setCreationPath(path);
+        setJournalMode(path === "freeflow");
+        setCreateStripStep(s.mobileCreateStep === "audio" ? 2 : 1);
         setDraftSk(row.sk);
+        if (!cancelled) setDraftHydrated(true);
       } catch (e) {
         if (!cancelled) {
           setDraftLoadError(
             e instanceof Error ? e.message : "Could not load draft",
           );
+          setDraftHydrated(true);
         }
       }
     })();
@@ -707,6 +850,50 @@ export function CreateWorkspace({
       cancelled = true;
     };
   }, [initialDraftSk]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let cancelled = false;
+    const local = loadJournalStore().entries;
+    setJournalPickerEntries(local);
+
+    const base = getMedimadeApiBase();
+    if (!base || !getMedimadeSessionJwt()) {
+      setJournalPickerListReady(true);
+      return;
+    }
+    void (async () => {
+      try {
+        const remote = await fetchJournalStoreRemote();
+        if (cancelled || !remote) return;
+        setJournalPickerEntries((prev) => {
+          if (shouldPreferRemoteJournalStore(remote, prev)) {
+            saveJournalStore(remote);
+            return remote.entries;
+          }
+          return prev;
+        });
+      } catch {
+        /* offline or no journal yet */
+      } finally {
+        if (!cancelled) setJournalPickerListReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const hasReflectableJournal = useMemo(
+    () => journalPickerEntries.some(journalEntryHasMeaningfulContent),
+    [journalPickerEntries],
+  );
+
+  useEffect(() => {
+    if (pendingModeChoice !== "journalReflect") return;
+    if (!journalPickerListReady) return;
+    if (!hasReflectableJournal) setPendingModeChoice(null);
+  }, [pendingModeChoice, journalPickerListReady, hasReflectableJournal]);
 
   useEffect(() => {
     if (!seedJournalContext) return;
@@ -757,6 +944,7 @@ export function CreateWorkspace({
       { role: "user", content: apiUserContent },
     ];
 
+    setCreationPath("freeflow");
     setJournalMode(true);
     setIntroTypingDone(true);
     setPhase("claude");
@@ -978,51 +1166,6 @@ export function CreateWorkspace({
       });
   }
 
-  function applyJournalToggle(next: boolean) {
-    pendingJournalModeRef.current = null;
-    setJournalMode(next);
-
-    const hasAnyUserMessage = messages.some((m) => m.role === "user");
-    const hasGeneratedScript = messages.some(
-      (m) => m.role === "assistant" && m.variant === "script",
-    );
-
-    // Reset all backend-driven state for a fresh chat start.
-    setChatLoading(false);
-    setClaudeThread([]);
-    setMeditationStyle(null);
-    setInput("");
-
-    // If nothing has been sent yet, silently swap the opening message and clear chat.
-    if (!hasAnyUserMessage && !hasGeneratedScript) {
-      setIntroTypingDone(false);
-      setMessages([
-        { role: "assistant", text: "", variant: "chat" },
-      ]);
-      // typing animation is handled by effect watching `messages`
-      // and will use the correct opening based on `journalMode`.
-      setPhase(next ? "feeling" : "style");
-      focusChatInput();
-      return;
-    }
-
-    // Otherwise, preserve history (muted), add divider, and start fresh below.
-    setMessages((prev) => [
-      ...prev.map((x) => ({ ...x, muted: true })),
-      {
-        role: "assistant",
-        text: "──── switched mode ────",
-        variant: "chat",
-        muted: true,
-        kind: "divider",
-      },
-      { role: "assistant", text: "", variant: "chat" },
-    ]);
-    setIntroTypingDone(false);
-    setPhase(next ? "feeling" : "style");
-    focusChatInput();
-  }
-
   function clearIntroTyping() {
     if (introTypingTimerRef.current !== null) {
       window.clearInterval(introTypingTimerRef.current);
@@ -1052,6 +1195,7 @@ export function CreateWorkspace({
 
   // Simulate Claude-style streaming for the *opening* guide messages only.
   useEffect(() => {
+    if (creationPath === "pending") return;
     // Only when we are at the start of a mode (style or journal feeling) and not already chatting.
     if (chatLoading || scriptLoading) return;
     if (!(phase === "style" || (journalMode && phase === "feeling" && !meditationStyle))) return;
@@ -1079,19 +1223,15 @@ export function CreateWorkspace({
       clearIntroTyping();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, journalMode, meditationStyle, chatLoading, scriptLoading, messages.length]);
-
-  function requestJournalToggle(next: boolean) {
-    const hasGeneratedScript = messages.some(
-      (m) => m.role === "assistant" && m.variant === "script",
-    );
-    if (hasGeneratedScript) {
-      pendingJournalModeRef.current = next;
-      setJournalConfirmOpen(true);
-      return;
-    }
-    applyJournalToggle(next);
-  }
+  }, [
+    creationPath,
+    phase,
+    journalMode,
+    meditationStyle,
+    chatLoading,
+    scriptLoading,
+    messages.length,
+  ]);
 
   function focusChatInput() {
     requestAnimationFrame(() => {
@@ -1100,16 +1240,27 @@ export function CreateWorkspace({
   }
 
   function resetChatKeepMode() {
-    // Keep `journalMode` as-is; reset the chat and retrigger the intro typing animation.
-    pendingJournalModeRef.current = null;
-    setJournalConfirmOpen(false);
+    // Keep creation path / journal mode as-is; reset chat and retrigger the intro typing animation.
     setChatLoading(false);
     setClaudeThread([]);
     setMeditationStyle(null);
     setInput("");
     setIntroTypingDone(false);
-    setMessages([{ role: "assistant", text: "", variant: "chat" }]);
-    setPhase(journalMode ? "feeling" : "style");
+    if (creationPath === "journalReflect") {
+      const recent = reflectableJournalEntriesForPicker(journalPickerEntries);
+      const next = new Set<string>();
+      for (let i = 0; i < Math.min(3, recent.length); i += 1) {
+        next.add(recent[i].id);
+      }
+      setJournalReflectSelectedIds(next);
+      setPhase("journalPick");
+      setMessages([
+        { role: "assistant", text: JOURNAL_REFLECT_PICK_INTRO, variant: "chat" },
+      ]);
+    } else {
+      setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+      setPhase(journalMode ? "feeling" : "style");
+    }
     isAtBottomRef.current = true;
     requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
@@ -1117,7 +1268,159 @@ export function CreateWorkspace({
     focusChatInput();
   }
 
+  function beginStylePath() {
+    setCreationPath("style");
+    setJournalMode(false);
+    setPhase("style");
+    setChatLoading(false);
+    setScriptLoading(false);
+    setClaudeThread([]);
+    setMeditationStyle(null);
+    setInput("");
+    setIntroTypingDone(false);
+    setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+    setMobileCreateStep("chat");
+    initialChatAutofocusDoneRef.current = false;
+    isAtBottomRef.current = true;
+  }
+
+  function beginFreeFlowPath() {
+    setCreationPath("freeflow");
+    setJournalMode(true);
+    setPhase("feeling");
+    setChatLoading(false);
+    setScriptLoading(false);
+    setClaudeThread([]);
+    setMeditationStyle(null);
+    setInput("");
+    setIntroTypingDone(false);
+    setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+    setMobileCreateStep("chat");
+    initialChatAutofocusDoneRef.current = false;
+    isAtBottomRef.current = true;
+  }
+
+  function beginJournalReflectPath() {
+    const recent = reflectableJournalEntriesForPicker(journalPickerEntries);
+    const next = new Set<string>();
+    for (let i = 0; i < Math.min(3, recent.length); i += 1) {
+      next.add(recent[i].id);
+    }
+    setJournalReflectSelectedIds(next);
+    setCreationPath("journalReflect");
+    setJournalMode(true);
+    setPhase("journalPick");
+    setChatLoading(false);
+    setScriptLoading(false);
+    setClaudeThread([]);
+    setMeditationStyle(null);
+    setInput("");
+    setIntroTypingDone(true);
+    setMessages([
+      { role: "assistant", text: JOURNAL_REFLECT_PICK_INTRO, variant: "chat" },
+    ]);
+    setMobileCreateStep("chat");
+    initialChatAutofocusDoneRef.current = false;
+    isAtBottomRef.current = true;
+  }
+
+  function toggleJournalReflectEntry(id: string) {
+    setJournalReflectSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }
+
+  async function confirmJournalReflectSelection() {
+    const pickerList = reflectableJournalEntriesForPicker(journalPickerEntries);
+    const ordered = pickerList.filter((e) => journalReflectSelectedIds.has(e.id));
+    if (!ordered.length || chatLoading) return;
+
+    const journalCards: JournalHandoffSegment[] = ordered.map((e) => ({
+      entryId: e.id,
+      title: e.title.trim() || deriveEntryTitle(e.contentHtml),
+      bodyPlain: journalEntryPlainForHandoff(e.contentHtml),
+      createdAt: e.createdAt,
+    }));
+
+    const apiUserContent = buildJournalHandoffApiContent(journalCards);
+    const history: MedimadeChatTurn[] = [
+      { role: "assistant", content: OPENING_JOURNAL },
+      { role: "user", content: apiUserContent },
+    ];
+    const styleHint = "General";
+
+    setCreationPath("freeflow");
+    setPhase("claude");
+    setIntroTypingDone(true);
+    setMeditationStyle(styleHint);
+    setClaudeThread([]);
+    setInput("");
+    setMessages([
+      {
+        role: "user",
+        text: JOURNAL_CREATE_FIRST_MESSAGE,
+        journalSegments: journalCards,
+      },
+    ]);
+    setChatLoading(true);
+
+    try {
+      let acc = "";
+      let assistantBubbleStarted = false;
+      const text = await streamMedimadeChat(
+        {
+          meditationStyle: styleHint,
+          messages: history,
+          journalMode: true,
+          meditationTargetMinutes,
+        },
+        (d) => {
+          acc += d;
+          if (!assistantBubbleStarted) {
+            assistantBubbleStarted = true;
+            setMessages((m) => [...m, { role: "assistant", text: acc }]);
+            maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
+          } else {
+            setMessages((m) => {
+              const next = [...m];
+              const last = next[next.length - 1];
+              if (last?.role !== "assistant") return m;
+              next[next.length - 1] = { role: "assistant", text: acc };
+              return next;
+            });
+            maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
+          }
+        },
+      );
+      setClaudeThread([...history, { role: "assistant", content: text }]);
+    } catch (e) {
+      const msg =
+        e instanceof Error ? e.message : "Could not reach the guide.";
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", text: `Sorry — ${msg}` },
+      ]);
+    } finally {
+      setChatLoading(false);
+      requestAnimationFrame(() => {
+        chatInputRef.current?.focus();
+      });
+    }
+  }
+
+  function goBackToChatStyle() {
+    setCreateStripStep(0);
+    setCreationPath("pending");
+    setPendingModeChoice(null);
+    setMobileCreateStep("chat");
+    initialChatAutofocusDoneRef.current = false;
+  }
+
   async function send() {
+    if (phase === "journalPick") return;
     const trimmed = input.trim();
     if (!trimmed || chatLoading || scriptLoading) return;
 
@@ -1770,11 +2073,17 @@ export function CreateWorkspace({
         <h1 className="font-display text-3xl font-medium tracking-tight">
           Create a meditation
         </h1>
-        <p className="mt-2 text-muted">
-          Choose a style, share how you’re feeling, and chat with the guide to
-          shape your script. Then, pick a voice, mix nature sounds, music, and
-          noise, and preview the blend before you create your meditation audio.
-        </p>
+        {workspaceSectionStep === 0 ? (
+          <p className="mt-2 text-muted">
+            Create a personalised meditation just for you.
+          </p>
+        ) : (
+          <p className="mt-2 text-muted">
+            Chat with the guide to shape your script, then pick a voice, mix
+            nature sounds, music, and noise, and preview the blend before you
+            generate your meditation audio.
+          </p>
+        )}
       </div>
 
       {draftLoadError ? (
@@ -1786,51 +2095,151 @@ export function CreateWorkspace({
         </div>
       ) : null}
 
-      {/* Mobile (&lt;lg): horizontal slide Script → Audio. lg+: two-column grid. */}
-      <div className="min-h-0 flex-1 overflow-hidden lg:overflow-visible">
-        <div
-          className={`flex h-full min-h-0 w-[200%] flex-row transition-transform duration-300 ease-out will-change-transform motion-reduce:duration-0 lg:grid lg:h-full lg:w-full lg:min-h-0 lg:translate-x-0 lg:grid-cols-2 lg:grid-rows-[minmax(0,1fr)] lg:gap-8 ${
-            !isLgViewport && mobileCreateStep === "audio"
-              ? "-translate-x-1/2"
-              : "translate-x-0"
-          }`}
-        >
-          <div className="flex h-full min-h-0 w-1/2 min-w-0 shrink-0 flex-col lg:contents">
-        <div className="flex min-h-0 w-full flex-1 flex-col gap-3 lg:h-full lg:min-h-0">
-        <section className="flex min-h-[40vh] w-full flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm lg:h-full lg:min-h-0">
+      {creationPath === "pending" &&
+      initialDraftSk?.trim() &&
+      !draftHydrated &&
+      !draftLoadError ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-8 text-sm text-muted">
+          Loading draft…
+        </div>
+      ) : (
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+        {workspaceSectionStep === 0 ? (
+          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+          <h2 className="shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
+            How would you like to generate your script?
+          </h2>
+          <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-3 md:gap-6">
+            <button
+              type="button"
+              onClick={() => setPendingModeChoice("style")}
+              aria-pressed={pendingModeChoice === "style"}
+              className={`cursor-pointer flex min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
+                pendingModeChoice === "style"
+                  ? "border-accent ring-2 ring-accent/25"
+                  : "border-border hover:border-accent/40 hover:bg-accent-soft/15"
+              }`}
+            >
+              <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
+                Pick a meditation style
+              </span>
+              <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
+                You start by choosing a meditation style in chat. The guide then asks
+                follow-up questions so that style is shaped around your mood, goals,
+                and what you need today.
+              </p>
+              <span
+                className="mx-auto mt-6 flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                aria-hidden
+              >
+                <IconMeditationStyle className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPendingModeChoice("freeflow")}
+              aria-pressed={pendingModeChoice === "freeflow"}
+              className={`cursor-pointer flex min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
+                pendingModeChoice === "freeflow"
+                  ? "border-accent ring-2 ring-accent/25"
+                  : "border-border hover:border-accent/40 hover:bg-accent-soft/15"
+              }`}
+            >
+              <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
+                Free flow chat
+              </span>
+              <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
+                Start from mood and what is on your mind—no style label up front.
+                The guide uses open, journal-style questions.
+              </p>
+              <span
+                className="mx-auto mt-6 flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                aria-hidden
+              >
+                <IconChatBubbles className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
+              </span>
+            </button>
+            <button
+              type="button"
+              disabled={!journalPickerListReady || !hasReflectableJournal}
+              onClick={() => setPendingModeChoice("journalReflect")}
+              aria-pressed={pendingModeChoice === "journalReflect"}
+              className={`flex min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
+                !journalPickerListReady || !hasReflectableJournal
+                  ? "cursor-not-allowed border-border opacity-50"
+                  : pendingModeChoice === "journalReflect"
+                    ? "cursor-pointer border-accent ring-2 ring-accent/25"
+                    : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
+              }`}
+            >
+              <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
+                Reflect on a journal entry
+              </span>
+              <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
+                In the next step you choose saved entries; the coach uses them as context for your meditation.
+              </p>
+              <span
+                className="mx-auto mt-6 flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                aria-hidden
+              >
+                <IconJournalReflect className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
+              </span>
+              {!journalPickerListReady ? (
+                <p className="mt-4 text-xs text-muted">Checking your saved journal…</p>
+              ) : !hasReflectableJournal ? (
+                <p className="mt-4 text-sm leading-relaxed text-muted">
+                  Start journaling to unlock this option.{" "}
+                  <Link
+                    href="/journal"
+                    className="font-semibold text-accent underline-offset-2 hover:underline"
+                  >
+                    Open Journal
+                  </Link>
+                </p>
+              ) : null}
+            </button>
+          </div>
+          </div>
+          <div className="shrink-0 border-t border-border/60 bg-background pt-4">
+            <div className="flex justify-end">
+            <button
+              type="button"
+              disabled={!pendingModeChoice}
+              onClick={() => {
+                if (pendingModeChoice === "style") {
+                  beginStylePath();
+                } else if (pendingModeChoice === "freeflow") {
+                  beginFreeFlowPath();
+                } else if (pendingModeChoice === "journalReflect") {
+                  beginJournalReflectPath();
+                }
+                setCreateStripStep(1);
+              }}
+              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+              aria-label={
+                pendingModeChoice === "journalReflect"
+                  ? "Continue and pick journal entries in chat"
+                  : "Continue to script and chat"
+              }
+            >
+              <span>Script</span>
+              <IconChevronRight className="text-accent" />
+            </button>
+            </div>
+          </div>
+        </div>
+        ) : null}
+        {workspaceSectionStep === 1 ? (
+        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <section className="flex w-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
             <div className="min-w-0 flex-1">
               <h2 className="text-base font-semibold tracking-tight">Script</h2>
             </div>
             <Tooltip.Provider delayDuration={250} disableHoverableContent>
               <div className="inline-flex shrink-0 items-center gap-2">
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-muted">
-                      <input
-                        type="checkbox"
-                        checked={journalMode}
-                        onChange={(e) => requestJournalToggle(e.target.checked)}
-                        disabled={chatControlsDisabled}
-                        className="h-4 w-4 rounded border-border bg-background accent-accent"
-                        aria-label="Journal mode"
-                      />
-                      <span>Journal mode</span>
-                    </label>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content
-                      side="top"
-                      align="center"
-                      sideOffset={8}
-                      className="max-w-[16rem] rounded-lg border border-border bg-card px-2.5 py-2 text-xs text-foreground shadow-md"
-                    >
-                      Mood based questions
-                      <Tooltip.Arrow className="fill-card stroke-border" />
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
-
                 <Tooltip.Root>
                   <Tooltip.Trigger asChild>
                     <button
@@ -2011,8 +2420,62 @@ export function CreateWorkspace({
                 </div>
                 </Tooltip.Provider>
               )}
+              {phase === "journalPick" ? (
+                <div className="mt-3 space-y-3 rounded-xl border border-border bg-background px-3 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    Your journal
+                  </p>
+                  <ul className="max-h-[min(16rem,42vh)] space-y-1.5 overflow-y-auto pr-1">
+                    {reflectableJournalEntriesForPicker(journalPickerEntries).map(
+                      (e) => {
+                        const title =
+                          e.title.trim() || deriveEntryTitle(e.contentHtml);
+                        const preview = stripHtmlToText(e.contentHtml).trim();
+                        const previewLine =
+                          preview.length > 96
+                            ? `${preview.slice(0, 93)}…`
+                            : preview;
+                        return (
+                          <li key={e.id}>
+                            <label className="flex cursor-pointer gap-3 rounded-lg border border-transparent px-2 py-2 hover:border-border hover:bg-accent-soft/25">
+                              <input
+                                type="checkbox"
+                                className="mt-1 h-4 w-4 shrink-0 rounded border-border accent-foreground"
+                                checked={journalReflectSelectedIds.has(e.id)}
+                                onChange={() => toggleJournalReflectEntry(e.id)}
+                              />
+                              <span className="min-w-0">
+                                <span className="block text-sm font-medium text-foreground">
+                                  {title}
+                                </span>
+                                <span className="mt-0.5 block text-xs text-muted">
+                                  {formatJournalEntryDate(e.updatedAt)}
+                                  {previewLine ? ` · ${previewLine}` : ""}
+                                </span>
+                              </span>
+                            </label>
+                          </li>
+                        );
+                      },
+                    )}
+                  </ul>
+                  <div className="flex justify-end border-t border-border/60 pt-3">
+                    <button
+                      type="button"
+                      disabled={
+                        chatLoading || journalReflectSelectedIds.size === 0
+                      }
+                      onClick={() => void confirmJournalReflectSelection()}
+                      className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                    >
+                      Continue with selected
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div ref={messagesEndRef} />
             </div>
+            {phase === "journalPick" ? null : (
             <div className="mt-3 flex shrink-0 gap-2 border-t border-border pt-3">
               <input
                 ref={chatInputRef}
@@ -2048,26 +2511,43 @@ export function CreateWorkspace({
                 )}
               </button>
             </div>
+            )}
           </div>
         </section>
-
-          <div className="flex shrink-0 justify-end lg:hidden">
+        </div>
+          <div className="shrink-0 border-t border-border/60 bg-background pt-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <button
               type="button"
-              onClick={() => setMobileCreateStep("audio")}
-              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+              onClick={goBackToChatStyle}
+              disabled={chatControlsDisabled}
+              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+              aria-label="Back to chat style selection"
+            >
+              <IconChevronLeft className="shrink-0 text-accent" />
+              <span>Chat style</span>
+            </button>
+            <button
+              type="button"
+              disabled={phase === "journalPick"}
+              onClick={() => {
+                setMobileCreateStep("audio");
+                setCreateStripStep(2);
+              }}
+              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
               aria-label="Next: audio and voice settings"
             >
               <span>Audio & voice</span>
               <IconChevronRight className="text-accent" />
             </button>
           </div>
-        </div>
           </div>
-
-          <div className="flex h-full min-h-0 w-1/2 min-w-0 shrink-0 flex-col gap-6 overflow-y-auto pb-12 lg:contents lg:overflow-visible lg:pb-0">
-        <div className="flex min-h-0 w-full flex-1 flex-col gap-6 pb-12 lg:h-full lg:min-h-0 lg:max-h-full lg:flex-1 lg:flex-col lg:gap-4 lg:overflow-hidden lg:pb-4 max-lg:min-h-0">
-          <section className="rounded-2xl border border-border bg-card shadow-sm lg:flex lg:flex-col">
+        </div>
+        ) : null}
+        {workspaceSectionStep === 2 ? (
+        <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <section className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
               <div className="min-w-0 flex-1">
                 <h2 className="text-base font-semibold tracking-tight">Audio</h2>
@@ -2089,7 +2569,7 @@ export function CreateWorkspace({
               </button>
             </div>
 
-            <div className="p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
               <audio ref={previewNatureRef} className="hidden" playsInline />
               <audio ref={previewMusicRef} className="hidden" playsInline />
               <audio ref={previewNoiseRef} className="hidden" playsInline />
@@ -2357,18 +2837,31 @@ export function CreateWorkspace({
 
             </div>
           </section>
-
-          <div className="relative z-20 mt-auto flex min-h-[3rem] w-full shrink-0 flex-nowrap items-center justify-between gap-4 bg-background px-0 pt-5 lg:pt-0">
+        </div>
+          {draftSaveMessage ? (
+            <p
+              className="shrink-0 py-2 text-center text-xs text-muted sm:text-right"
+              role="status"
+              aria-live="polite"
+            >
+              {draftSaveMessage}
+            </p>
+          ) : null}
+          <div className="shrink-0 border-t border-border/60 bg-background pt-4">
+            <div className="flex min-h-[3rem] w-full flex-nowrap items-center justify-between gap-4">
             <button
               type="button"
-              onClick={() => setMobileCreateStep("chat")}
-              className="flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 lg:hidden dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+              onClick={() => {
+                setMobileCreateStep("chat");
+                setCreateStripStep(1);
+              }}
+              className="flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
               aria-label="Back to script and chat"
             >
               <IconChevronLeft className="shrink-0 text-accent" />
               Script
             </button>
-            <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2 lg:ml-auto">
+            <div className="ml-auto flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
               <button
                 type="button"
                 onClick={() => void saveCurrentDraft()}
@@ -2404,16 +2897,8 @@ export function CreateWorkspace({
                 )}
               </button>
             </div>
+            </div>
           </div>
-          {draftSaveMessage ? (
-            <p
-              className="mt-2 shrink-0 text-center text-xs text-muted sm:text-right lg:mt-1 lg:text-right"
-              role="status"
-              aria-live="polite"
-            >
-              {draftSaveMessage}
-            </p>
-          ) : null}
 
           {/*
           Optional video, Markers, Manifestation (no wiring yet). Restore beside Speaker in sm:grid-cols-2 if needed.
@@ -2457,9 +2942,9 @@ export function CreateWorkspace({
           </Panel>
           */}
         </div>
-          </div>
-        </div>
+        ) : null}
       </div>
+      )}
 
       {audioModalUrl && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -2521,39 +3006,6 @@ export function CreateWorkspace({
         </div>
       )}
 
-      {journalConfirmOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-4 shadow-xl">
-            <div className="text-sm font-semibold text-foreground">
-              Starting over will replace your current script. Continue?
-            </div>
-            <div className="mt-4 flex justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  pendingJournalModeRef.current = null;
-                  setJournalConfirmOpen(false);
-                }}
-                className="cursor-pointer rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground hover:border-accent/40"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const next = pendingJournalModeRef.current;
-                  pendingJournalModeRef.current = null;
-                  setJournalConfirmOpen(false);
-                  if (typeof next === "boolean") applyJournalToggle(next);
-                }}
-                className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90 dark:text-deep"
-              >
-                Continue
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

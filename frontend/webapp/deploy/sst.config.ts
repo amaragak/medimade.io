@@ -27,10 +27,14 @@ export default $config({
     };
   },
   async run() {
-    new sst.aws.Nextjs("Web", {
+    const web = new sst.aws.Nextjs("Web", {
       path: "..",
       environment: nextPublicEnvFromProcess(),
-      // domain: "app.example.com",
+      domain: {
+        name: "consciously.live",
+        aliases: ["www.consciously.live"],
+      },
     });
+    return { url: web.url };
   },
 });

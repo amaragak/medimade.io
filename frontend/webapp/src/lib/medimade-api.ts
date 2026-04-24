@@ -57,6 +57,9 @@ export type MedimadeMagicLinkVerifyResult = {
   displayName: string | null;
 };
 
+/** One in-flight (or settled) verify per magic token so React Strict Mode does not burn the token twice. */
+const magicVerifyByToken = new Map<string, Promise<MedimadeMagicLinkVerifyResult>>();
+
 /**
  * Exchanges a magic-link token for a session JWT. Does not write localStorage;
  * callers should call `setMedimadeSession` after any required name step.
@@ -64,10 +67,24 @@ export type MedimadeMagicLinkVerifyResult = {
 export async function verifyMedimadeMagicLink(
   token: string,
 ): Promise<MedimadeMagicLinkVerifyResult> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const t = token.trim();
   if (!t) throw new Error("Token is required");
+  const existing = magicVerifyByToken.get(t);
+  if (existing) return existing;
+
+  const p = verifyMedimadeMagicLinkUncached(t);
+  magicVerifyByToken.set(t, p);
+  void p.catch(() => {
+    magicVerifyByToken.delete(t);
+  });
+  return p;
+}
+
+async function verifyMedimadeMagicLinkUncached(
+  t: string,
+): Promise<MedimadeMagicLinkVerifyResult> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const res = await fetch(`${base}/auth/magic-link/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -89,7 +106,10 @@ export async function verifyMedimadeMagicLink(
     typeof data.displayName === "string" && data.displayName.trim()
       ? data.displayName.trim()
       : null;
-  const needsProfileName = data.needsProfileName === true;
+  const needsProfileName =
+    typeof data.needsProfileName === "boolean"
+      ? data.needsProfileName
+      : !displayName;
   return {
     token: data.token.trim(),
     userId: typeof data.userId === "string" ? data.userId : "",

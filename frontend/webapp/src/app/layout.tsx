@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Caveat, DM_Sans, Fraunces } from "next/font/google";
+import { Suspense } from "react";
 import "./globals.css";
+import { ProfileNameGate } from "@/components/profile-name-gate";
 import { SiteHeader } from "@/components/site-header";
 // import { SiteFooter } from "@/components/site-footer";
 
@@ -40,6 +42,9 @@ export default function RootLayout({
       className={`${dmSans.variable} ${fraunces.variable} ${caveat.variable} h-full antialiased`}
     >
       <body className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
+        <Suspense fallback={null}>
+          <ProfileNameGate />
+        </Suspense>
         <SiteHeader />
         <main className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain">
           {children}

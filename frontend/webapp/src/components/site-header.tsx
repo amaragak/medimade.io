@@ -32,17 +32,23 @@ function isMeditateSection(path: string): boolean {
 export function SiteHeader() {
   const pathname = usePathname() || "/";
   const mobileMenuRef = useRef<HTMLDetailsElement | null>(null);
-  const [, bump] = useState(0);
   const [meditateMenuOpen, setMeditateMenuOpen] = useState(false);
+  /** Session is read from storage; SSR has no JWT — keep initial false so server and first client paint match (avoids hydration mismatch). */
+  const [signedIn, setSignedIn] = useState(false);
+  const [sessionLabel, setSessionLabel] = useState<string | null>(null);
+
   useEffect(() => {
-    const on = () => bump((n) => n + 1);
-    window.addEventListener("medimade-session-changed", on);
-    return () => window.removeEventListener("medimade-session-changed", on);
+    const sync = () => {
+      setSignedIn(Boolean(getMedimadeSessionJwt()));
+      const email = getMedimadeSessionEmail();
+      setSessionLabel(
+        getMedimadeSessionDisplayName()?.trim() || email || null,
+      );
+    };
+    sync();
+    window.addEventListener("medimade-session-changed", sync);
+    return () => window.removeEventListener("medimade-session-changed", sync);
   }, []);
-  const signedIn = Boolean(getMedimadeSessionJwt());
-  const sessionEmail = getMedimadeSessionEmail();
-  const sessionLabel =
-    getMedimadeSessionDisplayName()?.trim() || sessionEmail || null;
   const isActive = (href: string) =>
     href === "/"
       ? pathname === "/"
