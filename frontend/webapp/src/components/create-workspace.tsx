@@ -403,7 +403,7 @@ const OPENING_STYLE =
 const OPENING_JOURNAL = "What’s on your mind?";
 
 const JOURNAL_REFLECT_PICK_INTRO =
-  "Choose one or more journal entries below. The guide will use them as context for your meditation.";
+  "Which journal entry would you like to reflect on?";
 
 function reflectableJournalEntriesForPicker(entries: JournalEntry[]): JournalEntry[] {
   return entries
@@ -692,6 +692,8 @@ export function CreateWorkspace({
     { role: "assistant", text: "", variant: "chat" },
   ]);
   const [introTypingDone, setIntroTypingDone] = useState(false);
+  /** Bumped on reset so intro typing re-runs even when `messages.length` stays 1. */
+  const [introTypingSession, setIntroTypingSession] = useState(0);
   const introTypingTimerRef = useRef<number | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -1248,9 +1250,13 @@ export function CreateWorkspace({
   // Simulate Claude-style streaming for the *opening* guide messages only.
   useEffect(() => {
     if (creationPath === "pending") return;
-    // Only when we are at the start of a mode (style or journal feeling) and not already chatting.
+    // Only when we are at the start of a mode (style, journal feeling, or journal pick) and not already chatting.
     if (chatLoading || scriptLoading) return;
-    if (!(phase === "style" || (journalMode && phase === "feeling" && !meditationStyle))) return;
+    const introTypingPhase =
+      phase === "style" ||
+      (journalMode && phase === "feeling" && !meditationStyle) ||
+      (phase === "journalPick" && creationPath === "journalReflect");
+    if (!introTypingPhase) return;
     const idx = (() => {
       for (let i = messages.length - 1; i >= 0; i--) {
         const m = messages[i];
@@ -1261,14 +1267,24 @@ export function CreateWorkspace({
       return -1;
     })();
     if (idx < 0) return;
-    const opening = journalMode && phase === "feeling" && !meditationStyle ? OPENING_JOURNAL : OPENING_STYLE;
+    const opening =
+      phase === "journalPick" && creationPath === "journalReflect"
+        ? JOURNAL_REFLECT_PICK_INTRO
+        : journalMode && phase === "feeling" && !meditationStyle
+          ? OPENING_JOURNAL
+          : OPENING_STYLE;
     const m = messages[idx];
     if (m.text === opening) {
       setIntroTypingDone(true);
       return;
     }
     // Only type if the message is empty (fresh) or equals one of the opening strings.
-    if (m.text.trim().length === 0 || m.text === OPENING_STYLE || m.text === OPENING_JOURNAL) {
+    if (
+      m.text.trim().length === 0 ||
+      m.text === OPENING_STYLE ||
+      m.text === OPENING_JOURNAL ||
+      m.text === JOURNAL_REFLECT_PICK_INTRO
+    ) {
       startIntroTyping(idx, opening);
     }
     return () => {
@@ -1283,6 +1299,7 @@ export function CreateWorkspace({
     chatLoading,
     scriptLoading,
     messages.length,
+    introTypingSession,
   ]);
 
   function focusChatInput() {
@@ -1298,6 +1315,7 @@ export function CreateWorkspace({
     setMeditationStyle(null);
     setInput("");
     setIntroTypingDone(false);
+    setIntroTypingSession((s) => s + 1);
     if (creationPath === "journalReflect") {
       const recent = reflectableJournalEntriesForPicker(journalPickerEntries);
       const next = new Set<string>();
@@ -1306,9 +1324,7 @@ export function CreateWorkspace({
       }
       setJournalReflectSelectedIds(next);
       setPhase("journalPick");
-      setMessages([
-        { role: "assistant", text: JOURNAL_REFLECT_PICK_INTRO, variant: "chat" },
-      ]);
+      setMessages([{ role: "assistant", text: "", variant: "chat" }]);
     } else {
       setMessages([{ role: "assistant", text: "", variant: "chat" }]);
       setPhase(journalMode ? "feeling" : "style");
@@ -1367,10 +1383,9 @@ export function CreateWorkspace({
     setClaudeThread([]);
     setMeditationStyle(null);
     setInput("");
-    setIntroTypingDone(true);
-    setMessages([
-      { role: "assistant", text: JOURNAL_REFLECT_PICK_INTRO, variant: "chat" },
-    ]);
+    setIntroTypingDone(false);
+    setIntroTypingSession((s) => s + 1);
+    setMessages([{ role: "assistant", text: "", variant: "chat" }]);
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
@@ -2568,7 +2583,7 @@ export function CreateWorkspace({
                 </div>
                 </Tooltip.Provider>
               )}
-              {phase === "journalPick" ? (
+              {phase === "journalPick" && introTypingDone ? (
                 <div className="mt-3 space-y-3 rounded-xl border border-border bg-background px-3 py-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted">
                     Your journal
@@ -2588,7 +2603,7 @@ export function CreateWorkspace({
                             <label className="flex cursor-pointer gap-3 rounded-lg border border-transparent px-2 py-2 hover:border-border hover:bg-accent-soft/25">
                               <input
                                 type="checkbox"
-                                className="mt-1 h-4 w-4 shrink-0 rounded border-border accent-foreground"
+                                className="mt-1 h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-foreground"
                                 checked={journalReflectSelectedIds.has(e.id)}
                                 onChange={() => toggleJournalReflectEntry(e.id)}
                               />
@@ -2614,7 +2629,7 @@ export function CreateWorkspace({
                         chatLoading || journalReflectSelectedIds.size === 0
                       }
                       onClick={() => void confirmJournalReflectSelection()}
-                      className="rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                      className="cursor-pointer rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
                     >
                       Continue with selected
                     </button>

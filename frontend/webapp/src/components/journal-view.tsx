@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { JournalInsightsView } from "@/components/journal-insights-view";
 import { scheduleJournalInsightsRefreshAfterLeavingEditor } from "@/components/journal-insights-autorefresh";
@@ -13,22 +12,16 @@ import {
   putJournalStoreRemote,
 } from "@/lib/medimade-api";
 import {
-  JOURNAL_MEDITATION_PAYLOAD_KEY,
-  armJournalMeditationHandoffJson,
   formatJournalEntryDate,
   groupJournalEntriesForSidebar,
-  journalEntryPlainForHandoff,
   loadJournalStore,
   newJournalEntry,
   saveJournalStore,
   shouldPreferRemoteJournalStore,
   stripHtmlToText,
   type JournalEntry,
-  type JournalMeditationPayloadV1,
   type JournalStoreV2,
 } from "@/lib/journal-storage";
-
-const RECENT_ENTRIES_FOR_MODAL = 25;
 
 function entryPreview(html: string): string {
   const t = stripHtmlToText(html);
@@ -42,17 +35,12 @@ function sidebarEntryTitle(title: string): string {
 }
 
 export function JournalView() {
-  const router = useRouter();
   const [signedIn, setSignedIn] = useState(() => Boolean(getMedimadeSessionJwt()));
   const [hydrated, setHydrated] = useState(false);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
-  const [generateModalOpen, setGenerateModalOpen] = useState(false);
   const [insightsOpen, setInsightsOpen] = useState(false);
   const prevInsightsOpenRef = useRef(false);
-  const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(
-    () => new Set(),
-  );
   /** After first journal GET attempt (or skip if no API URL); avoids PUT before pull completes. */
   const [remoteJournalChecked, setRemoteJournalChecked] = useState(false);
   const entriesRef = useRef<JournalEntry[]>([]);
@@ -60,7 +48,6 @@ export function JournalView() {
   const latestHtmlRef = useRef("<p></p>");
   const latestTitleRef = useRef("");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const generateModalOpenedRef = useRef(false);
   const skipCloudPushRef = useRef(false);
 
   entriesRef.current = entries;
@@ -271,87 +258,6 @@ export function JournalView() {
     [entries],
   );
 
-  const recentEntriesForModal = useMemo(() => {
-    return [...entries]
-      .sort(
-        (a, b) =>
-          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-      )
-      .slice(0, RECENT_ENTRIES_FOR_MODAL);
-  }, [entries]);
-
-  useEffect(() => {
-    if (!generateModalOpen) {
-      generateModalOpenedRef.current = false;
-      return;
-    }
-    if (generateModalOpenedRef.current) return;
-    generateModalOpenedRef.current = true;
-    const next = new Set<string>();
-    for (
-      let i = 0;
-      i < Math.min(3, recentEntriesForModal.length);
-      i += 1
-    ) {
-      next.add(recentEntriesForModal[i].id);
-    }
-    setSelectedEntryIds(next);
-  }, [generateModalOpen, recentEntriesForModal]);
-
-  useEffect(() => {
-    if (!generateModalOpen) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key === "Escape") setGenerateModalOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [generateModalOpen]);
-
-  const toggleEntrySelected = useCallback((id: string) => {
-    setSelectedEntryIds((prev) => {
-      const n = new Set(prev);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
-  }, []);
-
-  const handleGenerateContinue = useCallback(() => {
-    flushSaveSync();
-    const ordered = recentEntriesForModal.filter((e) =>
-      selectedEntryIds.has(e.id),
-    );
-    if (!ordered.length) return;
-
-    const segments = ordered.map((e) => ({
-      entryId: e.id,
-      title: sidebarEntryTitle(e.title),
-      bodyPlain: journalEntryPlainForHandoff(e.contentHtml),
-      createdAt: e.createdAt,
-    }));
-
-    const payload: JournalMeditationPayloadV1 = {
-      v: 1,
-      at: new Date().toISOString(),
-      segments,
-    };
-
-    const json = JSON.stringify(payload);
-    try {
-      sessionStorage.setItem(JOURNAL_MEDITATION_PAYLOAD_KEY, json);
-    } catch {
-      /* ignore */
-    }
-    armJournalMeditationHandoffJson(json);
-    setGenerateModalOpen(false);
-    router.push("/meditate/create?fromJournal=1");
-  }, [
-    flushSaveSync,
-    recentEntriesForModal,
-    selectedEntryIds,
-    router,
-  ]);
-
   const selectEntry = useCallback(
     (nextId: string) => {
       flushSaveSync();
@@ -391,13 +297,13 @@ export function JournalView() {
         <div className="mt-8 flex flex-wrap gap-3">
           <Link
             href="/login"
-            className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 dark:text-deep"
+            className="cursor-pointer rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 dark:text-deep"
           >
             Sign in
           </Link>
           <Link
             href="/"
-            className="rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-accent/40"
+            className="cursor-pointer rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-accent/40"
           >
             Back
           </Link>
@@ -418,7 +324,7 @@ export function JournalView() {
               type="button"
               onClick={() => setInsightsOpen((v) => !v)}
               aria-pressed={insightsOpen}
-              className={`rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
+              className={`cursor-pointer rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
                 insightsOpen
                   ? "border-accent/50 bg-accent-soft text-foreground"
                   : "border-border bg-background text-foreground hover:border-accent/40"
@@ -426,22 +332,21 @@ export function JournalView() {
             >
               {insightsOpen ? "Journal" : "Insights"}
             </button>
-            <button
-              type="button"
-              onClick={() => setGenerateModalOpen(true)}
-              disabled={!hydrated || entries.length === 0 || insightsOpen}
-              className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40 dark:text-deep"
-            >
-              Generate meditation
-            </button>
           </div>
         </div>
         <p className="mt-2 text-muted">
           Rich notes and voice clips. With Medimade API configured, the journal
           syncs to cloud storage for this browser; otherwise it stays on this
-          device only. You can turn entries into guided meditations from here.
-          Open <span className="font-medium text-foreground">Insights</span> for
-          rolling themes from your entries.
+          device only. To build a meditation from your entries, open{" "}
+          <Link
+            href="/meditate/create"
+            className="cursor-pointer font-medium text-accent underline-offset-2 hover:underline"
+          >
+            Create
+          </Link>{" "}
+          and choose “Reflect on a journal entry”. Open{" "}
+          <span className="font-medium text-foreground">Insights</span> for rolling
+          themes from your entries.
         </p>
       </div>
 
@@ -450,7 +355,7 @@ export function JournalView() {
           <button
             type="button"
             onClick={createEntry}
-            className="rounded-xl border border-border bg-background px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:border-accent/40"
+            className="cursor-pointer rounded-xl border border-border bg-background px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:border-accent/40"
           >
             + New entry
           </button>
@@ -479,7 +384,7 @@ export function JournalView() {
                           <button
                             type="button"
                             onClick={() => selectEntry(e.id)}
-                            className={`w-full rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                            className={`w-full cursor-pointer rounded-xl border px-3 py-2.5 text-left transition-colors ${
                               isActive
                                 ? "border-accent/60 bg-accent text-white shadow-sm dark:text-deep"
                                 : "border-border bg-background text-foreground hover:border-accent/40"
@@ -550,90 +455,6 @@ export function JournalView() {
           )}
         </section>
       </div>
-
-      {generateModalOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4"
-          role="presentation"
-        >
-          <button
-            type="button"
-            aria-label="Close"
-            className="absolute inset-0 bg-deep/40 dark:bg-black/50"
-            onClick={() => setGenerateModalOpen(false)}
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="journal-generate-title"
-            className="relative z-10 flex max-h-[min(90dvh,36rem)] w-full max-w-lg flex-col rounded-t-2xl border border-border bg-card shadow-xl sm:rounded-2xl"
-          >
-            <div className="border-b border-border px-5 py-4">
-              <h2
-                id="journal-generate-title"
-                className="font-display text-lg font-medium tracking-tight text-foreground"
-              >
-                Generate a meditation
-              </h2>
-              <p className="mt-1 text-sm text-muted">
-                Choose recent journal entries to bring into Create. Your text is
-                copied into the chat as a starting message you can edit before
-                sending.
-              </p>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                Recent entries (newest first)
-              </p>
-              <ul className="mt-2 space-y-2">
-                {recentEntriesForModal.map((e) => {
-                  const checked = selectedEntryIds.has(e.id);
-                  return (
-                    <li key={e.id}>
-                      <label className="flex cursor-pointer gap-3 rounded-xl border border-border bg-background px-3 py-2.5 transition-colors hover:border-accent/35 focus-within:ring-2 focus-within:ring-accent/30">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleEntrySelected(e.id)}
-                          className="mt-0.5 size-4 shrink-0 rounded border-border text-accent focus:ring-accent/40"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm font-semibold text-foreground">
-                            {sidebarEntryTitle(e.title)}
-                          </span>
-                          <span className="mt-0.5 block text-xs text-muted">
-                            Created {formatJournalEntryDate(e.createdAt)}
-                          </span>
-                          <span className="mt-1 line-clamp-2 text-xs text-muted">
-                            {entryPreview(e.contentHtml)}
-                          </span>
-                        </span>
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border px-5 py-4">
-              <button
-                type="button"
-                onClick={() => setGenerateModalOpen(false)}
-                className="rounded-xl border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground transition-colors hover:border-accent/40"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={selectedEntryIds.size === 0}
-                onClick={handleGenerateContinue}
-                className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40 dark:text-deep"
-              >
-                Continue to Create
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

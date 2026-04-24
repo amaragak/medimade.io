@@ -386,8 +386,8 @@ function ToolbarBtn({
         disabled
           ? "cursor-not-allowed opacity-50"
           : active
-            ? "bg-accent text-white dark:text-deep"
-            : "text-muted hover:bg-accent-soft/50 hover:text-foreground"
+            ? "cursor-pointer bg-accent text-white dark:text-deep"
+            : "cursor-pointer text-muted hover:bg-accent-soft/50 hover:text-foreground"
       }`}
     >
       {children}

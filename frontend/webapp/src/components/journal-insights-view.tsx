@@ -113,7 +113,7 @@ export function JournalInsightsView() {
             type="button"
             onClick={refresh}
             disabled={!apiEnabled || !getMedimadeSessionJwt() || refreshing}
-            className="shrink-0 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40 dark:text-deep"
+            className="shrink-0 cursor-pointer rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:pointer-events-none disabled:opacity-40 dark:text-deep"
           >
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
@@ -128,7 +128,10 @@ export function JournalInsightsView() {
           ) : !getMedimadeSessionJwt() ? (
             <p className="text-muted">
               Sign in to load cloud insights for your journal.{" "}
-              <Link href="/login" className="font-medium text-accent underline-offset-2 hover:underline">
+              <Link
+                href="/login"
+                className="cursor-pointer font-medium text-accent underline-offset-2 hover:underline"
+              >
                 Sign in
               </Link>
             </p>
