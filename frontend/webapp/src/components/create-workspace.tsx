@@ -183,6 +183,31 @@ function IconChevronLeft({ className }: { className?: string }) {
   );
 }
 
+function IconChevronDown({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+const WORKSPACE_GENERATION_MODES = [
+  { value: "style" as const, label: "Pick a meditation style" },
+  { value: "freeflow" as const, label: "Free flow chat" },
+  { value: "journalReflect" as const, label: "Reflect on a journal entry" },
+];
+
 /**
  * Lucide “flower-2” (lucide-static v0.460, ISC) — creation picker, pick a style.
  * @see https://lucide.dev/icons/flower-2
@@ -695,6 +720,8 @@ export function CreateWorkspace({
   const [pendingModeChoice, setPendingModeChoice] = useState<
     null | "style" | "freeflow" | "journalReflect"
   >(null);
+  const [workspaceModeMenuOpen, setWorkspaceModeMenuOpen] = useState(false);
+  const workspaceModeMenuRef = useRef<HTMLDivElement>(null);
   /** Journal list for Create chooser + in-chat reflect picker (local + optional cloud). */
   const [journalPickerEntries, setJournalPickerEntries] = useState<JournalEntry[]>(
     [],
@@ -894,6 +921,31 @@ export function CreateWorkspace({
     if (!journalPickerListReady) return;
     if (!hasReflectableJournal) setPendingModeChoice(null);
   }, [pendingModeChoice, journalPickerListReady, hasReflectableJournal]);
+
+  /** Chooser cards + chat header select stay aligned with the active path. */
+  useEffect(() => {
+    if (creationPath === "pending") return;
+    if (creationPath === "style") setPendingModeChoice("style");
+    else if (creationPath === "freeflow") setPendingModeChoice("freeflow");
+    else if (creationPath === "journalReflect") setPendingModeChoice("journalReflect");
+  }, [creationPath]);
+
+  useEffect(() => {
+    if (!workspaceModeMenuOpen) return;
+    function onPointerDown(e: PointerEvent) {
+      const el = workspaceModeMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setWorkspaceModeMenuOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setWorkspaceModeMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [workspaceModeMenuOpen]);
 
   useEffect(() => {
     if (!seedJournalContext) return;
@@ -1412,11 +1464,37 @@ export function CreateWorkspace({
   }
 
   function goBackToChatStyle() {
+    const modeFromPath: null | "style" | "freeflow" | "journalReflect" =
+      creationPath === "style"
+        ? "style"
+        : creationPath === "freeflow"
+          ? "freeflow"
+          : creationPath === "journalReflect"
+            ? "journalReflect"
+            : null;
     setCreateStripStep(0);
     setCreationPath("pending");
-    setPendingModeChoice(null);
+    setPendingModeChoice(modeFromPath);
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
+  }
+
+  function applyWorkspaceModeChange(v: "style" | "freeflow" | "journalReflect") {
+    if (v === "journalReflect" && (!journalPickerListReady || !hasReflectableJournal))
+      return;
+    const currentMode: null | "style" | "freeflow" | "journalReflect" =
+      creationPath === "style"
+        ? "style"
+        : creationPath === "freeflow"
+          ? "freeflow"
+          : creationPath === "journalReflect"
+            ? "journalReflect"
+            : null;
+    if (v === currentMode) return;
+    setPendingModeChoice(v);
+    if (v === "style") beginStylePath();
+    else if (v === "freeflow") beginFreeFlowPath();
+    else beginJournalReflectPath();
   }
 
   async function send() {
@@ -2067,6 +2145,18 @@ export function CreateWorkspace({
     }
   }
 
+  const activeWorkspaceMode: null | "style" | "freeflow" | "journalReflect" =
+    creationPath === "style"
+      ? "style"
+      : creationPath === "freeflow"
+        ? "freeflow"
+        : creationPath === "journalReflect"
+          ? "journalReflect"
+          : null;
+  const activeWorkspaceModeLabel =
+    WORKSPACE_GENERATION_MODES.find((o) => o.value === activeWorkspaceMode)
+      ?.label ?? "Mode";
+
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6">
       <div className="mb-6 shrink-0">
@@ -2110,15 +2200,15 @@ export function CreateWorkspace({
           <h2 className="shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
             How would you like to generate your script?
           </h2>
-          <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-3 md:gap-6">
+          <div className="grid min-h-0 flex-1 grid-cols-1 items-stretch gap-4 md:grid-cols-3 md:gap-6">
             <button
               type="button"
               onClick={() => setPendingModeChoice("style")}
               aria-pressed={pendingModeChoice === "style"}
-              className={`cursor-pointer flex min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
+              className={`flex h-full min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
                 pendingModeChoice === "style"
-                  ? "border-accent ring-2 ring-accent/25"
-                  : "border-border hover:border-accent/40 hover:bg-accent-soft/15"
+                  ? "cursor-pointer border-accent ring-2 ring-accent/25"
+                  : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
               }`}
             >
               <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
@@ -2130,7 +2220,7 @@ export function CreateWorkspace({
                 and what you need today.
               </p>
               <span
-                className="mx-auto mt-6 flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
                 aria-hidden
               >
                 <IconMeditationStyle className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
@@ -2140,10 +2230,10 @@ export function CreateWorkspace({
               type="button"
               onClick={() => setPendingModeChoice("freeflow")}
               aria-pressed={pendingModeChoice === "freeflow"}
-              className={`cursor-pointer flex min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
+              className={`flex h-full min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
                 pendingModeChoice === "freeflow"
-                  ? "border-accent ring-2 ring-accent/25"
-                  : "border-border hover:border-accent/40 hover:bg-accent-soft/15"
+                  ? "cursor-pointer border-accent ring-2 ring-accent/25"
+                  : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
               }`}
             >
               <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
@@ -2154,7 +2244,7 @@ export function CreateWorkspace({
                 The guide uses open, journal-style questions.
               </p>
               <span
-                className="mx-auto mt-6 flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
                 aria-hidden
               >
                 <IconChatBubbles className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
@@ -2165,7 +2255,7 @@ export function CreateWorkspace({
               disabled={!journalPickerListReady || !hasReflectableJournal}
               onClick={() => setPendingModeChoice("journalReflect")}
               aria-pressed={pendingModeChoice === "journalReflect"}
-              className={`flex min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
+              className={`flex h-full min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
                 !journalPickerListReady || !hasReflectableJournal
                   ? "cursor-not-allowed border-border opacity-50"
                   : pendingModeChoice === "journalReflect"
@@ -2179,16 +2269,10 @@ export function CreateWorkspace({
               <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
                 In the next step you choose saved entries; the coach uses them as context for your meditation.
               </p>
-              <span
-                className="mx-auto mt-6 flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
-                aria-hidden
-              >
-                <IconJournalReflect className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
-              </span>
               {!journalPickerListReady ? (
-                <p className="mt-4 text-xs text-muted">Checking your saved journal…</p>
+                <p className="mt-3 text-xs text-muted">Checking your saved journal…</p>
               ) : !hasReflectableJournal ? (
-                <p className="mt-4 text-sm leading-relaxed text-muted">
+                <p className="mt-3 text-sm leading-relaxed text-muted">
                   Start journaling to unlock this option.{" "}
                   <Link
                     href="/journal"
@@ -2198,6 +2282,12 @@ export function CreateWorkspace({
                   </Link>
                 </p>
               ) : null}
+              <span
+                className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                aria-hidden
+              >
+                <IconJournalReflect className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
+              </span>
             </button>
           </div>
           </div>
@@ -2233,11 +2323,68 @@ export function CreateWorkspace({
         {workspaceSectionStep === 1 ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <h2 className="mb-2 shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:mb-3 sm:text-xl">
+          Shape how your meditation script is written
+        </h2>
         <section className="flex w-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <h2 className="text-base font-semibold tracking-tight">Script</h2>
-            </div>
+            <h2 className="min-w-0 shrink text-base font-semibold tracking-tight">Script</h2>
+            <div className="flex shrink-0 items-center gap-2">
+              <div ref={workspaceModeMenuRef} className="relative">
+                <button
+                  type="button"
+                  id="create-workspace-mode-trigger"
+                  aria-label="How to generate your script"
+                  aria-haspopup="listbox"
+                  aria-expanded={workspaceModeMenuOpen}
+                  aria-controls="create-workspace-mode-listbox"
+                  disabled={chatControlsDisabled}
+                  onClick={() => setWorkspaceModeMenuOpen((o) => !o)}
+                  className="inline-flex h-8 max-w-[min(16rem,calc(100vw-6rem))] cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-left text-xs font-medium text-foreground shadow-sm transition-colors hover:border-accent/45 hover:bg-accent-soft/25 disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[18rem]"
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {activeWorkspaceModeLabel}
+                  </span>
+                  <IconChevronDown
+                    className={`shrink-0 text-muted transition-transform ${workspaceModeMenuOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+                {workspaceModeMenuOpen ? (
+                  <div
+                    id="create-workspace-mode-listbox"
+                    role="listbox"
+                    aria-labelledby="create-workspace-mode-trigger"
+                    className="absolute right-0 top-full z-30 mt-1 w-max min-w-full max-w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-card py-1 shadow-md"
+                  >
+                    {WORKSPACE_GENERATION_MODES.map((opt) => {
+                      const selected = opt.value === activeWorkspaceMode;
+                      const journalDisabled =
+                        opt.value === "journalReflect" &&
+                        (!journalPickerListReady || !hasReflectableJournal);
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          disabled={journalDisabled}
+                          onClick={() => {
+                            applyWorkspaceModeChange(opt.value);
+                            setWorkspaceModeMenuOpen(false);
+                          }}
+                          className={`flex w-full cursor-pointer items-center px-3 py-2.5 text-left text-xs font-medium text-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
+                            selected
+                              ? "bg-accent-soft/45 text-foreground"
+                              : "hover:bg-accent-soft/30"
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
             <Tooltip.Provider delayDuration={250} disableHoverableContent>
               <div className="inline-flex shrink-0 items-center gap-2">
                 <Tooltip.Root>
@@ -2267,6 +2414,7 @@ export function CreateWorkspace({
                 </Tooltip.Root>
               </div>
             </Tooltip.Provider>
+            </div>
             {/* Preview script — hidden for now
             <button
               type="button"
@@ -2546,8 +2694,11 @@ export function CreateWorkspace({
         ) : null}
         {workspaceSectionStep === 2 ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <section className="flex flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto sm:gap-3">
+          <h2 className="shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
+            Customise how your meditation will sound
+          </h2>
+          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
               <div className="min-w-0 flex-1">
                 <h2 className="text-base font-semibold tracking-tight">Audio</h2>
