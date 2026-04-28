@@ -50,6 +50,14 @@ import {
   stripHtmlToText,
   type JournalEntry,
 } from "@/lib/journal-storage";
+import {
+  PLAN_CREATE_FIRST_MESSAGE,
+  PLAN_CREATE_OPENING_ASSISTANT,
+  buildPlanCreateHandoffApiContent,
+  clearPlanCreateHandoff,
+  readPlanCreateHandoff,
+} from "@/lib/plan-create-handoff";
+import { loadPlanDreamsStore, type PlanDream } from "@/lib/plan-dreams";
 
 function mediaFileUrl(base: string, key: string): string {
   const b = base.replace(/\/$/, "");
@@ -202,10 +210,32 @@ function IconChevronDown({ className }: { className?: string }) {
   );
 }
 
+function IconGoalTarget({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="24"
+      height="24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="5" />
+      <circle cx="12" cy="12" r="1.5" />
+    </svg>
+  );
+}
+
 const WORKSPACE_GENERATION_MODES = [
   { value: "style" as const, label: "Pick a meditation style" },
   { value: "freeflow" as const, label: "Free flow chat" },
   { value: "journalReflect" as const, label: "Reflect on a journal entry" },
+  { value: "goal" as const, label: "Move towards a goal" },
 ];
 
 /**
@@ -382,10 +412,15 @@ const meditationStyleTooltip: Record<(typeof meditationStyles)[number], string> 
     "Resting in a wide, receptive field—sounds, sensations, and thoughts without fixing on one object.",
 };
 
-type Phase = "style" | "feeling" | "claude" | "journalPick";
+type Phase = "style" | "feeling" | "claude" | "journalPick" | "goalPick";
 
 /** Before chat: user picks style-first vs free-flow vs journal-reflect creation. */
-type CreationPath = "pending" | "style" | "freeflow" | "journalReflect";
+type CreationPath =
+  | "pending"
+  | "style"
+  | "freeflow"
+  | "journalReflect"
+  | "goal";
 
 function inferCreationPathFromDraft(
   s: MeditationDraftStateV1,
@@ -405,6 +440,10 @@ const OPENING_JOURNAL = "What’s on your mind?";
 const JOURNAL_REFLECT_PICK_INTRO =
   "Which journal entry would you like to reflect on?";
 
+const GOAL_PICK_INTRO = "Which goal would you like to move towards?";
+const OPENING_GOAL =
+  "Great. I’ll write a visualization and manifestation-style meditation around this goal.\n\nBefore I draft anything: what would success look like, and what would it feel like in your body?";
+
 function reflectableJournalEntriesForPicker(entries: JournalEntry[]): JournalEntry[] {
   return entries
     .filter(journalEntryHasMeaningfulContent)
@@ -420,6 +459,71 @@ function chatMessageTranscriptLine(m: ChatMessage): string {
     return buildJournalHandoffApiContent(m.journalSegments);
   }
   return m.text;
+}
+
+type PlanTask = {
+  id: string;
+  title: string;
+  done: boolean;
+};
+
+type PlanGoal = {
+  id: string;
+  title: string;
+  description: string;
+  createdAt: string;
+  tasks: PlanTask[];
+};
+
+type PlanStateV1 = {
+  v: 1;
+  goals: PlanGoal[];
+};
+
+function dreamToPlanGoal(d: PlanDream): PlanGoal {
+  const parts: string[] = [];
+  if (d.dreamText.trim()) parts.push(d.dreamText.trim());
+  if (d.obstacleText.trim()) {
+    parts.push(`What's in the way:\n${d.obstacleText.trim()}`);
+  }
+  if (d.visionText.trim()) {
+    parts.push(`Vision:\n${d.visionText.trim()}`);
+  }
+  const description =
+    parts.join("\n\n").trim().slice(0, 12000) || d.firstThought.trim();
+  return {
+    id: d.id,
+    title: d.title.trim() || "Untitled",
+    description,
+    createdAt: d.createdAt,
+    tasks: [],
+  };
+}
+
+function loadPlanGoals(): PlanGoal[] {
+  if (typeof window === "undefined") return [];
+  const dreamRows = loadPlanDreamsStore().dreams.map(dreamToPlanGoal);
+  const dreamIds = new Set(dreamRows.map((g) => g.id));
+  let legacy: PlanGoal[] = [];
+  try {
+    const raw = window.localStorage.getItem("mm_plan_v1");
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === "object") {
+        const o = parsed as Partial<PlanStateV1>;
+        if (o.v === 1 && Array.isArray(o.goals)) {
+          legacy = (o.goals as PlanGoal[])
+            .filter(
+              (g) => g && typeof g.id === "string" && typeof g.title === "string",
+            )
+            .slice(0, 50);
+        }
+      }
+    }
+  } catch {
+    legacy = [];
+  }
+  return [...dreamRows, ...legacy.filter((g) => !dreamIds.has(g.id))];
 }
 
 function JournalHandoffEntryCards({
@@ -569,6 +673,8 @@ type CreateWorkspaceProps = {
   initialDraftSk?: string | null;
   /** When true, read journal → create handoff from sessionStorage once (if no draft). */
   seedJournalContext?: boolean;
+  /** When true, read Plan → create handoff from sessionStorage once (if no draft). */
+  seedPlanContext?: boolean;
 };
 
 function getStyleFollowupQuestion(style: string): string {
@@ -619,15 +725,17 @@ function getStyleFollowupQuestion(style: string): string {
 export function CreateWorkspace({
   initialDraftSk = null,
   seedJournalContext = false,
+  seedPlanContext = false,
 }: CreateWorkspaceProps) {
   const router = useRouter();
   const isRedirectingToLibraryRef = useRef(false);
+  const seedFromHandoff = seedJournalContext || seedPlanContext;
   const [mobileCreateStep, setMobileCreateStep] = useState<"chat" | "audio">(
     "chat",
   );
   /** 0 = chooser, 1 = script/chat, 2 = audio — same horizontal strip at every viewport width. */
   const [createStripStep, setCreateStripStep] = useState<0 | 1 | 2>(() =>
-    seedJournalContext ? 1 : 0,
+    seedFromHandoff ? 1 : 0,
   );
 
   // Reduce perceived navigation latency (and any browser "redirecting" UI) by prefetching Library.
@@ -636,7 +744,7 @@ export function CreateWorkspace({
   }, [router]);
 
   const [phase, setPhase] = useState<Phase>(() =>
-    seedJournalContext ? "claude" : "style",
+    seedFromHandoff ? "claude" : "style",
   );
   const [meditationStyle, setMeditationStyle] = useState<string | null>(null);
   const [claudeThread, setClaudeThread] = useState<MedimadeChatTurn[]>([]);
@@ -702,9 +810,9 @@ export function CreateWorkspace({
   const chatInputRef = useRef<HTMLInputElement | null>(null);
   const initialChatAutofocusDoneRef = useRef(false);
   const [speakerModelId, setSpeakerModelId] = useState<string>("");
-  const [journalMode, setJournalMode] = useState(() => Boolean(seedJournalContext));
+  const [journalMode, setJournalMode] = useState(() => Boolean(seedFromHandoff));
   const [creationPath, setCreationPath] = useState<CreationPath>(() =>
-    seedJournalContext ? "freeflow" : "pending",
+    seedFromHandoff ? "freeflow" : "pending",
   );
   /** Which full-width section to show; pending path always maps to chooser (avoids strip/chat flash races). */
   const workspaceSectionStep: 0 | 1 | 2 =
@@ -720,10 +828,13 @@ export function CreateWorkspace({
 
   /** On the first screen: which path is selected before tapping “Script”. */
   const [pendingModeChoice, setPendingModeChoice] = useState<
-    null | "style" | "freeflow" | "journalReflect"
+    null | "style" | "freeflow" | "journalReflect" | "goal"
   >(null);
   const [workspaceModeMenuOpen, setWorkspaceModeMenuOpen] = useState(false);
   const workspaceModeMenuRef = useRef<HTMLDivElement>(null);
+  const chooserCardsRef = useRef<HTMLDivElement | null>(null);
+  /** Default to 2×2 until measured — avoids a one-frame “skinny 4-up” layout. */
+  const [chooserLayout, setChooserLayout] = useState<"row4" | "grid2">("grid2");
   /** Journal list for Create chooser + in-chat reflect picker (local + optional cloud). */
   const [journalPickerEntries, setJournalPickerEntries] = useState<JournalEntry[]>(
     [],
@@ -732,6 +843,9 @@ export function CreateWorkspace({
   const [journalReflectSelectedIds, setJournalReflectSelectedIds] = useState(
     () => new Set<string>(),
   );
+  const [planGoals, setPlanGoals] = useState<PlanGoal[]>([]);
+  const [planGoalsReady, setPlanGoalsReady] = useState(false);
+  const [goalSelectedId, setGoalSelectedId] = useState<string | null>(null);
 
   const [draftSk, setDraftSk] = useState<string | null>(null);
   const [draftSaving, setDraftSaving] = useState(false);
@@ -759,7 +873,7 @@ export function CreateWorkspace({
 
   function buildDraftState(): MeditationDraftStateV1 {
     const phaseForDraft: MeditationDraftStateV1["phase"] =
-      phase === "journalPick" ? "feeling" : phase;
+      phase === "journalPick" || phase === "goalPick" ? "feeling" : phase;
     return {
       v: MEDITATION_DRAFT_STATE_VERSION,
       phase: phaseForDraft,
@@ -917,6 +1031,7 @@ export function CreateWorkspace({
     () => journalPickerEntries.some(journalEntryHasMeaningfulContent),
     [journalPickerEntries],
   );
+  const hasPlanGoals = useMemo(() => planGoals.length > 0, [planGoals.length]);
 
   useEffect(() => {
     if (pendingModeChoice !== "journalReflect") return;
@@ -924,12 +1039,47 @@ export function CreateWorkspace({
     if (!hasReflectableJournal) setPendingModeChoice(null);
   }, [pendingModeChoice, journalPickerListReady, hasReflectableJournal]);
 
+  useEffect(() => {
+    if (pendingModeChoice !== "goal") return;
+    if (!planGoalsReady) return;
+    if (!hasPlanGoals) setPendingModeChoice(null);
+  }, [pendingModeChoice, planGoalsReady, hasPlanGoals]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setPlanGoals(loadPlanGoals());
+    setPlanGoalsReady(true);
+    const onFocus = () => setPlanGoals(loadPlanGoals());
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const el = chooserCardsRef.current;
+    if (!el) return;
+    // Only use 4-across when each card can stay ~as wide as the old 3-card row (~300px+).
+    // Typical `max-w-6xl` viewports then use the 2×2 square grid instead of skinny quarters.
+    const CARD_MIN_PX = 300;
+    const GAP_PX = 24; // md:gap-6
+    const compute = () => {
+      const w = el.getBoundingClientRect().width;
+      const need = CARD_MIN_PX * 4 + GAP_PX * 3;
+      setChooserLayout(w >= need ? "row4" : "grid2");
+    };
+    compute();
+    const ro = new ResizeObserver(() => compute());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [workspaceSectionStep]);
+
   /** Chooser cards + chat header select stay aligned with the active path. */
   useEffect(() => {
     if (creationPath === "pending") return;
     if (creationPath === "style") setPendingModeChoice("style");
     else if (creationPath === "freeflow") setPendingModeChoice("freeflow");
     else if (creationPath === "journalReflect") setPendingModeChoice("journalReflect");
+    else if (creationPath === "goal") setPendingModeChoice("goal");
   }, [creationPath]);
 
   useEffect(() => {
@@ -951,6 +1101,7 @@ export function CreateWorkspace({
 
   useEffect(() => {
     if (!seedJournalContext) return;
+    if (seedPlanContext) return;
     const sk = initialDraftSk?.trim();
     if (sk) {
       try {
@@ -1064,7 +1215,101 @@ export function CreateWorkspace({
         });
       }
     })();
-  }, [seedJournalContext, initialDraftSk, router]);
+  }, [seedJournalContext, seedPlanContext, initialDraftSk, router]);
+
+  useEffect(() => {
+    if (!seedPlanContext) return;
+    if (seedJournalContext) return;
+    const sk = initialDraftSk?.trim();
+    if (sk) {
+      try {
+        clearPlanCreateHandoff();
+      } catch {
+        /* ignore */
+      }
+      router.replace("/meditate/create");
+      return;
+    }
+
+    const handoff = readPlanCreateHandoff();
+    router.replace("/meditate/create");
+
+    const vision = handoff?.visionText?.trim() ?? "";
+    if (!handoff || !vision) {
+      clearPlanCreateHandoff();
+      return;
+    }
+
+    const apiUserContent = buildPlanCreateHandoffApiContent(handoff);
+    const styleHint = "Visualization";
+    const history: MedimadeChatTurn[] = [
+      { role: "assistant", content: PLAN_CREATE_OPENING_ASSISTANT },
+      { role: "user", content: apiUserContent },
+    ];
+
+    setCreationPath("freeflow");
+    setJournalMode(true);
+    setIntroTypingDone(true);
+    setPhase("claude");
+    setMeditationStyle(styleHint);
+    setClaudeThread([]);
+    setInput("");
+    setMessages([
+      {
+        role: "user",
+        text: PLAN_CREATE_FIRST_MESSAGE,
+        variant: "chat",
+      },
+    ]);
+    setChatLoading(true);
+
+    void (async () => {
+      try {
+        let acc = "";
+        let assistantBubbleStarted = false;
+        const text = await streamMedimadeChat(
+          {
+            meditationStyle: styleHint,
+            messages: history,
+            journalMode: true,
+            meditationTargetMinutes,
+          },
+          (d) => {
+            acc += d;
+            if (!assistantBubbleStarted) {
+              assistantBubbleStarted = true;
+              setMessages((m) => [...m, { role: "assistant", text: acc }]);
+              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
+            } else {
+              setMessages((m) => {
+                const next = [...m];
+                const last = next[next.length - 1];
+                if (last?.role !== "assistant") return m;
+                next[next.length - 1] = { role: "assistant", text: acc };
+                return next;
+              });
+              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
+            }
+          },
+        );
+        setClaudeThread([...history, { role: "assistant", content: text }]);
+      } catch (e) {
+        const msg =
+          e instanceof Error ? e.message : "Could not reach the guide.";
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", text: `Sorry — ${msg}` },
+        ]);
+      } finally {
+        clearPlanCreateHandoff();
+        setChatLoading(false);
+        requestAnimationFrame(() => {
+          chatInputRef.current?.focus();
+        });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot Plan→Create handoff; avoid re-running when session length changes.
+  }, [seedPlanContext, seedJournalContext, initialDraftSk, router]);
 
   useEffect(() => {
     void listFishSpeakers()
@@ -1255,7 +1500,8 @@ export function CreateWorkspace({
     const introTypingPhase =
       phase === "style" ||
       (journalMode && phase === "feeling" && !meditationStyle) ||
-      (phase === "journalPick" && creationPath === "journalReflect");
+      (phase === "journalPick" && creationPath === "journalReflect") ||
+      (phase === "goalPick" && creationPath === "goal");
     if (!introTypingPhase) return;
     const idx = (() => {
       for (let i = messages.length - 1; i >= 0; i--) {
@@ -1270,6 +1516,8 @@ export function CreateWorkspace({
     const opening =
       phase === "journalPick" && creationPath === "journalReflect"
         ? JOURNAL_REFLECT_PICK_INTRO
+        : phase === "goalPick" && creationPath === "goal"
+          ? GOAL_PICK_INTRO
         : journalMode && phase === "feeling" && !meditationStyle
           ? OPENING_JOURNAL
           : OPENING_STYLE;
@@ -1283,7 +1531,8 @@ export function CreateWorkspace({
       m.text.trim().length === 0 ||
       m.text === OPENING_STYLE ||
       m.text === OPENING_JOURNAL ||
-      m.text === JOURNAL_REFLECT_PICK_INTRO
+      m.text === JOURNAL_REFLECT_PICK_INTRO ||
+      m.text === GOAL_PICK_INTRO
     ) {
       startIntroTyping(idx, opening);
     }
@@ -1324,6 +1573,10 @@ export function CreateWorkspace({
       }
       setJournalReflectSelectedIds(next);
       setPhase("journalPick");
+      setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+    } else if (creationPath === "goal") {
+      setGoalSelectedId(null);
+      setPhase("goalPick");
       setMessages([{ role: "assistant", text: "", variant: "chat" }]);
     } else {
       setMessages([{ role: "assistant", text: "", variant: "chat" }]);
@@ -1389,6 +1642,102 @@ export function CreateWorkspace({
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
+  }
+
+  function beginGoalPath() {
+    setCreationPath("goal");
+    setJournalMode(true);
+    setGoalSelectedId(null);
+    setPhase("goalPick");
+    setChatLoading(false);
+    setScriptLoading(false);
+    setClaudeThread([]);
+    setMeditationStyle(null);
+    setInput("");
+    setIntroTypingDone(false);
+    setIntroTypingSession((s) => s + 1);
+    setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+    setMobileCreateStep("chat");
+    initialChatAutofocusDoneRef.current = false;
+    isAtBottomRef.current = true;
+  }
+
+  async function confirmGoalSelection() {
+    const id = goalSelectedId?.trim() ?? "";
+    if (!id || chatLoading) return;
+    const goal = planGoals.find((g) => g.id === id);
+    if (!goal) return;
+
+    const lines: string[] = [];
+    lines.push(`Goal: ${goal.title.trim() || "Untitled goal"}`);
+    if (goal.description?.trim()) lines.push(`Context: ${goal.description.trim()}`);
+    const openTasks = (goal.tasks ?? [])
+      .filter((t) => t && !t.done && (t.title ?? "").trim())
+      .slice(0, 6)
+      .map((t) => `- ${t.title.trim()}`);
+    if (openTasks.length) {
+      lines.push("");
+      lines.push("Current tasks:");
+      lines.push(...openTasks);
+    }
+    const goalSummary = lines.join("\n");
+
+    const styleHint = "Manifestation";
+    const history: MedimadeChatTurn[] = [
+      { role: "assistant", content: OPENING_GOAL },
+      { role: "user", content: goalSummary },
+    ];
+
+    setPhase("claude");
+    setIntroTypingDone(true);
+    setMeditationStyle(styleHint);
+    setClaudeThread([]);
+    setInput("");
+    setMessages([
+      {
+        role: "user",
+        text: goalSummary,
+        variant: "chat",
+      },
+    ]);
+    setChatLoading(true);
+
+    try {
+      let acc = "";
+      let assistantBubbleStarted = false;
+      const text = await streamMedimadeChat(
+        {
+          meditationStyle: styleHint,
+          messages: history,
+        },
+        (d) => {
+          acc += d;
+          if (!assistantBubbleStarted) {
+            assistantBubbleStarted = true;
+            setMessages((m) => [...m, { role: "assistant", text: acc }]);
+            maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
+          } else {
+            setMessages((m) => {
+              const next = [...m];
+              const last = next[next.length - 1];
+              if (last?.role !== "assistant") return m;
+              next[next.length - 1] = { role: "assistant", text: acc };
+              return next;
+            });
+            maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
+          }
+        },
+      );
+      setClaudeThread([...history, { role: "assistant", content: text }]);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Could not reach the guide.";
+      setMessages((m) => [...m, { role: "assistant", text: `Sorry — ${msg}` }]);
+    } finally {
+      setChatLoading(false);
+      requestAnimationFrame(() => {
+        chatInputRef.current?.focus();
+      });
+    }
   }
 
   function toggleJournalReflectEntry(id: string) {
@@ -1479,13 +1828,15 @@ export function CreateWorkspace({
   }
 
   function goBackToChatStyle() {
-    const modeFromPath: null | "style" | "freeflow" | "journalReflect" =
+    const modeFromPath: null | "style" | "freeflow" | "journalReflect" | "goal" =
       creationPath === "style"
         ? "style"
         : creationPath === "freeflow"
           ? "freeflow"
           : creationPath === "journalReflect"
             ? "journalReflect"
+            : creationPath === "goal"
+              ? "goal"
             : null;
     setCreateStripStep(0);
     setCreationPath("pending");
@@ -1494,26 +1845,32 @@ export function CreateWorkspace({
     initialChatAutofocusDoneRef.current = false;
   }
 
-  function applyWorkspaceModeChange(v: "style" | "freeflow" | "journalReflect") {
+  function applyWorkspaceModeChange(
+    v: "style" | "freeflow" | "journalReflect" | "goal",
+  ) {
     if (v === "journalReflect" && (!journalPickerListReady || !hasReflectableJournal))
       return;
-    const currentMode: null | "style" | "freeflow" | "journalReflect" =
+    if (v === "goal" && (!planGoalsReady || !hasPlanGoals)) return;
+    const currentMode: null | "style" | "freeflow" | "journalReflect" | "goal" =
       creationPath === "style"
         ? "style"
         : creationPath === "freeflow"
           ? "freeflow"
           : creationPath === "journalReflect"
             ? "journalReflect"
+            : creationPath === "goal"
+              ? "goal"
             : null;
     if (v === currentMode) return;
     setPendingModeChoice(v);
     if (v === "style") beginStylePath();
     else if (v === "freeflow") beginFreeFlowPath();
-    else beginJournalReflectPath();
+    else if (v === "journalReflect") beginJournalReflectPath();
+    else beginGoalPath();
   }
 
   async function send() {
-    if (phase === "journalPick") return;
+    if (phase === "journalPick" || phase === "goalPick") return;
     const trimmed = input.trim();
     if (!trimmed || chatLoading || scriptLoading) return;
 
@@ -2160,13 +2517,15 @@ export function CreateWorkspace({
     }
   }
 
-  const activeWorkspaceMode: null | "style" | "freeflow" | "journalReflect" =
+  const activeWorkspaceMode: null | "style" | "freeflow" | "journalReflect" | "goal" =
     creationPath === "style"
       ? "style"
       : creationPath === "freeflow"
         ? "freeflow"
         : creationPath === "journalReflect"
           ? "journalReflect"
+          : creationPath === "goal"
+            ? "goal"
           : null;
   const activeWorkspaceModeLabel =
     WORKSPACE_GENERATION_MODES.find((o) => o.value === activeWorkspaceMode)
@@ -2215,94 +2574,253 @@ export function CreateWorkspace({
           <h2 className="shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
             How would you like to generate your script?
           </h2>
-          <div className="grid min-h-0 flex-1 grid-cols-1 items-stretch gap-4 md:grid-cols-3 md:gap-6">
+          <div
+            ref={chooserCardsRef}
+            className={`grid min-h-0 flex-1 grid-cols-1 items-stretch gap-4 md:gap-6 ${
+              chooserLayout === "row4" ? "md:grid-cols-4" : "sm:grid-cols-2"
+            }`}
+          >
             <button
               type="button"
               onClick={() => setPendingModeChoice("style")}
               aria-pressed={pendingModeChoice === "style"}
-              className={`flex h-full min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
+              className={`flex h-full flex-col rounded-2xl border-2 bg-card text-left shadow-sm transition-colors ${
                 pendingModeChoice === "style"
                   ? "cursor-pointer border-accent ring-2 ring-accent/25"
                   : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
-              }`}
+              } ${chooserLayout === "row4" ? "min-h-[200px] p-6 sm:min-h-[260px] sm:p-8" : "p-6"}`}
             >
-              <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
-                Pick a meditation style
-              </span>
-              <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                You start by choosing a meditation style in chat. The guide then asks
-                follow-up questions so that style is shaped around your mood, goals,
-                and what you need today.
-              </p>
-              <span
-                className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
-                aria-hidden
-              >
-                <IconMeditationStyle className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
-              </span>
+              {chooserLayout === "row4" ? (
+                <>
+                  <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
+                    Pick a meditation style
+                  </span>
+                  <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
+                    You start by choosing a meditation style in chat. The guide then asks
+                    follow-up questions so that style is shaped around your mood, goals,
+                    and what you need today.
+                  </p>
+                  <span
+                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                    aria-hidden
+                  >
+                    <IconMeditationStyle className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
+                  </span>
+                </>
+              ) : (
+                <div className="flex min-h-0 flex-1 items-start gap-4">
+                  <span
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
+                    aria-hidden
+                  >
+                    <IconMeditationStyle className="h-9 w-9" />
+                  </span>
+                  <div className="min-w-0">
+                    <span className="block font-display text-lg font-medium tracking-tight text-foreground">
+                      Pick a meditation style
+                    </span>
+                    <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
+                      You start by choosing a meditation style in chat. The guide then asks
+                      follow-up questions so that style is shaped around your mood, goals,
+                      and what you need today.
+                    </p>
+                  </div>
+                </div>
+              )}
             </button>
             <button
               type="button"
               onClick={() => setPendingModeChoice("freeflow")}
               aria-pressed={pendingModeChoice === "freeflow"}
-              className={`flex h-full min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
+              className={`flex h-full flex-col rounded-2xl border-2 bg-card text-left shadow-sm transition-colors ${
                 pendingModeChoice === "freeflow"
                   ? "cursor-pointer border-accent ring-2 ring-accent/25"
                   : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
-              }`}
+              } ${chooserLayout === "row4" ? "min-h-[200px] p-6 sm:min-h-[260px] sm:p-8" : "p-6"}`}
             >
-              <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
-                Free flow chat
-              </span>
-              <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                Start from mood and what is on your mind—no style label up front.
-                The guide uses open, journal-style questions.
-              </p>
-              <span
-                className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
-                aria-hidden
-              >
-                <IconChatBubbles className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
-              </span>
+              {chooserLayout === "row4" ? (
+                <>
+                  <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
+                    Free flow chat
+                  </span>
+                  <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
+                    Start from mood and what is on your mind—no style label up front.
+                    The guide uses open, journal-style questions.
+                  </p>
+                  <span
+                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                    aria-hidden
+                  >
+                    <IconChatBubbles className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
+                  </span>
+                </>
+              ) : (
+                <div className="flex min-h-0 flex-1 items-start gap-4">
+                  <span
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
+                    aria-hidden
+                  >
+                    <IconChatBubbles className="h-9 w-9" />
+                  </span>
+                  <div className="min-w-0">
+                    <span className="block font-display text-lg font-medium tracking-tight text-foreground">
+                      Free flow chat
+                    </span>
+                    <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
+                      Start from mood and what is on your mind—no style label up front.
+                      The guide uses open, journal-style questions.
+                    </p>
+                  </div>
+                </div>
+              )}
             </button>
             <button
               type="button"
               disabled={!journalPickerListReady || !hasReflectableJournal}
               onClick={() => setPendingModeChoice("journalReflect")}
               aria-pressed={pendingModeChoice === "journalReflect"}
-              className={`flex h-full min-h-[200px] flex-col rounded-2xl border-2 bg-card p-6 text-left shadow-sm transition-colors sm:min-h-[260px] sm:p-8 ${
+              className={`flex h-full flex-col rounded-2xl border-2 bg-card text-left shadow-sm transition-colors ${
                 !journalPickerListReady || !hasReflectableJournal
                   ? "cursor-not-allowed border-border opacity-50"
                   : pendingModeChoice === "journalReflect"
                     ? "cursor-pointer border-accent ring-2 ring-accent/25"
                     : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
-              }`}
+              } ${chooserLayout === "row4" ? "min-h-[200px] p-6 sm:min-h-[260px] sm:p-8" : "p-6"}`}
             >
-              <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
-                Reflect on a journal entry
-              </span>
-              <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                In the next step you choose saved entries; the coach uses them as context for your meditation.
-              </p>
-              {!journalPickerListReady ? (
-                <p className="mt-3 text-xs text-muted">Checking your saved journal…</p>
-              ) : !hasReflectableJournal ? (
-                <p className="mt-3 text-sm leading-relaxed text-muted">
-                  Start journaling to unlock this option.{" "}
-                  <Link
-                    href="/journal"
-                    className="font-semibold text-accent underline-offset-2 hover:underline"
+              {chooserLayout === "row4" ? (
+                <>
+                  <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
+                    Reflect on a journal entry
+                  </span>
+                  <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
+                    In the next step you choose saved entries; the coach uses them as context for your meditation.
+                  </p>
+                  {!journalPickerListReady ? (
+                    <p className="mt-3 text-xs text-muted">Checking your saved journal…</p>
+                  ) : !hasReflectableJournal ? (
+                    <p className="mt-3 text-sm leading-relaxed text-muted">
+                      Start journaling to unlock this option.{" "}
+                      <Link
+                        href="/journal"
+                        className="font-semibold text-accent underline-offset-2 hover:underline"
+                      >
+                        Open Journal
+                      </Link>
+                    </p>
+                  ) : null}
+                  <span
+                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                    aria-hidden
                   >
-                    Open Journal
-                  </Link>
-                </p>
-              ) : null}
-              <span
-                className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
-                aria-hidden
-              >
-                <IconJournalReflect className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
-              </span>
+                    <IconJournalReflect className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
+                  </span>
+                </>
+              ) : (
+                <div className="flex min-h-0 flex-1 items-start gap-4">
+                  <span
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
+                    aria-hidden
+                  >
+                    <IconJournalReflect className="h-9 w-9" />
+                  </span>
+                  <div className="min-w-0">
+                    <span className="block font-display text-lg font-medium tracking-tight text-foreground">
+                      Reflect on a journal entry
+                    </span>
+                    <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
+                      In the next step you choose saved entries; the coach uses them as context for your meditation.
+                    </p>
+                    {!journalPickerListReady ? (
+                      <p className="mt-2 text-xs text-muted">Checking your saved journal…</p>
+                    ) : !hasReflectableJournal ? (
+                      <p className="mt-2 text-sm leading-relaxed text-muted">
+                        Start journaling to unlock this option.{" "}
+                        <Link
+                          href="/journal"
+                          className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
+                        >
+                          Open Journal
+                        </Link>
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+            </button>
+            <button
+              type="button"
+              disabled={!planGoalsReady || !hasPlanGoals}
+              onClick={() => setPendingModeChoice("goal")}
+              aria-pressed={pendingModeChoice === "goal"}
+              className={`flex h-full flex-col rounded-2xl border-2 bg-card text-left shadow-sm transition-colors ${
+                !planGoalsReady || !hasPlanGoals
+                  ? "cursor-not-allowed border-border opacity-50"
+                  : pendingModeChoice === "goal"
+                    ? "cursor-pointer border-accent ring-2 ring-accent/25"
+                    : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
+              } ${chooserLayout === "row4" ? "min-h-[200px] p-6 sm:min-h-[260px] sm:p-8" : "p-6"}`}
+            >
+              {chooserLayout === "row4" ? (
+                <>
+                  <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
+                    Move towards a goal
+                  </span>
+                  <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
+                    Choose a goal from Plan. The guide creates a visualization / manifestation meditation that helps you step toward it.
+                  </p>
+                  {!planGoalsReady ? (
+                    <p className="mt-3 text-xs text-muted">Checking your goals…</p>
+                  ) : !hasPlanGoals ? (
+                    <p className="mt-3 text-sm leading-relaxed text-muted">
+                      Add a dream in{" "}
+                      <Link
+                        href="/plan"
+                        className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
+                      >
+                        Plan
+                      </Link>{" "}
+                      to unlock this option.
+                    </p>
+                  ) : null}
+                  <span
+                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                    aria-hidden
+                  >
+                    <IconGoalTarget className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
+                  </span>
+                </>
+              ) : (
+                <div className="flex min-h-0 flex-1 items-start gap-4">
+                  <span
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
+                    aria-hidden
+                  >
+                    <IconGoalTarget className="h-9 w-9" />
+                  </span>
+                  <div className="min-w-0">
+                    <span className="block font-display text-lg font-medium tracking-tight text-foreground">
+                      Move towards a goal
+                    </span>
+                    <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
+                      Choose a goal from Plan. The guide creates a visualization / manifestation meditation that helps you step toward it.
+                    </p>
+                    {!planGoalsReady ? (
+                      <p className="mt-2 text-xs text-muted">Checking your goals…</p>
+                    ) : !hasPlanGoals ? (
+                      <p className="mt-2 text-sm leading-relaxed text-muted">
+                        Add a dream in{" "}
+                        <Link
+                          href="/plan"
+                          className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
+                        >
+                          Plan
+                        </Link>{" "}
+                        to unlock this option.
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              )}
             </button>
           </div>
           </div>
@@ -2318,6 +2836,8 @@ export function CreateWorkspace({
                   beginFreeFlowPath();
                 } else if (pendingModeChoice === "journalReflect") {
                   beginJournalReflectPath();
+                } else if (pendingModeChoice === "goal") {
+                  beginGoalPath();
                 }
                 setCreateStripStep(1);
               }}
@@ -2325,6 +2845,8 @@ export function CreateWorkspace({
               aria-label={
                 pendingModeChoice === "journalReflect"
                   ? "Continue and pick journal entries in chat"
+                  : pendingModeChoice === "goal"
+                    ? "Continue and pick a goal in chat"
                   : "Continue to script and chat"
               }
             >
@@ -2376,13 +2898,15 @@ export function CreateWorkspace({
                       const journalDisabled =
                         opt.value === "journalReflect" &&
                         (!journalPickerListReady || !hasReflectableJournal);
+                      const goalDisabled =
+                        opt.value === "goal" && (!planGoalsReady || !hasPlanGoals);
                       return (
                         <button
                           key={opt.value}
                           type="button"
                           role="option"
                           aria-selected={selected}
-                          disabled={journalDisabled}
+                          disabled={journalDisabled || goalDisabled}
                           onClick={() => {
                             applyWorkspaceModeChange(opt.value);
                             setWorkspaceModeMenuOpen(false);
@@ -2636,9 +3160,79 @@ export function CreateWorkspace({
                   </div>
                 </div>
               ) : null}
+              {phase === "goalPick" ? (
+                <div className="mt-3 space-y-3 rounded-xl border border-border bg-background px-3 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    Your goals (from Plan)
+                  </p>
+                  {!planGoalsReady ? (
+                    <p className="text-sm text-muted">Loading goals…</p>
+                  ) : !hasPlanGoals ? (
+                    <p className="text-sm leading-relaxed text-muted">
+                      Add a dream in{" "}
+                      <Link
+                        href="/plan"
+                        className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
+                      >
+                        Plan
+                      </Link>{" "}
+                      to use this flow.
+                    </p>
+                  ) : introTypingDone ? (
+                    <>
+                      <ul className="max-h-[min(16rem,42vh)] space-y-1.5 overflow-y-auto pr-1">
+                        {[...planGoals]
+                          .sort((a, b) =>
+                            (b.createdAt ?? "").localeCompare(a.createdAt ?? ""),
+                          )
+                          .slice(0, 25)
+                          .map((g) => {
+                            const title = (g.title ?? "").trim() || "Untitled goal";
+                            const preview = (g.description ?? "").trim();
+                            const previewLine =
+                              preview.length > 96 ? `${preview.slice(0, 93)}…` : preview;
+                            const openTasks = (g.tasks ?? []).filter((t) => !t.done).length;
+                            return (
+                              <li key={g.id}>
+                                <label className="flex cursor-pointer gap-3 rounded-lg border border-transparent px-2 py-2 hover:border-border hover:bg-accent-soft/25">
+                                  <input
+                                    type="radio"
+                                    name="goal-pick"
+                                    className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-foreground"
+                                    checked={goalSelectedId === g.id}
+                                    onChange={() => setGoalSelectedId(g.id)}
+                                  />
+                                  <span className="min-w-0">
+                                    <span className="block text-sm font-medium text-foreground">
+                                      {title}
+                                    </span>
+                                    <span className="mt-0.5 block text-xs text-muted">
+                                      {openTasks ? `${openTasks} open tasks` : "No open tasks"}
+                                      {previewLine ? ` · ${previewLine}` : ""}
+                                    </span>
+                                  </span>
+                                </label>
+                              </li>
+                            );
+                          })}
+                      </ul>
+                      <div className="flex justify-end border-t border-border/60 pt-3">
+                        <button
+                          type="button"
+                          disabled={chatLoading || !goalSelectedId}
+                          onClick={() => void confirmGoalSelection()}
+                          className="cursor-pointer rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                        >
+                          Continue with selected
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
               <div ref={messagesEndRef} />
             </div>
-            {phase === "journalPick" ? null : (
+            {phase === "journalPick" || phase === "goalPick" ? null : (
             <div className="mt-3 flex shrink-0 gap-2 border-t border-border pt-3">
               <input
                 ref={chatInputRef}
@@ -2692,7 +3286,7 @@ export function CreateWorkspace({
             </button>
             <button
               type="button"
-              disabled={phase === "journalPick"}
+              disabled={phase === "journalPick" || phase === "goalPick"}
               onClick={() => {
                 setMobileCreateStep("audio");
                 setCreateStripStep(2);

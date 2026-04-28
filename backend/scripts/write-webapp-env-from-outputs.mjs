@@ -3,10 +3,11 @@ import fs from "fs";
 const outputsPath = process.argv[2];
 const webappEnv = process.argv[3];
 const mobileEnv = process.argv[4];
+const extensionEnv = process.argv[5];
 
 if (!outputsPath || !webappEnv) {
   console.error(
-    "Usage: node write-webapp-env-from-outputs.mjs <cdk-outputs.json> <webapp/.env> [mobile/.env]",
+    "Usage: node write-webapp-env-from-outputs.mjs <cdk-outputs.json> <webapp/.env> [mobile/.env] [extension/.env]",
   );
   process.exit(1);
 }
@@ -97,4 +98,10 @@ if (mobileEnv) {
       mediaBaseUrl ? ", EXPO_PUBLIC_MEDIMADE_MEDIA_BASE_URL" : ""
     } to ${mobileEnv}`,
   );
+}
+
+if (extensionEnv) {
+  const extPairs = [["VITE_MEDIMADE_API_URL", apiUrl]];
+  mergeEnvFile(extensionEnv, extPairs);
+  console.log(`Wrote VITE_MEDIMADE_API_URL to ${extensionEnv}`);
 }

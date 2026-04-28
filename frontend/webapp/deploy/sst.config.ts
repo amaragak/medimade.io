@@ -33,6 +33,9 @@ export default $config({
       domain: {
         name: "consciously.live",
         aliases: ["www.consciously.live"],
+        // DNS in Cloudflare (not Route 53); point records at CloudFront / ACM as needed.
+        dns: false,
+        cert: "arn:aws:acm:us-east-1:382309212161:certificate/de288d1f-a1f7-436b-ae16-3f79de3d5d98",
       },
     });
     return { url: web.url };

@@ -16,7 +16,13 @@ function json(
 ): APIGatewayProxyStructuredResultV2 {
   return {
     statusCode,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      // Allow browser + extension clients to fetch this public catalog.
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type,Authorization",
+    },
     body: JSON.stringify(payload),
   };
 }

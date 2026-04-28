@@ -79,10 +79,6 @@ export function JournalView() {
   }, []);
 
   useEffect(() => {
-    if (!signedIn) {
-      setHydrated(true);
-      return;
-    }
     const store = loadJournalStore();
     setEntries(store.entries);
     setActiveEntryId(store.activeEntryId);
@@ -286,32 +282,6 @@ export function JournalView() {
   const initialHtmlForEditor = activeEntry?.contentHtml ?? "<p></p>";
   const initialTitleForEditor = activeEntry?.title ?? "";
 
-  if (!signedIn) {
-    return (
-      <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-10 sm:px-6">
-        <h1 className="font-display text-3xl font-medium tracking-tight">Journal</h1>
-        <p className="mt-2 text-muted">
-          Sign in to view and edit your journal. Entries are stored per account and
-          can’t be accessed by other users.
-        </p>
-        <div className="mt-8 flex flex-wrap gap-3">
-          <Link
-            href="/login"
-            className="cursor-pointer rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 dark:text-deep"
-          >
-            Sign in
-          </Link>
-          <Link
-            href="/"
-            className="cursor-pointer rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-accent/40"
-          >
-            Back
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6">
       <div className="mb-6 shrink-0">
@@ -324,11 +294,12 @@ export function JournalView() {
               type="button"
               onClick={() => setInsightsOpen((v) => !v)}
               aria-pressed={insightsOpen}
+              disabled={!signedIn}
               className={`cursor-pointer rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
                 insightsOpen
                   ? "border-accent/50 bg-accent-soft text-foreground"
                   : "border-border bg-background text-foreground hover:border-accent/40"
-              }`}
+              } disabled:cursor-not-allowed disabled:opacity-60`}
             >
               {insightsOpen ? "Journal" : "Insights"}
             </button>
@@ -337,7 +308,15 @@ export function JournalView() {
         <p className="mt-2 text-muted">
           Rich notes and voice clips. With Medimade API configured, the journal
           syncs to cloud storage for this browser; otherwise it stays on this
-          device only. To build a meditation from your entries, open{" "}
+          device only.{" "}
+          {!signedIn ? (
+            <>
+              <span className="ml-1">
+                Sign in to enable cloud sync and Insights.
+              </span>
+            </>
+          ) : null}{" "}
+          To build a meditation from your entries, open{" "}
           <Link
             href="/meditate/create"
             className="cursor-pointer font-medium text-accent underline-offset-2 hover:underline"

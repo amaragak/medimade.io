@@ -871,11 +871,21 @@ export default function LibraryView({
     setPending(loadPendingGenerations());
   }, []);
 
+  function removePendingJob(jobId: string) {
+    const id = jobId.trim();
+    if (!id) return;
+    const current = loadPendingGenerations();
+    const next = current.filter((p) => p.jobId !== id);
+    savePendingGenerations(next);
+    setPending(next);
+  }
+
   // Keep local pending generations in sync + poll status.
   useEffect(() => {
     if (pending.length === 0) return;
 
     let cancelled = false;
+    const STALE_PENDING_MS = 1000 * 60 * 60 * 12; // 12h
     const tick = async (opts: { refreshLibraryOnChange: boolean }) => {
       if (cancelled) return;
       const current = loadPendingGenerations();
@@ -912,7 +922,24 @@ export default function LibraryView({
             next.push({ ...nextP, status: "failed", error: st.error ?? "Generation failed" });
             continue;
           }
-          next.push({ ...nextP, status: st.status === "running" ? "running" : "pending" });
+          const createdMs = Date.parse(p.createdAt ?? "");
+          const stale =
+            Number.isFinite(createdMs) &&
+            Date.now() - createdMs > STALE_PENDING_MS;
+          if (stale) {
+            changed = true;
+            next.push({
+              ...nextP,
+              status: "failed",
+              error:
+                "This has been generating for a long time. Please try again from Create.",
+            });
+            continue;
+          }
+          next.push({
+            ...nextP,
+            status: st.status === "running" ? "running" : "pending",
+          });
         } catch (e) {
           // Network errors shouldn't kill the placeholder; keep it.
           next.push(p);
@@ -1092,6 +1119,35 @@ export default function LibraryView({
 
   function renderItem(m: LibraryRow) {
     if (isPendingRow(m)) {
+      const isFailed = m.status === "failed";
+      const spinner = (
+        <svg
+          className="h-5 w-5 animate-spin"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          aria-hidden
+        >
+          <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+        </svg>
+      );
+      const failIcon = (
+        <svg
+          className="h-5 w-5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+          <path d="M12 9v4" />
+          <path d="M12 17h.01" />
+        </svg>
+      );
       return (
         <li
           key={m.pendingKey}
@@ -1099,30 +1155,43 @@ export default function LibraryView({
             if (el) itemElsRef.current.set(m.pendingKey, el);
             else itemElsRef.current.delete(m.pendingKey);
           }}
-          className="relative min-w-0 overflow-hidden rounded-2xl border border-accent/35 bg-accent-soft/20 p-4 shadow-sm"
+          className={`relative min-w-0 overflow-hidden rounded-2xl border p-4 shadow-sm ${
+            isFailed
+              ? "border-red-500/35 bg-red-500/5"
+              : "border-accent/35 bg-accent-soft/20"
+          }`}
         >
-          {/* Indeterminate linear progress (MUI-like) */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute left-0 top-0 h-1 w-full bg-accent/10"
-          >
-            <div
-              className="h-full w-1/3 bg-accent/60"
-              style={{
-                animation: "mmIndeterminateBar 1.4s ease-in-out infinite",
-              }}
-            />
-          </div>
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 animate-pulse bg-accent-soft/30"
-          />
+          {!isFailed ? (
+            <>
+              {/* Indeterminate linear progress (MUI-like) */}
+              <div
+                aria-hidden
+                className="pointer-events-none absolute left-0 top-0 h-1 w-full bg-accent/10"
+              >
+                <div
+                  className="h-full w-1/3 bg-accent/60"
+                  style={{
+                    animation: "mmIndeterminateBar 1.4s ease-in-out infinite",
+                  }}
+                />
+              </div>
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 animate-pulse bg-accent-soft/30"
+              />
+            </>
+          ) : null}
           <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1">
               <h2 className="font-display text-lg font-medium leading-snug">
                 {m.title}
               </h2>
               <p className="mt-1 text-sm text-muted">{m.description ?? "—"}</p>
+              {isFailed ? (
+                <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                  {m.error ?? "Generation failed."}
+                </p>
+              ) : null}
               <p className="mt-2 text-xs text-muted">
                 {formatWhen(m.createdAt)}
                 {m.speakerName ? ` · ${m.speakerName}` : ""}
@@ -1130,21 +1199,23 @@ export default function LibraryView({
             </div>
             <div className="flex flex-shrink-0 items-center gap-2">
               <div
-                className="flex h-11 w-11 items-center justify-center rounded-full bg-accent/15 text-accent"
-                aria-label="Generating"
-                title="Generating"
+                className={`flex h-11 w-11 items-center justify-center rounded-full ${
+                  isFailed
+                    ? "bg-red-500/10 text-red-600 dark:text-red-400"
+                    : "bg-accent/15 text-accent"
+                }`}
+                aria-label={isFailed ? "Generation failed" : "Generating"}
+                title={isFailed ? "Generation failed" : "Generating"}
               >
-                <svg
-                  className="h-5 w-5 animate-spin"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  aria-hidden
-                >
-                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                </svg>
+                {isFailed ? failIcon : spinner}
               </div>
+              <button
+                type="button"
+                onClick={() => removePendingJob(m.jobId)}
+                className="cursor-pointer rounded-full border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:border-accent/35 hover:bg-accent-soft/20"
+              >
+                Remove
+              </button>
             </div>
           </div>
         </li>
@@ -1780,14 +1851,7 @@ export default function LibraryView({
         <p className="mt-10 text-sm text-muted">Loading…</p>
       ) : pagedVisibleItems.length === 0 ? (
         <p className="mt-10 w-full min-w-0 text-sm text-muted">
-          {!getMedimadeSessionJwt() ? (
-            <>
-              Sign in to see your library.{" "}
-              <Link href="/login" className="font-medium text-accent underline-offset-2 hover:underline">
-                Sign in
-              </Link>
-            </>
-          ) : libraryTab === "drafts" ? (
+          {libraryTab === "drafts" ? (
             "No drafts yet. On Create, use Save draft (audio step) to store your session; drafts only show here."
           ) : favouritesOnly ? (
             "No favourite meditations yet."

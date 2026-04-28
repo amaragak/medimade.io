@@ -9,6 +9,7 @@ export function CreateWorkspaceRoute() {
     <CreateWorkspace
       initialDraftSk={sp.get("draftSk")}
       seedJournalContext={sp.get("fromJournal") === "1"}
+      seedPlanContext={sp.get("fromPlan") === "1"}
     />
   );
 }

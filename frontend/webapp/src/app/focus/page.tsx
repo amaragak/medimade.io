@@ -3,7 +3,7 @@ import Link from "next/link";
 export const metadata = {
   title: "Focus",
   description:
-    "Consciously for Chrome: block distracting sites, run focus and Pomodoro sessions, and stay in flow—coming to the Chrome Web Store.",
+    "breath+work for Chrome by Consciously: block distracting sites, run focus and Pomodoro sessions, and stay in flow—coming to the Chrome Web Store.",
 };
 
 const features = [
@@ -33,15 +33,16 @@ export default function FocusMarketingPage() {
           Chrome extension
         </p>
         <h1 className="mt-3 font-display text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
-          Focus in the browser
+          breath+work
         </h1>
         <p className="mt-2 max-w-2xl font-hand text-2xl font-medium leading-snug text-accent sm:text-[1.65rem]">
           Block noise. Run the timer. Stay with one thing.
         </p>
         <p className="mt-6 max-w-2xl text-lg text-muted">
-          The Consciously extension is for people who do real work in Chrome:
-          distraction blocking, Pomodoro and focus timers, and light structure
-          around breaks—without turning your day into a spreadsheet.
+          <span className="font-semibold text-foreground">breath+work</span> is
+          Consciously&apos;s Chrome extension for people who do real work in the
+          tab: distraction blocking, Pomodoro and focus timers, and light
+          structure around breaks—without turning your day into a spreadsheet.
         </p>
         <div className="mt-10 flex flex-wrap items-center gap-3">
           <button

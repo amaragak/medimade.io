@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>breath+work</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Fraunces:opsz,wght@9..144,400..700&family=Caveat:wght@500&family=Courier+Prime:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="brand">
+          <div class="brandSub">
+            <span class="brandSubDisplay">Consciously</span>
+          </div>
+          <div class="brandName">breath+work</div>
+        </div>
+        <nav class="tabs" role="tablist" aria-label="Focus tabs">
+          <button class="tab isActive" data-tab="timer" role="tab" aria-selected="true">Timer</button>
+          <button class="tab" data-tab="block" role="tab" aria-selected="false">Block</button>
+          <button class="tab" data-tab="sounds" role="tab" aria-selected="false">Sounds</button>
+        </nav>
+      </header>
+
+      <main class="main">
+        <section class="panel" data-panel="timer">
+          <div class="card cardTimer">
+            <div class="rowBetween">
+              <div>
+                <div class="kicker">Pomodoro</div>
+                <div class="title">Focus, gently</div>
+              </div>
+              <div class="pill" id="timerPhasePill">Focus</div>
+            </div>
+
+            <div class="timerCenter">
+              <div class="time" id="timerTime">25:00</div>
+
+              <div class="controls">
+                <button class="btnPrimary" id="timerStartPause">Start</button>
+                <button class="btnGhost" id="timerReset">Reset</button>
+              </div>
+
+              <div class="presets">
+                <button class="chip" id="preset255">25/5</button>
+                <button class="chip" id="preset5010">50/10</button>
+                <button class="chip" id="preset9015">90/15</button>
+              </div>
+
+              <div class="timerInputs rowBetween subtle">
+                <label class="inline">
+                  <span>Focus</span>
+                  <input class="num" id="focusMin" type="number" min="1" max="180" step="1" />
+                  <span>min</span>
+                </label>
+                <label class="inline">
+                  <span>Break</span>
+                  <input class="num" id="breakMin" type="number" min="1" max="60" step="1" />
+                  <span>min</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="cardFoot hint">
+              Timer keeps running even when you close this popup.
+            </div>
+          </div>
+        </section>
+
+        <section class="panel isHidden" data-panel="block">
+          <div class="card cardBlock">
+            <div class="rowBetween">
+              <div>
+                <div class="kicker">Site blocking</div>
+                <div class="title">Protect the container</div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="blockEnabled" />
+                <span class="switchTrack" aria-hidden="true"></span>
+              </label>
+            </div>
+
+            <div class="blockBody">
+              <p class="body">
+                Add domains (one per line). When blocking is on, requests are gently
+                redirected to a quiet pause page.
+              </p>
+
+              <textarea id="blockList" class="textarea blockList" rows="8" placeholder="twitter.com&#10;youtube.com&#10;reddit.com"></textarea>
+
+              <div class="controls">
+                <button class="btnPrimary" id="blockSave">Save</button>
+                <button class="btnGhost" id="blockApplyNow">Apply now</button>
+              </div>
+              <div class="subtle small" id="blockStatus"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel isHidden" data-panel="sounds">
+          <div class="card cardSounds">
+            <div class="rowBetween">
+              <div>
+                <div class="kicker">Ambient sounds</div>
+                <div class="title">A soft sound bed</div>
+              </div>
+              <button class="btnGhost" id="soundsStopAll">Play all</button>
+            </div>
+
+            <div class="soundsBody">
+              <div class="subtle small" id="soundsStatus"></div>
+              <div class="mixer">
+                <div class="lane">
+                  <div class="laneGrid">
+                    <div class="laneTitle">Nature</div>
+                    <select id="selNature" class="select laneSelect" aria-label="Nature sound"></select>
+                    <input type="range" id="volNature" min="0" max="100" value="25" aria-label="Nature volume" />
+                    <button class="iconBtn" id="toggleNature" type="button" aria-label="Toggle nature">
+                      <span class="icon" data-icon="play" aria-hidden="true">▶</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="lane">
+                  <div class="laneGrid">
+                    <div class="laneTitle">Music</div>
+                    <select id="selMusic" class="select laneSelect" aria-label="Music sound"></select>
+                    <input type="range" id="volMusic" min="0" max="100" value="40" aria-label="Music volume" />
+                    <button class="iconBtn" id="toggleMusic" type="button" aria-label="Toggle music">
+                      <span class="icon" data-icon="play" aria-hidden="true">▶</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="lane">
+                  <div class="laneGrid">
+                    <div class="laneTitle">Noise</div>
+                    <select id="selNoise" class="select laneSelect" aria-label="Noise sound"></select>
+                    <input type="range" id="volNoise" min="0" max="100" value="10" aria-label="Noise volume" />
+                    <button class="iconBtn" id="toggleNoise" type="button" aria-label="Toggle noise">
+                      <span class="icon" data-icon="play" aria-hidden="true">▶</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cardFoot hint" id="soundsFootnote">
+                Sounds load from the Consciously backend configured for this build.
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./popup.ts"></script>
+  </body>
+</html>
+

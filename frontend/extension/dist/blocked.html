@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pause</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Fraunces:opsz,wght@9..144,400..700&family=Caveat:wght@500&family=Courier+Prime:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root{
+        --background: #f9f4ee;
+        --foreground: #2c2621;
+        --muted: #6f665e;
+        --card: #fffaf6;
+        --border: #ebe2d6;
+        --accent: #b86b48;
+        --accent-soft: #f0e0d6;
+        --gold: #c49a6c;
+        --deep: #1a1410;
+        --on-accent: #ffffff;
+        --font-sans: "DM Sans", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        --font-display: "Fraunces", Georgia, serif;
+        --font-hand: "Caveat", "Segoe Print", "Bradley Hand", cursive;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root{
+          --background: #171311;
+          --foreground: #f4ebe3;
+          --muted: #a89b90;
+          --card: #221c18;
+          --border: #3d342c;
+          --accent: #d4916e;
+          --accent-soft: #3a2e27;
+          --gold: #d4b896;
+          --deep: #0f0c0a;
+          --on-accent: var(--deep);
+        }
+      }
+      html,body{height:100%}
+      body{
+        margin:0;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding:24px;
+        background:
+          radial-gradient(ellipse 80% 60% at 70% 20%, rgb(184 107 72 / 0.14), transparent 55%),
+          radial-gradient(ellipse 50% 50% at 20% 80%, rgb(196 154 108 / 0.18), transparent 50%),
+          var(--background);
+        color:var(--foreground);
+        font-family: var(--font-sans);
+      }
+      .card{
+        max-width:520px;
+        width:100%;
+        border:1px solid var(--border);
+        border-radius:20px;
+        background: color-mix(in srgb, var(--card) 92%, transparent);
+        padding:18px 18px 16px;
+        box-shadow: 0 18px 50px rgba(0,0,0,.18);
+      }
+      .k{font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted)}
+      h1{margin:10px 0 0; font-size:24px; letter-spacing:-.02em; font-family: var(--font-display)}
+      p{margin:10px 0 0; color:var(--muted); line-height:1.5}
+      .row{display:flex; gap:10px; margin-top:14px; flex-wrap:wrap}
+      a,button{
+        border-radius:999px;
+        padding:10px 14px;
+        border:1px solid color-mix(in srgb, var(--border) 92%, transparent);
+        background: color-mix(in srgb, var(--card) 70%, transparent);
+        color:var(--foreground);
+        text-decoration:none;
+        font-weight:650;
+        cursor:pointer;
+      }
+      button.primary{background:var(--accent); border-color:transparent; color:var(--on-accent)}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="k">Consciously · focus</div>
+      <h1>This site is paused.</h1>
+      <p>
+        Not a punishment—just a boundary. If you still want to go there, make it a conscious choice.
+      </p>
+      <div class="row">
+        <button class="primary" id="openExtension">Open Focus popup</button>
+        <button id="goBack">Go back</button>
+      </div>
+    </div>
+    <script>
+      document.getElementById('goBack').addEventListener('click', () => history.back());
+      document.getElementById('openExtension').addEventListener('click', async () => {
+        try { await chrome.runtime.sendMessage({ type: 'OPEN_POPUP' }); } catch {}
+      });
+    </script>
+  </body>
+</html>
+

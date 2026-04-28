@@ -18,6 +18,7 @@ medimade_default_aws_profile "$@"
 REPO_ROOT="$(cd "$BACKEND_ROOT/.." && pwd)"
 WEBAPP_ENV="$REPO_ROOT/frontend/webapp/.env"
 MOBILE_ENV="$REPO_ROOT/frontend/mobile/.env"
+EXT_ENV="$REPO_ROOT/frontend/extension/.env"
 OUTPUTS="$(mktemp)"
 cleanup() { rm -f "$OUTPUTS"; }
 trap cleanup EXIT
@@ -66,4 +67,4 @@ else
   npx cdk deploy "$@" --outputs-file "$OUTPUTS"
 fi
 
-node "$BACKEND_ROOT/scripts/write-webapp-env-from-outputs.mjs" "$OUTPUTS" "$WEBAPP_ENV" "$MOBILE_ENV"
+node "$BACKEND_ROOT/scripts/write-webapp-env-from-outputs.mjs" "$OUTPUTS" "$WEBAPP_ENV" "$MOBILE_ENV" "$EXT_ENV"

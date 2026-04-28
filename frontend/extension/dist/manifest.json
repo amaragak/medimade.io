@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "breath+work",
+  "description": "Pomodoro focus timer, gentle site blocking, and ambient sounds.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "breath+work",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "sw.js",
+    "type": "module"
+  },
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "declarativeNetRequest"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "declarative_net_request": {
+    "rule_resources": []
+  }
+}
+
