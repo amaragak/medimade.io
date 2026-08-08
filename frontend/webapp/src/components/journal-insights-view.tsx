@@ -10,6 +10,7 @@ import {
   type JournalInsights,
   type JournalInsightsTopicId,
 } from "@/lib/medimade-api";
+import { JournalWeeklyReflectionCard } from "@/components/journal-weekly-reflection-card";
 import { ChatMarkdown } from "@/components/chat-markdown";
 
 const TOPIC_ORDER: Array<{ id: JournalInsightsTopicId; label: string }> = [
@@ -105,8 +106,9 @@ export function JournalInsightsView() {
               Journal insights
             </h1>
             <p className="mt-2 text-muted">
-              Rolling summaries by topic from your journal entries. Use Refresh to
-              update insights from new entries.
+              Rolling summaries by topic from your journal entries, plus an end-of-week
+              letter written to you. Use Refresh to update topic insights from new
+              entries.
             </p>
           </div>
           <button
@@ -170,6 +172,8 @@ export function JournalInsightsView() {
           ) : null}
         </div>
       </div>
+
+      <JournalWeeklyReflectionCard />
 
       <div className="space-y-4">
         {TOPIC_ORDER.map((t) => {

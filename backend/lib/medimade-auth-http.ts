@@ -28,11 +28,29 @@ export function parseBearer(event: APIGatewayProxyEventV2): string | null {
   return t || null;
 }
 
+export type MedimadeAuthUser = { sub: string; email?: string; name?: string };
+
+export async function optionalUserJson(
+  event: APIGatewayProxyEventV2,
+): Promise<MedimadeAuthUser | null> {
+  const token = parseBearer(event);
+  if (!token) return null;
+  try {
+    const claims = await verifyMedimadeJwt(token);
+    if (!claims?.sub) return null;
+    return {
+      sub: claims.sub,
+      email: claims.email,
+      ...(claims.name ? { name: claims.name } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function requireUserJson(
   event: APIGatewayProxyEventV2,
-): Promise<
-  { sub: string; email?: string; name?: string } | APIGatewayProxyStructuredResultV2
-> {
+): Promise<MedimadeAuthUser | APIGatewayProxyStructuredResultV2> {
   const token = parseBearer(event);
   if (!token) {
     return jsonAuth(401, { error: "Authorization Bearer token required" });

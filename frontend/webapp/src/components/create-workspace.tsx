@@ -1001,7 +1001,7 @@ export function CreateWorkspace({
     setJournalPickerEntries(local);
 
     const base = getMedimadeApiBase();
-    if (!base || !getMedimadeSessionJwt()) {
+    if (!base) {
       setJournalPickerListReady(true);
       return;
     }

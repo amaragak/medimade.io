@@ -249,7 +249,8 @@ export async function transcribeJournalAudio(params: {
 
 /**
  * Loads journal from `GET /journal/store` (DynamoDB-backed; same JSON shape as before).
- * Requires a session JWT (`Authorization`); returns null if nothing saved yet.
+ * Without a session JWT, returns all journal entries from the table (dev mode).
+ * With a session JWT, returns the signed-in user's journal.
  */
 export async function fetchJournalStoreRemote(): Promise<JournalStoreV2 | null> {
   const base = getMedimadeApiBase();
@@ -408,6 +409,103 @@ export async function runJournalInsightsRemote(opts?: {
     throw new Error("Insights response missing insights object");
   }
   return insights as JournalInsights;
+}
+
+export type JournalWeeklyReflection = {
+  ownerId: string;
+  weekKey: string;
+  weekStart: string;
+  weekEnd: string;
+  letterMarkdown: string;
+  meta: {
+    generatedAt: string;
+    model: string;
+    journalEntryCount: number;
+    meditationChatCount: number;
+    usage?: { input_tokens: number; output_tokens: number } | null;
+  };
+};
+
+export async function fetchJournalWeeklyReflectionRemote(): Promise<{
+  reflection: JournalWeeklyReflection | null;
+  weekKey: string;
+  weekStart: string;
+  weekEnd: string;
+  empty?: boolean;
+}> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/journal/weekly-reflection`, {
+    headers: medimadeApiAuthHeaders(),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const reflection =
+    data.reflection && typeof data.reflection === "object"
+      ? (data.reflection as JournalWeeklyReflection)
+      : null;
+  return {
+    reflection,
+    weekKey: typeof data.weekKey === "string" ? data.weekKey : "",
+    weekStart: typeof data.weekStart === "string" ? data.weekStart : "",
+    weekEnd: typeof data.weekEnd === "string" ? data.weekEnd : "",
+    empty: data.empty === true,
+  };
+}
+
+export async function runJournalWeeklyReflectionRemote(opts?: {
+  regenerate?: boolean;
+}): Promise<{
+  reflection: JournalWeeklyReflection | null;
+  weekKey: string;
+  weekStart: string;
+  weekEnd: string;
+  empty?: boolean;
+}> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/journal/weekly-reflection`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      ...(opts?.regenerate ? { regenerate: true } : {}),
+    }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const reflection =
+    data.reflection && typeof data.reflection === "object"
+      ? (data.reflection as JournalWeeklyReflection)
+      : null;
+  return {
+    reflection,
+    weekKey: typeof data.weekKey === "string" ? data.weekKey : "",
+    weekStart: typeof data.weekStart === "string" ? data.weekStart : "",
+    weekEnd: typeof data.weekEnd === "string" ? data.weekEnd : "",
+    empty: data.empty === true,
+  };
 }
 
 async function streamChatRequest(

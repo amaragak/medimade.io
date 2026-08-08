@@ -7,7 +7,6 @@ import {
   type LibraryMeditationItem,
   libraryMeditationCategoryLabel,
   listLibraryMeditations,
-  getMedimadeSessionJwt,
   getMeditationAudioJobStatus,
   patchMeditationFavourite,
   patchMeditationArchived,
@@ -841,10 +840,6 @@ export default function LibraryView({
     setLoading(true);
     setError(null);
     try {
-      if (!getMedimadeSessionJwt()) {
-        setItems([]);
-        return;
-      }
       const list = await listLibraryMeditations();
       setItems(list);
     } catch (e) {

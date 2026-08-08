@@ -23,6 +23,10 @@ export const CLAUDE_SECRET_NAME = "medimade/CLAUDE_API_KEY";
 export const OPENAI_SECRET_NAME = "medimade/OPENAI_API_KEY";
 /** Brevo API key for transactional email (magic-link auth, future notifications). */
 export const BREVO_SECRET_NAME = "medimade/BREVO_API_KEY";
+/** RunPod API key for Orpheus TTS serverless worker (`POST /orpheus/tts`). */
+export const RUNPODS_SECRET_NAME = "medimade/RUNPODS_API_KEY";
+/** RunPod runsync URL for Orpheus TTS (e.g. https://api.runpod.ai/v2/{id}/runsync). */
+export const RUNPODS_URL_SECRET_NAME = "medimade/RUNPODS_URL";
 
 export class MedimadeStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -50,6 +54,18 @@ export class MedimadeStack extends cdk.Stack {
       this,
       "BrevoApiKey",
       BREVO_SECRET_NAME,
+    );
+
+    const runpodsApiKeySecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      "RunpodsApiKey",
+      RUNPODS_SECRET_NAME,
+    );
+
+    const runpodsUrlSecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      "RunpodsUrl",
+      RUNPODS_URL_SECRET_NAME,
     );
 
     // Storage for generated MP3s, served via CloudFront (streaming-friendly).
@@ -226,6 +242,20 @@ export class MedimadeStack extends cdk.Stack {
     });
     fishApiKeySecret.grantRead(fishTts);
 
+    const orpheusTts = new lambda_nodejs.NodejsFunction(this, "OrpheusTtsFunction", {
+      entry: path.join(__dirname, "../lambdas/orpheus-tts.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(120),
+      memorySize: 512,
+      environment: {
+        RUNPODS_SECRET_ARN: runpodsApiKeySecret.secretArn,
+        RUNPODS_URL_SECRET_ARN: runpodsUrlSecret.secretArn,
+      },
+    });
+    runpodsApiKeySecret.grantRead(orpheusTts);
+    runpodsUrlSecret.grantRead(orpheusTts);
+
     const claudeChat = new lambda_nodejs.NodejsFunction(this, "ClaudeChatFunction", {
       entry: path.join(__dirname, "../lambdas/claude-chat.ts"),
       handler: "handler",
@@ -285,6 +315,24 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "FishTtsIntegration",
         fishTts,
+      ),
+    });
+
+    httpApi.addRoutes({
+      path: "/orpheus/tts",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration(
+        "OrpheusTtsIntegration",
+        orpheusTts,
+      ),
+    });
+
+    httpApi.addRoutes({
+      path: "/v1/audio/speech",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration(
+        "OrpheusSpeechIntegration",
+        orpheusTts,
       ),
     });
 
@@ -749,6 +797,45 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    const journalWeeklyReflection = new lambda_nodejs.NodejsFunction(
+      this,
+      "JournalWeeklyReflectionFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/journal-weekly-reflection.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(60),
+        memorySize: 1024,
+        environment: {
+          CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,
+          JOURNAL_TABLE_NAME: journalTable.tableName,
+          JOURNAL_INSIGHTS_TABLE_NAME: journalInsightsTable.tableName,
+          MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+          MEDITATION_JOBS_TABLE_NAME: meditationJobsTable.tableName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        },
+      },
+    );
+    claudeApiKeySecret.grantRead(journalWeeklyReflection);
+    journalTable.grantReadData(journalWeeklyReflection);
+    journalInsightsTable.grantReadWriteData(journalWeeklyReflection);
+    meditationAnalyticsTable.grantReadData(journalWeeklyReflection);
+    meditationJobsTable.grantReadData(journalWeeklyReflection);
+    authJwtSecret.grantRead(journalWeeklyReflection);
+
+    httpApi.addRoutes({
+      path: "/journal/weekly-reflection",
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.POST,
+        apigwv2.HttpMethod.OPTIONS,
+      ],
+      integration: new integrations.HttpLambdaIntegration(
+        "JournalWeeklyReflectionIntegration",
+        journalWeeklyReflection,
+      ),
+    });
+
     // --- Python: voice FX (Pedalboard) — layer is pre-built with Docker, committed under layers/pedalboard/
     const pedalboardLayerRoot = path.join(__dirname, "../layers/pedalboard");
     const pedalboardPackageInit = path.join(
@@ -800,6 +887,11 @@ export class MedimadeStack extends cdk.Stack {
     new cdk.CfnOutput(this, "FishTtsUrl", {
       value: `${httpApi.apiEndpoint}/fish/tts`,
     });
+    new cdk.CfnOutput(this, "OrpheusTtsUrl", {
+      description:
+        "OpenAI-compatible speech: POST JSON { model, input, voice, response_format, speed }",
+      value: `${httpApi.apiEndpoint}/v1/audio/speech`,
+    });
     new cdk.CfnOutput(this, "VoiceFxUrl", {
       description: "POST JSON { audioBase64, preset? } WAV → effected WAV",
       value: `${httpApi.apiEndpoint}/audio/voice-fx`,
@@ -812,6 +904,15 @@ export class MedimadeStack extends cdk.Stack {
     new cdk.CfnOutput(this, "FishAudioSecretName", {
       description: "Put your Fish Audio API key as the secret string value",
       value: FISH_AUDIO_SECRET_NAME,
+    });
+    new cdk.CfnOutput(this, "RunpodsSecretName", {
+      description: "Put your RunPod API key as the secret string value",
+      value: RUNPODS_SECRET_NAME,
+    });
+    new cdk.CfnOutput(this, "RunpodsUrlSecretName", {
+      description:
+        "Put your RunPod runsync URL as the secret string value (e.g. https://api.runpod.ai/v2/{id}/runsync)",
+      value: RUNPODS_URL_SECRET_NAME,
     });
     new cdk.CfnOutput(this, "ClaudeSecretName", {
       description: "Put your Anthropic API key as the secret string value",

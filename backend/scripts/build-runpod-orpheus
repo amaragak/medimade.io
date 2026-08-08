@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Build (and optionally push) the RunPod Serverless Orpheus 3B worker image.
+#
+# Usage (from repo root or backend/):
+#   backend/scripts/build-runpod-orpheus
+#   backend/scripts/build-runpod-orpheus --push yourusername/orpheus-worker:latest
+#   backend/scripts/build-runpod-orpheus --tag medimade/orpheus-worker:dev --push
+#
+# Requires Docker with GPU-capable build host only for runtime testing; build itself
+# is a normal docker build (RunPod runs the image on CUDA workers).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WORKER_DIR="$ROOT/runpod/orpheus-worker"
+TAG="medimade/orpheus-worker:latest"
+PUSH=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --push)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --push requires an image ref (e.g. yourusername/orpheus-worker:latest)" >&2
+        exit 1
+      fi
+      TAG="$2"
+      PUSH=1
+      shift 2
+      ;;
+    --tag)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --tag requires a value" >&2
+        exit 1
+      fi
+      TAG="$2"
+      shift 2
+      ;;
+    -h | --help)
+      echo "Usage: $0 [--tag IMAGE] [--push [IMAGE]]" >&2
+      echo "  --tag IMAGE    local tag (default: medimade/orpheus-worker:latest)" >&2
+      echo "  --push [IMAGE] push after build; IMAGE defaults to --tag value" >&2
+      exit 0
+      ;;
+    *)
+      echo "error: unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+echo "==> Building RunPod Orpheus worker ($TAG) from $WORKER_DIR ..."
+docker build --platform linux/amd64 -t "$TAG" "$WORKER_DIR"
+
+echo "==> Built: $TAG"
+
+if [[ -n "$PUSH" ]]; then
+  echo "==> Pushing $TAG ..."
+  docker push "$TAG"
+  echo "==> Pushed. In RunPod: Serverless → New Endpoint → Docker → $TAG"
+else
+  echo "Local build only. Push with:"
+  echo "  docker push $TAG"
+  echo "  # or"
+  echo "  $0 --tag $TAG --push"
+fi

@@ -11,6 +11,8 @@ Create a secret with this **exact name** (full path string):
 | **`medimade/FISH_AUDIO_API_KEY`** | Your Fish Audio API key (plain text as the secret string) |
 | **`medimade/CLAUDE_API_KEY`** | Your Anthropic API key for Claude (plain text as the secret string) |
 | **`medimade/OPENAI_API_KEY`** | Your OpenAI API key (plain text; used for **Whisper** journal transcription via `POST /journal/transcribe`) |
+| **`medimade/RUNPODS_API_KEY`** | Your RunPod API key (plain text; used for **Orpheus TTS** via `POST /orpheus/tts`) |
+| **`medimade/RUNPODS_URL`** | RunPod runsync URL (plain text), e.g. `https://api.runpod.ai/v2/zn1bktgpxtgvhh/runsync` |
 
 Create or update them **before** you exercise the API (stack deploy can succeed even if a secret does not exist yet; the Lambda that needs it will fail until the secret is present).
 
@@ -166,6 +168,21 @@ it means `authEmailFrom` and/or `authWebappOrigin` were not provided at deploy t
 - Body: `{ "text": string, "reference_id": string }`  
 - Success: `200`, `audio/mpeg` (base64 in API Gateway)
 
+- **POST** `{OrpheusTtsUrl}` (alias **`{ApiUrl}/v1/audio/speech`**) — OpenAI-style Orpheus TTS  
+- Body:
+  ```json
+  {
+    "model": "orpheus",
+    "input": "Hello world! This is a test of the Orpheus TTS system.",
+    "voice": "tara",
+    "response_format": "wav",
+    "speed": 1.0
+  }
+  ```
+- Success: `200`, `audio/wav` (base64 in API Gateway)  
+- Legacy alias: **`POST {ApiUrl}/orpheus/tts`** (same handler; also accepts `{ "text", "voice" }`)  
+- Requires secrets **`medimade/RUNPODS_API_KEY`** and **`medimade/RUNPODS_URL`**. If the URL ends with `/v1/audio/speech`, the Lambda forwards the OpenAI-shaped body; otherwise it uses RunPod runsync `{ input: { text, voice } }`. Note: API Gateway HTTP integrations time out at **30s**; cold RunPod workers may exceed that — keep a warm worker or switch to async RunPod jobs for long text.
+
 - **POST** `{MedimadeChatUrl}` (Claude Haiku, **streams** via Lambda response streaming)  
 
 **Coach chat** — body:
@@ -214,6 +231,20 @@ There is **no auth** on these paths today: the client sends an opaque **`ownerId
   Body: `{ "ownerId": string }`. Runs Claude to update rolling summaries from journal-entry deltas since the last run, persists results in DynamoDB (`JournalInsightsTable`), and returns the updated `{ insights }`.
 
 The web journal UI loads from **localStorage** first, then may **GET** and merge when the cloud copy is newer (or local is a single empty stub). Edits **debounce to PUT** the full store; the server persists **per-entry items** in DynamoDB.
+
+## RunPod Orpheus 3B worker (optional TTS)
+
+Separate from CDK: a Docker image for RunPod Serverless TTS lives under **`runpod/orpheus-worker/`** (`handler.py` + `Dockerfile`).
+
+Build locally (requires Docker):
+
+```bash
+cd backend
+npm run build-runpod-orpheus
+npm run build-runpod-orpheus -- --tag yourusername/orpheus-worker:latest --push
+```
+
+Then create a **Serverless → Docker** endpoint in the RunPod dashboard (16 GB+ GPU, image tag you pushed). Full steps: **`runpod/orpheus-worker/README.md`**.
 
 ## Destroy
 

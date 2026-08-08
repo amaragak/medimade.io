@@ -7,9 +7,10 @@ import {
   BatchWriteCommand,
   DynamoDBDocumentClient,
   QueryCommand,
+  ScanCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { DeleteObjectCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { requireUserJson } from "../lib/medimade-auth-http";
+import { optionalUserJson, requireUserJson } from "../lib/medimade-auth-http";
 
 const ddbClient = new DynamoDBClient({});
 const ddb = DynamoDBDocumentClient.from(ddbClient, {
@@ -119,6 +120,57 @@ async function queryAllKeys(
     startKey = r.LastEvaluatedKey as Record<string, unknown> | undefined;
   } while (startKey);
   return keys;
+}
+
+async function scanAllItems(table: string): Promise<Record<string, unknown>[]> {
+  const items: Record<string, unknown>[] = [];
+  let startKey: Record<string, unknown> | undefined;
+  do {
+    const r = await ddb.send(
+      new ScanCommand({
+        TableName: table,
+        ...(startKey ? { ExclusiveStartKey: startKey } : {}),
+      }),
+    );
+    for (const it of r.Items ?? []) items.push(it as Record<string, unknown>);
+    startKey = r.LastEvaluatedKey as Record<string, unknown> | undefined;
+  } while (startKey);
+  return items;
+}
+
+function mergeAllJournalItems(items: Record<string, unknown>[]): JournalStoreV2 {
+  type Row = { entry: JournalEntry; updated: number };
+  const rows: Row[] = [];
+  for (const item of items) {
+    const sk = item.sk;
+    if (typeof sk !== "string" || !sk.startsWith("ENTRY#")) continue;
+    const id = typeof item.id === "string" ? item.id : sk.slice("ENTRY#".length);
+    if (
+      typeof item.createdAt !== "string" ||
+      typeof item.updatedAt !== "string" ||
+      typeof item.title !== "string" ||
+      typeof item.contentHtml !== "string"
+    ) {
+      continue;
+    }
+    rows.push({
+      updated: new Date(item.updatedAt).getTime() || 0,
+      entry: {
+        id,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        title: item.title,
+        contentHtml: item.contentHtml,
+      },
+    });
+  }
+  rows.sort((a, b) => b.updated - a.updated);
+  const entries = rows.map((r) => r.entry);
+  return {
+    version: 2,
+    activeEntryId: entries[0]?.id ?? null,
+    entries,
+  };
 }
 
 async function queryAllItems(
@@ -351,9 +403,23 @@ export async function handler(
   }
 
   if (method === "GET") {
-    const auth = await requireUserJson(event);
-    if ("statusCode" in auth) return auth;
-    const ownerId = (auth as { sub: string }).sub;
+    const user = await optionalUserJson(event);
+    if (!user) {
+      try {
+        const items = await scanAllItems(table);
+        if (!items.length) return json(200, { store: null });
+        const store = mergeAllJournalItems(items);
+        return json(200, {
+          store: store.entries.length
+            ? store
+            : { version: 2, activeEntryId: null, entries: [] },
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Read failed";
+        return json(500, { error: msg });
+      }
+    }
+    const ownerId = user.sub;
     try {
       const items = await queryAllItems(table, ownerId);
       if (items.length) {

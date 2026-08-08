@@ -60,10 +60,6 @@ export function JournalView() {
   }, []);
 
   useEffect(() => {
-    if (!signedIn) setInsightsOpen(false);
-  }, [signedIn]);
-
-  useEffect(() => {
     if (prevInsightsOpenRef.current && !insightsOpen) {
       scheduleJournalInsightsRefreshAfterLeavingEditor();
     }
@@ -90,18 +86,10 @@ export function JournalView() {
 
   /** Pull cloud journal when API is configured and cloud copy is newer (or local is empty stub). */
   useEffect(() => {
-    if (!signedIn) {
-      setRemoteJournalChecked(true);
-      return;
-    }
     if (!hydrated) return;
     let cancelled = false;
     const base = getMedimadeApiBase();
     if (!base) {
-      setRemoteJournalChecked(true);
-      return;
-    }
-    if (!getMedimadeSessionJwt()) {
       setRemoteJournalChecked(true);
       return;
     }
@@ -133,7 +121,7 @@ export function JournalView() {
     return () => {
       cancelled = true;
     };
-  }, [signedIn, hydrated, persist]);
+  }, [hydrated, persist]);
 
   const cloudPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -294,12 +282,11 @@ export function JournalView() {
               type="button"
               onClick={() => setInsightsOpen((v) => !v)}
               aria-pressed={insightsOpen}
-              disabled={!signedIn}
               className={`cursor-pointer rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
                 insightsOpen
                   ? "border-accent/50 bg-accent-soft text-foreground"
                   : "border-border bg-background text-foreground hover:border-accent/40"
-              } disabled:cursor-not-allowed disabled:opacity-60`}
+              }`}
             >
               {insightsOpen ? "Journal" : "Insights"}
             </button>
@@ -311,9 +298,7 @@ export function JournalView() {
           device only.{" "}
           {!signedIn ? (
             <>
-              <span className="ml-1">
-                Sign in to enable cloud sync and Insights.
-              </span>
+              Sign in to enable cloud sync and personalised topic insights.
             </>
           ) : null}{" "}
           To build a meditation from your entries, open{" "}
