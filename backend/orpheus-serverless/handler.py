@@ -2,7 +2,6 @@
 RunPod Serverless worker for Orpheus 3B TTS.
 
 Uses runpod.serverless.start() — NOT a FastAPI/Gradio HTTP server.
-RunPod dispatches jobs through a queue; the handler loop polls for work.
 """
 
 from __future__ import annotations
@@ -11,19 +10,14 @@ import base64
 import io
 import os
 import re
+import sys
 import time
 import traceback
 import wave
 from typing import Any
 
-import numpy as np
-import runpod
-import torch
-from snac import SNAC
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
 # ---------------------------------------------------------------------------
-# Orpheus token constants
+# Config
 # ---------------------------------------------------------------------------
 TOKEN_START_HUMAN = 128259
 TOKEN_END_TEXT = 128009
@@ -31,7 +25,7 @@ TOKEN_END_HUMAN = 128260
 TOKEN_START_AUDIO = 128257
 TOKEN_END_AUDIO = 128258
 AUDIO_TOKEN_OFFSET = 128266
-TOKENS_PER_SECOND = 86  # ~7 tokens/frame at ~12.5 frames/sec
+TOKENS_PER_SECOND = 86
 
 SAMPLE_RATE = 24000
 SILENCE_BETWEEN_CHUNKS_SEC = 0.3
@@ -39,73 +33,108 @@ SILENCE_BETWEEN_CHUNKS_SEC = 0.3
 VALID_VOICES = frozenset({"tara", "leah", "jess", "leo", "dan", "mia", "zac", "zoe"})
 DEFAULT_VOICE = "tara"
 
-ORPHEUS_MODEL_ID = "canopylabs/orpheus-3b-0.1-ft"
-SNAC_MODEL_ID = "hubertsiuzdak/snac_24khz"
-MODEL_CACHE_DIR = os.environ.get("HF_HOME", "/models")
-# Docker builds bake weights into /models; local test sets HF_LOCAL_FILES_ONLY=0 to allow download.
-LOCAL_FILES_ONLY = os.environ.get("HF_LOCAL_FILES_ONLY", "1") == "1"
-_HF_TOKEN = os.environ.get("HF_TOKEN", "").strip() or None
+ORPHEUS_MODEL_PATH = os.environ.get("ORPHEUS_MODEL_PATH", "/models/orpheus-3b")
+SNAC_MODEL_PATH = os.environ.get("SNAC_MODEL_PATH", "/models/snac")
 
-# ---------------------------------------------------------------------------
-# Cold-start model load (once per worker process)
-# ---------------------------------------------------------------------------
-print("[orpheus-serverless] Worker starting — loading models…", flush=True)
+tokenizer = None
+orpheus_model = None
+snac_model = None
 
-_device = "cuda" if torch.cuda.is_available() else "cpu"
-if _device != "cuda":
-    print(
-        "[orpheus-serverless] WARNING: CUDA not available; inference will fail on GPU endpoints.",
-        flush=True,
+
+def log(message: str, **fields: object) -> None:
+    suffix = ""
+    if fields:
+        parts = " ".join(f"{k}={v!r}" for k, v in fields.items())
+        suffix = f" ({parts})"
+    print(f"[orpheus-serverless] {message}{suffix}", flush=True)
+
+
+def log_boot_environment() -> None:
+    log("boot environment", python=sys.version.split()[0], pid=os.getpid())
+    log(
+        "env",
+        ORPHEUS_MODEL_PATH=ORPHEUS_MODEL_PATH,
+        SNAC_MODEL_PATH=SNAC_MODEL_PATH,
+        HF_LOCAL_FILES_ONLY=os.environ.get("HF_LOCAL_FILES_ONLY", ""),
+    )
+    for label, path in (("orpheus", ORPHEUS_MODEL_PATH), ("snac", SNAC_MODEL_PATH)):
+        if os.path.isdir(path):
+            files = sorted(os.listdir(path))[:15]
+            log(f"{label} dir ok", path=path, files=files)
+        else:
+            log(f"{label} dir MISSING", path=path)
+
+
+def load_models() -> None:
+    """Load models once per worker process. Raises on failure."""
+    global tokenizer, orpheus_model, snac_model
+
+    import torch
+    from snac import SNAC
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    log_boot_environment()
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "CUDA is not available — this worker requires a GPU endpoint. "
+            f"torch={torch.__version__} cuda={torch.version.cuda}",
+        )
+
+    device = torch.device("cuda:0")
+    props = torch.cuda.get_device_properties(0)
+    log(
+        "cuda ready",
+        gpu=props.name,
+        vram_gb=round(props.total_memory / 1e9, 1),
+        torch=torch.__version__,
     )
 
-_t0 = time.perf_counter()
-print(f"[orpheus-serverless] Loading tokenizer: {ORPHEUS_MODEL_ID}", flush=True)
-tokenizer = AutoTokenizer.from_pretrained(
-    ORPHEUS_MODEL_ID,
-    cache_dir=MODEL_CACHE_DIR,
-    local_files_only=LOCAL_FILES_ONLY,
-    token=_HF_TOKEN,
-)
-print(
-    f"[orpheus-serverless] Tokenizer loaded in {time.perf_counter() - _t0:.1f}s",
-    flush=True,
-)
+    local_only = os.environ.get("HF_LOCAL_FILES_ONLY", "1") == "1"
+    hf_token = os.environ.get("HF_TOKEN", "").strip() or None
 
-_t1 = time.perf_counter()
-print(f"[orpheus-serverless] Loading Orpheus LM: {ORPHEUS_MODEL_ID}", flush=True)
-orpheus_model = AutoModelForCausalLM.from_pretrained(
-    ORPHEUS_MODEL_ID,
-    cache_dir=MODEL_CACHE_DIR,
-    local_files_only=LOCAL_FILES_ONLY,
-    token=_HF_TOKEN,
-    torch_dtype=torch.bfloat16,
-    device_map="cuda" if _device == "cuda" else None,
-)
-if _device == "cuda":
-    orpheus_model = orpheus_model.to("cuda")
-orpheus_model.eval()
-print(
-    f"[orpheus-serverless] Orpheus LM loaded in {time.perf_counter() - _t1:.1f}s",
-    flush=True,
-)
+    orpheus_config = os.path.join(ORPHEUS_MODEL_PATH, "config.json")
+    if not os.path.isfile(orpheus_config):
+        raise FileNotFoundError(
+            f"Orpheus weights not found at {ORPHEUS_MODEL_PATH}. "
+            "Rebuild the Docker image (download_models.py bakes weights to this path).",
+        )
 
-_t2 = time.perf_counter()
-print(f"[orpheus-serverless] Loading SNAC decoder: {SNAC_MODEL_ID}", flush=True)
-snac_model = SNAC.from_pretrained(
-    SNAC_MODEL_ID,
-    cache_dir=MODEL_CACHE_DIR,
-    token=_HF_TOKEN,
-)
-snac_model = snac_model.to(_device).eval()
-print(
-    f"[orpheus-serverless] SNAC loaded in {time.perf_counter() - _t2:.1f}s "
-    f"(total cold start {time.perf_counter() - _t0:.1f}s)",
-    flush=True,
-)
+    cold_start = time.perf_counter()
+
+    t0 = time.perf_counter()
+    log("loading tokenizer", path=ORPHEUS_MODEL_PATH)
+    tokenizer = AutoTokenizer.from_pretrained(
+        ORPHEUS_MODEL_PATH,
+        local_files_only=local_only,
+        token=hf_token,
+    )
+    log("tokenizer loaded", seconds=round(time.perf_counter() - t0, 1))
+
+    t1 = time.perf_counter()
+    log("loading Orpheus LM", path=ORPHEUS_MODEL_PATH, dtype="bfloat16")
+    orpheus_model = AutoModelForCausalLM.from_pretrained(
+        ORPHEUS_MODEL_PATH,
+        local_files_only=local_only,
+        token=hf_token,
+        torch_dtype=torch.bfloat16,
+        device_map={"": 0},
+    )
+    orpheus_model.eval()
+    log("Orpheus LM loaded", seconds=round(time.perf_counter() - t1, 1))
+
+    t2 = time.perf_counter()
+    log("loading SNAC decoder", path=SNAC_MODEL_PATH)
+    snac_model = SNAC.from_pretrained(SNAC_MODEL_PATH)
+    snac_model = snac_model.to(device).eval()
+    log(
+        "SNAC loaded",
+        seconds=round(time.perf_counter() - t2, 1),
+        cold_start_seconds=round(time.perf_counter() - cold_start, 1),
+    )
 
 
 def split_text_into_chunks(text: str, max_chunk_chars: int) -> list[str]:
-    """Split at sentence boundaries, accumulating up to max_chunk_chars."""
     text = text.strip()
     if not text:
         return []
@@ -138,7 +167,9 @@ def split_text_into_chunks(text: str, max_chunk_chars: int) -> list[str]:
     return chunks if chunks else [text]
 
 
-def build_prompt_ids(voice: str, text: str) -> torch.Tensor:
+def build_prompt_ids(voice: str, text: str):
+    import torch
+
     prompt = f"{voice}: {text}"
     encoded = tokenizer(prompt, return_tensors="pt").input_ids
     device = next(orpheus_model.parameters()).device
@@ -152,8 +183,7 @@ def build_prompt_ids(voice: str, text: str) -> torch.Tensor:
     return torch.cat([start, encoded, end], dim=1)
 
 
-def extract_audio_codes(generated: torch.Tensor) -> list[int]:
-    """Extract SNAC code indices from generated token sequence."""
+def extract_audio_codes(generated) -> list[int]:
     seq = generated[0].tolist() if generated.dim() > 1 else generated.tolist()
 
     last_start = -1
@@ -177,8 +207,9 @@ def extract_audio_codes(generated: torch.Tensor) -> list[int]:
     return codes[:trim]
 
 
-def redistribute_codes_to_layers(codes: list[int]) -> list[torch.Tensor]:
-    """Map flat 7-token frames into SNAC's three codebook layers."""
+def redistribute_codes_to_layers(codes: list[int]) -> list:
+    import torch
+
     num_frames = len(codes) // 7
     layer_1: list[int] = []
     layer_2: list[int] = []
@@ -202,11 +233,15 @@ def redistribute_codes_to_layers(codes: list[int]) -> list[torch.Tensor]:
     ]
 
 
-def decode_codes_to_waveform(codes: list[int]) -> np.ndarray:
+def decode_codes_to_waveform(codes: list[int]):
+    import numpy as np
+
     if len(codes) < 7:
         return np.array([], dtype=np.float32)
 
     code_tensors = redistribute_codes_to_layers(codes)
+    import torch
+
     with torch.inference_mode():
         audio_hat = snac_model.decode(code_tensors)
 
@@ -224,12 +259,11 @@ def generate_chunk_waveform(
     top_p: float,
     repetition_penalty: float,
     max_seconds_per_chunk: float,
-) -> np.ndarray:
+):
+    import torch
+
     input_ids = build_prompt_ids(voice, text)
-    max_new_tokens = min(
-        int(max_seconds_per_chunk * TOKENS_PER_SECOND),
-        8192,
-    )
+    max_new_tokens = min(int(max_seconds_per_chunk * TOKENS_PER_SECOND), 8192)
     rep_penalty = max(repetition_penalty, 1.1)
 
     with torch.inference_mode():
@@ -247,15 +281,17 @@ def generate_chunk_waveform(
     return decode_codes_to_waveform(codes)
 
 
-def concatenate_with_silence(segments: list[np.ndarray]) -> np.ndarray:
+def concatenate_with_silence(segments: list) -> Any:
+    import numpy as np
+
     if not segments:
         return np.array([], dtype=np.float32)
     silence = np.zeros(
         int(SILENCE_BETWEEN_CHUNKS_SEC * SAMPLE_RATE),
         dtype=np.float32,
     )
-    parts: list[np.ndarray] = []
-    for i, seg in enumerate(segments):
+    parts: list = []
+    for seg in segments:
         if seg.size == 0:
             continue
         if parts:
@@ -266,7 +302,9 @@ def concatenate_with_silence(segments: list[np.ndarray]) -> np.ndarray:
     return np.concatenate(parts)
 
 
-def waveform_to_wav_bytes(audio: np.ndarray) -> bytes:
+def waveform_to_wav_bytes(audio) -> bytes:
+    import numpy as np
+
     clipped = np.clip(audio, -1.0, 1.0)
     pcm = (clipped * 32767.0).astype(np.int16)
     buf = io.BytesIO()
@@ -284,7 +322,6 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(inp, dict):
             return {"error": "`input` must be an object"}
 
-        # Medimade backend sends OpenAI-shaped `input.input`; direct calls use `text`.
         text_raw = inp.get("text")
         if text_raw is None:
             text_raw = inp.get("input")
@@ -313,8 +350,9 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
         if not chunks:
             return {"error": "No text chunks to synthesize"}
 
+        log("job started", voice=voice, chunks=len(chunks), text_chars=len(text))
         gen_started = time.perf_counter()
-        wave_segments: list[np.ndarray] = []
+        wave_segments = []
 
         for chunk_idx, chunk_text in enumerate(chunks, start=1):
             chunk_started = time.perf_counter()
@@ -327,12 +365,11 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
                 max_seconds_per_chunk=max_seconds_per_chunk,
             )
             chunk_seconds = waveform.size / SAMPLE_RATE if waveform.size else 0.0
-            chunk_elapsed = time.perf_counter() - chunk_started
-            print(
-                f"[orpheus-serverless] chunk {chunk_idx}/{len(chunks)}: "
-                f"{chunk_seconds:.2f}s audio in {chunk_elapsed:.2f}s "
-                f"({len(chunk_text)} chars)",
-                flush=True,
+            log(
+                f"chunk {chunk_idx}/{len(chunks)} done",
+                audio_seconds=round(chunk_seconds, 2),
+                gen_seconds=round(time.perf_counter() - chunk_started, 2),
+                chars=len(chunk_text),
             )
             if waveform.size == 0:
                 return {
@@ -349,6 +386,11 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
         wav_bytes = waveform_to_wav_bytes(full_audio)
         audio_base64 = base64.b64encode(wav_bytes).decode("utf-8")
 
+        log(
+            "job complete",
+            duration_seconds=round(duration_seconds, 2),
+            generation_seconds=round(generation_seconds, 2),
+        )
         return {
             "audio_base64": audio_base64,
             "format": "wav",
@@ -359,8 +401,25 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
             "generation_seconds": round(generation_seconds, 3),
         }
     except Exception as exc:
+        log("job error", error=str(exc))
         traceback.print_exc()
         return {"error": str(exc)}
 
 
-runpod.serverless.start({"handler": handler})
+def main() -> None:
+    log("worker process starting")
+    try:
+        load_models()
+    except Exception as exc:
+        log("FATAL: model load failed — worker exiting", error=str(exc))
+        traceback.print_exc()
+        sys.exit(1)
+
+    import runpod
+
+    log("entering RunPod handler loop (runpod.serverless.start)")
+    runpod.serverless.start({"handler": handler})
+
+
+if __name__ == "__main__":
+    main()

@@ -90,15 +90,21 @@ function parseRunpodEndpointId(upstreamUrl: string): string | null {
   return m?.[1] ?? null;
 }
 
+/** `…/v2/{endpointId}` with optional `/run` or `/runsync` stripped. */
+export function runpodEndpointBase(upstreamUrl: string): string {
+  return upstreamUrl
+    .trim()
+    .replace(/\/$/, "")
+    .replace(/\/runsync$/i, "")
+    .replace(/\/run$/i, "");
+}
+
+export function runpodRunsyncUrl(upstreamUrl: string): string {
+  return `${runpodEndpointBase(upstreamUrl)}/runsync`;
+}
+
 function runpodRunUrl(upstreamUrl: string): string {
-  const trimmed = upstreamUrl.trim().replace(/\/$/, "");
-  if (/\/runsync$/i.test(trimmed)) {
-    return trimmed.replace(/\/runsync$/i, "/run");
-  }
-  if (/\/run$/i.test(trimmed)) {
-    return trimmed;
-  }
-  return `${trimmed}/run`;
+  return `${runpodEndpointBase(upstreamUrl)}/run`;
 }
 
 export type ActiveRunpodJob = {
@@ -518,7 +524,7 @@ export async function orpheusTtsWav(params: {
       return wav;
     }
 
-    const upstream = await fetch(upstreamUrl, {
+    const upstream = await fetch(runpodRunsyncUrl(upstreamUrl), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${params.apiKey}`,

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Docker tag suffix (e.g. v1)"
+        description: "Docker tag suffix (e.g. v2 — use v2 after boot-logging fix)"
         required: true
-        default: "v1"
+        default: "v2"
 
 jobs:
   build-push:

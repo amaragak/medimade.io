@@ -12,7 +12,7 @@ Create a secret with this **exact name** (full path string):
 | **`medimade/CLAUDE_API_KEY`** | Your Anthropic API key for Claude (plain text as the secret string) |
 | **`medimade/OPENAI_API_KEY`** | Your OpenAI API key (plain text; used for **Whisper** journal transcription via `POST /journal/transcribe`) |
 | **`medimade/RUNPODS_API_KEY`** | Your RunPod API key (plain text; used for **Orpheus TTS** via `POST /orpheus/tts`) |
-| **`medimade/RUNPODS_URL`** | RunPod runsync URL (plain text), e.g. `https://api.runpod.ai/v2/zn1bktgpxtgvhh/runsync` |
+| **`medimade/RUNPODS_URL`** | RunPod endpoint URL (plain text), e.g. `https://api.runpod.ai/v2/<endpoint-id>` — suffix optional (`/runsync` or `/run` appended by client) |
 
 Create or update them **before** you exercise the API (stack deploy can succeed even if a secret does not exist yet; the Lambda that needs it will fail until the secret is present).
 

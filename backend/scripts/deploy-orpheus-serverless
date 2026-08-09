@@ -53,7 +53,8 @@ if [[ -z "$ENDPOINT_ID" ]]; then
   exit 1
 fi
 
-RUNSYNC_URL="https://api.runpod.ai/v2/${ENDPOINT_ID}/runsync"
+RUNSYNC_URL="https://api.runpod.ai/v2/${ENDPOINT_ID}"
+# Store endpoint base (no suffix) — client appends /runsync or /run as needed.
 
 echo "==> Updating AWS secret medimade/RUNPODS_URL → $RUNSYNC_URL"
 aws secretsmanager put-secret-value \
