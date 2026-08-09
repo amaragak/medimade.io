@@ -2,6 +2,11 @@
  * Plan / Dreams planner — persisted locally until a backend exists.
  */
 
+import {
+  loadIdeateStore,
+  saveIdeateStore,
+} from "@/lib/plan-ideate-store";
+
 export type DreamState =
   | "germinating"
   | "exploring"
@@ -23,6 +28,8 @@ export type PlanDream = {
   obstacleExploreReply: string;
   visionBuildReply: string;
   meditationsGenerated: number;
+  /** Set when user manually marks project complete */
+  completedAt: string | null;
 };
 
 export type PlanDreamsStoreV1 = {
@@ -68,6 +75,7 @@ export function createPlanDream(input: {
     obstacleExploreReply: "",
     visionBuildReply: "",
     meditationsGenerated: 0,
+    completedAt: null,
   };
 }
 
@@ -85,19 +93,8 @@ export function upsertPlanDream(
 
 export function loadPlanDreamsStore(): PlanDreamsStoreV1 {
   if (typeof window === "undefined") return { v: 1, dreams: [] };
-  try {
-    const raw = window.localStorage.getItem(PLAN_DREAMS_LS_KEY);
-    if (!raw) {
-      return migrateLegacyPlanIfNeeded();
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") return { v: 1, dreams: [] };
-    const o = parsed as Partial<PlanDreamsStoreV1>;
-    if (o.v !== 1 || !Array.isArray(o.dreams)) return { v: 1, dreams: [] };
-    return { v: 1, dreams: normalizeDreams(o.dreams) };
-  } catch {
-    return { v: 1, dreams: [] };
-  }
+  const v2 = loadIdeateStore();
+  return { v: 1, dreams: v2.dreams };
 }
 
 function normalizeDreams(raw: unknown[]): PlanDream[] {
@@ -126,6 +123,7 @@ function normalizeDreams(raw: unknown[]): PlanDream[] {
         typeof d.meditationsGenerated === "number" && Number.isFinite(d.meditationsGenerated)
           ? Math.max(0, Math.floor(d.meditationsGenerated))
           : 0,
+      completedAt: typeof d.completedAt === "string" ? d.completedAt : null,
     });
   }
   return out;
@@ -170,6 +168,7 @@ function migrateLegacyPlanIfNeeded(): PlanDreamsStoreV1 {
         obstacleExploreReply: "",
         visionBuildReply: "",
         meditationsGenerated: 0,
+        completedAt: null,
       });
     }
     if (dreams.length) {
@@ -185,10 +184,8 @@ function migrateLegacyPlanIfNeeded(): PlanDreamsStoreV1 {
 export function savePlanDreamsStore(store: PlanDreamsStoreV1) {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(
-      PLAN_DREAMS_LS_KEY,
-      JSON.stringify({ v: 1, dreams: store.dreams.slice(0, 200) }),
-    );
+    const current = loadIdeateStore();
+    saveIdeateStore({ ...current, dreams: store.dreams.slice(0, 200) });
   } catch {
     /* ignore */
   }

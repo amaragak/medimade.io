@@ -22,16 +22,26 @@ import {
   fetchJournalStoreRemote,
   listBackgroundAudio,
   listFishSpeakers,
+  listOrpheusSpeakers,
   saveMeditationDraft,
   backgroundAudioStreamingKey,
   type FishSpeaker,
+  type OrpheusSpeaker,
+  type TtsProvider,
   type BackgroundAudioItem,
 } from "@/lib/medimade-api";
+import {
+  DEFAULT_ORPHEUS_VOICE_ID,
+  ORPHEUS_VOICES,
+  orpheusVoiceNameForId,
+} from "@/lib/orpheus-voices";
 import {
   FIXED_SPEECH_PREVIEW_SPEED,
   speakerPreviewFxSampleKey,
   speakerPreviewLoudFxSampleKey,
   speakerPreviewLoudSampleKey,
+  orpheusSpeakerPreviewLoudFxSampleKey,
+  orpheusSpeakerPreviewLoudSampleKey,
 } from "@/lib/speaker-sample-speed";
 import {
   JOURNAL_CREATE_FIRST_MESSAGE,
@@ -627,6 +637,16 @@ function isDraftStateV1(raw: unknown): raw is MeditationDraftStateV1 {
     return false;
   }
   if (typeof o.speakerModelId !== "string") return false;
+  if (
+    o.ttsProvider !== undefined &&
+    o.ttsProvider !== "fish" &&
+    o.ttsProvider !== "orpheus"
+  ) {
+    return false;
+  }
+  if (o.orpheusVoiceId !== undefined && typeof o.orpheusVoiceId !== "string") {
+    return false;
+  }
   if (typeof o.backgroundNatureKey !== "string") return false;
   if (typeof o.backgroundMusicKey !== "string") return false;
   // Back-compat: older drafts stored drums; new drafts store noise.
@@ -796,6 +816,13 @@ export function CreateWorkspace({
   });
   // Speakers come from backend `GET /fish/speakers` (single source of truth).
   const [fishSpeakers, setFishSpeakers] = useState<FishSpeaker[]>([]);
+  const [orpheusSpeakers, setOrpheusSpeakers] = useState<OrpheusSpeaker[]>(
+    () => [...ORPHEUS_VOICES],
+  );
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>("fish");
+  const [orpheusVoiceId, setOrpheusVoiceId] = useState<string>(
+    DEFAULT_ORPHEUS_VOICE_ID,
+  );
   const [messages, setMessages] = useState<ChatMessage[]>([
     { role: "assistant", text: "", variant: "chat" },
   ]);
@@ -883,6 +910,8 @@ export function CreateWorkspace({
       input,
       speechSpeed,
       speakerModelId,
+      ttsProvider,
+      orpheusVoiceId,
       backgroundNatureKey: backgroundAudioStreamingKey(backgroundNatureKey),
       backgroundMusicKey: backgroundAudioStreamingKey(backgroundMusicKey),
       // Stored as noise; old drafts used drums.
@@ -954,6 +983,16 @@ export function CreateWorkspace({
         setClaudeThread(s.claudeThread);
         setInput(s.input);
         setSpeakerModelId(s.speakerModelId);
+        setTtsProvider(
+          s.ttsProvider === "orpheus" || s.ttsProvider === "fish"
+            ? s.ttsProvider
+            : "fish",
+        );
+        setOrpheusVoiceId(
+          typeof s.orpheusVoiceId === "string" && s.orpheusVoiceId.trim()
+            ? s.orpheusVoiceId
+            : DEFAULT_ORPHEUS_VOICE_ID,
+        );
         setBackgroundNatureKey(
           backgroundAudioStreamingKey(s.backgroundNatureKey),
         );
@@ -1325,6 +1364,21 @@ export function CreateWorkspace({
       })
       .catch(() => {
         // Keep existing fallback constants if the endpoint isn't reachable.
+      });
+  }, []);
+
+  useEffect(() => {
+    void listOrpheusSpeakers()
+      .then((voices) => {
+        if (!voices || voices.length === 0) return;
+        setOrpheusSpeakers(voices);
+        setOrpheusVoiceId((current) => {
+          if (voices.some((v) => v.id === current)) return current;
+          return voices[0]?.id ?? DEFAULT_ORPHEUS_VOICE_ID;
+        });
+      })
+      .catch(() => {
+        // Fall back to bundled ORPHEUS_VOICES constants.
       });
   }, []);
 
@@ -2136,7 +2190,9 @@ export function CreateWorkspace({
         meditationTargetMinutes,
         transcript,
         scriptText: existingScript,
-        reference_id: speakerModelId,
+        reference_id:
+          ttsProvider === "orpheus" ? orpheusVoiceId : speakerModelId,
+        ttsProvider,
         speed: speechSpeed,
         voiceFxPreset: speakerFxPreviewOn ? "mixer" : null,
         ...(backgroundNatureKey
@@ -2200,7 +2256,12 @@ export function CreateWorkspace({
       }
 
       const speakerName =
-        fishSpeakers.find((s) => s.modelId === speakerModelId)?.name ?? null;
+        ttsProvider === "orpheus"
+          ? (orpheusVoiceNameForId(orpheusVoiceId) ??
+            orpheusSpeakers.find((v) => v.id === orpheusVoiceId)?.name ??
+            null)
+          : (fishSpeakers.find((s) => s.modelId === speakerModelId)?.name ??
+            null);
 
       const pending: PendingLibraryGeneration = {
         jobId,
@@ -2209,7 +2270,8 @@ export function CreateWorkspace({
         description: metaDesc,
         meditationStyle,
         speakerName,
-        speakerModelId,
+        speakerModelId:
+          ttsProvider === "orpheus" ? orpheusVoiceId : speakerModelId,
       };
       const nextPending = [pending, ...loadPendingGenerations()].filter(
         (x, idx, arr) => arr.findIndex((y) => y.jobId === x.jobId) === idx,
@@ -2371,17 +2433,22 @@ export function CreateWorkspace({
   useEffect(() => {
     const el = speakerSampleRef.current;
     if (!el) return;
-    if (mediaBaseUrl && speakerModelId) {
+
+    const voiceId =
+      ttsProvider === "orpheus" ? orpheusVoiceId : speakerModelId;
+    if (mediaBaseUrl && voiceId) {
       const key = speakerFxPreviewOn
-        ? speakerPreviewLoudFxSampleKey(speakerModelId, speechSpeed)
-        : speakerPreviewLoudSampleKey(speakerModelId, speechSpeed);
+        ? ttsProvider === "orpheus"
+          ? orpheusSpeakerPreviewLoudFxSampleKey(voiceId, speechSpeed)
+          : speakerPreviewLoudFxSampleKey(voiceId, speechSpeed)
+        : ttsProvider === "orpheus"
+          ? orpheusSpeakerPreviewLoudSampleKey(voiceId, speechSpeed)
+          : speakerPreviewLoudSampleKey(voiceId, speechSpeed);
       const next = mediaFileUrl(mediaBaseUrl, key);
       if (el.src !== next) {
         el.src = next;
         void el.load();
       }
-      // If the speaker track was already playing, hot-swap to the new URL and keep playing
-      // (speed change, FX toggle, speaker change should not require re-pressing play).
       if (playing.speaker) {
         speakerRepeatWantedRef.current = true;
         void el.play().catch(() => {
@@ -2395,7 +2462,15 @@ export function CreateWorkspace({
         stopTrack("speaker");
       }
     }
-  }, [mediaBaseUrl, speakerModelId, speechSpeed, speakerFxPreviewOn, playing.speaker]);
+  }, [
+    mediaBaseUrl,
+    ttsProvider,
+    speakerModelId,
+    orpheusVoiceId,
+    speechSpeed,
+    speakerFxPreviewOn,
+    playing.speaker,
+  ]);
 
   useEffect(() => {
     const el = speakerSampleRef.current;
@@ -2464,7 +2539,11 @@ export function CreateWorkspace({
   }
 
   async function toggleRowPreview(track: SoloTrack) {
-    if (track === "speaker" && (!mediaBaseUrl || !speakerModelId)) return;
+    if (track === "speaker") {
+      const voiceId =
+        ttsProvider === "orpheus" ? orpheusVoiceId : speakerModelId;
+      if (!mediaBaseUrl || !voiceId) return;
+    }
     if (track === "nature" && !backgroundNatureKey) return;
     if (track === "music" && !backgroundMusicKey) return;
     if (track === "noise" && !backgroundNoiseKey) return;
@@ -2766,18 +2845,18 @@ export function CreateWorkspace({
                     Move towards a goal
                   </span>
                   <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                    Choose a goal from Plan. The guide creates a visualization / manifestation meditation that helps you step toward it.
+                    Choose a goal from Ideate. The guide creates a visualization / manifestation meditation that helps you step toward it.
                   </p>
                   {!planGoalsReady ? (
                     <p className="mt-3 text-xs text-muted">Checking your goals…</p>
                   ) : !hasPlanGoals ? (
                     <p className="mt-3 text-sm leading-relaxed text-muted">
-                      Add a dream in{" "}
+                      Add a project in{" "}
                       <Link
-                        href="/plan"
+                        href="/ideate"
                         className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
                       >
-                        Plan
+                        Ideate
                       </Link>{" "}
                       to unlock this option.
                     </p>
@@ -2802,18 +2881,18 @@ export function CreateWorkspace({
                       Move towards a goal
                     </span>
                     <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
-                      Choose a goal from Plan. The guide creates a visualization / manifestation meditation that helps you step toward it.
+                      Choose a goal from Ideate. The guide creates a visualization / manifestation meditation that helps you step toward it.
                     </p>
                     {!planGoalsReady ? (
                       <p className="mt-2 text-xs text-muted">Checking your goals…</p>
                     ) : !hasPlanGoals ? (
                       <p className="mt-2 text-sm leading-relaxed text-muted">
-                        Add a dream in{" "}
+                        Add a project in{" "}
                         <Link
-                          href="/plan"
+                          href="/ideate"
                           className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
                         >
-                          Plan
+                          Ideate
                         </Link>{" "}
                         to unlock this option.
                       </p>
@@ -3163,18 +3242,18 @@ export function CreateWorkspace({
               {phase === "goalPick" ? (
                 <div className="mt-3 space-y-3 rounded-xl border border-border bg-background px-3 py-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                    Your goals (from Plan)
+                    Your goals (from Ideate)
                   </p>
                   {!planGoalsReady ? (
                     <p className="text-sm text-muted">Loading goals…</p>
                   ) : !hasPlanGoals ? (
                     <p className="text-sm leading-relaxed text-muted">
-                      Add a dream in{" "}
+                      Add a project in{" "}
                       <Link
-                        href="/plan"
+                        href="/ideate"
                         className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
                       >
-                        Plan
+                        Ideate
                       </Link>{" "}
                       to use this flow.
                     </p>
@@ -3336,71 +3415,138 @@ export function CreateWorkspace({
               <audio ref={speakerSampleRef} className="hidden" playsInline />
 
               <div className="space-y-6">
-                <div className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:gap-2">
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
-                    Speaker
-                  </span>
-                  <select
-                    value={speakerModelId}
-                    onChange={(e) => {
-                      setSpeakerModelId(e.target.value);
-                    }}
-                    className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
-                    disabled={soundControlsDisabled}
-                  >
-                    {fishSpeakers.map((s) => (
-                      <option key={s.modelId} value={s.modelId}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                  <div
-                    className="shrink-0 flex flex-col items-center"
-                    title={
-                      speakerFxPreviewOn
-                        ? "Preview uses mixer FX (WAV on CDN). Click for dry Fish sample."
-                        : "Preview uses dry Fish MP3. Click for FX (requires generated *-fx.wav)."
-                    }
-                  >
-                    <div className="relative top-[2px] mb-1 text-center text-[10px] font-semibold uppercase leading-none tracking-wide text-muted">
-                      FX
+                <div className="flex flex-col gap-3 border-b border-border pb-6">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+                    <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
+                      Engine
+                    </span>
+                    <div className="inline-flex min-w-0 flex-1 rounded-xl border border-border bg-background p-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          stopTrack("speaker");
+                          setTtsProvider("fish");
+                        }}
+                        disabled={soundControlsDisabled}
+                        className={`min-w-0 flex-1 cursor-pointer rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                          ttsProvider === "fish"
+                            ? "bg-accent text-white dark:text-deep"
+                            : "text-foreground hover:bg-muted/40"
+                        }`}
+                      >
+                        Fish Audio
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          stopTrack("speaker");
+                          setTtsProvider("orpheus");
+                        }}
+                        disabled={soundControlsDisabled}
+                        className={`min-w-0 flex-1 cursor-pointer rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                          ttsProvider === "orpheus"
+                            ? "bg-accent text-white dark:text-deep"
+                            : "text-foreground hover:bg-muted/40"
+                        }`}
+                      >
+                        Orpheus
+                      </button>
                     </div>
-                    <Switch.Root
-                      checked={speakerFxPreviewOn}
-                      onCheckedChange={(v) => setSpeakerFxPreviewOn(Boolean(v))}
-                      disabled={soundControlsDisabled || !mediaBaseUrl || !speakerModelId}
-                      aria-label={
-                        speakerFxPreviewOn
-                          ? "Turn speaker FX off"
-                          : "Turn speaker FX on"
-                      }
-                      className="relative top-[2px] h-4 w-8 cursor-pointer rounded-full border border-border bg-muted/30 align-middle transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <Switch.Thumb className="block h-3 w-3 translate-x-[2px] rounded-full bg-white shadow transition-transform will-change-transform data-[state=checked]:translate-x-[18px]" />
-                    </Switch.Root>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void toggleRowPreview("speaker")}
-                    disabled={soundControlsDisabled || !mediaBaseUrl || !speakerModelId}
-                    aria-label={
-                      playing.speaker
-                        ? "Pause speaker sample"
-                        : "Play speaker sample"
-                    }
-                    title={
-                      !mediaBaseUrl
-                        ? "Voice samples need your media URL."
-                        : "Play or pause this voice sample (loops with a short gap)"
-                    }
-                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <PreviewPlayPauseIcon
-                      playing={
-                        playing.speaker
+
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+                    <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
+                      Voice
+                    </span>
+                    {ttsProvider === "fish" ? (
+                      <select
+                        value={speakerModelId}
+                        onChange={(e) => {
+                          setSpeakerModelId(e.target.value);
+                        }}
+                        className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
+                        disabled={soundControlsDisabled}
+                      >
+                        {fishSpeakers.map((s) => (
+                          <option key={s.modelId} value={s.modelId}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <select
+                        value={orpheusVoiceId}
+                        onChange={(e) => {
+                          setOrpheusVoiceId(e.target.value);
+                        }}
+                        className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
+                        disabled={soundControlsDisabled}
+                      >
+                        {orpheusSpeakers.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.description ? `${v.name} — ${v.description}` : v.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <div
+                      className="shrink-0 flex flex-col items-center"
+                      title={
+                        speakerFxPreviewOn
+                          ? "Preview uses mixer FX (WAV on CDN)."
+                          : "Preview uses loudness-normalized MP3 on CDN."
                       }
-                    />
-                  </button>
+                    >
+                      <div className="relative top-[2px] mb-1 text-center text-[10px] font-semibold uppercase leading-none tracking-wide text-muted">
+                        FX
+                      </div>
+                      <Switch.Root
+                        checked={speakerFxPreviewOn}
+                        onCheckedChange={(v) =>
+                          setSpeakerFxPreviewOn(Boolean(v))
+                        }
+                        disabled={
+                          soundControlsDisabled ||
+                          !mediaBaseUrl ||
+                          (ttsProvider === "orpheus"
+                            ? !orpheusVoiceId
+                            : !speakerModelId)
+                        }
+                        aria-label={
+                          speakerFxPreviewOn
+                            ? "Turn speaker FX off"
+                            : "Turn speaker FX on"
+                        }
+                        className="relative top-[2px] h-4 w-8 cursor-pointer rounded-full border border-border bg-muted/30 align-middle transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Switch.Thumb className="block h-3 w-3 translate-x-[2px] rounded-full bg-white shadow transition-transform will-change-transform data-[state=checked]:translate-x-[18px]" />
+                      </Switch.Root>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void toggleRowPreview("speaker")}
+                      disabled={
+                        soundControlsDisabled ||
+                        !mediaBaseUrl ||
+                        (ttsProvider === "orpheus"
+                          ? !orpheusVoiceId
+                          : !speakerModelId)
+                      }
+                      aria-label={
+                        playing.speaker
+                          ? "Pause speaker sample"
+                          : "Play speaker sample"
+                      }
+                      title={
+                        !mediaBaseUrl
+                          ? "Voice samples need your media URL."
+                          : "Play or pause this voice sample (loops with a short gap)"
+                      }
+                      className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <PreviewPlayPauseIcon playing={playing.speaker} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:gap-2">

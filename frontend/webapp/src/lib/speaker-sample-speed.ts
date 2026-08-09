@@ -66,3 +66,18 @@ export function speakerPreviewLoudFxSampleKey(
 ): string {
   return `speaker-samples/${modelId}/${speechSpeedToSampleStem(speed)}-loud-fx.wav`;
 }
+
+/** Orpheus preview samples — keep in sync with `backend/lib/speaker-sample-speed.ts`. */
+export function orpheusSpeakerPreviewLoudSampleKey(
+  voiceId: string,
+  speed: number,
+): string {
+  return `orpheus-speaker-samples/${voiceId}/${speechSpeedToSampleStem(speed)}-loud.mp3`;
+}
+
+export function orpheusSpeakerPreviewLoudFxSampleKey(
+  voiceId: string,
+  speed: number,
+): string {
+  return `orpheus-speaker-samples/${voiceId}/${speechSpeedToSampleStem(speed)}-loud-fx.wav`;
+}

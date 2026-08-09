@@ -1,9 +1,9 @@
 export const metadata = {
-  title: "Dream workspace · Plan",
+  title: "Dream workspace · Ideate",
   description: "Reflect, explore resistance, and shape a vision for your dream.",
 };
 
-export default function PlanGoalLayout({
+export default function IdeateGoalLayout({
   children,
 }: {
   children: React.ReactNode;

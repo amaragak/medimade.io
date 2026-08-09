@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Generate Orpheus TTS preview clips per voice/speed and upload under orpheus-speaker-samples/<voiceId>/.
+#
+# Usage:
+#   backend/scripts/generate-orpheus-speaker-samples --profile mm
+#   backend/scripts/generate-orpheus-speaker-samples --local-test --voice tara --profile mm
+set -euo pipefail
+
+BACKEND_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENTRY="$BACKEND_ROOT/scripts/generate-orpheus-speaker-samples.ts"
+
+cd "$BACKEND_ROOT"
+exec npx tsx "$ENTRY" "$@"

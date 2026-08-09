@@ -1,0 +1,5 @@
+test_output.wav
+__pycache__
+.git
+*.pyc
+README.md

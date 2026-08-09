@@ -23,9 +23,9 @@ export const CLAUDE_SECRET_NAME = "medimade/CLAUDE_API_KEY";
 export const OPENAI_SECRET_NAME = "medimade/OPENAI_API_KEY";
 /** Brevo API key for transactional email (magic-link auth, future notifications). */
 export const BREVO_SECRET_NAME = "medimade/BREVO_API_KEY";
-/** RunPod API key for Orpheus TTS serverless worker (`POST /orpheus/tts`). */
+/** RunPod API key for Orpheus TTS serverless (`nexslerdev/orpheus-fastapi-tts`, `POST /orpheus/tts`). */
 export const RUNPODS_SECRET_NAME = "medimade/RUNPODS_API_KEY";
-/** RunPod runsync URL for Orpheus TTS (e.g. https://api.runpod.ai/v2/{id}/runsync). */
+/** RunPod upstream URL (runsync or `/v1/audio/speech` on the Orpheus FastAPI worker). */
 export const RUNPODS_URL_SECRET_NAME = "medimade/RUNPODS_URL";
 
 export class MedimadeStack extends cdk.Stack {
@@ -374,12 +374,14 @@ export class MedimadeStack extends cdk.Stack {
         entry: path.join(__dirname, "../lambdas/generate-meditation-audio.ts"),
         handler: "handler",
         runtime: lambda.Runtime.NODEJS_20_X,
-        timeout: cdk.Duration.seconds(180),
+        timeout: cdk.Duration.seconds(900),
         memorySize: 1024,
         layers: [ffmpegLayer],
         environment: {
           CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,
           FISH_AUDIO_SECRET_ARN: fishApiKeySecret.secretArn,
+          RUNPODS_SECRET_ARN: runpodsApiKeySecret.secretArn,
+          RUNPODS_URL_SECRET_ARN: runpodsUrlSecret.secretArn,
           MEDIA_BUCKET_NAME: mediaBucket.bucketName,
           MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
           MEDIMADE_API_URL: httpApi.apiEndpoint,
@@ -391,6 +393,8 @@ export class MedimadeStack extends cdk.Stack {
     );
     claudeApiKeySecret.grantRead(meditationAudioWorker);
     fishApiKeySecret.grantRead(meditationAudioWorker);
+    runpodsApiKeySecret.grantRead(meditationAudioWorker);
+    runpodsUrlSecret.grantRead(meditationAudioWorker);
     mediaBucket.grantPut(meditationAudioWorker);
     mediaBucket.grantRead(meditationAudioWorker);
     meditationAnalyticsTable.grantWriteData(meditationAudioWorker);
@@ -564,6 +568,27 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "FishSpeakersListIntegration",
         fishSpeakersList,
+      ),
+    });
+
+    const orpheusSpeakersList = new lambda_nodejs.NodejsFunction(
+      this,
+      "OrpheusSpeakersListFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/orpheus-speakers.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+      },
+    );
+
+    httpApi.addRoutes({
+      path: "/orpheus/speakers",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration(
+        "OrpheusSpeakersListIntegration",
+        orpheusSpeakersList,
       ),
     });
 

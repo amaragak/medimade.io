@@ -6,12 +6,13 @@ import {
   GetSecretValueCommand,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
+import { orpheusTtsWav } from "../lib/orpheus-tts-client";
+import { DEFAULT_ORPHEUS_VOICE_ID } from "../lib/orpheus-voices";
 
 const secrets = new SecretsManagerClient({});
 let cachedApiKey: string | undefined;
 let cachedUpstreamUrl: string | undefined;
 
-const DEFAULT_VOICE = "tara";
 const DEFAULT_MODEL = "orpheus";
 
 async function getSecretString(
@@ -83,7 +84,7 @@ function parseSpeechRequest(raw: unknown): SpeechRequest | { error: string } {
   const voice =
     typeof body.voice === "string" && body.voice.trim()
       ? body.voice.trim()
-      : DEFAULT_VOICE;
+      : DEFAULT_ORPHEUS_VOICE_ID;
 
   const model =
     typeof body.model === "string" && body.model.trim()
@@ -107,25 +108,6 @@ function parseSpeechRequest(raw: unknown): SpeechRequest | { error: string } {
   return { text, voice, model, responseFormat, speed };
 }
 
-function isOpenAiSpeechUrl(url: string): boolean {
-  return /\/v1\/audio\/speech\/?$/i.test(url.trim());
-}
-
-function upstreamRequestBody(req: SpeechRequest, upstreamUrl: string): string {
-  if (isOpenAiSpeechUrl(upstreamUrl)) {
-    return JSON.stringify({
-      model: req.model,
-      input: req.text,
-      voice: req.voice,
-      response_format: req.responseFormat,
-      speed: req.speed,
-    });
-  }
-  return JSON.stringify({
-    input: { text: req.text, voice: req.voice },
-  });
-}
-
 function wavAudioResponse(audioB64: string): APIGatewayProxyStructuredResultV2 {
   return {
     statusCode: 200,
@@ -137,17 +119,6 @@ function wavAudioResponse(audioB64: string): APIGatewayProxyStructuredResultV2 {
     body: audioB64,
     isBase64Encoded: true,
   };
-}
-
-function extractAudioBase64FromRunpodOutput(
-  output: Record<string, unknown>,
-): string | null {
-  if (typeof output.error === "string" && output.error.trim()) {
-    throw new Error(output.error.trim());
-  }
-  const audioB64 =
-    typeof output.audio_base64 === "string" ? output.audio_base64.trim() : "";
-  return audioB64 || null;
 }
 
 export async function handler(
@@ -179,74 +150,16 @@ export async function handler(
     return json(400, { error: parsed.error });
   }
 
-  let upstream: Response;
   try {
-    upstream = await fetch(upstreamUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: upstreamRequestBody(parsed, upstreamUrl),
+    const wav = await orpheusTtsWav({
+      apiKey,
+      upstreamUrl,
+      text: parsed.text,
+      voice: parsed.voice,
+      model: parsed.model,
+      speed: parsed.speed,
     });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Upstream TTS fetch failed";
-    return json(502, { error: msg });
-  }
-
-  const contentType = upstream.headers.get("content-type")?.toLowerCase() ?? "";
-
-  if (contentType.includes("audio/")) {
-    if (!upstream.ok) {
-      const detail = await upstream.text().catch(() => "");
-      return json(upstream.status, {
-        error: "Upstream TTS request failed",
-        detail: detail.slice(0, 2000),
-      });
-    }
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    return wavAudioResponse(buf.toString("base64"));
-  }
-
-  let data: Record<string, unknown> = {};
-  try {
-    data = (await upstream.json()) as Record<string, unknown>;
-  } catch {
-    const detail = await upstream.text().catch(() => "");
-    return json(upstream.status || 502, {
-      error: "Upstream returned non-JSON",
-      detail: detail.slice(0, 2000),
-    });
-  }
-
-  if (!upstream.ok) {
-    return json(upstream.status, {
-      error: "Upstream TTS request failed",
-      detail:
-        (typeof data.error === "string" && data.error) ||
-        JSON.stringify(data).slice(0, 2000),
-    });
-  }
-
-  const output = data.output;
-  if (!output || typeof output !== "object") {
-    return json(502, {
-      error: "Upstream response missing output",
-      detail: JSON.stringify(data).slice(0, 2000),
-    });
-  }
-
-  try {
-    const audioB64 = extractAudioBase64FromRunpodOutput(
-      output as Record<string, unknown>,
-    );
-    if (!audioB64) {
-      return json(502, {
-        error: "Upstream output missing audio_base64",
-        detail: JSON.stringify(output).slice(0, 2000),
-      });
-    }
-    return wavAudioResponse(audioB64);
+    return wavAudioResponse(wav.toString("base64"));
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Upstream TTS failed";
     return json(502, { error: msg });

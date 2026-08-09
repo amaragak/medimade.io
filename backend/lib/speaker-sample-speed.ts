@@ -63,3 +63,25 @@ export function speakerPreviewLoudFxSampleKey(
 ): string {
   return `speaker-samples/${modelId}/${speechSpeedToSampleStem(speed)}-loud-fx.wav`;
 }
+
+/** Orpheus preview samples: S3 keys `orpheus-speaker-samples/<voiceId>/<stem>.mp3`. */
+export function orpheusSpeakerPreviewSampleKey(
+  voiceId: string,
+  speed: number,
+): string {
+  return `orpheus-speaker-samples/${voiceId}/${speechSpeedToSampleStem(speed)}.mp3`;
+}
+
+export function orpheusSpeakerPreviewLoudSampleKey(
+  voiceId: string,
+  speed: number,
+): string {
+  return `orpheus-speaker-samples/${voiceId}/${speechSpeedToSampleStem(speed)}-loud.mp3`;
+}
+
+export function orpheusSpeakerPreviewLoudFxSampleKey(
+  voiceId: string,
+  speed: number,
+): string {
+  return `orpheus-speaker-samples/${voiceId}/${speechSpeedToSampleStem(speed)}-loud-fx.wav`;
+}

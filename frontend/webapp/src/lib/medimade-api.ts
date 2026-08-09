@@ -704,6 +704,14 @@ export type FishSpeaker = {
   modelId: string;
 };
 
+export type OrpheusSpeaker = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
+export type TtsProvider = "fish" | "orpheus";
+
 /** Pedalboard preset for light delay + reverb (sound mixer / speaker previews). */
 export const VOICE_FX_PRESET_MEDITATION_MIXER = "mixer";
 
@@ -758,12 +766,65 @@ export async function listFishSpeakers(): Promise<FishSpeaker[]> {
   return data.speakers ?? [];
 }
 
+export async function listOrpheusSpeakers(): Promise<OrpheusSpeaker[]> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/orpheus/speakers`);
+  const data = (await res.json()) as {
+    voices?: OrpheusSpeaker[];
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+  return data.voices ?? [];
+}
+
+const ORPHEUS_PREVIEW_LINE =
+  "Take a slow breath in, and let it go.";
+
+/** Live Orpheus preview via `POST /orpheus/tts` (WAV blob). */
+export async function fetchOrpheusSpeechPreview(params: {
+  voice: string;
+  speed?: number;
+  input?: string;
+}): Promise<Blob> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/orpheus/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      input: params.input ?? ORPHEUS_PREVIEW_LINE,
+      voice: params.voice,
+      response_format: "wav",
+      ...(typeof params.speed === "number" && Number.isFinite(params.speed)
+        ? { speed: params.speed }
+        : {}),
+    }),
+  });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try {
+      const data = (await res.json()) as { error?: string; detail?: string };
+      msg = data.detail ?? data.error ?? msg;
+    } catch {
+      /* binary or empty */
+    }
+    throw new Error(msg);
+  }
+  return res.blob();
+}
+
 /** Calls backend Lambda to generate script (if needed), synthesize with Fish, store in S3, and return CloudFront URL. */
 export async function generateMeditationAudio(params: {
   meditationStyle: string | null;
   transcript: string;
   scriptText?: string | null;
   reference_id: string;
+  ttsProvider?: TtsProvider;
   speed?: number;
   /** If set, applies voice FX (Pedalboard) after loudness normalization. */
   voiceFxPreset?: string | null;
@@ -804,6 +865,7 @@ export async function generateMeditationAudio(params: {
     transcript: params.transcript,
     scriptText: params.scriptText ?? "",
     reference_id: params.reference_id,
+    ...(params.ttsProvider ? { ttsProvider: params.ttsProvider } : {}),
     ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
     ...(speed === undefined ? {} : { speed }),
     ...(backgroundSoundKey === undefined ? {} : { backgroundSoundKey }),
@@ -906,6 +968,7 @@ export async function createMeditationAudioJob(params: {
   transcript: string;
   scriptText?: string | null;
   reference_id: string;
+  ttsProvider?: TtsProvider;
   speed?: number;
   /** If set, applies voice FX (Pedalboard) after loudness normalization. */
   voiceFxPreset?: string | null;
@@ -953,6 +1016,7 @@ export async function createMeditationAudioJob(params: {
     transcript: params.transcript,
     scriptText: params.scriptText ?? "",
     reference_id: params.reference_id,
+    ...(params.ttsProvider ? { ttsProvider: params.ttsProvider } : {}),
     meditationTargetMinutes,
     ...(params.journalMode === true ? { journalMode: true } : {}),
     ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
@@ -1114,6 +1178,8 @@ export type MeditationDraftStateV1 = {
   input: string;
   speechSpeed: number;
   speakerModelId: string;
+  ttsProvider?: TtsProvider;
+  orpheusVoiceId?: string;
   speakerFxPreviewOn?: boolean;
   backgroundNatureKey: string;
   backgroundMusicKey: string;

@@ -8,6 +8,11 @@ import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { randomUUID } from "crypto";
 import { FIXED_SPEECH_PREVIEW_SPEED } from "../lib/speaker-sample-speed";
 import { requireUserJson } from "../lib/medimade-auth-http";
+import {
+  normalizeOrpheusVoiceId,
+  normalizeTtsProvider,
+  type TtsProvider,
+} from "../lib/orpheus-voices";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const lambdaClient = new LambdaClient({});
@@ -45,6 +50,7 @@ export async function handler(
     meditationStyle?: string;
     scriptText?: string;
     reference_id?: string;
+    ttsProvider?: string;
     speed?: number;
     voiceFxPreset?: string;
     /** True when the user used journal / “How I feel” flow (no real style label). */
@@ -67,13 +73,23 @@ export async function handler(
     return json(400, { error: "Invalid JSON body" });
   }
 
-  const referenceId =
+  const ttsProvider: TtsProvider = normalizeTtsProvider(body.ttsProvider);
+
+  let referenceId =
     typeof body.reference_id === "string" && body.reference_id.trim()
       ? body.reference_id.trim()
       : "";
-  if (!referenceId) {
+  if (ttsProvider === "orpheus") {
+    const voice = normalizeOrpheusVoiceId(referenceId);
+    if (!voice) {
+      return json(400, {
+        error: "`reference_id` must be a valid Orpheus voice id (e.g. tara, leah)",
+      });
+    }
+    referenceId = voice;
+  } else if (!referenceId) {
     return json(400, {
-      error: "`reference_id` (voice model id) is required",
+      error: "`reference_id` (Fish voice model id) is required",
     });
   }
 
@@ -129,6 +145,7 @@ export async function handler(
         meditationStyle,
         scriptText,
         referenceId,
+        ttsProvider,
         speed,
         ...(journalMode ? { journalMode: true } : {}),
         meditationTargetMinutes,

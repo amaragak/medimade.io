@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Wire Medimade to a RunPod Orpheus Serverless endpoint after the image is deployed.
+#
+# RunPod template/endpoint creation requires the account API key from
+# https://www.runpod.io/console/user/settings (NOT the rpa_* serverless key).
+#
+# Usage:
+#   backend/scripts/deploy-orpheus-serverless --endpoint-id abc123 --profile mm
+#   backend/scripts/deploy-orpheus-serverless --endpoint-id abc123 --image youruser/orpheus-serverless:v1 --profile mm
+#
+# If you already updated the endpoint image in the RunPod console, only --endpoint-id is needed
+# to refresh medimade/RUNPODS_URL and smoke-test /health + /runsync.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ENDPOINT_ID=""
+IMAGE=""
+AWS_PROFILE_ARG=()
+RUNPOD_MGMT_KEY="${RUNPOD_MANAGEMENT_API_KEY:-}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --endpoint-id)
+      ENDPOINT_ID="$2"
+      shift 2
+      ;;
+    --image)
+      IMAGE="$2"
+      shift 2
+      ;;
+    --profile)
+      AWS_PROFILE_ARG=(--profile "$2")
+      export AWS_PROFILE="$2"
+      shift 2
+      ;;
+    --runpod-key)
+      RUNPOD_MGMT_KEY="$2"
+      shift 2
+      ;;
+    -h | --help)
+      sed -n '1,20p' "$0"
+      exit 0
+      ;;
+    *)
+      echo "error: unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ -z "$ENDPOINT_ID" ]]; then
+  echo "error: --endpoint-id is required" >&2
+  exit 1
+fi
+
+RUNSYNC_URL="https://api.runpod.ai/v2/${ENDPOINT_ID}/runsync"
+
+echo "==> Updating AWS secret medimade/RUNPODS_URL → $RUNSYNC_URL"
+aws secretsmanager put-secret-value \
+  "${AWS_PROFILE_ARG[@]}" \
+  --secret-id medimade/RUNPODS_URL \
+  --secret-string "$RUNSYNC_URL"
+
+RPA_KEY="$(aws secretsmanager get-secret-value \
+  "${AWS_PROFILE_ARG[@]}" \
+  --secret-id medimade/RUNPODS_API_KEY \
+  --query SecretString --output text)"
+
+echo "==> RunPod health"
+curl -sS -H "Authorization: Bearer $RPA_KEY" \
+  "https://api.runpod.ai/v2/${ENDPOINT_ID}/health" | python3 -m json.tool
+
+echo "==> Purging stale queue (safe before first test)"
+curl -sS -X POST -H "Authorization: Bearer $RPA_KEY" \
+  "https://api.runpod.ai/v2/${ENDPOINT_ID}/purge-queue" | python3 -m json.tool || true
+
+if [[ -n "$IMAGE" && -n "$RUNPOD_MGMT_KEY" ]]; then
+  echo "==> Creating/updating RunPod serverless template for $IMAGE"
+  QUERY='mutation saveTemplate($input: SaveTemplateInput!) { saveTemplate(input: $input) { id name imageName } }'
+  PAYLOAD=$(python3 - <<PY
+import json, os
+print(json.dumps({
+  "query": """$QUERY""",
+  "variables": {
+    "input": {
+      "name": "medimade-orpheus-serverless",
+      "imageName": os.environ["IMAGE"],
+      "isServerless": True,
+      "volumeInGb": 0,
+      "containerDiskInGb": 25,
+      "dockerArgs": "python -u handler.py",
+    }
+  }
+}))
+PY
+)
+  IMAGE="$IMAGE" curl -sS -X POST "https://api.runpod.io/graphql?api_key=${RUNPOD_MGMT_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD" | python3 -m json.tool
+  echo "    Assign the new template to endpoint $ENDPOINT_ID in the RunPod console,"
+  echo "    or re-run saveEndpoint via GraphQL (see backend/orpheus-serverless/README.md)."
+elif [[ -n "$IMAGE" ]]; then
+  echo "==> Skipping template create (set RUNPOD_MANAGEMENT_API_KEY or --runpod-key to automate)."
+  echo "    Manually set endpoint $ENDPOINT_ID image to: $IMAGE"
+  echo "    Settings: max workers=1, active workers=0, container disk=25GB, GPU 24GB tier."
+fi
+
+echo "==> Smoke test /runsync (short text; may take 60–120s on cold start)"
+curl -sS --max-time 180 -X POST "$RUNSYNC_URL" \
+  -H "Authorization: Bearer $RPA_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"input":{"text":"Welcome. <sigh> Let your shoulders drop.","voice":"tara"}}' \
+  | python3 - <<'PY'
+import json, sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+except json.JSONDecodeError:
+    print(raw[:2000])
+    sys.exit(1)
+out = d.get("output") or {}
+print(json.dumps({
+    "status": d.get("status"),
+    "error": d.get("error") or out.get("error"),
+    "duration_seconds": out.get("duration_seconds"),
+    "has_audio": bool(out.get("audio_base64")),
+}, indent=2))
+if out.get("error") or d.get("error"):
+    sys.exit(1)
+if not out.get("audio_base64"):
+    sys.exit(1)
+PY
+
+echo "==> Done. RUNPODS_URL updated; smoke test passed."
+echo "    Local sample: cd backend && npm run generate-orpheus-speaker-samples -- --local-test --voice tara --speed 0.9 --profile mm"

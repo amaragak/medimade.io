@@ -1,0 +1,20 @@
+# Generated audio
+*.wav
+test_output.wav
+
+# Model weights / HF cache, if anything downloads locally during testing
+models/
+.cache/
+*.safetensors
+*.bin
+*.pth
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Docker build leftovers
+.docker/

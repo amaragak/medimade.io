@@ -13,6 +13,9 @@ import {
   type DreamState,
   type PlanDream,
 } from "@/lib/plan-dreams";
+import { PlanResistanceThreadBanner } from "@/components/plan/plan-resistance-thread-banner";
+import { loadIdeateStore } from "@/lib/plan-ideate-store";
+import { globalResistanceThreads } from "@/lib/plan-resistance-threads";
 
 type FilterTab = "all" | DreamState;
 
@@ -87,19 +90,27 @@ export function PlanHomeClient() {
     ...DREAM_STATE_ORDER.map((s) => ({ id: s, label: DREAM_STATE_LABEL[s] })),
   ];
 
+  const resistanceThreads = globalResistanceThreads(loadIdeateStore());
+
   return (
     <div className="mesh-hero min-h-[calc(100vh-3.5rem)] pb-28">
       <section className="mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
         <p className="text-sm font-medium uppercase tracking-widest text-accent">
-          PLAN
+          IDEATE
         </p>
         <h1 className="mt-3 font-display text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
           Dreams → reality
         </h1>
         <p className="mt-4 max-w-2xl text-lg leading-relaxed text-muted">
-          Add a dream or goal, explore what&apos;s underneath it, then generate a
+          Add a project or goal, explore what&apos;s underneath it, then generate a
           visualisation meditation to make it feel real.
         </p>
+
+        {resistanceThreads[0] ? (
+          <div className="mt-8 max-w-2xl">
+            <PlanResistanceThreadBanner theme={resistanceThreads[0]} />
+          </div>
+        ) : null}
 
         <div className="mt-8 flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {tabs.map((t) => {
@@ -130,7 +141,7 @@ export function PlanHomeClient() {
             {sorted.map((d) => (
               <li key={d.id}>
                 <Link
-                  href={`/plan/goal/${encodeURIComponent(d.id)}`}
+                  href={`/ideate/goal/${encodeURIComponent(d.id)}`}
                   className="block rounded-2xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-accent/35 hover:bg-accent-soft/10"
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -164,10 +175,10 @@ export function PlanHomeClient() {
       <button
         type="button"
         onClick={() => setModalOpen(true)}
-        className="fixed bottom-6 right-6 z-40 rounded-full bg-accent px-5 py-3 text-sm font-semibold text-white shadow-lg transition-opacity hover:opacity-90 dark:text-deep"
+        className="fixed bottom-6 right-6 z-40 cursor-pointer rounded-full bg-accent px-5 py-3 text-sm font-semibold text-white shadow-lg transition-opacity hover:opacity-90 dark:text-deep"
         aria-haspopup="dialog"
       >
-        Add a dream
+        Add a project
       </button>
 
       {modalOpen ? (
@@ -178,15 +189,15 @@ export function PlanHomeClient() {
         >
           <div
             role="dialog"
-            aria-labelledby="plan-add-dream-title"
+            aria-labelledby="ideate-add-dream-title"
             className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <h2
-              id="plan-add-dream-title"
+              id="ideate-add-dream-title"
               className="font-display text-xl font-medium text-foreground"
             >
-              New dream
+              New project
             </h2>
             <p className="mt-1 text-sm text-muted">
               Name it softly—you can shape the rest inside the workspace.

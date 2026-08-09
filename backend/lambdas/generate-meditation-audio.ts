@@ -25,6 +25,11 @@ import {
 } from "../lib/meditation-user-pk";
 import { parseAnthropicMessageUsage } from "../lib/anthropic-pricing";
 import { estimateCoachChatTokensFromTranscript } from "../lib/claude-coach-chat-estimate";
+import { orpheusTtsWav } from "../lib/orpheus-tts-client";
+import {
+  normalizeTtsProvider,
+  type TtsProvider,
+} from "../lib/orpheus-voices";
 import {
   getFleetScriptWordTargets,
   scriptDurationPlanningAppendix,
@@ -128,6 +133,8 @@ async function wavToMp3Buffer(wavBuf: Buffer): Promise<Buffer> {
 
 let cachedClaudeKey: string | undefined;
 let cachedFishKey: string | undefined;
+let cachedRunpodApiKey: string | undefined;
+let cachedRunpodUpstreamUrl: string | undefined;
 
 // Dev-friendly prompt: shorter output so iteration is fast.
 // Default to true unless explicitly set `DEV_MODE=false`.
@@ -288,6 +295,28 @@ async function getFishApiKey(): Promise<string> {
   if (!s) throw new Error("Fish Audio API key secret is empty");
   cachedFishKey = s;
   return cachedFishKey;
+}
+
+async function getRunpodApiKey(): Promise<string> {
+  if (cachedRunpodApiKey) return cachedRunpodApiKey;
+  const arn = process.env.RUNPODS_SECRET_ARN;
+  if (!arn) throw new Error("RUNPODS_SECRET_ARN is not set");
+  const out = await secrets.send(new GetSecretValueCommand({ SecretId: arn }));
+  const s = out.SecretString?.trim();
+  if (!s) throw new Error("RunPod API key secret is empty");
+  cachedRunpodApiKey = s;
+  return cachedRunpodApiKey;
+}
+
+async function getRunpodUpstreamUrl(): Promise<string> {
+  if (cachedRunpodUpstreamUrl) return cachedRunpodUpstreamUrl;
+  const arn = process.env.RUNPODS_URL_SECRET_ARN;
+  if (!arn) throw new Error("RUNPODS_URL_SECRET_ARN is not set");
+  const out = await secrets.send(new GetSecretValueCommand({ SecretId: arn }));
+  const s = out.SecretString?.trim();
+  if (!s) throw new Error("RunPod URL secret is empty");
+  cachedRunpodUpstreamUrl = s;
+  return cachedRunpodUpstreamUrl;
 }
 
 function json(
@@ -793,19 +822,51 @@ async function fishTtsMp3(params: {
   throw new Error(lastErr ?? "Fish Audio request failed");
 }
 
+async function synthesizeSegmentMp3(params: {
+  provider: TtsProvider;
+  fishApiKey?: string;
+  runpod?: { apiKey: string; upstreamUrl: string };
+  text: string;
+  voiceId: string;
+  speed: number;
+}): Promise<Buffer> {
+  if (params.provider === "fish") {
+    if (!params.fishApiKey) throw new Error("Fish API key is not configured");
+    return fishTtsMp3({
+      apiKey: params.fishApiKey,
+      text: params.text,
+      reference_id: params.voiceId,
+      speed: params.speed,
+    });
+  }
+  if (!params.runpod) throw new Error("RunPod TTS is not configured");
+  const wav = await orpheusTtsWav({
+    apiKey: params.runpod.apiKey,
+    upstreamUrl: params.runpod.upstreamUrl,
+    text: params.text,
+    voice: params.voiceId,
+    speed: params.speed,
+  });
+  return wavToMp3Buffer(wav);
+}
+
 async function synthesizeScriptWithPauses(params: {
-  apiKey: string;
+  provider: TtsProvider;
+  fishApiKey?: string;
+  runpod?: { apiKey: string; upstreamUrl: string };
   script: string;
-  reference_id: string;
+  voiceId: string;
   speed: number;
 }): Promise<{ audio: Buffer; utf8Bytes: number }> {
   const segments = parseScriptIntoSegments(params.script);
   if (segments.length === 0) {
     const clean = sanitizeScriptForTts(params.script);
-    const audio = await fishTtsMp3({
-      apiKey: params.apiKey,
+    const audio = await synthesizeSegmentMp3({
+      provider: params.provider,
+      fishApiKey: params.fishApiKey,
+      runpod: params.runpod,
       text: clean,
-      reference_id: params.reference_id,
+      voiceId: params.voiceId,
       speed: params.speed,
     });
     return { audio, utf8Bytes: Buffer.byteLength(clean, "utf8") };
@@ -821,10 +882,12 @@ async function synthesizeScriptWithPauses(params: {
     if (!clean) continue;
     totalBytes += Buffer.byteLength(clean, "utf8");
 
-    const segBuf = await fishTtsMp3({
-      apiKey: params.apiKey,
+    const segBuf = await synthesizeSegmentMp3({
+      provider: params.provider,
+      fishApiKey: params.fishApiKey,
+      runpod: params.runpod,
       text: clean,
-      reference_id: params.reference_id,
+      voiceId: params.voiceId,
       speed: params.speed,
     });
     const segPath = `/tmp/seg-${id}-${i}.mp3`;
@@ -853,10 +916,12 @@ async function synthesizeScriptWithPauses(params: {
 
   if (files.length === 0) {
     const clean = sanitizeScriptForTts(params.script);
-    const audio = await fishTtsMp3({
-      apiKey: params.apiKey,
+    const audio = await synthesizeSegmentMp3({
+      provider: params.provider,
+      fishApiKey: params.fishApiKey,
+      runpod: params.runpod,
       text: clean,
-      reference_id: params.reference_id,
+      voiceId: params.voiceId,
       speed: params.speed,
     });
     return { audio, utf8Bytes: Buffer.byteLength(clean, "utf8") };
@@ -970,6 +1035,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     meditationTargetMinutes?: number;
     scriptText?: string;
     referenceId?: string;
+    ttsProvider?: TtsProvider;
     speed?: number;
     voiceFxPreset?: string;
     backgroundSoundKey?: string;
@@ -1018,6 +1084,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     meditationTargetMinutes?: number;
     scriptText?: string;
     reference_id?: string;
+    ttsProvider?: TtsProvider;
     speed?: number;
     voiceFxPreset?: string;
     backgroundSoundKey?: string;
@@ -1036,6 +1103,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     meditationTargetMinutes: jobItem.meditationTargetMinutes,
     scriptText: jobItem.scriptText,
     reference_id: jobItem.referenceId,
+    ttsProvider: jobItem.ttsProvider,
     speed: jobItem.speed,
     voiceFxPreset: jobItem.voiceFxPreset,
     backgroundSoundKey: jobItem.backgroundSoundKey,
@@ -1049,13 +1117,18 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     backgroundNoiseGain: jobItem.backgroundNoiseGain,
   };
 
+  const ttsProvider = normalizeTtsProvider(body.ttsProvider ?? jobItem.ttsProvider);
+
   const referenceId =
     typeof body.reference_id === "string" && body.reference_id.trim()
       ? body.reference_id.trim()
       : "";
   if (!referenceId) {
-    const msg = "`reference_id` (voice model id) is required";
-    console.error("job missing referenceId", { jobId: event.jobId });
+    const msg =
+      ttsProvider === "orpheus"
+        ? "`reference_id` (Orpheus voice id) is required"
+        : "`reference_id` (Fish voice model id) is required";
+    console.error("job missing referenceId", { jobId: event.jobId, ttsProvider });
     await markJobFailed(event.jobId, msg);
     return json(400, { error: msg });
   }
@@ -1148,6 +1221,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     meditationStylePresent: Boolean(meditationStyle?.trim()),
     scriptTextChars: scriptText.length,
     reference_id: referenceId,
+    ttsProvider,
     speechSpeed,
     backgroundLayerCount: backgroundLayers.length,
   });
@@ -1287,12 +1361,25 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     console.warn("job metadata update failed", { jobId: event.jobId, msg });
   }
 
-  let fishKey: string;
+  let fishKey: string | undefined;
+  let runpodCreds: { apiKey: string; upstreamUrl: string } | undefined;
   try {
-    fishKey = await getFishApiKey();
+    if (ttsProvider === "orpheus") {
+      runpodCreds = {
+        apiKey: await getRunpodApiKey(),
+        upstreamUrl: await getRunpodUpstreamUrl(),
+      };
+    } else {
+      fishKey = await getFishApiKey();
+    }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Fish secret lookup failed";
-    console.error("fish secret lookup failed", { msg });
+    const msg =
+      e instanceof Error
+        ? e.message
+        : ttsProvider === "orpheus"
+          ? "RunPod secret lookup failed"
+          : "Fish secret lookup failed";
+    console.error("tts secret lookup failed", { msg, ttsProvider });
     await markJobFailed(event.jobId, msg);
     return json(500, { error: msg });
   }
@@ -1303,8 +1390,9 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   let spokenUtf8Bytes = 0;
   let spokenWordCount = 0;
   try {
-    console.log("calling Fish TTS with pause-aware synthesis", {
+    console.log("calling TTS with pause-aware synthesis", {
       reference_id: referenceId,
+      ttsProvider,
     });
     // Speak the meditation title first, then pause, then the script.
     // Note: `scriptTextUsed` is stored/displayed without the title (script should not include it).
@@ -1316,14 +1404,16 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       ? spokenPlain.split(/\s+/).filter(Boolean).length
       : 0;
     const { audio, utf8Bytes } = await synthesizeScriptWithPauses({
-      apiKey: fishKey,
+      provider: ttsProvider,
+      fishApiKey: fishKey,
+      runpod: runpodCreds,
       script: ttsScript,
-      reference_id: referenceId,
+      voiceId: referenceId,
       speed: speechSpeed,
     });
     mp3Buf = audio;
     scriptUtf8Bytes = utf8Bytes;
-    console.log("Fish TTS success", { bytes: mp3Buf.byteLength });
+    console.log("TTS success", { bytes: mp3Buf.byteLength, ttsProvider });
     try {
       mp3Buf = await loudnormMp3Buffer(mp3Buf);
       console.log("loudnorm -16 LUFS applied to speech", {
@@ -1355,8 +1445,13 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       }
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Fish TTS failed";
-    console.error("Fish TTS failed", { msg });
+    const msg =
+      e instanceof Error
+        ? e.message
+        : ttsProvider === "orpheus"
+          ? "Orpheus TTS failed"
+          : "Fish TTS failed";
+    console.error("TTS failed", { msg, ttsProvider });
     await markJobFailed(event.jobId, msg);
     return json(500, { error: msg });
   }

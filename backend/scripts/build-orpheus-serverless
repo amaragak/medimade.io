@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Build (and optionally push) the Orpheus 3B RunPod Serverless worker image.
+#
+# Usage (from repo root or backend/):
+#   backend/scripts/build-orpheus-serverless
+#   backend/scripts/build-orpheus-serverless --tag youruser/orpheus-serverless:v1 --push
+#
+# Requires Docker, ~40GB free disk, network for HuggingFace during build (~15–18GB image).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WORKER_DIR="$ROOT/orpheus-serverless"
+TAG="medimade/orpheus-serverless:v1"
+PUSH=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --push)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --push requires an image ref (e.g. youruser/orpheus-serverless:v1)" >&2
+        exit 1
+      fi
+      TAG="$2"
+      PUSH=1
+      shift 2
+      ;;
+    --tag)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --tag requires a value" >&2
+        exit 1
+      fi
+      TAG="$2"
+      shift 2
+      ;;
+    -h | --help)
+      echo "Usage: $0 [--tag IMAGE] [--push [IMAGE]]" >&2
+      echo "  --tag IMAGE    local tag (default: medimade/orpheus-serverless:v1)" >&2
+      echo "  --push [IMAGE] push after build; IMAGE defaults to --tag value" >&2
+      exit 0
+      ;;
+    *)
+      echo "error: unknown argument: $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ ! -d "$WORKER_DIR" ]]; then
+  echo "error: missing $WORKER_DIR" >&2
+  exit 1
+fi
+
+echo "==> Building Orpheus Serverless worker ($TAG) from $WORKER_DIR ..."
+echo "    (first build downloads ~6GB HF weights + PyTorch; allow 30–90 min)"
+docker build --platform linux/amd64 -t "$TAG" "$WORKER_DIR"
+
+echo "==> Built: $TAG"
+
+if [[ -n "$PUSH" ]]; then
+  echo "==> Pushing $TAG ..."
+  docker push "$TAG"
+  echo "==> Pushed."
+else
+  echo "Local build only. Push with:"
+  echo "  docker push $TAG"
+  echo "  # or"
+  echo "  $0 --tag $TAG --push"
+fi

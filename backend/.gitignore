@@ -16,3 +16,6 @@ cdk.out
 
 # local env files
 .env*.local
+
+# local dev artifacts (Orpheus/Fish sample tests, etc.)
+.local/

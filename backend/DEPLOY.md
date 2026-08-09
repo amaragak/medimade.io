@@ -183,6 +183,10 @@ it means `authEmailFrom` and/or `authWebappOrigin` were not provided at deploy t
 - Legacy alias: **`POST {ApiUrl}/orpheus/tts`** (same handler; also accepts `{ "text", "voice" }`)  
 - Requires secrets **`medimade/RUNPODS_API_KEY`** and **`medimade/RUNPODS_URL`**. If the URL ends with `/v1/audio/speech`, the Lambda forwards the OpenAI-shaped body; otherwise it uses RunPod runsync `{ input: { text, voice } }`. Note: API Gateway HTTP integrations time out at **30s**; cold RunPod workers may exceed that — keep a warm worker or switch to async RunPod jobs for long text.
 
+- **GET** `{ApiUrl}/orpheus/speakers` — built-in Orpheus voice catalog (`{ "voices": [{ "id", "name", "description?" }] }`)
+
+- Meditation audio jobs accept **`ttsProvider`**: `"fish"` (default) or `"orpheus"`. **`reference_id`** is the Fish model id or Orpheus voice id (`tara`, `leah`, …). The async worker calls Fish directly or RunPod (via secrets) for Orpheus.
+
 - **POST** `{MedimadeChatUrl}` (Claude Haiku, **streams** via Lambda response streaming)  
 
 **Coach chat** — body:
@@ -201,7 +205,18 @@ it means `authEmailFrom` and/or `authWebappOrigin` were not provided at deploy t
   `inputFormat` defaults to **`auto`** (detects RIFF/WAVE vs everything else such as Fish **MP3**).  
   Success: `200` JSON `{ "format":"wav", "sampleRate", "channels", "audioBase64", "preset", "inputFormat" }`  
 
-Speaker preview **`*-fx.wav`** files (same Pedalboard chain) are produced by `npm run generate-speaker-samples` when `MEDIIMADE_API_URL` (or stack `ApiUrl`) is resolvable.
+Speaker preview **`*-fx.wav`** / **`*-loud-fx.wav`** files (Pedalboard preset `mixer`) are produced by:
+
+- Fish: `npm run generate-speaker-samples -- --profile mm`
+- Orpheus: `npm run generate-orpheus-speaker-samples -- --profile mm`
+
+  Local single-sample test uses **`jobPolicy=single`**: purges the RunPod queue, submits one `/run` job (not `/runsync`), and **cancels that job** on timeout, error, or Ctrl+C. Output goes to gitignored `backend/.local/orpheus-speaker-samples/`.
+
+  `npm run generate-orpheus-speaker-samples -- --local-test --voice tara --speed 0.9 --profile mm`
+
+  Output example: `.local/orpheus-speaker-samples/tara-0.9.mp3`, `…-loud.mp3`, `…-loud-fx.wav`
+
+when `MEDIIMADE_API_URL` (or stack `ApiUrl`) is resolvable.
 
 ### Journal (HTTP API on `{ApiUrl}`)
 
@@ -232,19 +247,76 @@ There is **no auth** on these paths today: the client sends an opaque **`ownerId
 
 The web journal UI loads from **localStorage** first, then may **GET** and merge when the cloud copy is newer (or local is a single empty stub). Edits **debounce to PUT** the full store; the server persists **per-entry items** in DynamoDB.
 
-## RunPod Orpheus 3B worker (optional TTS)
+## RunPod Orpheus TTS (serverless)
 
-Separate from CDK: a Docker image for RunPod Serverless TTS lives under **`runpod/orpheus-worker/`** (`handler.py` + `Dockerfile`).
+Meditation generation and **`POST /orpheus/tts`** use RunPod Serverless.
 
-Build locally (requires Docker):
+**Use the queue-based worker in `backend/orpheus-serverless/`** — not `nexslerdev/orpheus-fastapi-tts` (FastAPI images idle forever on Serverless; they never call `runpod.serverless.start()`).
+
+Full build/deploy docs: **`backend/orpheus-serverless/README.md`**.
+
+### 1. Build & push the image
+
+From a machine with Docker, ~40GB free disk, and `docker login`:
 
 ```bash
 cd backend
-npm run build-runpod-orpheus
-npm run build-runpod-orpheus -- --tag yourusername/orpheus-worker:latest --push
+npm run build-orpheus-serverless -- --tag YOUR_DOCKERUSER/orpheus-serverless:v1 --push YOUR_DOCKERUSER/orpheus-serverless:v1
 ```
 
-Then create a **Serverless → Docker** endpoint in the RunPod dashboard (16 GB+ GPU, image tag you pushed). Full steps: **`runpod/orpheus-worker/README.md`**.
+First build downloads ~6GB HuggingFace weights into the image (30–90 min).
+
+### 2. Create or update the RunPod endpoint
+
+RunPod console → **Serverless** → **New Endpoint** (or edit existing):
+
+| Setting | Value |
+|---------|--------|
+| **Image** | `YOUR_DOCKERUSER/orpheus-serverless:v1` |
+| **GPU** | 24GB tier (A5000 / RTX 4090 / L4) |
+| **Container disk** | 25GB |
+| **Max workers** | 1 (while testing) |
+| **Active workers** | **0** |
+| **Idle timeout** | 5–10s |
+| **FlashBoot** | On |
+
+Copy the endpoint **runsync URL**: `https://api.runpod.ai/v2/<endpoint-id>/runsync`
+
+Worker logs must show `[orpheus-serverless] Worker starting — loading models…`, not `Pod Started` with no handler output.
+
+### 3. Wire AWS secrets & smoke test
+
+```bash
+backend/scripts/deploy-orpheus-serverless --endpoint-id YOUR_ENDPOINT_ID --profile mm
+```
+
+Optional: pass `--image YOUR_DOCKERUSER/orpheus-serverless:v1` with `RUNPOD_MANAGEMENT_API_KEY` set to create a template via GraphQL.
+
+| Secret | Value |
+|--------|--------|
+| **`medimade/RUNPODS_API_KEY`** | RunPod **serverless** API key (`rpa_…`) |
+| **`medimade/RUNPODS_URL`** | runsync URL (updated by deploy script) |
+
+### 4. Generate Orpheus speaker samples
+
+```bash
+cd backend
+npm run generate-orpheus-speaker-samples -- --local-test --voice tara --speed 0.9 --profile mm
+```
+
+### 5. Verify via API
+
+```bash
+curl -sS -X POST "$API_URL/orpheus/tts" \
+  -H "Content-Type: application/json" \
+  -d '{"input":"Hello from Orpheus.","voice":"tara","response_format":"wav"}' \
+  --output /tmp/orpheus.wav
+```
+
+### Legacy workers (do not use for new deploys)
+
+- **`nexslerdev/orpheus-fastapi-tts`** — HTTP server, broken on Serverless queue
+- **`runpod/orpheus-worker/`** — older vLLM-based handler; build with `npm run build-runpod-orpheus`
 
 ## Destroy
 

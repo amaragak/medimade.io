@@ -17,7 +17,7 @@ const meditateSub = [
 
 const navRest = [
   { href: "/journal", label: "Journal" },
-  { href: "/plan", label: "Plan" },
+  { href: "/ideate", label: "Ideate" },
   { href: "/focus", label: "Focus" },
   ...(process.env.NODE_ENV !== "production"
     ? [{ href: "/analytics", label: "Analytics" }]
