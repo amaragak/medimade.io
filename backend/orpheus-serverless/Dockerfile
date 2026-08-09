@@ -2,7 +2,7 @@
 #
 # Build requires HF_TOKEN — canopylabs/orpheus-3b-0.1-ft is gated on HuggingFace.
 
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1

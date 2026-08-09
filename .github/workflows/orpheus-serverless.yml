@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: "Docker tag suffix (e.g. v2 — use v2 after boot-logging fix)"
+        description: "Docker tag suffix (v3 = torch 2.7 cu128 + Blackwell sm_120 fix)"
         required: true
-        default: "v2"
+        default: "v3"
 
 jobs:
   build-push:

@@ -83,12 +83,18 @@ def load_models() -> None:
 
     device = torch.device("cuda:0")
     props = torch.cuda.get_device_properties(0)
+    cc = f"{props.major}.{props.minor}"
     log(
         "cuda ready",
         gpu=props.name,
         vram_gb=round(props.total_memory / 1e9, 1),
+        compute_capability=cc,
         torch=torch.__version__,
     )
+    if props.major >= 12:
+        log(
+            "Blackwell GPU detected — requires torch 2.7+ cu128 (this image)",
+        )
 
     local_only = os.environ.get("HF_LOCAL_FILES_ONLY", "1") == "1"
     hf_token = os.environ.get("HF_TOKEN", "").strip() or None
