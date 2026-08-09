@@ -5,7 +5,8 @@
 #   backend/scripts/build-orpheus-serverless
 #   backend/scripts/build-orpheus-serverless --tag youruser/orpheus-serverless:v1 --push
 #
-# Requires Docker, ~40GB free disk, network for HuggingFace during build (~15–18GB image).
+# Requires Docker, ~40GB free disk, HF_TOKEN, network for HuggingFace during build (~15–18GB image).
+# Accept gated model access: https://huggingface.co/canopylabs/orpheus-3b-0.1-ft
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -50,9 +51,19 @@ if [[ ! -d "$WORKER_DIR" ]]; then
   exit 1
 fi
 
+if [[ -z "${HF_TOKEN:-}" ]]; then
+  echo "error: HF_TOKEN is required (Orpheus model is gated on HuggingFace)" >&2
+  echo "  1. Accept access: https://huggingface.co/canopylabs/orpheus-3b-0.1-ft" >&2
+  echo "  2. Create a read token: https://huggingface.co/settings/tokens" >&2
+  echo "  3. export HF_TOKEN=hf_..." >&2
+  exit 1
+fi
+
 echo "==> Building Orpheus Serverless worker ($TAG) from $WORKER_DIR ..."
 echo "    (first build downloads ~6GB HF weights + PyTorch; allow 30–90 min)"
-docker build --platform linux/amd64 -t "$TAG" "$WORKER_DIR"
+docker build --platform linux/amd64 \
+  --secret id=hf_token,env=HF_TOKEN \
+  -t "$TAG" "$WORKER_DIR"
 
 echo "==> Built: $TAG"
 

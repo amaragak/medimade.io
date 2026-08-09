@@ -33,6 +33,8 @@ jobs:
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/orpheus-serverless:${{ inputs.image_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          secrets: |
+            hf_token=${{ secrets.HF_TOKEN }}
 
       - name: Image ref
         run: |

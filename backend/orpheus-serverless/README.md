@@ -16,6 +16,7 @@ Images like `nexslerdev/orpheus-fastapi-tts` start a web server, log `Pod Starte
 
 ```
 backend/orpheus-serverless/
+├── download_models.py  # build-time HF weight bake (requires HF_TOKEN)
 ├── handler.py          # worker (models loaded at import)
 ├── Dockerfile          # CUDA image with weights baked in
 ├── requirements.txt
@@ -50,18 +51,26 @@ python test_local.py
 
 ## Build & push
 
+The Orpheus weights are **gated on HuggingFace**. Before any build:
+
+1. Open [canopylabs/orpheus-3b-0.1-ft](https://huggingface.co/canopylabs/orpheus-3b-0.1-ft) and **accept access** (logged in)
+2. Create a **read** token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+
 Run from **`backend/orpheus-serverless/`**. The image is ~15–18GB with weights baked in (intentional). **Need ~40GB free disk** for local builds.
 
 ### Option A — local Docker (needs ~40GB free disk + `docker login`)
 
 ```bash
+export HF_TOKEN=hf_...
 cd backend
 npm run build-orpheus-serverless -- --tag YOUR_DOCKERUSER/orpheus-serverless:v1 --push YOUR_DOCKERUSER/orpheus-serverless:v1
 ```
 
 ### Option B — GitHub Actions (recommended if local disk is tight)
 
-1. Add repo secrets: **`DOCKERHUB_USERNAME`**, **`DOCKERHUB_TOKEN`**
+1. Add repo secrets:
+   - **`DOCKERHUB_USERNAME`**, **`DOCKERHUB_TOKEN`**
+   - **`HF_TOKEN`** — HuggingFace read token (account must have accepted Orpheus access)
 2. Actions → **Orpheus Serverless Docker** → **Run workflow**
 3. Use the pushed image ref on your RunPod endpoint
 
@@ -69,8 +78,9 @@ npm run build-orpheus-serverless -- --tag YOUR_DOCKERUSER/orpheus-serverless:v1 
 
 ```bash
 cd backend/orpheus-serverless
+export HF_TOKEN=hf_...
 export IMAGE=yourusername/orpheus-serverless:v1
-docker build --platform linux/amd64 -t "$IMAGE" .
+docker build --platform linux/amd64 --secret id=hf_token,env=HF_TOKEN -t "$IMAGE" .
 docker push "$IMAGE"
 ```
 

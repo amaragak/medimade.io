@@ -44,6 +44,7 @@ SNAC_MODEL_ID = "hubertsiuzdak/snac_24khz"
 MODEL_CACHE_DIR = os.environ.get("HF_HOME", "/models")
 # Docker builds bake weights into /models; local test sets HF_LOCAL_FILES_ONLY=0 to allow download.
 LOCAL_FILES_ONLY = os.environ.get("HF_LOCAL_FILES_ONLY", "1") == "1"
+_HF_TOKEN = os.environ.get("HF_TOKEN", "").strip() or None
 
 # ---------------------------------------------------------------------------
 # Cold-start model load (once per worker process)
@@ -63,6 +64,7 @@ tokenizer = AutoTokenizer.from_pretrained(
     ORPHEUS_MODEL_ID,
     cache_dir=MODEL_CACHE_DIR,
     local_files_only=LOCAL_FILES_ONLY,
+    token=_HF_TOKEN,
 )
 print(
     f"[orpheus-serverless] Tokenizer loaded in {time.perf_counter() - _t0:.1f}s",
@@ -75,6 +77,7 @@ orpheus_model = AutoModelForCausalLM.from_pretrained(
     ORPHEUS_MODEL_ID,
     cache_dir=MODEL_CACHE_DIR,
     local_files_only=LOCAL_FILES_ONLY,
+    token=_HF_TOKEN,
     torch_dtype=torch.bfloat16,
     device_map="cuda" if _device == "cuda" else None,
 )
@@ -88,7 +91,11 @@ print(
 
 _t2 = time.perf_counter()
 print(f"[orpheus-serverless] Loading SNAC decoder: {SNAC_MODEL_ID}", flush=True)
-snac_model = SNAC.from_pretrained(SNAC_MODEL_ID, cache_dir=MODEL_CACHE_DIR)
+snac_model = SNAC.from_pretrained(
+    SNAC_MODEL_ID,
+    cache_dir=MODEL_CACHE_DIR,
+    token=_HF_TOKEN,
+)
 snac_model = snac_model.to(_device).eval()
 print(
     f"[orpheus-serverless] SNAC loaded in {time.perf_counter() - _t2:.1f}s "

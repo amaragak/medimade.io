@@ -9,6 +9,13 @@ import os
 os.environ.setdefault("HF_HOME", os.path.join(os.path.dirname(__file__), ".cache"))
 # Allow HuggingFace download on first local run (Docker sets HF_LOCAL_FILES_ONLY=1).
 os.environ.setdefault("HF_LOCAL_FILES_ONLY", "0")
+if not os.environ.get("HF_TOKEN", "").strip():
+    print(
+        "Note: HF_TOKEN may be required — accept access at "
+        "https://huggingface.co/canopylabs/orpheus-3b-0.1-ft then "
+        "export HF_TOKEN=hf_...",
+        flush=True,
+    )
 
 import base64
 import sys
