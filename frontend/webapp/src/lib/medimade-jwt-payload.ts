@@ -4,18 +4,22 @@
  */
 export function decodeMedimadeJwtPayloadUnverified(
   token: string,
-): { sub?: string; email?: string; name?: string } | null {
+): { sub?: string; email?: string; name?: string; exp?: number } | null {
   const parts = token.trim().split(".");
   if (parts.length !== 3 || !parts[1]) return null;
   try {
     const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
     const pad = "=".repeat((4 - (b64.length % 4)) % 4);
-    const json = atob(b64 + pad);
+    const binary = atob(b64 + pad);
+    const json = new TextDecoder().decode(
+      Uint8Array.from(binary, (c) => c.charCodeAt(0)),
+    );
     const p = JSON.parse(json) as Record<string, unknown>;
     return {
       sub: typeof p.sub === "string" ? p.sub : undefined,
       email: typeof p.email === "string" ? p.email : undefined,
       name: typeof p.name === "string" ? p.name : undefined,
+      exp: typeof p.exp === "number" && Number.isFinite(p.exp) ? p.exp : undefined,
     };
   } catch {
     return null;

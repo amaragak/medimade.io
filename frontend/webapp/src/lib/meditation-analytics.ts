@@ -43,6 +43,35 @@ export function fishCostUsdFromBillableBytes(bytes: number): number {
   return bytes * FISH_USD_PER_UTF8_BYTE;
 }
 
+export function formatFishCostUsd(usd: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) return "$0";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  if (usd < 1) return `$${usd.toFixed(3)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+/** Fish S2.1 Pro billable UTF-8 bytes for a library row. */
+export function estimateFishBillableUtf8Bytes(params: {
+  scriptUtf8Bytes?: number | null;
+  scriptText?: string | null;
+  title?: string | null;
+  scriptTruncated?: boolean;
+}): { bytes: number; approximate: boolean } | null {
+  const stored = params.scriptUtf8Bytes;
+  if (typeof stored === "number" && Number.isFinite(stored) && stored > 0) {
+    return { bytes: stored, approximate: false };
+  }
+  const script = params.scriptText?.trim() ?? "";
+  if (!script) return null;
+  const title = params.title?.trim() ?? "";
+  const spoken = stripPauseMarkers(script);
+  const combined = title ? `${title}\n\n${spoken}` : spoken;
+  return {
+    bytes: utf8ByteLength(combined),
+    approximate: true,
+  };
+}
+
 export type MeditationAnalyticsRow = {
   scriptUtf8Bytes?: number;
   durationSeconds?: number | null;

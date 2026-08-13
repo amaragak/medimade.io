@@ -2,11 +2,24 @@ const JWT_KEY = "mm_session_jwt_v1";
 const EMAIL_KEY = "mm_session_email_v1";
 const DISPLAY_NAME_KEY = "mm_session_display_name_v1";
 
+function normalizeStoredJwt(raw: string): string | null {
+  let t = raw.trim();
+  if (
+    (t.startsWith('"') && t.endsWith('"')) ||
+    (t.startsWith("'") && t.endsWith("'"))
+  ) {
+    t = t.slice(1, -1).trim();
+  }
+  t = t.replace(/^Bearer\s+/i, "").trim();
+  return t || null;
+}
+
 export function getMedimadeSessionJwt(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    const t = window.localStorage.getItem(JWT_KEY)?.trim();
-    return t || null;
+    const t = window.localStorage.getItem(JWT_KEY);
+    if (!t) return null;
+    return normalizeStoredJwt(t);
   } catch {
     return null;
   }
@@ -39,7 +52,9 @@ export function setMedimadeSession(
 ): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(JWT_KEY, token.trim());
+    const jwt = normalizeStoredJwt(token);
+    if (!jwt) return;
+    window.localStorage.setItem(JWT_KEY, jwt);
     if (email?.trim()) window.localStorage.setItem(EMAIL_KEY, email.trim());
     else window.localStorage.removeItem(EMAIL_KEY);
     if (displayName?.trim())

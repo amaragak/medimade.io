@@ -58,9 +58,9 @@ export function SiteHeader() {
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
         <Link
           href="/"
-          className="font-display text-lg font-medium tracking-tight text-foreground"
+          className="font-display text-2xl font-medium tracking-tight text-foreground lowercase"
         >
-          Consciously
+          consciously
         </Link>
         <nav className="hidden items-center gap-1 sm:flex">
           <div

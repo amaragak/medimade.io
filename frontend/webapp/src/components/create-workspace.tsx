@@ -18,7 +18,6 @@ import {
   getMeditationDraft,
   getMedimadeApiBase,
   getMedimadeMediaBaseUrl,
-  getMedimadeSessionJwt,
   fetchJournalStoreRemote,
   listBackgroundAudio,
   listFishSpeakers,
@@ -76,6 +75,75 @@ function mediaFileUrl(base: string, key: string): string {
 }
 
 const SPEAKER_SAMPLE_GAP_MS = 3000;
+
+function isLocalDevHost(): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1";
+}
+
+const DEV_RANDOM_SCRIPT_SEEDS: readonly { style: string; user: string }[] = [
+  {
+    style: "Body scan",
+    user: "My jaw and shoulders are clenched after staring at a screen all day.",
+  },
+  {
+    style: "Breath-led",
+    user: "I can't catch my breath; everything feels rushed.",
+  },
+  {
+    style: "Sleep",
+    user: "I'm exhausted but my mind won't stop replaying the day.",
+  },
+  {
+    style: "Anxiety relief",
+    user: "I have a presentation tomorrow and my stomach is in knots.",
+  },
+  {
+    style: "Visualization",
+    user: "I want to feel like I'm walking somewhere quiet and green.",
+  },
+  {
+    style: "Loving-kindness",
+    user: "I've been hard on myself lately and want to soften.",
+  },
+  {
+    style: "Open awareness",
+    user: "I'm overstimulated and want to just notice what's here without fixing it.",
+  },
+  {
+    style: "Reflection",
+    user: "Something ended this week and I haven't really sat with it.",
+  },
+  {
+    style: "Story",
+    user: "I want a gentle story that helps me feel safe and small in a good way.",
+  },
+  {
+    style: "Affirmation loop",
+    user: "I need simple phrases I can repeat when I start spiraling.",
+  },
+  {
+    style: "Manifestation",
+    user: "I want to feel the life I'm building as if it's already here.",
+  },
+  {
+    style: "Movement meditation",
+    user: "I've been sitting too long; I need to move slowly and wake up my body.",
+  },
+];
+
+function pickDevRandomScriptSeed(): { style: string; transcript: string } {
+  const seed =
+    DEV_RANDOM_SCRIPT_SEEDS[
+      Math.floor(Math.random() * DEV_RANDOM_SCRIPT_SEEDS.length)
+    ]!;
+  return {
+    style: seed.style,
+    transcript: `User: ${seed.user}\n\nGuide: Let's shape a short practice around that.`,
+  };
+}
 
 function parseMeditationTargetMinutes(raw: unknown): MeditationTargetMinutes {
   if (raw === 2 || raw === 5 || raw === 10) return raw;
@@ -873,6 +941,10 @@ export function CreateWorkspace({
   const [planGoals, setPlanGoals] = useState<PlanGoal[]>([]);
   const [planGoalsReady, setPlanGoalsReady] = useState(false);
   const [goalSelectedId, setGoalSelectedId] = useState<string | null>(null);
+
+  /** Dev: skip chat → audio; Generate asks the worker for a random script. */
+  const [devSkipToAudio, setDevSkipToAudio] = useState(false);
+  const devRandomTranscriptRef = useRef<string | null>(null);
 
   const [draftSk, setDraftSk] = useState<string | null>(null);
   const [draftSaving, setDraftSaving] = useState(false);
@@ -1716,6 +1788,29 @@ export function CreateWorkspace({
     isAtBottomRef.current = true;
   }
 
+  function beginDevSkipToAudio() {
+    const seed = pickDevRandomScriptSeed();
+    devRandomTranscriptRef.current = seed.transcript;
+    setDevSkipToAudio(true);
+    setCreationPath("style");
+    setJournalMode(false);
+    setPhase("claude");
+    setChatLoading(false);
+    setScriptLoading(false);
+    setClaudeThread([]);
+    setMeditationStyle(seed.style);
+    setInput("");
+    setIntroTypingDone(true);
+    setMessages([]);
+    setLastUsedScript(null);
+    setAudioError(null);
+    setPendingModeChoice("style");
+    setMobileCreateStep("audio");
+    setCreateStripStep(2);
+    initialChatAutofocusDoneRef.current = false;
+    isAtBottomRef.current = true;
+  }
+
   async function confirmGoalSelection() {
     const id = goalSelectedId?.trim() ?? "";
     if (!id || chatLoading) return;
@@ -1896,6 +1991,8 @@ export function CreateWorkspace({
     setCreationPath("pending");
     setPendingModeChoice(modeFromPath);
     setMobileCreateStep("chat");
+    setDevSkipToAudio(false);
+    devRandomTranscriptRef.current = null;
     initialChatAutofocusDoneRef.current = false;
   }
 
@@ -2166,23 +2263,44 @@ export function CreateWorkspace({
   async function generateMeditationAudioAndShow() {
     if (audioLoading) return;
     setAudioError(null);
+
+    const voiceId =
+      ttsProvider === "orpheus" ? orpheusVoiceId.trim() : speakerModelId.trim();
+    if (!voiceId) {
+      setAudioError(
+        ttsProvider === "orpheus"
+          ? "Choose an Orpheus voice before generating."
+          : "Choose a Fish Audio voice before generating.",
+      );
+      return;
+    }
+    if (!getMedimadeApiBase()) {
+      setAudioError("API URL is not configured (NEXT_PUBLIC_MEDIMADE_API_URL).");
+      return;
+    }
+
     // Stop all preview audio while generating.
     stopAllAudioPreview();
     setAudioLoading(true);
     try {
       const last = messages[messages.length - 1];
       const existingScript =
-        last?.role === "assistant" && last.variant === "script"
-          ? last.text
-          : null;
+        devSkipToAudio
+          ? null
+          : last?.role === "assistant" && last.variant === "script"
+            ? last.text
+            : null;
 
-      const transcript = messages
-        .filter((m) => !(m.role === "assistant" && m.variant === "script"))
-        .map(
-          (m) =>
-            `${m.role === "user" ? "User" : "Guide"}: ${chatMessageTranscriptLine(m)}`,
-        )
-        .join("\n\n");
+      const transcript = devSkipToAudio
+        ? (devRandomTranscriptRef.current?.trim() ||
+          "User: I want a short random guided meditation.\n\nGuide: Let's begin.")
+        : messages
+            .filter((m) => !(m.role === "assistant" && m.variant === "script"))
+            .map(
+              (m) =>
+                `${m.role === "user" ? "User" : "Guide"}: ${chatMessageTranscriptLine(m)}`,
+            )
+            .join("\n\n");
 
       const { jobId } = await createMeditationAudioJob({
         meditationStyle,
@@ -2557,7 +2675,27 @@ export function CreateWorkspace({
             ? previewMusicRef.current
             : previewNoiseRef.current;
 
-    if (!el?.src) {
+    if (!el) return;
+
+    if (track === "speaker" && mediaBaseUrl) {
+      const voiceId =
+        ttsProvider === "orpheus" ? orpheusVoiceId : speakerModelId;
+      if (!voiceId) return;
+      const key = speakerFxPreviewOn
+        ? ttsProvider === "orpheus"
+          ? orpheusSpeakerPreviewLoudFxSampleKey(voiceId, speechSpeed)
+          : speakerPreviewLoudFxSampleKey(voiceId, speechSpeed)
+        : ttsProvider === "orpheus"
+          ? orpheusSpeakerPreviewLoudSampleKey(voiceId, speechSpeed)
+          : speakerPreviewLoudSampleKey(voiceId, speechSpeed);
+      const next = mediaFileUrl(mediaBaseUrl, key);
+      if (el.src !== next) {
+        el.src = next;
+        el.load();
+      }
+    }
+
+    if (!el.src) {
       return;
     }
 
@@ -2612,10 +2750,27 @@ export function CreateWorkspace({
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6">
+      {/* Keep preview elements mounted on every step so src is assigned before the Audio panel. */}
+      <audio ref={previewNatureRef} className="hidden" playsInline />
+      <audio ref={previewMusicRef} className="hidden" playsInline />
+      <audio ref={previewNoiseRef} className="hidden" playsInline />
+      <audio ref={speakerSampleRef} className="hidden" playsInline />
       <div className="mb-6 shrink-0">
-        <h1 className="font-display text-3xl font-medium tracking-tight">
-          Create a meditation
-        </h1>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <h1 className="font-display text-3xl font-medium tracking-tight">
+            Create a meditation
+          </h1>
+          {isLocalDevHost() && workspaceSectionStep === 0 ? (
+            <button
+              type="button"
+              onClick={beginDevSkipToAudio}
+              className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent-soft/70"
+              aria-label="Dev: skip chat and go to audio setup with a random script on generate"
+            >
+              Skip to audio
+            </button>
+          ) : null}
+        </div>
         {workspaceSectionStep === 0 ? (
           <p className="mt-2 text-muted">
             Create a personalised meditation just for you.
@@ -3409,11 +3564,6 @@ export function CreateWorkspace({
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <audio ref={previewNatureRef} className="hidden" playsInline />
-              <audio ref={previewMusicRef} className="hidden" playsInline />
-              <audio ref={previewNoiseRef} className="hidden" playsInline />
-              <audio ref={speakerSampleRef} className="hidden" playsInline />
-
               <div className="space-y-6">
                 <div className="flex flex-col gap-3 border-b border-border pb-6">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
@@ -3753,11 +3903,23 @@ export function CreateWorkspace({
               {draftSaveMessage}
             </p>
           ) : null}
+          {audioError ? (
+            <p
+              className="shrink-0 max-w-full break-words py-2 text-center text-sm text-red-700 dark:text-red-300 sm:text-right"
+              role="alert"
+            >
+              {audioError}
+            </p>
+          ) : null}
           <div className="shrink-0 border-t border-border/60 bg-background pt-4">
             <div className="flex min-h-[3rem] w-full flex-nowrap items-center justify-between gap-4">
             <button
               type="button"
               onClick={() => {
+                if (devSkipToAudio) {
+                  goBackToChatStyle();
+                  return;
+                }
                 setMobileCreateStep("chat");
                 setCreateStripStep(1);
               }}

@@ -15,6 +15,24 @@ export function medimadeApiAuthHeaders(): Record<string, string> {
   return t ? { Authorization: `Bearer ${t}` } : {};
 }
 
+function sessionTokenForBody(): string | undefined {
+  return getMedimadeSessionJwt() ?? undefined;
+}
+
+function meditationAudioJobStatusUrl(base: string, jobId: string): string {
+  const token = sessionTokenForBody();
+  const qs = token ? `?sessionToken=${encodeURIComponent(token)}` : "";
+  return `${base}/meditation/audio/jobs/${encodeURIComponent(jobId)}${qs}`;
+}
+
+function meditationAudioAuthFailureMessage(
+  status: number,
+  apiError?: string | null,
+): string | null {
+  if (status !== 401) return null;
+  return apiError?.trim() || "Could not authorize this request. Try Generate again.";
+}
+
 function medimadeJsonHeaders(): Record<string, string> {
   return { "Content-Type": "application/json", ...medimadeApiAuthHeaders() };
 }
@@ -873,6 +891,7 @@ export async function generateMeditationAudio(params: {
     ...(backgroundMusicKey ? { backgroundMusicKey } : {}),
     ...(backgroundDrumsKey ? { backgroundDrumsKey } : {}),
     ...(backgroundNoiseKey ? { backgroundNoiseKey } : {}),
+    ...(sessionTokenForBody() ? { sessionToken: sessionTokenForBody() } : {}),
   };
 
   if (typeof params.backgroundNatureGain === "number") {
@@ -901,12 +920,17 @@ export async function generateMeditationAudio(params: {
   };
 
   if (!createRes.ok || !createData.jobId) {
-    const msg =
-      createData.detail ??
-      createData.error ??
-      createRes.statusText ??
-      "Audio job creation failed";
-    throw new Error(msg);
+    const authMsg = meditationAudioAuthFailureMessage(
+      createRes.status,
+      createData.detail ?? createData.error,
+    );
+    throw new Error(
+      authMsg ??
+        (createData.detail ??
+          createData.error ??
+          createRes.statusText ??
+          "Audio job creation failed"),
+    );
   }
 
   const jobId = createData.jobId;
@@ -921,7 +945,7 @@ export async function generateMeditationAudio(params: {
       throw new Error("Audio generation timed out");
     }
 
-    const statusRes = await fetch(`${base}/meditation/audio/jobs/${jobId}`, {
+    const statusRes = await fetch(meditationAudioJobStatusUrl(base, jobId), {
       headers: medimadeApiAuthHeaders(),
     });
     const statusData = (await statusRes.json()) as {
@@ -1020,6 +1044,7 @@ export async function createMeditationAudioJob(params: {
     meditationTargetMinutes,
     ...(params.journalMode === true ? { journalMode: true } : {}),
     ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
+    ...(sessionTokenForBody() ? { sessionToken: sessionTokenForBody() } : {}),
     ...(speed === undefined ? {} : { speed }),
     ...(backgroundSoundKey === undefined ? {} : { backgroundSoundKey }),
     ...(backgroundNatureKey ? { backgroundNatureKey } : {}),
@@ -1047,19 +1072,28 @@ export async function createMeditationAudioJob(params: {
     body: JSON.stringify(jobBody),
   });
 
-  const createData = (await createRes.json()) as {
-    jobId?: string;
-    error?: string;
-    detail?: string;
-  };
+  let createData: { jobId?: string; error?: string; detail?: string } = {};
+  try {
+    createData = (await createRes.json()) as typeof createData;
+  } catch {
+    throw new Error(
+      meditationAudioAuthFailureMessage(createRes.status, null) ??
+        `Audio job creation failed (${createRes.status || "network error"})`,
+    );
+  }
 
   if (!createRes.ok || !createData.jobId) {
-    const msg =
-      createData.detail ??
-      createData.error ??
-      createRes.statusText ??
-      "Audio job creation failed";
-    throw new Error(msg);
+    const authMsg = meditationAudioAuthFailureMessage(
+      createRes.status,
+      createData.detail ?? createData.error,
+    );
+    throw new Error(
+      authMsg ??
+        (createData.detail ??
+          createData.error ??
+          createRes.statusText ??
+          "Audio job creation failed"),
+    );
   }
 
   return { jobId: createData.jobId };
@@ -1073,12 +1107,15 @@ export async function getMeditationAudioJobStatus(
   const id = jobId.trim();
   if (!id) throw new Error("jobId is required");
 
-  const res = await fetch(`${base}/meditation/audio/jobs/${encodeURIComponent(id)}`, {
+  const res = await fetch(meditationAudioJobStatusUrl(base, id), {
     headers: medimadeApiAuthHeaders(),
   });
   const data = (await res.json()) as MeditationAudioJobStatus;
   if (!res.ok) {
-    throw new Error(data.error ?? res.statusText ?? "Audio job status failed");
+    throw new Error(
+      meditationAudioAuthFailureMessage(res.status, data.error) ??
+        (data.error ?? res.statusText ?? "Audio job status failed"),
+    );
   }
   return { ...data, jobId: data.jobId ?? id };
 }
@@ -1143,6 +1180,8 @@ export type LibraryMeditationItem = {
   durationSeconds: number | null;
   scriptText: string | null;
   scriptTruncated: boolean;
+  /** UTF-8 bytes actually sent to TTS (Fish billable input), when stored. */
+  scriptUtf8Bytes?: number | null;
   rating: number | null;
   favourite: boolean;
   archived: boolean;
@@ -1150,6 +1189,14 @@ export type LibraryMeditationItem = {
   mp3Bytes: number | null;
   /** Saved create-flow draft (not shown in main library list). */
   isDraft: boolean;
+  /** Speech-only stem; backgrounds are mixed in the Library player. */
+  liveMix?: boolean;
+  backgroundNatureKey?: string | null;
+  backgroundMusicKey?: string | null;
+  backgroundNoiseKey?: string | null;
+  backgroundNatureGain?: number | null;
+  backgroundMusicGain?: number | null;
+  backgroundNoiseGain?: number | null;
 };
 
 export const MEDITATION_DRAFT_STATE_VERSION = 1 as const;
@@ -1319,6 +1366,35 @@ export async function patchMeditationFavourite(
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ sk, favourite }),
+  });
+  const data = (await res.json()) as { error?: string; detail?: string };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+}
+
+export async function patchMeditationBackgroundMix(
+  sk: string,
+  mix: {
+    backgroundNatureKey: string;
+    backgroundMusicKey: string;
+    backgroundNoiseKey: string;
+    backgroundNatureGain: number;
+    backgroundMusicGain: number;
+    backgroundNoiseGain: number;
+  },
+): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/library/meditations/mix`, {
+    method: "PATCH",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      sk,
+      ...mix,
+      ...(sessionTokenForBody() ? { sessionToken: sessionTokenForBody() } : {}),
+    }),
   });
   const data = (await res.json()) as { error?: string; detail?: string };
   if (!res.ok) {

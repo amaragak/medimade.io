@@ -51,6 +51,7 @@ type OutItem = {
   durationSeconds: number | null;
   scriptText: string | null;
   scriptTruncated: boolean;
+  scriptUtf8Bytes: number | null;
   rating: number | null;
   favourite: boolean;
   archived: boolean;
@@ -60,7 +61,23 @@ type OutItem = {
   catalogued: boolean;
   mp3Bytes: number | null;
   isDraft: boolean;
+  liveMix: boolean;
+  backgroundNatureKey: string | null;
+  backgroundMusicKey: string | null;
+  backgroundNoiseKey: string | null;
+  backgroundNatureGain: number | null;
+  backgroundMusicGain: number | null;
+  backgroundNoiseGain: number | null;
 };
+
+function optTrimKey(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function optGain(v: unknown): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  return Math.min(100, Math.max(0, v));
+}
 
 async function queryAllMeditationItems(
   tableName: string,
@@ -218,6 +235,12 @@ function buildLibraryItems(params: {
     const scriptText =
       typeof row.scriptText === "string" ? row.scriptText : null;
     const scriptTruncated = row.scriptTruncated === true;
+    const scriptUtf8Bytes =
+      typeof row.scriptUtf8Bytes === "number" &&
+      Number.isFinite(row.scriptUtf8Bytes) &&
+      row.scriptUtf8Bytes > 0
+        ? row.scriptUtf8Bytes
+        : null;
     const rating =
       typeof row.rating === "number" &&
       Number.isFinite(row.rating) &&
@@ -250,6 +273,7 @@ function buildLibraryItems(params: {
       durationSeconds,
       scriptText,
       scriptTruncated,
+      scriptUtf8Bytes,
       rating,
       favourite,
       archived,
@@ -259,6 +283,13 @@ function buildLibraryItems(params: {
       catalogued: !isDraft,
       mp3Bytes,
       isDraft,
+      liveMix: row.liveMix === true,
+      backgroundNatureKey: optTrimKey(row.backgroundNatureKey),
+      backgroundMusicKey: optTrimKey(row.backgroundMusicKey),
+      backgroundNoiseKey: optTrimKey(row.backgroundNoiseKey),
+      backgroundNatureGain: optGain(row.backgroundNatureGain),
+      backgroundMusicGain: optGain(row.backgroundMusicGain),
+      backgroundNoiseGain: optGain(row.backgroundNoiseGain),
     });
   }
 
@@ -276,6 +307,7 @@ function buildLibraryItems(params: {
       durationSeconds: null,
       scriptText: null,
       scriptTruncated: false,
+      scriptUtf8Bytes: null,
       rating: null,
       favourite: false,
       archived: false,
@@ -285,6 +317,13 @@ function buildLibraryItems(params: {
       catalogued: false,
       mp3Bytes: obj.size,
       isDraft: false,
+      liveMix: false,
+      backgroundNatureKey: null,
+      backgroundMusicKey: null,
+      backgroundNoiseKey: null,
+      backgroundNatureGain: null,
+      backgroundMusicGain: null,
+      backgroundNoiseGain: null,
     });
   }
 

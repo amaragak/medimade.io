@@ -42,7 +42,10 @@ import { randomUUID } from "crypto";
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const FISH_TTS_URL = "https://api.fish.audio/v1/tts";
 const MODEL = "claude-haiku-4-5";
-const FISH_TTS_MODEL = (process.env.FISH_TTS_MODEL || "s2-pro").trim() || "s2-pro";
+const FISH_TTS_MODEL =
+  (process.env.FISH_TTS_MODEL || "s2.1-pro-free").trim() || "s2.1-pro-free";
+/** Stretch `[[PAUSE xs]]` silence slightly at render (1 = as written). */
+const PAUSE_RENDER_SCALE = 1.12;
 
 const secrets = new SecretsManagerClient({});
 const s3 = new S3Client({});
@@ -445,10 +448,10 @@ async function generateScriptFromClaude(params: {
     "Match the emotional tone, intentions, and imagery implied by the conversation.",
     "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
-    "Use **liberal** natural pauses with inline markers `[[PAUSE xs]]` (e.g. `[[PAUSE 2s]]`, `[[PAUSE 5s]]`): include them **often**—after most sentences or sense-units, at **every** meaningful transition (arrival → practice, shifts in technique or imagery, closing), and wherever a human guide would breathe or let a phrase land—not only at rare dramatic beats.",
+    "Use **liberal** natural pauses with inline markers `[[PAUSE xs]]` (e.g. `[[PAUSE 3s]]`, `[[PAUSE 6s]]`): include them **often**—after most sentences or sense-units, at **every** meaningful transition (arrival → practice, shifts in technique or imagery, closing), and wherever a human guide would breathe or let a phrase land—not only at rare dramatic beats.",
     "Place **every** pause **intelligently**: each gap must fit the moment—what was just said, the emotional or somatic weight, the transition, and what comes next. Pauses are not filler; avoid random, uniform, or excessive markers that would break rhythm or feel mechanical.",
-    "Vary pause lengths by context: **short** bridges can be ~1s–2s when momentum matters; **typical** gaps between lines are often **2s–4s**; use **4s–8s** (sometimes longer) after heavier invitations, imagery, or emotional lines. Default toward **longer and slightly more frequent** silence than a dense script—still never gratuitous.",
-    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often **4s–12s**, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
+    "Vary pause lengths by context: **short** bridges can be ~1.5s–2.5s when momentum matters; **typical** gaps between lines are often **2.5s–5s**; use **5s–9s** (sometimes longer) after heavier invitations, imagery, or emotional lines. Default toward **longer and slightly more frequent** silence than a dense script—still never gratuitous.",
+    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often **5s–14s**, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
     "Place pause markers on their own or immediately after a sentence, never splitting words.",
     "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
     scriptDurationPlanningAppendix(params.targetMinutes, {
@@ -471,10 +474,10 @@ async function generateScriptFromClaude(params: {
     "You may omit the usual generic beginning and ending for now. Skip arrival/closing boilerplate unless it is directly needed to cover the topic.",
     "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
-    "Use **liberal** natural pauses with inline markers `[[PAUSE xs]]` (e.g. `[[PAUSE 2s]]`, `[[PAUSE 5s]]`): include them **often**—after most sentences or sense-units, at **every** meaningful transition (arrival → practice, shifts in technique or imagery, closing), and wherever a human guide would breathe or let a phrase land—not only at rare dramatic beats.",
+    "Use **liberal** natural pauses with inline markers `[[PAUSE xs]]` (e.g. `[[PAUSE 3s]]`, `[[PAUSE 6s]]`): include them **often**—after most sentences or sense-units, at **every** meaningful transition (arrival → practice, shifts in technique or imagery, closing), and wherever a human guide would breathe or let a phrase land—not only at rare dramatic beats.",
     "Place **every** pause **intelligently**: each gap must fit the moment—what was just said, the emotional or somatic weight, the transition, and what comes next. Pauses are not filler; avoid random, uniform, or excessive markers that would break rhythm or feel mechanical.",
-    "Vary pause lengths by context: **short** bridges can be ~1s–2s when momentum matters; **typical** gaps between lines are often **2s–4s**; use **4s–8s** (sometimes longer) after heavier invitations, imagery, or emotional lines. Default toward **longer and slightly more frequent** silence than a dense script—still never gratuitous.",
-    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often **4s–12s**, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
+    "Vary pause lengths by context: **short** bridges can be ~1.5s–2.5s when momentum matters; **typical** gaps between lines are often **2.5s–5s**; use **5s–9s** (sometimes longer) after heavier invitations, imagery, or emotional lines. Default toward **longer and slightly more frequent** silence than a dense script—still never gratuitous.",
+    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often **5s–14s**, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
     "Place pause markers on their own or immediately after a sentence, never splitting words.",
     "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
     scriptDurationPlanningAppendix(1, { speechSpeed: params.speechSpeed }),
@@ -903,7 +906,7 @@ async function synthesizeScriptWithPauses(params: {
         "-i",
         "anullsrc=channel_layout=mono:sample_rate=44100",
         "-t",
-        seg.pauseSeconds.toFixed(2),
+        (seg.pauseSeconds * PAUSE_RENDER_SCALE).toFixed(2),
         "-q:a",
         "9",
         "-acodec",
@@ -1396,8 +1399,8 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     });
     // Speak the meditation title first, then pause, then the script.
     // Note: `scriptTextUsed` is stored/displayed without the title (script should not include it).
-    const ttsScript = `${libraryTitle}\n\n[[PAUSE 2.5s]]\n\n${scriptTextUsed}`;
-    pauseSecondsTotal = sumPauseMarkerSeconds(ttsScript);
+    const ttsScript = `${libraryTitle}\n\n[[PAUSE 3s]]\n\n${scriptTextUsed}`;
+    pauseSecondsTotal = sumPauseMarkerSeconds(ttsScript) * PAUSE_RENDER_SCALE;
     const spokenPlain = spokenPlainWithoutPauses(ttsScript);
     spokenUtf8Bytes = Buffer.byteLength(spokenPlain, "utf8");
     spokenWordCount = spokenPlain
@@ -1459,17 +1462,9 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   const key = `meditations/${jobUserId}/${randomUUID()}.mp3`;
   const durationSeconds = await getMp3DurationSeconds(mp3Buf);
 
-  if (backgroundLayers.length > 0) {
-    mp3Buf = await mixSpeechWithBackgrounds({
-      speechBuf: mp3Buf,
-      layers: backgroundLayers,
-      durationSeconds,
-      bucket: mediaBucketName,
-    });
-  }
+  // Background beds are mixed live in the Library player (not baked into this MP3).
 
-  // Final loudness normalization for the actual delivered meditation MP3.
-  // This keeps the user-facing output consistently loud even after FX and/or bed mixing.
+  // Final loudness normalization for the speech stem.
   try {
     mp3Buf = await loudnormMp3Buffer(mp3Buf);
     console.log("loudnorm -16 LUFS applied to final output", { bytes: mp3Buf.byteLength });
@@ -1556,6 +1551,25 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
           scriptText: scriptForLibrary,
           scriptTruncated,
           rating: null,
+          liveMix: true,
+          backgroundNatureKey: nk ?? "",
+          backgroundMusicKey: mk ?? "",
+          backgroundNoiseKey: zk ?? "",
+          backgroundNatureGain:
+            typeof body.backgroundNatureGain === "number" &&
+            Number.isFinite(body.backgroundNatureGain)
+              ? Math.min(100, Math.max(0, body.backgroundNatureGain))
+              : 25,
+          backgroundMusicGain:
+            typeof body.backgroundMusicGain === "number" &&
+            Number.isFinite(body.backgroundMusicGain)
+              ? Math.min(100, Math.max(0, body.backgroundMusicGain))
+              : 50,
+          backgroundNoiseGain:
+            typeof body.backgroundNoiseGain === "number" &&
+            Number.isFinite(body.backgroundNoiseGain)
+              ? Math.min(100, Math.max(0, body.backgroundNoiseGain))
+              : 10,
         },
       }),
     );

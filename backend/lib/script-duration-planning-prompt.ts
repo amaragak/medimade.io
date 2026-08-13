@@ -3,7 +3,7 @@ const DEFAULT_IMPLIED_WPM_ACTIVE = 140;
  * Fraction of voice stem assumed to be explicit `[[PAUSE …]]` when
  * `MEDITATION_MEDIAN_PAUSE_SHARE` is not set (tune from analytics median pause / stem).
  */
-const DEFAULT_ASSUMED_PAUSE_SHARE = 0.33;
+const DEFAULT_ASSUMED_PAUSE_SHARE = 0.38;
 const DEFAULT_WORD_BAND_FRACTION = 0.12;
 
 function parsePositiveFloat(s: string | undefined, fallback: number): number {
@@ -59,7 +59,7 @@ export type FleetScriptWordTargets = {
  * stem ≈ pause_seconds + active_speech_seconds, with active ≈ (spoken_words × 60) / (wpm × speed).
  *
  * - `MEDITATION_IMPLIED_WPM_ACTIVE`: median “words per active speech minute” from analytics.
- * - `MEDITATION_MEDIAN_PAUSE_SHARE`: median (sum pauses / stem) from analytics; if unset, 0.33.
+ * - `MEDITATION_MEDIAN_PAUSE_SHARE`: median (sum pauses / stem) from analytics; if unset, 0.38.
  * - `MEDITATION_SCRIPT_WORD_BAND`: half-width fraction around center (default 0.12 → ±12%).
  */
 export function getFleetScriptWordTargets(params: {

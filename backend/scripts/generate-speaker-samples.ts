@@ -49,7 +49,8 @@ import {
 
 const SAMPLE_TEXT = "Welcome to your personalised meditation";
 const FISH_TTS_URL = "https://api.fish.audio/v1/tts";
-const FISH_TTS_MODEL = (process.env.FISH_TTS_MODEL || "s2-pro").trim() || "s2-pro";
+const FISH_TTS_MODEL =
+  (process.env.FISH_TTS_MODEL || "s2.1-pro-free").trim() || "s2.1-pro-free";
 const DEFAULT_SECRET_NAME = "medimade/FISH_AUDIO_API_KEY";
 const execFileAsync = promisify(execFile);
 

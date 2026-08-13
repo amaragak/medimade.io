@@ -237,7 +237,7 @@ export class MedimadeStack extends cdk.Stack {
       layers: [ffmpegLayer],
       environment: {
         FISH_AUDIO_SECRET_ARN: fishApiKeySecret.secretArn,
-        FISH_TTS_MODEL: "s2-pro",
+        FISH_TTS_MODEL: "s2.1-pro-free",
       },
     });
     fishApiKeySecret.grantRead(fishTts);
@@ -387,7 +387,7 @@ export class MedimadeStack extends cdk.Stack {
           MEDIMADE_API_URL: httpApi.apiEndpoint,
           MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
           MEDITATION_JOBS_TABLE_NAME: meditationJobsTable.tableName,
-          FISH_TTS_MODEL: "s2-pro",
+          FISH_TTS_MODEL: "s2.1-pro-free",
         },
       },
     );
@@ -670,6 +670,33 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "MeditationArchiveIntegration",
         meditationArchive,
+      ),
+    });
+
+    const meditationMix = new lambda_nodejs.NodejsFunction(
+      this,
+      "MeditationMixFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/meditation-mix.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+        environment: {
+          MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        },
+      },
+    );
+    meditationAnalyticsTable.grantWriteData(meditationMix);
+    authJwtSecret.grantRead(meditationMix);
+
+    httpApi.addRoutes({
+      path: "/library/meditations/mix",
+      methods: [apigwv2.HttpMethod.PATCH],
+      integration: new integrations.HttpLambdaIntegration(
+        "MeditationMixIntegration",
+        meditationMix,
       ),
     });
 

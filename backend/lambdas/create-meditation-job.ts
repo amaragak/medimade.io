@@ -7,7 +7,8 @@ import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import { randomUUID } from "crypto";
 import { FIXED_SPEECH_PREVIEW_SPEED } from "../lib/speaker-sample-speed";
-import { requireUserJson } from "../lib/medimade-auth-http";
+import { optionalUserJson } from "../lib/medimade-auth-http";
+import { GLOBAL_MEDITATION_USER_ID } from "../lib/meditation-user-pk";
 import {
   normalizeOrpheusVoiceId,
   normalizeTtsProvider,
@@ -35,16 +36,6 @@ export async function handler(
     return json(405, { error: "Method not allowed" });
   }
 
-  const auth = await requireUserJson(event);
-  if ("statusCode" in auth) return auth;
-  const userId = (auth as { sub: string }).sub;
-
-  const tableName = process.env.MEDITATION_JOBS_TABLE_NAME;
-  const workerFn = process.env.WORKER_FUNCTION_NAME;
-  if (!tableName || !workerFn) {
-    return json(500, { error: "Job table or worker function not configured" });
-  }
-
   let body: {
     transcript?: string;
     meditationStyle?: string;
@@ -53,6 +44,7 @@ export async function handler(
     ttsProvider?: string;
     speed?: number;
     voiceFxPreset?: string;
+    sessionToken?: string;
     /** True when the user used journal / “How I feel” flow (no real style label). */
     journalMode?: boolean;
     /** 2, 5, or 10 — guided meditation length target for coach + script. */
@@ -71,6 +63,18 @@ export async function handler(
     body = JSON.parse(event.body || "{}");
   } catch {
     return json(400, { error: "Invalid JSON body" });
+  }
+
+  const auth = await optionalUserJson(
+    event,
+    typeof body.sessionToken === "string" ? body.sessionToken : null,
+  );
+  const userId = auth?.sub?.trim() || GLOBAL_MEDITATION_USER_ID;
+
+  const tableName = process.env.MEDITATION_JOBS_TABLE_NAME;
+  const workerFn = process.env.WORKER_FUNCTION_NAME;
+  if (!tableName || !workerFn) {
+    return json(500, { error: "Job table or worker function not configured" });
   }
 
   const ttsProvider: TtsProvider = normalizeTtsProvider(body.ttsProvider);

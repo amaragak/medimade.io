@@ -9,7 +9,7 @@ import {
   meditationPlaybackS3Key,
 } from "../lib/playback-keys";
 import { GLOBAL_MEDITATION_USER_ID } from "../lib/meditation-user-pk";
-import { requireUserJson } from "../lib/medimade-auth-http";
+import { optionalUserJson } from "../lib/medimade-auth-http";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
@@ -31,9 +31,11 @@ export async function handler(
     return json(405, { error: "Method not allowed" });
   }
 
-  const auth = await requireUserJson(event);
-  if ("statusCode" in auth) return auth;
-  const callerId = (auth as { sub: string }).sub;
+  const auth = await optionalUserJson(
+    event,
+    event.queryStringParameters?.sessionToken ?? null,
+  );
+  const callerId = auth?.sub?.trim() || "";
 
   const tableName = process.env.MEDITATION_JOBS_TABLE_NAME;
   if (!tableName) {
@@ -63,7 +65,9 @@ export async function handler(
   const isGlobalJob =
     !jobUserId ||
     jobUserId === GLOBAL_MEDITATION_USER_ID;
-  if (!isGlobalJob && jobUserId !== callerId) {
+  // Unauthenticated poll is allowed for now (guest generate). Signed-in
+  // callers still cannot read another user's non-global job.
+  if (!isGlobalJob && callerId && jobUserId !== callerId) {
     return json(404, { error: "Job not found" });
   }
 
