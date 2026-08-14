@@ -1,4 +1,38 @@
-import type { LibraryMeditationItem } from "./medimade-api";
+import {
+  type LibraryMeditationItem,
+  libraryMeditationCategoryLabel,
+} from "./medimade-api";
+
+/** Preset library categories — keep in sync with Create styles / backend types. */
+export const LIBRARY_MEDITATION_CATEGORIES = [
+  "Body scan",
+  "Visualization",
+  "Breath-led",
+  "Manifestation",
+  "Affirmation loop",
+  "Story",
+  "Reflection",
+  "Sleep",
+  "Loving-kindness",
+  "Anxiety relief",
+  "Movement meditation",
+  "Open awareness",
+] as const;
+
+export type LibraryMeditationCategory =
+  (typeof LIBRARY_MEDITATION_CATEGORIES)[number];
+
+export function itemMatchesLibraryCategory(
+  m: { meditationType: string | null; meditationStyle: string | null },
+  category: string,
+): boolean {
+  if (category === "all") return true;
+  const type = m.meditationType?.trim() ?? "";
+  const style = m.meditationStyle?.trim() ?? "";
+  const styleOk = style && style.toLowerCase() !== "general" ? style : "";
+  if (type === category || styleOk === category) return true;
+  return libraryMeditationCategoryLabel(m) === category;
+}
 
 /**
  * Curated Community Library entries.
@@ -60,6 +94,7 @@ export function communityLibraryAsItems(): LibraryMeditationItem[] {
       rating: null,
       favourite: false,
       archived: false,
+      isPublic: true,
       catalogued: true,
       mp3Bytes: null,
       isDraft: false,

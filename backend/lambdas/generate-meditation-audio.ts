@@ -34,6 +34,13 @@ import {
   getFleetScriptWordTargets,
   scriptDurationPlanningAppendix,
 } from "../lib/script-duration-planning-prompt";
+import {
+  parseScriptIntoSegments,
+  SCRIPT_PAUSE_PROMPT_RULES,
+  stripPauseMarkers as spokenPlainWithoutPauses,
+  sumPauseMarkerSeconds,
+  TITLE_PAUSE_MARKER,
+} from "../lib/script-pause-bands";
 import fs from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -44,7 +51,7 @@ const FISH_TTS_URL = "https://api.fish.audio/v1/tts";
 const MODEL = "claude-haiku-4-5";
 const FISH_TTS_MODEL =
   (process.env.FISH_TTS_MODEL || "s2.1-pro-free").trim() || "s2.1-pro-free";
-/** Stretch `[[PAUSE xs]]` silence slightly at render (1 = as written). */
+/** Stretch named-band silence slightly at render (1 = as written). */
 const PAUSE_RENDER_SCALE = 1.12;
 
 const secrets = new SecretsManagerClient({});
@@ -336,61 +343,6 @@ function json(
 type Role = "user" | "assistant";
 type ChatTurn = { role: Role; content: string };
 
-type ScriptSegment = {
-  text: string;
-  pauseSeconds: number;
-};
-
-/** Sum seconds from all `[[PAUSE …]]` markers (Fish / script convention). */
-function sumPauseMarkerSeconds(script: string): number {
-  if (!script) return 0;
-  const re = /\[\[PAUSE\s+([0-9]+(?:\.[0-9])?)s?\]\]/gi;
-  let total = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(script)) !== null) {
-    const p = parseFloat(m[1] ?? "0");
-    if (Number.isFinite(p) && p > 0) total += p;
-  }
-  return total;
-}
-
-/** Text Fish speaks excluding pause markers; normalized whitespace. */
-function spokenPlainWithoutPauses(script: string): string {
-  if (!script) return "";
-  return script
-    .replace(/\[\[PAUSE\s+([0-9]+(?:\.[0-9])?)s?\]\]/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function parseScriptIntoSegments(script: string): ScriptSegment[] {
-  const segments: ScriptSegment[] = [];
-  if (!script) return segments;
-  const re = /\[\[PAUSE\s+([0-9]+(?:\.[0-9])?)s?\]\]/gi;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = re.exec(script)) !== null) {
-    const raw = script.slice(lastIndex, match.index);
-    const text = raw.trim();
-    const pause = parseFloat(match[1] ?? "0");
-    if (text) {
-      segments.push({
-        text,
-        pauseSeconds: Number.isFinite(pause) && pause > 0 ? pause : 0,
-      });
-    }
-    lastIndex = match.index + match[0].length;
-  }
-
-  const tail = script.slice(lastIndex).trim();
-  if (tail) {
-    segments.push({ text: tail, pauseSeconds: 0 });
-  }
-
-  return segments;
-}
-
 async function generateScriptFromClaude(params: {
   apiKey: string;
   meditationStyle?: string;
@@ -448,12 +400,8 @@ async function generateScriptFromClaude(params: {
     "Match the emotional tone, intentions, and imagery implied by the conversation.",
     "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
-    "Use **liberal** natural pauses with inline markers `[[PAUSE xs]]` (e.g. `[[PAUSE 3s]]`, `[[PAUSE 6s]]`): include them **often**—after most sentences or sense-units, at **every** meaningful transition (arrival → practice, shifts in technique or imagery, closing), and wherever a human guide would breathe or let a phrase land—not only at rare dramatic beats.",
-    "Place **every** pause **intelligently**: each gap must fit the moment—what was just said, the emotional or somatic weight, the transition, and what comes next. Pauses are not filler; avoid random, uniform, or excessive markers that would break rhythm or feel mechanical.",
-    "Vary pause lengths by context: **short** bridges can be ~1.5s–2.5s when momentum matters; **typical** gaps between lines are often **2.5s–5s**; use **5s–9s** (sometimes longer) after heavier invitations, imagery, or emotional lines. Default toward **longer and slightly more frequent** silence than a dense script—still never gratuitous.",
-    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often **5s–14s**, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
-    "Place pause markers on their own or immediately after a sentence, never splitting words.",
-    "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
+    SCRIPT_PAUSE_PROMPT_RULES,
+    "Output **only** the words the guide speaks and these [[PAUSE …]] named-band markers; do not output other markdown or commentary.",
     scriptDurationPlanningAppendix(params.targetMinutes, {
       speechSpeed: params.speechSpeed,
     }),
@@ -474,12 +422,8 @@ async function generateScriptFromClaude(params: {
     "You may omit the usual generic beginning and ending for now. Skip arrival/closing boilerplate unless it is directly needed to cover the topic.",
     "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
-    "Use **liberal** natural pauses with inline markers `[[PAUSE xs]]` (e.g. `[[PAUSE 3s]]`, `[[PAUSE 6s]]`): include them **often**—after most sentences or sense-units, at **every** meaningful transition (arrival → practice, shifts in technique or imagery, closing), and wherever a human guide would breathe or let a phrase land—not only at rare dramatic beats.",
-    "Place **every** pause **intelligently**: each gap must fit the moment—what was just said, the emotional or somatic weight, the transition, and what comes next. Pauses are not filler; avoid random, uniform, or excessive markers that would break rhythm or feel mechanical.",
-    "Vary pause lengths by context: **short** bridges can be ~1.5s–2.5s when momentum matters; **typical** gaps between lines are often **2.5s–5s**; use **5s–9s** (sometimes longer) after heavier invitations, imagery, or emotional lines. Default toward **longer and slightly more frequent** silence than a dense script—still never gratuitous.",
-    "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often **5s–14s**, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
-    "Place pause markers on their own or immediately after a sentence, never splitting words.",
-    "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
+    SCRIPT_PAUSE_PROMPT_RULES,
+    "Output **only** the words the guide speaks and these [[PAUSE …]] named-band markers; do not output other markdown or commentary.",
     scriptDurationPlanningAppendix(1, { speechSpeed: params.speechSpeed }),
   ].join("\n");
 
@@ -1399,7 +1343,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     });
     // Speak the meditation title first, then pause, then the script.
     // Note: `scriptTextUsed` is stored/displayed without the title (script should not include it).
-    const ttsScript = `${libraryTitle}\n\n[[PAUSE 3s]]\n\n${scriptTextUsed}`;
+    const ttsScript = `${libraryTitle}\n\n${TITLE_PAUSE_MARKER}\n\n${scriptTextUsed}`;
     pauseSecondsTotal = sumPauseMarkerSeconds(ttsScript) * PAUSE_RENDER_SCALE;
     const spokenPlain = spokenPlainWithoutPauses(ttsScript);
     spokenUtf8Bytes = Buffer.byteLength(spokenPlain, "utf8");
@@ -1566,6 +1510,24 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
               ? Math.min(100, Math.max(0, body.backgroundMusicGain))
               : 50,
           backgroundNoiseGain:
+            typeof body.backgroundNoiseGain === "number" &&
+            Number.isFinite(body.backgroundNoiseGain)
+              ? Math.min(100, Math.max(0, body.backgroundNoiseGain))
+              : 10,
+          createdBackgroundNatureKey: nk ?? "",
+          createdBackgroundMusicKey: mk ?? "",
+          createdBackgroundNoiseKey: zk ?? "",
+          createdBackgroundNatureGain:
+            typeof body.backgroundNatureGain === "number" &&
+            Number.isFinite(body.backgroundNatureGain)
+              ? Math.min(100, Math.max(0, body.backgroundNatureGain))
+              : 25,
+          createdBackgroundMusicGain:
+            typeof body.backgroundMusicGain === "number" &&
+            Number.isFinite(body.backgroundMusicGain)
+              ? Math.min(100, Math.max(0, body.backgroundMusicGain))
+              : 50,
+          createdBackgroundNoiseGain:
             typeof body.backgroundNoiseGain === "number" &&
             Number.isFinite(body.backgroundNoiseGain)
               ? Math.min(100, Math.max(0, body.backgroundNoiseGain))

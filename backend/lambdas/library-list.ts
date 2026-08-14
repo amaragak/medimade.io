@@ -8,6 +8,7 @@ import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from "@aws-sdk/lib-
 import { speakerNameForModelId } from "../lib/fish-speakers";
 import { meditationPlaybackS3Key } from "../lib/playback-keys";
 import { optionalUserJson } from "../lib/medimade-auth-http";
+import { mixListenerPk } from "../lib/meditation-listener-mix";
 import {
   GLOBAL_MEDITATION_USER_ID,
   LEGACY_MEDITATION_PARTITION_PK,
@@ -55,6 +56,7 @@ type OutItem = {
   rating: number | null;
   favourite: boolean;
   archived: boolean;
+  isPublic: boolean;
   description: string | null;
   speakerModelId: string | null;
   speakerName: string | null;
@@ -68,6 +70,18 @@ type OutItem = {
   backgroundNatureGain: number | null;
   backgroundMusicGain: number | null;
   backgroundNoiseGain: number | null;
+  createdBackgroundNatureKey: string | null;
+  createdBackgroundMusicKey: string | null;
+  createdBackgroundNoiseKey: string | null;
+  createdBackgroundNatureGain: number | null;
+  createdBackgroundMusicGain: number | null;
+  createdBackgroundNoiseGain: number | null;
+  publisherBackgroundNatureKey: string | null;
+  publisherBackgroundMusicKey: string | null;
+  publisherBackgroundNoiseKey: string | null;
+  publisherBackgroundNatureGain: number | null;
+  publisherBackgroundMusicGain: number | null;
+  publisherBackgroundNoiseGain: number | null;
 };
 
 function optTrimKey(v: unknown): string | null {
@@ -99,6 +113,83 @@ async function queryAllMeditationItems(
     lek = out.LastEvaluatedKey;
   } while (lek);
   return items;
+}
+
+async function scanPublicMeditationItems(
+  tableName: string,
+): Promise<DdbMeditation[]> {
+  const items: DdbMeditation[] = [];
+  let lek: Record<string, unknown> | undefined;
+  do {
+    const out = await ddb.send(
+      new ScanCommand({
+        TableName: tableName,
+        FilterExpression:
+          "isPublic = :t AND (attribute_not_exists(archived) OR archived = :f) AND (attribute_not_exists(isDraft) OR isDraft = :f)",
+        ExpressionAttributeValues: { ":t": true, ":f": false },
+        ExclusiveStartKey: lek,
+      }),
+    );
+    items.push(...((out.Items ?? []) as DdbMeditation[]));
+    lek = out.LastEvaluatedKey;
+  } while (lek);
+  return items;
+}
+
+async function queryListenerMixOverrides(
+  tableName: string,
+  pk: string,
+): Promise<Map<string, DdbMeditation>> {
+  const byS3 = new Map<string, DdbMeditation>();
+  let lek: Record<string, unknown> | undefined;
+  do {
+    const out = await ddb.send(
+      new QueryCommand({
+        TableName: tableName,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :pfx)",
+        ExpressionAttributeValues: { ":pk": pk, ":pfx": "MIX#" },
+        ExclusiveStartKey: lek,
+      }),
+    );
+    for (const row of (out.Items ?? []) as DdbMeditation[]) {
+      const s3Key =
+        typeof row.s3Key === "string" && row.s3Key.trim()
+          ? row.s3Key.trim()
+          : typeof row.sk === "string" && row.sk.startsWith("MIX#")
+            ? row.sk.slice(4)
+            : "";
+      if (s3Key) byS3.set(s3Key, row);
+    }
+    lek = out.LastEvaluatedKey;
+  } while (lek);
+  return byS3;
+}
+
+function applyListenerMixOverlay(
+  items: OutItem[],
+  overrides: Map<string, DdbMeditation>,
+): OutItem[] {
+  if (overrides.size === 0) return items;
+  return items.map((item) => {
+    const o = overrides.get(item.s3Key);
+    if (!o) return item;
+    return {
+      ...item,
+      liveMix: o.liveMix === true || item.liveMix,
+      backgroundNatureKey:
+        optTrimKey(o.backgroundNatureKey) ?? item.backgroundNatureKey,
+      backgroundMusicKey:
+        optTrimKey(o.backgroundMusicKey) ?? item.backgroundMusicKey,
+      backgroundNoiseKey:
+        optTrimKey(o.backgroundNoiseKey) ?? item.backgroundNoiseKey,
+      backgroundNatureGain:
+        optGain(o.backgroundNatureGain) ?? item.backgroundNatureGain,
+      backgroundMusicGain:
+        optGain(o.backgroundMusicGain) ?? item.backgroundMusicGain,
+      backgroundNoiseGain:
+        optGain(o.backgroundNoiseGain) ?? item.backgroundNoiseGain,
+    };
+  });
 }
 
 async function scanAllMeditationItems(tableName: string): Promise<DdbMeditation[]> {
@@ -250,6 +341,7 @@ function buildLibraryItems(params: {
         : null;
     const favourite = row.favourite === true;
     const archived = row.archived === true;
+    const isPublic = row.isPublic === true;
     const description =
       typeof row.description === "string" && row.description.trim().length > 0
         ? row.description.trim()
@@ -277,6 +369,7 @@ function buildLibraryItems(params: {
       rating,
       favourite,
       archived,
+      isPublic,
       description,
       speakerModelId: referenceId,
       speakerName: speakerNameForModelId(referenceId),
@@ -290,6 +383,30 @@ function buildLibraryItems(params: {
       backgroundNatureGain: optGain(row.backgroundNatureGain),
       backgroundMusicGain: optGain(row.backgroundMusicGain),
       backgroundNoiseGain: optGain(row.backgroundNoiseGain),
+      createdBackgroundNatureKey:
+        optTrimKey(row.createdBackgroundNatureKey) ??
+        optTrimKey(row.backgroundNatureKey),
+      createdBackgroundMusicKey:
+        optTrimKey(row.createdBackgroundMusicKey) ??
+        optTrimKey(row.backgroundMusicKey),
+      createdBackgroundNoiseKey:
+        optTrimKey(row.createdBackgroundNoiseKey) ??
+        optTrimKey(row.backgroundNoiseKey),
+      createdBackgroundNatureGain:
+        optGain(row.createdBackgroundNatureGain) ??
+        optGain(row.backgroundNatureGain),
+      createdBackgroundMusicGain:
+        optGain(row.createdBackgroundMusicGain) ??
+        optGain(row.backgroundMusicGain),
+      createdBackgroundNoiseGain:
+        optGain(row.createdBackgroundNoiseGain) ??
+        optGain(row.backgroundNoiseGain),
+      publisherBackgroundNatureKey: optTrimKey(row.backgroundNatureKey),
+      publisherBackgroundMusicKey: optTrimKey(row.backgroundMusicKey),
+      publisherBackgroundNoiseKey: optTrimKey(row.backgroundNoiseKey),
+      publisherBackgroundNatureGain: optGain(row.backgroundNatureGain),
+      publisherBackgroundMusicGain: optGain(row.backgroundMusicGain),
+      publisherBackgroundNoiseGain: optGain(row.backgroundNoiseGain),
     });
   }
 
@@ -311,6 +428,7 @@ function buildLibraryItems(params: {
       rating: null,
       favourite: false,
       archived: false,
+      isPublic: false,
       description: null,
       speakerModelId: null,
       speakerName: null,
@@ -324,6 +442,18 @@ function buildLibraryItems(params: {
       backgroundNatureGain: null,
       backgroundMusicGain: null,
       backgroundNoiseGain: null,
+      createdBackgroundNatureKey: null,
+      createdBackgroundMusicKey: null,
+      createdBackgroundNoiseKey: null,
+      createdBackgroundNatureGain: null,
+      createdBackgroundMusicGain: null,
+      createdBackgroundNoiseGain: null,
+      publisherBackgroundNatureKey: null,
+      publisherBackgroundMusicKey: null,
+      publisherBackgroundNoiseKey: null,
+      publisherBackgroundNatureGain: null,
+      publisherBackgroundMusicGain: null,
+      publisherBackgroundNoiseGain: null,
     });
   }
 
@@ -342,6 +472,9 @@ export async function handler(
   }
 
   const user = await optionalUserJson(event);
+  const community =
+    event.queryStringParameters?.community === "1" ||
+    event.queryStringParameters?.community === "true";
 
   const tableName = process.env.MEDITATION_ANALYTICS_TABLE_NAME;
   const bucket = process.env.MEDIA_BUCKET_NAME;
@@ -351,6 +484,25 @@ export async function handler(
   }
 
   try {
+    if (community) {
+      const ddbItems = await scanPublicMeditationItems(tableName);
+      const items = buildLibraryItems({ ddbItems, s3Objects: [], cfDomain });
+      const mixTable = process.env.MEDITATION_LISTENER_MIX_TABLE_NAME;
+      const listenerPk = mixTable
+        ? mixListenerPk({
+            userSub: user?.sub,
+            guestListenerId: event.queryStringParameters?.listenerId,
+          })
+        : null;
+      if (mixTable && listenerPk) {
+        const overrides = await queryListenerMixOverrides(mixTable, listenerPk);
+        return json(200, {
+          items: applyListenerMixOverlay(items, overrides),
+        });
+      }
+      return json(200, { items });
+    }
+
     if (!user) {
       const [ddbItems, s3Objects] = await Promise.all([
         scanAllMeditationItems(tableName),

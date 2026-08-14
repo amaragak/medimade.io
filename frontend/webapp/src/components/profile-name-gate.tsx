@@ -21,7 +21,7 @@ export function ProfileNameGate() {
 
   useEffect(() => {
     if (!pathname) return;
-    if (pathname === "/login" || pathname.startsWith("/auth/")) return;
+    if (pathname === "/login" || pathname.startsWith("/auth/") || pathname.startsWith("/admin")) return;
 
     const jwt = getMedimadeSessionJwt();
     if (!jwt) return;

@@ -22,6 +22,7 @@ const navRest = [
   ...(process.env.NODE_ENV !== "production"
     ? [{ href: "/analytics", label: "Analytics" }]
     : []),
+  { href: "/admin", label: "Admin" },
   { href: "/settings", label: "API" },
 ] as const;
 

@@ -130,7 +130,7 @@ export function scriptDurationPlanningAppendix(
     "",
     "### Voice stem length (pauses + speaking time)",
     "The Fish **voice stem** (narration before background beds) lasts roughly:",
-    "**sum of all `[[PAUSE …]]` seconds** plus **time spent speaking the words**.",
+    "**sum of all `[[PAUSE …]]` (named bands: short / medium / long / extra long — never seconds in the script)** plus **time spent speaking the words**.",
     "Pause markers are silent on the clock; only spoken words consume “active” time at your typical Fish pace.",
     "",
     `For about **${targetMinutes}** minute(s) of stem (~**${Tsec}** s total), plan pauses and spoken length so they land near that budget together.`,
@@ -140,7 +140,7 @@ export function scriptDurationPlanningAppendix(
     "",
     `Use **wpm_active ≈ ${wpm}** (env \`MEDITATION_IMPLIED_WPM_ACTIVE\`) and **Fish_speed ≈ ${speechSpeed}** for this job.`,
     `At pause share **~${(pauseShare * 100).toFixed(0)}%** of stem (~**${typicalPause}** s in markers), one consistent point estimate is **~${wordAtTypicalPause}** spoken words (align the script’s word band with that trade-off).`,
-    "If you add more explicit silence, trim spoken words; if you use fewer or shorter pauses, you need more words (or accept a shorter stem).",
+    "If you use more **long** / **extra long** markers, trim spoken words; if you use fewer or **short** pauses, you need more words (or accept a shorter stem). Seconds are assigned at audio render from those names, not written in the script.",
     "",
     "Treat this as pacing guidance; content and technique still come first.",
   ];

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import * as Switch from "@radix-ui/react-switch";
 import {
   type LibraryMeditationItem,
   libraryMeditationCategoryLabel,
@@ -12,6 +13,7 @@ import {
   listBackgroundAudio,
   patchMeditationFavourite,
   patchMeditationArchived,
+  patchMeditationPublic,
   patchMeditationBackgroundMix,
   patchMeditationRating,
   backgroundAudioStreamingKey,
@@ -24,7 +26,8 @@ import {
   fishCostUsdFromBillableBytes,
   formatFishCostUsd,
 } from "@/lib/meditation-analytics";
-import { communityLibraryAsItems } from "@/lib/community-library";
+import { communityLibraryAsItems, itemMatchesLibraryCategory } from "@/lib/community-library";
+import { CommunityCategoryGrid } from "@/components/community-category-grid";
 
 function formatDuration(seconds: number | null): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) {
@@ -130,6 +133,76 @@ function IconGrid({ className }: { className?: string }) {
   );
 }
 
+function mixValuesFromItem(
+  m: LibraryMeditationItem,
+  source: "current" | "created" | "publisher",
+): LibraryMixValues {
+  const key = (preferred: string | null | undefined, fallback: string | null | undefined) =>
+    backgroundAudioStreamingKey((preferred ?? fallback ?? "").trim());
+  const gain = (
+    preferred: number | null | undefined,
+    fallback: number | null | undefined,
+    def: number,
+  ) =>
+    typeof preferred === "number" && Number.isFinite(preferred)
+      ? preferred
+      : typeof fallback === "number" && Number.isFinite(fallback)
+        ? fallback
+        : def;
+  if (source === "created") {
+    return {
+      natureKey: key(m.createdBackgroundNatureKey, m.backgroundNatureKey),
+      musicKey: key(m.createdBackgroundMusicKey, m.backgroundMusicKey),
+      noiseKey: key(m.createdBackgroundNoiseKey, m.backgroundNoiseKey),
+      natureGain: gain(m.createdBackgroundNatureGain, m.backgroundNatureGain, 25),
+      musicGain: gain(m.createdBackgroundMusicGain, m.backgroundMusicGain, 50),
+      noiseGain: gain(m.createdBackgroundNoiseGain, m.backgroundNoiseGain, 10),
+    };
+  }
+  if (source === "publisher") {
+    return {
+      natureKey: key(m.publisherBackgroundNatureKey, m.backgroundNatureKey),
+      musicKey: key(m.publisherBackgroundMusicKey, m.backgroundMusicKey),
+      noiseKey: key(m.publisherBackgroundNoiseKey, m.backgroundNoiseKey),
+      natureGain: gain(
+        m.publisherBackgroundNatureGain,
+        m.backgroundNatureGain,
+        25,
+      ),
+      musicGain: gain(m.publisherBackgroundMusicGain, m.backgroundMusicGain, 50),
+      noiseGain: gain(m.publisherBackgroundNoiseGain, m.backgroundNoiseGain, 10),
+    };
+  }
+  return {
+    natureKey: key(m.backgroundNatureKey, ""),
+    musicKey: key(m.backgroundMusicKey, ""),
+    noiseKey: key(m.backgroundNoiseKey, ""),
+    natureGain: gain(m.backgroundNatureGain, null, 25),
+    musicGain: gain(m.backgroundMusicGain, null, 50),
+    noiseGain: gain(m.backgroundNoiseGain, null, 10),
+  };
+}
+
+function IconMixReset({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+    </svg>
+  );
+}
+
 function IconMixer({ className }: { className?: string }) {
   return (
     <svg
@@ -183,7 +256,7 @@ function IconHeart({
 
 type ViewMode = "list" | "grid";
 type SortBy = "newest" | "oldest" | "title";
-type LibraryMainTab = "meditations" | "community" | "drafts";
+type LibraryMainTab = "meditations" | "community";
 
 type ActiveTrack = {
   url: string;
@@ -332,17 +405,17 @@ const MixVerticalFader = memo(function MixVerticalFader({
   }
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col items-center gap-2">
-      <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+    <div className="flex min-w-0 flex-1 flex-col items-center gap-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
         {label}
       </span>
       <span
         ref={labelRef}
-        className="tabular-nums text-xs text-muted"
+        className="tabular-nums text-[10px] text-muted"
       >
         {initialGain}%
       </span>
-      <div className="flex h-40 w-10 items-center justify-center">
+      <div className="flex h-28 w-8 items-center justify-center">
         <input
           ref={inputRef}
           type="range"
@@ -358,7 +431,7 @@ const MixVerticalFader = memo(function MixVerticalFader({
           onMouseUp={commit}
           onTouchEnd={commit}
           onKeyUp={commit}
-          className="h-10 w-40 origin-center -rotate-90 cursor-pointer accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-8 w-28 origin-center -rotate-90 cursor-pointer accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={`${label} level`}
           aria-orientation="vertical"
         />
@@ -372,29 +445,33 @@ const MixVerticalFader = memo(function MixVerticalFader({
 
 function LibraryMixEditorModal({
   item,
+  anchorEl,
   natureItems,
   musicItems,
   noiseItems,
-  playing,
   error,
-  onTogglePlay,
+  resetMix,
   onLiveVolume,
   onPreview,
   onPersist,
   onClose,
+  closeRef,
 }: {
   item: LibraryMeditationItem;
+  anchorEl: HTMLElement | null;
   natureItems: BackgroundAudioItem[];
   musicItems: BackgroundAudioItem[];
   noiseItems: BackgroundAudioItem[];
-  playing: boolean;
   error: string | null;
-  onTogglePlay: () => void;
+  resetMix: LibraryMixValues;
   onLiveVolume: (channel: BedVolumeChannel, gain: number) => void;
   onPreview: (mix: LibraryMixValues) => void;
   onPersist: (mix: LibraryMixValues) => void | Promise<void>;
   onClose: () => void;
+  closeRef: { current: (() => void) | null };
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const [natureKey, setNatureKey] = useState(
     () => backgroundAudioStreamingKey(item.backgroundNatureKey ?? ""),
   );
@@ -429,151 +506,199 @@ function LibraryMixEditorModal({
     onPreview(next);
   }
 
-  async function closeAndSave() {
-    try {
-      await onPersist(mixRef.current);
-      onClose();
-    } catch {
-      // Keep mixer open; error is shown from persistMix.
-    }
+  function applyResetMix() {
+    const next = resetMix;
+    setNatureKey(next.natureKey);
+    setMusicKey(next.musicKey);
+    setNoiseKey(next.noiseKey);
+    setNatureGain(next.natureGain);
+    setMusicGain(next.musicGain);
+    setNoiseGain(next.noiseGain);
+    mixRef.current = next;
+    previewNow(next);
+    void Promise.resolve(onPersist(next)).catch(() => {});
   }
+
+  const closeAndSave = useCallback(() => {
+    const mix = mixRef.current;
+    onClose();
+    void Promise.resolve(onPersist(mix)).catch(() => {});
+  }, [onClose, onPersist]);
+
+  closeRef.current = closeAndSave;
+
+  useLayoutEffect(() => {
+    function place() {
+      const panel = panelRef.current;
+      const anchor = anchorEl;
+      if (!panel || !anchor) return;
+      const a = anchor.getBoundingClientRect();
+      const w = panel.offsetWidth;
+      const h = panel.offsetHeight;
+      const gap = 8;
+      let left = a.right - w;
+      left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+      let top = a.top - h - gap;
+      if (top < 8) top = a.bottom + gap;
+      if (top + h > window.innerHeight - 8) {
+        top = Math.max(8, window.innerHeight - h - 8);
+      }
+      setPos({ top, left });
+    }
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [anchorEl, item.sk]);
+
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (panelRef.current?.contains(t)) return;
+      if (anchorEl?.contains(t)) return;
+      closeAndSave();
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closeAndSave();
+    }
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [anchorEl, closeAndSave]);
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 pb-28"
-      onClick={() => void closeAndSave()}
+      ref={panelRef}
+      role="dialog"
+      aria-label="Background mix"
+      className="fixed z-[80] w-[17.5rem] rounded-xl border border-border bg-card p-3 text-sm text-foreground shadow-xl"
+      style={{
+        top: pos?.top ?? -9999,
+        left: pos?.left ?? -9999,
+      }}
     >
-      <div
-        className="w-full max-w-md rounded-2xl border border-border bg-card p-5 text-sm text-foreground shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-base font-semibold">Background mix</div>
-            <p className="mt-1 truncate text-sm text-muted">
-              <span className="font-semibold text-foreground">
-                “{item.title}”
-              </span>
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onTogglePlay}
-            aria-label={playing ? "Pause preview" : "Play preview"}
-            className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white dark:text-deep"
-          >
-            {playing ? (
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden>
-                <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
-              </svg>
-            ) : (
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden>
-                <path d="M8 5v14l11-7L8 5z" />
-              </svg>
-            )}
-          </button>
-        </div>
-
-        <div className="mt-5 flex items-end justify-center gap-3 sm:gap-5">
-          {(
-            [
-              {
-                label: "Music",
-                key: musicKey,
-                setKey: setMusicKey,
-                gain: musicGain,
-                setGain: setMusicGain,
-                items: musicItems,
-                channel: "music" as const,
-              },
-              {
-                label: "Nature",
-                key: natureKey,
-                setKey: setNatureKey,
-                gain: natureGain,
-                setGain: setNatureGain,
-                items: natureItems,
-                channel: "nature" as const,
-              },
-              {
-                label: "Noise",
-                key: noiseKey,
-                setKey: setNoiseKey,
-                gain: noiseGain,
-                setGain: setNoiseGain,
-                items: noiseItems,
-                channel: "noise" as const,
-              },
-            ] as const
-          ).map((row) => (
-            <div
-              key={row.label}
-              className="flex min-w-0 flex-1 flex-col items-center gap-2"
-            >
-              <MixVerticalFader
-                label={row.label}
-                disabled={!row.key}
-                initialGain={row.gain}
-                onLiveChange={(gain) => {
-                  mixRef.current = {
-                    ...mixRef.current,
-                    ...(row.channel === "music"
-                      ? { musicGain: gain }
-                      : row.channel === "nature"
-                        ? { natureGain: gain }
-                        : { noiseGain: gain }),
-                  };
-                  onLiveVolume(row.channel, gain);
-                }}
-                onCommit={(gain) => {
-                  const next: LibraryMixValues = {
-                    ...mixRef.current,
-                    ...(row.channel === "music"
-                      ? { musicGain: gain }
-                      : row.channel === "nature"
-                        ? { natureGain: gain }
-                        : { noiseGain: gain }),
-                  };
-                  if (row.channel === "music") setMusicGain(gain);
-                  else if (row.channel === "nature") setNatureGain(gain);
-                  else setNoiseGain(gain);
-                  mixRef.current = next;
-                  previewNow(next);
-                }}
-              />
-              <select
-                className="w-full min-w-0 rounded-xl border border-border bg-background px-2 py-2 text-xs sm:text-sm"
-                value={row.key}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  row.setKey(value);
-                  const next: LibraryMixValues = {
-                    ...mixRef.current,
-                    ...(row.channel === "music"
-                      ? { musicKey: value }
-                      : row.channel === "nature"
-                        ? { natureKey: value }
-                        : { noiseKey: value }),
-                  };
-                  mixRef.current = next;
-                  previewNow(next);
-                }}
-              >
-                <option value="">None</option>
-                {row.items.map((s) => (
-                  <option key={s.key} value={s.key}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
-        </div>
-
-        {error ? (
-          <p className="mt-3 text-sm text-red-700 dark:text-red-300">{error}</p>
-        ) : null}
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 truncate text-xs font-semibold text-foreground">
+          {item.title}
+        </p>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            applyResetMix();
+          }}
+          className="shrink-0 cursor-pointer rounded-md p-1 text-muted hover:bg-accent-soft/50 hover:text-foreground"
+          aria-label="Reset mix to original"
+          title="Reset mix to original"
+        >
+          <IconMixReset />
+        </button>
       </div>
+      <div className="mt-2 flex items-end justify-center gap-2">
+        {(
+          [
+            {
+              label: "Music",
+              key: musicKey,
+              setKey: setMusicKey,
+              gain: musicGain,
+              setGain: setMusicGain,
+              items: musicItems,
+              channel: "music" as const,
+            },
+            {
+              label: "Nature",
+              key: natureKey,
+              setKey: setNatureKey,
+              gain: natureGain,
+              setGain: setNatureGain,
+              items: natureItems,
+              channel: "nature" as const,
+            },
+            {
+              label: "Noise",
+              key: noiseKey,
+              setKey: setNoiseKey,
+              gain: noiseGain,
+              setGain: setNoiseGain,
+              items: noiseItems,
+              channel: "noise" as const,
+            },
+          ] as const
+        ).map((row) => (
+          <div
+            key={row.label}
+            className="flex min-w-0 flex-1 flex-col items-center gap-1"
+          >
+            <MixVerticalFader
+              label={row.label}
+              disabled={!row.key}
+              initialGain={row.gain}
+              onLiveChange={(gain) => {
+                mixRef.current = {
+                  ...mixRef.current,
+                  ...(row.channel === "music"
+                    ? { musicGain: gain }
+                    : row.channel === "nature"
+                      ? { natureGain: gain }
+                      : { noiseGain: gain }),
+                };
+                onLiveVolume(row.channel, gain);
+              }}
+              onCommit={(gain) => {
+                const next: LibraryMixValues = {
+                  ...mixRef.current,
+                  ...(row.channel === "music"
+                    ? { musicGain: gain }
+                    : row.channel === "nature"
+                      ? { natureGain: gain }
+                      : { noiseGain: gain }),
+                };
+                if (row.channel === "music") setMusicGain(gain);
+                else if (row.channel === "nature") setNatureGain(gain);
+                else setNoiseGain(gain);
+                mixRef.current = next;
+                previewNow(next);
+              }}
+            />
+            <select
+              className="w-full min-w-0 rounded-lg border border-border bg-background px-1 py-1 text-[10px]"
+              value={row.key}
+              onChange={(e) => {
+                const value = e.target.value;
+                row.setKey(value);
+                const next: LibraryMixValues = {
+                  ...mixRef.current,
+                  ...(row.channel === "music"
+                    ? { musicKey: value }
+                    : row.channel === "nature"
+                      ? { natureKey: value }
+                      : { noiseKey: value }),
+                };
+                mixRef.current = next;
+                previewNow(next);
+              }}
+            >
+              <option value="">None</option>
+              {row.items.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        ))}
+      </div>
+      {error ? (
+        <p className="mt-2 text-xs text-red-700 dark:text-red-300">{error}</p>
+      ) : null}
     </div>
   );
 }
@@ -659,7 +784,7 @@ function downloadBasename(title: string): string {
 }
 
 function stripPauseMarkers(text: string): string {
-  // Remove library script-only pause markers: `[[PAUSE xs]]`
+  // Remove library script-only pause markers: `[[PAUSE medium]]`, etc.
   return text.replace(/\[\[PAUSE\s+[^\]]+\]\]/g, "");
 }
 
@@ -667,7 +792,6 @@ function LibraryAudioStrip({
   track,
   onDismiss,
   playbackToggleNonce,
-  playRequestNonce = 0,
   elevated = false,
   bedVolumeApiRef,
   onPlayingChange,
@@ -676,7 +800,6 @@ function LibraryAudioStrip({
   track: ActiveTrack | null;
   onDismiss: () => void;
   playbackToggleNonce: number;
-  playRequestNonce?: number;
   elevated?: boolean;
   bedVolumeApiRef?: { current: LibraryBedVolumeApi | null };
   onPlayingChange?: (s3Key: string, playing: boolean) => void;
@@ -691,7 +814,6 @@ function LibraryAudioStrip({
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const lastToggleNonceRef = useRef(playbackToggleNonce);
-  const lastPlayRequestNonceRef = useRef(playRequestNonce);
   const lastReportedTimeRef = useRef<number>(-Infinity);
   const liveBedGainsRef = useRef({
     nature: track?.natureGain ?? 0,
@@ -822,14 +944,6 @@ function LibraryAudioStrip({
     lastToggleNonceRef.current = playbackToggleNonce;
     togglePlayback();
   }, [playbackToggleNonce, track]);
-
-  useEffect(() => {
-    if (!track) return;
-    if (playRequestNonce === lastPlayRequestNonceRef.current) return;
-    lastPlayRequestNonceRef.current = playRequestNonce;
-    const el = audioRef.current;
-    if (el?.paused) void el.play().catch(() => {});
-  }, [playRequestNonce, track]);
 
   useEffect(() => {
     const el = audioRef.current;
@@ -1080,6 +1194,9 @@ export default function LibraryView({
   const [items, setItems] = useState<LibraryMeditationItem[]>(
     Array.isArray(initialItems) ? initialItems : [],
   );
+  const [communityRemote, setCommunityRemote] = useState<
+    LibraryMeditationItem[]
+  >([]);
   // IMPORTANT: keep initial render consistent between SSR and client hydration.
   // Pending generations are stored in localStorage (client-only), so we load them after mount.
   const [pending, setPending] = useState<PendingLibraryGeneration[]>([]);
@@ -1096,6 +1213,8 @@ export default function LibraryView({
   } | null>(null);
   const [mixEditor, setMixEditor] = useState<LibraryMeditationItem | null>(null);
   const [mixError, setMixError] = useState<string | null>(null);
+  const [mixAnchorEl, setMixAnchorEl] = useState<HTMLElement | null>(null);
+  const mixCloseRef = useRef<(() => void) | null>(null);
   const [mixNature, setMixNature] = useState<BackgroundAudioItem[]>([]);
   const [mixMusic, setMixMusic] = useState<BackgroundAudioItem[]>([]);
   const [mixNoise, setMixNoise] = useState<BackgroundAudioItem[]>([]);
@@ -1111,7 +1230,6 @@ export default function LibraryView({
   const [playingTimeSeconds, setPlayingTimeSeconds] = useState(0);
   const playingS3KeyRef = useRef<string | null>(null);
   const [playbackToggleNonce, setPlaybackToggleNonce] = useState(0);
-  const [playRequestNonce, setPlayRequestNonce] = useState(0);
   const [pendingAutoplay, setPendingAutoplay] = useState<{
     jobId: string;
     audioKey: string;
@@ -1218,7 +1336,16 @@ export default function LibraryView({
     }));
   }, [pending]);
 
-  const communityItems = useMemo(() => communityLibraryAsItems(), []);
+  const communityItems = useMemo(() => {
+    const byKey = new Map<string, LibraryMeditationItem>();
+    for (const x of communityRemote) {
+      if (x.s3Key) byKey.set(x.s3Key, x);
+    }
+    for (const x of communityLibraryAsItems()) {
+      if (x.s3Key && !byKey.has(x.s3Key)) byKey.set(x.s3Key, x);
+    }
+    return [...byKey.values()];
+  }, [communityRemote]);
 
   const sortedCommunityItems = useMemo(() => {
     const next = [...communityItems];
@@ -1234,22 +1361,19 @@ export default function LibraryView({
 
   const libraryRows: LibraryRow[] = useMemo(() => {
     if (libraryTab === "community") return sortedCommunityItems;
-    // Only show pending generations in the main meditations tab.
-    if (libraryTab !== "meditations") return sortedItems;
     return [...pendingRows, ...sortedItems];
   }, [libraryTab, pendingRows, sortedItems, sortedCommunityItems]);
 
   const visibleItems: LibraryRow[] = useMemo(() => {
-    if (libraryTab === "drafts") {
-      return sortedItems.filter((x) => x.isDraft === true);
-    }
     if (libraryTab === "community") {
       if (categoryFilter === "all") return sortedCommunityItems;
-      return sortedCommunityItems.filter(
-        (x) => libraryMeditationCategoryLabel(x) === categoryFilter,
+      return sortedCommunityItems.filter((x) =>
+        itemMatchesLibraryCategory(x, categoryFilter),
       );
     }
-    const base = sortedItems.filter((x) => x.catalogued && x.archived !== true);
+    const base = sortedItems.filter(
+      (x) => x.catalogued && x.archived !== true && x.isDraft !== true,
+    );
     const afterFav = favouritesOnly ? base.filter((x) => x.favourite) : base;
     const afterCat =
       categoryFilter === "all"
@@ -1479,8 +1603,12 @@ export default function LibraryView({
     setLoading(true);
     setError(null);
     try {
-      const list = await listLibraryMeditations();
+      const [list, community] = await Promise.all([
+        listLibraryMeditations(),
+        listLibraryMeditations({ community: true }),
+      ]);
       setItems(list);
+      setCommunityRemote(community);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load library");
     } finally {
@@ -1628,7 +1756,7 @@ export default function LibraryView({
     if (!focus) return;
     focusHandledRef.current = true;
 
-    // Ensure we show the meditations tab (not drafts) for a generated audio key.
+    // Ensure we show the meditations tab for a generated audio key.
     setLibraryTab("meditations");
 
     const found = visibleItems.find((x) => {
@@ -1751,6 +1879,48 @@ export default function LibraryView({
     }
   }
 
+  async function setPublic(item: LibraryMeditationItem, isPublic: boolean) {
+    if (!item.sk) return;
+    const sk = item.sk;
+    const prev = item.isPublic === true;
+    const nextItem = { ...item, isPublic };
+    setItems((prevItems) =>
+      prevItems.map((x) => (x.sk === sk ? { ...x, isPublic } : x)),
+    );
+    setCommunityRemote((prevList) => {
+      if (isPublic) {
+        if (prevList.some((x) => x.sk === sk || x.s3Key === item.s3Key)) {
+          return prevList.map((x) =>
+            x.sk === sk || x.s3Key === item.s3Key ? { ...x, isPublic } : x,
+          );
+        }
+        return [nextItem, ...prevList];
+      }
+      return prevList.filter((x) => x.sk !== sk && x.s3Key !== item.s3Key);
+    });
+    try {
+      await patchMeditationPublic(sk, isPublic);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not update public");
+      setItems((prevItems) =>
+        prevItems.map((x) => (x.sk === sk ? { ...x, isPublic: prev } : x)),
+      );
+      setCommunityRemote((prevList) => {
+        if (prev) {
+          if (prevList.some((x) => x.sk === sk || x.s3Key === item.s3Key)) {
+            return prevList.map((x) =>
+              x.sk === sk || x.s3Key === item.s3Key
+                ? { ...x, isPublic: true }
+                : x,
+            );
+          }
+          return [{ ...item, isPublic: true }, ...prevList];
+        }
+        return prevList.filter((x) => x.sk !== sk && x.s3Key !== item.s3Key);
+      });
+    }
+  }
+
   function openMixEditor(m: LibraryMeditationItem) {
     if (!m.sk || m.liveMix !== true) return;
     setMixEditor(m);
@@ -1761,26 +1931,26 @@ export default function LibraryView({
     const natureGain = m.backgroundNatureGain ?? 25;
     const musicGain = m.backgroundMusicGain ?? 50;
     const noiseGain = m.backgroundNoiseGain ?? 10;
-    setNowPlaying(
-      liveMixTrack(m, {
+    setNowPlaying((p) => {
+      if (!p || p.s3Key !== m.s3Key) return p;
+      return liveMixTrack(m, {
         natureKey,
         musicKey,
         noiseKey,
         natureGain,
         musicGain,
         noiseGain,
-      }),
-    );
-    setPlayRequestNonce((n) => n + 1);
+      });
+    });
   }
 
   function applyMixPreview(mix: LibraryMixValues) {
     const item = mixEditor;
     if (!item) return;
     setNowPlaying((p) => {
-      const base = p && p.s3Key === item.s3Key ? p : liveMixTrack(item, mix);
+      if (!p || p.s3Key !== item.s3Key) return p;
       return {
-        ...base,
+        ...p,
         ...liveMixTrack(item, mix),
       };
     });
@@ -1794,14 +1964,20 @@ export default function LibraryView({
     const musicKey = backgroundAudioStreamingKey(mix.musicKey.trim());
     const noiseKey = backgroundAudioStreamingKey(mix.noiseKey.trim());
     try {
-      await patchMeditationBackgroundMix(sk, {
-        backgroundNatureKey: natureKey,
-        backgroundMusicKey: musicKey,
-        backgroundNoiseKey: noiseKey,
-        backgroundNatureGain: mix.natureGain,
-        backgroundMusicGain: mix.musicGain,
-        backgroundNoiseGain: mix.noiseGain,
-      });
+      await patchMeditationBackgroundMix(
+        sk,
+        {
+          backgroundNatureKey: natureKey,
+          backgroundMusicKey: musicKey,
+          backgroundNoiseKey: noiseKey,
+          backgroundNatureGain: mix.natureGain,
+          backgroundMusicGain: mix.musicGain,
+          backgroundNoiseGain: mix.noiseGain,
+        },
+        libraryTab === "community"
+          ? { community: true, s3Key: item.s3Key }
+          : undefined,
+      );
       const next: LibraryMeditationItem = {
         ...item,
         liveMix: true,
@@ -1812,7 +1988,15 @@ export default function LibraryView({
         backgroundMusicGain: mix.musicGain,
         backgroundNoiseGain: mix.noiseGain,
       };
-      setItems((prev) => prev.map((x) => (x.sk === sk ? { ...x, ...next } : x)));
+      if (libraryTab === "community") {
+        setCommunityRemote((prev) =>
+          prev.map((x) =>
+            x.sk === sk || x.s3Key === item.s3Key ? { ...x, ...next } : x,
+          ),
+        );
+      } else {
+        setItems((prev) => prev.map((x) => (x.sk === sk ? { ...x, ...next } : x)));
+      }
       setMixEditor((cur) => (cur?.sk === sk ? { ...cur, ...next } : cur));
       setNowPlaying((p) =>
         p && p.s3Key === item.s3Key
@@ -1835,6 +2019,7 @@ export default function LibraryView({
 
   function closeMixEditor() {
     setMixEditor(null);
+    setMixAnchorEl(null);
     setMixError(null);
   }
   function renderItem(m: LibraryRow) {
@@ -2016,7 +2201,8 @@ export default function LibraryView({
     const lengthLine = formatDuration(m.durationSeconds);
     const fishCostText = showFishCostTooltip ? fishCostTooltipText(m) : null;
 
-    const stars = (
+    const isCommunity = libraryTab === "community";
+    const stars = isCommunity ? null : (
       <div className="flex items-center gap-0.5">
         {[1, 2, 3, 4, 5].map((star) => (
           <button
@@ -2044,7 +2230,7 @@ export default function LibraryView({
     );
 
     const favouriteDisabled = !m.sk || favouriteBusySk === m.sk;
-    const favouriteBtn = (
+    const favouriteBtn = isCommunity ? null : (
       <button
         type="button"
         onClick={() => void setFavourite(m, !m.favourite)}
@@ -2064,18 +2250,23 @@ export default function LibraryView({
       </button>
     );
 
-    const canEditMix =
-      libraryTab !== "community" &&
-      m.liveMix === true &&
-      Boolean(m.sk) &&
-      !m.isDraft;
+    const canEditMix = m.liveMix === true && Boolean(m.sk) && !m.isDraft;
     const mixerBtn = canEditMix ? (
       <button
         type="button"
-        onClick={() => openMixEditor(m)}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (mixEditor?.sk === m.sk) {
+            mixCloseRef.current?.();
+            return;
+          }
+          setMixAnchorEl(e.currentTarget);
+          openMixEditor(m);
+        }}
+        aria-expanded={mixEditor?.sk === m.sk}
         aria-label="Edit background mix"
         className={`self-center items-center justify-center p-1 text-accent transition-opacity ${
-          alwaysShowRowChrome
+          alwaysShowRowChrome || mixEditor?.sk === m.sk
             ? "opacity-100 pointer-events-auto"
             : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
         } cursor-pointer`}
@@ -2086,7 +2277,44 @@ export default function LibraryView({
 
     const archiveDisabled =
       !m.sk || archiveBusySk === m.sk || ratingBusy === m.sk || favouriteBusySk === m.sk;
-    const archiveBtn = (
+    const publicDisabled = !m.sk;
+    const rowChrome =
+      alwaysShowRowChrome
+        ? "opacity-100 pointer-events-auto"
+        : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto";
+    const publicBtn =
+      libraryTab !== "community" && m.sk && !m.isDraft ? (
+        <div
+          className={`flex items-center gap-2 transition-opacity ${rowChrome} ${
+            publicDisabled ? "cursor-not-allowed opacity-50" : ""
+          }`}
+          title={
+            m.isPublic === true
+              ? "Public — in Community Library"
+              : "Make public in Community Library"
+          }
+        >
+          <span
+            className={`text-[11px] font-medium tracking-wide ${
+              m.isPublic === true ? "text-accent" : "text-muted"
+            }`}
+          >
+            Public
+          </span>
+          <Switch.Root
+            checked={m.isPublic === true}
+            onCheckedChange={(v) => void setPublic(m, Boolean(v))}
+            disabled={publicDisabled}
+            aria-label={
+              m.isPublic ? "Remove from community library" : "Make public"
+            }
+            className="relative h-5 w-9 shrink-0 rounded-full border border-border bg-muted/40 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed"
+          >
+            <Switch.Thumb className="block h-4 w-4 translate-x-[2px] rounded-full bg-white shadow-sm transition-transform will-change-transform data-[state=checked]:translate-x-[16px]" />
+          </Switch.Root>
+        </div>
+      ) : null;
+    const archiveBtn = isCommunity ? null : (
       <button
         type="button"
         onClick={() => {
@@ -2095,13 +2323,7 @@ export default function LibraryView({
         }}
         disabled={archiveDisabled}
         aria-label="Archive meditation"
-        className={`cursor-pointer text-xs font-semibold transition-opacity transition-colors ${
-          alwaysShowRowChrome
-            ? "opacity-100 pointer-events-auto"
-            : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
-        } ${
-          "text-muted hover:text-foreground"
-        } ${
+        className={`rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted transition-opacity transition-colors hover:border-accent/40 hover:text-foreground ${rowChrome} ${
           archiveDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
         }`}
         title="Archive"
@@ -2249,7 +2471,12 @@ export default function LibraryView({
               {formatWhen(m.createdAt)}
               {m.speakerName ? ` · ${m.speakerName}` : ""}
             </span>
-            <span className="shrink-0">{archiveBtn}</span>
+            {publicBtn || archiveBtn ? (
+            <span className="shrink-0 flex items-center gap-3">
+              {publicBtn}
+              {archiveBtn}
+            </span>
+            ) : null}
           </div>
           {scriptBlock ? <div className="mt-4">{scriptBlock}</div> : null}
           <div className="mt-auto flex items-center justify-between gap-3 translate-y-2">
@@ -2324,106 +2551,19 @@ export default function LibraryView({
             {formatWhen(m.createdAt)}
             {m.speakerName ? ` · ${m.speakerName}` : ""}
           </span>
-          <span className="shrink-0">{archiveBtn}</span>
+          {publicBtn || archiveBtn ? (
+            <span className="shrink-0 flex items-center gap-3">
+              {publicBtn}
+              {archiveBtn}
+            </span>
+          ) : null}
         </div>
         {scriptBlock ? <div className="mt-4 border-t border-border pt-4">{scriptBlock}</div> : null}
       </li>
     );
   }
 
-  return (
-    <>
-      {indeterminateStyle}
-      {accentRgb ? (
-        <style>
-          {`@keyframes borderAccentColorPulse {
-            0% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.35); }
-            50% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 1); }
-            100% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 1); }
-          }`}
-        </style>
-      ) : null}
-    <div
-      className={`mx-auto w-full max-w-6xl min-w-0 px-4 py-10 sm:px-6 [scrollbar-gutter:stable] ${
-        nowPlaying ? "pb-32 sm:pb-28" : ""
-      }`}
-    >
-      <header className="w-full min-w-0">
-        <div className="grid w-full min-w-0 gap-4 sm:grid-cols-[1fr_auto] sm:items-start">
-          <div className="min-w-0 w-full">
-            <h1 className="font-display text-3xl font-medium tracking-tight">
-              Library
-            </h1>
-            <div
-              className="mt-4 inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
-              role="tablist"
-              aria-label="Library section"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={libraryTab === "meditations"}
-                onClick={() => setLibraryTab("meditations")}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                  libraryTab === "meditations"
-                    ? "bg-accent text-white dark:text-deep"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                Meditations
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={libraryTab === "community"}
-                onClick={() => setLibraryTab("community")}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                  libraryTab === "community"
-                    ? "bg-accent text-white dark:text-deep"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                Community Library
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={libraryTab === "drafts"}
-                onClick={() => setLibraryTab("drafts")}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                  libraryTab === "drafts"
-                    ? "bg-accent text-white dark:text-deep"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                Drafts
-              </button>
-            </div>
-            <p className="mt-2 w-full min-w-0 text-muted">
-              {libraryTab === "drafts"
-                ? "Work in progress from Create. Open a draft to keep editing; it stays here until you generate audio."
-                : libraryTab === "community"
-                  ? "Popular meditations from the community. Play any session; more will appear here over time."
-                : "Your generated meditations, saved with details from each session. Rate them, and open the script whenever you need the text."}
-            </p>
-          </div>
-          <div className="mt-4 flex w-full items-center justify-between gap-3 sm:col-span-2 sm:row-start-2">
-            <div className="flex items-center gap-3">
-              {libraryTab === "meditations" ? (
-              <button
-                type="button"
-                onClick={() => setFavouritesOnly((v) => !v)}
-                aria-pressed={favouritesOnly}
-                className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
-                  favouritesOnly
-                    ? "border-accent/60 bg-accent text-white dark:text-deep"
-                    : "border-border bg-background text-foreground hover:border-accent/40"
-                }`}
-              >
-                <IconHeart filled={favouritesOnly} />
-                <span className="hidden sm:inline">Favourites</span>
-              </button>
-              ) : null}
+  const sortDropdown = (
               <div ref={sortDropdownRef} className="relative shrink-0">
                 <button
                   type="button"
@@ -2489,7 +2629,122 @@ export default function LibraryView({
                   </div>
                 ) : null}
               </div>
-              {libraryTab === "meditations" || libraryTab === "community" ? (
+  );
+
+  const layoutToggle = (
+            <div
+              className="inline-flex rounded-xl border border-border bg-card p-1"
+              role="group"
+              aria-label="Library layout"
+            >
+              <button
+                type="button"
+                onClick={() => setViewMode("list")}
+                aria-pressed={viewMode === "list"}
+                className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
+                  viewMode === "list"
+                    ? "bg-accent text-white dark:text-deep"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                <IconList />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("grid")}
+                aria-pressed={viewMode === "grid"}
+                className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
+                  viewMode === "grid"
+                    ? "bg-accent text-white dark:text-deep"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                <IconGrid />
+              </button>
+            </div>
+  );
+
+  return (
+    <>
+      {indeterminateStyle}
+      {accentRgb ? (
+        <style>
+          {`@keyframes borderAccentColorPulse {
+            0% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.35); }
+            50% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 1); }
+            100% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 1); }
+          }`}
+        </style>
+      ) : null}
+    <div
+      className={`mx-auto w-full max-w-6xl min-w-0 px-4 py-10 sm:px-6 [scrollbar-gutter:stable] ${
+        nowPlaying ? "pb-32 sm:pb-28" : ""
+      }`}
+    >
+      <header className="w-full min-w-0">
+        <div className="grid w-full min-w-0 gap-4 sm:grid-cols-[1fr_auto] sm:items-start">
+          <div className="min-w-0 w-full">
+            <h1 className="font-display text-3xl font-medium tracking-tight">
+              Library
+            </h1>
+            <div
+              className="mt-4 inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
+              role="tablist"
+              aria-label="Library section"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={libraryTab === "meditations"}
+                onClick={() => setLibraryTab("meditations")}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                  libraryTab === "meditations"
+                    ? "bg-accent text-white dark:text-deep"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                Meditations
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={libraryTab === "community"}
+                onClick={() => setLibraryTab("community")}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                  libraryTab === "community"
+                    ? "bg-accent text-white dark:text-deep"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                Community Library
+              </button>
+            </div>
+            <p className="mt-2 w-full min-w-0 text-muted">
+              {libraryTab === "community"
+                ? "Popular meditations from the community. Play any session; more will appear here over time."
+                : "Your generated meditations, saved with details from each session. Rate them, and open the script whenever you need the text."}
+            </p>
+          </div>
+          {libraryTab !== "community" ? (
+          <div className="mt-4 flex w-full items-center justify-between gap-3 sm:col-span-2 sm:row-start-2">
+            <div className="flex items-center gap-3">
+              {libraryTab === "meditations" ? (
+              <button
+                type="button"
+                onClick={() => setFavouritesOnly((v) => !v)}
+                aria-pressed={favouritesOnly}
+                className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
+                  favouritesOnly
+                    ? "border-accent/60 bg-accent text-white dark:text-deep"
+                    : "border-border bg-background text-foreground hover:border-accent/40"
+                }`}
+              >
+                <IconHeart filled={favouritesOnly} />
+                <span className="hidden sm:inline">Favourites</span>
+              </button>
+              ) : null}
+              {sortDropdown}
+              {libraryTab === "meditations" ? (
               <div ref={categoryDropdownRef} className="relative shrink-0">
                 <button
                   type="button"
@@ -2557,37 +2812,9 @@ export default function LibraryView({
               </div>
               ) : null}
             </div>
-            <div
-              className="inline-flex rounded-xl border border-border bg-card p-1"
-              role="group"
-              aria-label="Library layout"
-            >
-              <button
-                type="button"
-                onClick={() => setViewMode("list")}
-                aria-pressed={viewMode === "list"}
-                className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
-                  viewMode === "list"
-                    ? "bg-accent text-white dark:text-deep"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                <IconList />
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("grid")}
-                aria-pressed={viewMode === "grid"}
-                className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
-                  viewMode === "grid"
-                    ? "bg-accent text-white dark:text-deep"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                <IconGrid />
-              </button>
-            </div>
+            {layoutToggle}
           </div>
+          ) : null}
           <Link
             href="/meditate/create"
             className="shrink-0 self-start rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white dark:text-deep sm:mt-0 sm:col-start-2 sm:row-start-1"
@@ -2596,6 +2823,19 @@ export default function LibraryView({
           </Link>
         </div>
       </header>
+
+      {libraryTab === "community" ? (
+        <>
+          <CommunityCategoryGrid
+            selected={categoryFilter}
+            onSelect={setCategoryFilter}
+          />
+          <div className="mt-8 flex w-full items-center justify-between gap-3">
+            {sortDropdown}
+            {layoutToggle}
+          </div>
+        </>
+      ) : null}
 
       {error ? (
         <p className="mt-6 w-full min-w-0 rounded-xl border border-border bg-card px-4 py-3 text-sm text-red-700 dark:text-red-300">
@@ -2608,11 +2848,11 @@ export default function LibraryView({
       pagedVisibleItems.length === 0 ? (
         <p className="mt-10 text-sm text-muted">Loading…</p>
       ) : pagedVisibleItems.length === 0 ? (
-        <p className="mt-10 w-full min-w-0 text-sm text-muted">
-          {libraryTab === "drafts" ? (
-            "No drafts yet. On Create, use Save draft (audio step) to store your session; drafts only show here."
-          ) : libraryTab === "community" ? (
-            "No community meditations yet. Popular sessions will show up here."
+        <p className={`${libraryTab === "community" ? "mt-4" : "mt-10"} w-full min-w-0 text-sm text-muted`}>
+          {libraryTab === "community" ? (
+            categoryFilter === "all"
+              ? "No community meditations yet. Popular sessions will show up here."
+              : `No community meditations in ${categoryFilter} yet.`
           ) : favouritesOnly ? (
             "No favourite meditations yet."
           ) : (
@@ -2623,8 +2863,8 @@ export default function LibraryView({
         <ul
           className={
             viewMode === "grid"
-              ? "mt-10 grid w-full min-w-0 max-w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
-              : "mt-10 flex w-full min-w-0 max-w-full flex-col gap-3"
+              ? `${libraryTab === "community" ? "mt-4" : "mt-10"} grid w-full min-w-0 max-w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3`
+              : `${libraryTab === "community" ? "mt-4" : "mt-10"} flex w-full min-w-0 max-w-full flex-col gap-3`
           }
         >
           {pagedVisibleItems.map((m) => renderItem(m))}
@@ -2714,8 +2954,6 @@ export default function LibraryView({
       track={nowPlaying}
       onDismiss={() => setNowPlaying(null)}
         playbackToggleNonce={playbackToggleNonce}
-        playRequestNonce={playRequestNonce}
-        elevated={Boolean(mixEditor)}
         bedVolumeApiRef={bedVolumeApiRef}
         onPlayingChange={(s3Key, playing) =>
           setPlayingS3Key(playing ? s3Key : null)
@@ -2730,24 +2968,23 @@ export default function LibraryView({
     {mixEditor ? (
       <LibraryMixEditorModal
         item={mixEditor}
+        anchorEl={mixAnchorEl}
         natureItems={mixNature}
         musicItems={mixMusic}
         noiseItems={mixNoise}
-        playing={playingS3Key === mixEditor.s3Key}
         error={mixError}
-        onTogglePlay={() => {
-          if (playingS3Key === mixEditor.s3Key) {
-            setPlaybackToggleNonce((v) => v + 1);
-          } else {
-            setPlayRequestNonce((n) => n + 1);
-          }
-        }}
+        resetMix={mixValuesFromItem(
+          mixEditor,
+          libraryTab === "community" ? "publisher" : "created",
+        )}
         onLiveVolume={(channel, gain) => {
+          if (nowPlaying?.s3Key !== mixEditor.s3Key) return;
           bedVolumeApiRef.current?.setBedVolume(channel, gain);
         }}
         onPreview={applyMixPreview}
         onPersist={persistMix}
         onClose={closeMixEditor}
+        closeRef={mixCloseRef}
       />
     ) : null}
 

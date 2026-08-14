@@ -779,7 +779,7 @@ export default function AnalyticsPage() {
               </div>
               <p className="mt-1 max-w-3xl text-[11px] leading-relaxed text-muted">
                 “How many pauses?” is really “how many <em>seconds</em> of explicit silence in total?”
-                — one long <code className="text-[10px]">[[PAUSE 30s]]</code> counts the same as many
+                — one <code className="text-[10px]">[[PAUSE extra long]]</code> counts the same as many
                 short gaps that add to 30s. Below: spoken-word budgets for three pause totals at your
                 median <code className="text-[10px]">wpm_active</code>.
               </p>

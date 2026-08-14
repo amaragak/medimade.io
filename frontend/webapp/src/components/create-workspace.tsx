@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import * as Switch from "@radix-ui/react-switch";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { ChatMarkdown } from "@/components/chat-markdown";
+import { MeditationTypeCardGrid } from "@/components/community-category-grid";
 import {
   type MedimadeChatTurn,
   type MeditationDraftStateV1,
@@ -490,7 +491,42 @@ const meditationStyleTooltip: Record<(typeof meditationStyles)[number], string> 
     "Resting in a wide, receptive field—sounds, sensations, and thoughts without fixing on one object.",
 };
 
-type Phase = "style" | "feeling" | "claude" | "journalPick" | "goalPick";
+/** Shown under the type grid after a card is selected. */
+const meditationStyleDescription: Record<(typeof meditationStyles)[number], string> = {
+  "Body scan":
+    "You rest still while attention moves slowly through the body—feet, legs, torso, arms, face. Noticing sensation (warmth, tightness, space) helps release holding and settle the nervous system. Good when you feel scattered, tense, or disconnected from the body.",
+  Visualization:
+    "The guide paints scenes you can see and feel: a place, a future moment, or an inner quality made vivid. You stay with the imagery so mood and confidence can shift. Choose this when you want to rehearse a state, not only relax.",
+  "Breath-led":
+    "The breath is the main anchor—its rhythm, the feel of air, or a simple count. Attention keeps returning to inhaling and exhaling to steady the mind and downshift arousal. A clear choice when you want something simple and regulating.",
+  Manifestation:
+    "You name what you want to call in and spend time in the feeling of it already here—vivid, future-facing, still grounded. The tone is supportive rather than striving. Use this when intention and “as if” matter more than a generic unwind.",
+  "Affirmation loop":
+    "Short phrases repeat throughout the practice so they can land in the body, not just the mind (“I am safe,” “I can meet this”). Pacing stays calm; you rest between lines. Helpful for rebuilding self-trust or a kinder inner voice.",
+  Story:
+    "A coherent narrative carries you—setting, sensory detail, a gentle arc that resolves. You’re invited to inhabit the story rather than follow a list of techniques. Fits when metaphor and journey feel more natural than instructions.",
+  Reflection:
+    "Quiet prompts help you look at what you’re carrying: meaning, values, a decision, or an experience that needs space. There are pauses to notice and integrate, not only to relax. Choose this when you want insight, not only calm.",
+  Sleep:
+    "Language, pacing, and imagery are built to wind the system down—no problem-solving, no bright energy. The practice is meant to be listened to in bed and allowed to trail off. Pick this when the goal is drifting, not staying alert.",
+  "Loving-kindness":
+    "Classic metta: warm phrases of goodwill, first toward yourself and then widening to others (a friend, a stranger, all beings). Repetition is the method. Reach for this when you want compassion, connection, or a softer heart.",
+  "Anxiety relief":
+    "Grounding and breath sit alongside working with worry—racing thoughts, what-ifs, a tight chest. The script offers reassurance and a way to meet the mind without feeding it. Use this when anxiety is the thing you need help with today.",
+  "Movement meditation":
+    "Attention lives in slow walking, stretching, or small posture shifts rather than stillness. Sensation of feet, joints, and breath in motion is the practice. Choose this if sitting still feels restless or you want to meditate on the go.",
+  "Open awareness":
+    "Instead of fixing on one object, you rest in a wide field—sounds, body, thoughts—letting experience come and go. Nothing needs to be pushed away or held. Good when you already have some stillness and want a more spacious sit.",
+};
+
+function descriptionForMeditationStyle(label: string): string | null {
+  if ((meditationStyles as readonly string[]).includes(label)) {
+    return meditationStyleDescription[label as (typeof meditationStyles)[number]];
+  }
+  return null;
+}
+
+type Phase = "stylePick" | "style" | "feeling" | "claude" | "journalPick" | "goalPick";
 
 /** Before chat: user picks style-first vs free-flow vs journal-reflect creation. */
 type CreationPath =
@@ -925,6 +961,7 @@ export function CreateWorkspace({
   const [pendingModeChoice, setPendingModeChoice] = useState<
     null | "style" | "freeflow" | "journalReflect" | "goal"
   >(null);
+  const [pendingStyleType, setPendingStyleType] = useState<string | null>(null);
   const [workspaceModeMenuOpen, setWorkspaceModeMenuOpen] = useState(false);
   const workspaceModeMenuRef = useRef<HTMLDivElement>(null);
   const chooserCardsRef = useRef<HTMLDivElement | null>(null);
@@ -972,7 +1009,11 @@ export function CreateWorkspace({
 
   function buildDraftState(): MeditationDraftStateV1 {
     const phaseForDraft: MeditationDraftStateV1["phase"] =
-      phase === "journalPick" || phase === "goalPick" ? "feeling" : phase;
+      phase === "stylePick"
+        ? "style"
+        : phase === "journalPick" || phase === "goalPick"
+          ? "feeling"
+          : phase;
     return {
       v: MEDITATION_DRAFT_STATE_VERSION,
       phase: phaseForDraft,
@@ -1049,7 +1090,11 @@ export function CreateWorkspace({
           backgroundDrumsKey?: string;
           backgroundDrumsGain?: number;
         };
-        setPhase(s.phase);
+        setPhase(
+          s.phase === "style" && !s.meditationStyle?.trim()
+            ? "stylePick"
+            : s.phase,
+        );
         setMeditationStyle(s.meditationStyle);
         setMessages(s.messages);
         setClaudeThread(s.claudeThread);
@@ -1704,6 +1749,10 @@ export function CreateWorkspace({
       setGoalSelectedId(null);
       setPhase("goalPick");
       setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+    } else if (creationPath === "style") {
+      setPendingStyleType(null);
+      setPhase("stylePick");
+      setMessages([]);
     } else {
       setMessages([{ role: "assistant", text: "", variant: "chat" }]);
       setPhase(journalMode ? "feeling" : "style");
@@ -1718,17 +1767,27 @@ export function CreateWorkspace({
   function beginStylePath() {
     setCreationPath("style");
     setJournalMode(false);
-    setPhase("style");
+    setPhase("stylePick");
     setChatLoading(false);
     setScriptLoading(false);
     setClaudeThread([]);
     setMeditationStyle(null);
+    setPendingStyleType(null);
     setInput("");
     setIntroTypingDone(false);
-    setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+    setMessages([]);
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
+  }
+
+  function confirmStyleTypePick() {
+    const label = pendingStyleType?.trim();
+    if (!label) return;
+    setIntroTypingDone(true);
+    setMessages([{ role: "assistant", text: OPENING_STYLE, variant: "chat" }]);
+    setCreateStripStep(1);
+    pickStyle(label);
   }
 
   function beginFreeFlowPath() {
@@ -2734,6 +2793,9 @@ export function CreateWorkspace({
     }
   }
 
+  const showPathChooser = creationPath === "pending";
+  const showStyleTypePick =
+    creationPath === "style" && phase === "stylePick";
   const activeWorkspaceMode: null | "style" | "freeflow" | "journalReflect" | "goal" =
     creationPath === "style"
       ? "style"
@@ -2760,7 +2822,7 @@ export function CreateWorkspace({
           <h1 className="font-display text-3xl font-medium tracking-tight">
             Create a meditation
           </h1>
-          {isLocalDevHost() && workspaceSectionStep === 0 ? (
+          {isLocalDevHost() && showPathChooser ? (
             <button
               type="button"
               onClick={beginDevSkipToAudio}
@@ -2771,7 +2833,7 @@ export function CreateWorkspace({
             </button>
           ) : null}
         </div>
-        {workspaceSectionStep === 0 ? (
+        {showPathChooser || showStyleTypePick ? (
           <p className="mt-2 text-muted">
             Create a personalised meditation just for you.
           </p>
@@ -2802,7 +2864,7 @@ export function CreateWorkspace({
         </div>
       ) : (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        {workspaceSectionStep === 0 ? (
+        {showPathChooser ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
           <h2 className="shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
@@ -2830,8 +2892,7 @@ export function CreateWorkspace({
                     Pick a meditation style
                   </span>
                   <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                    You start by choosing a meditation style in chat. The guide then asks
-                    follow-up questions so that style is shaped around your mood, goals,
+                    You start by choosing a meditation type, then chat so that style is shaped around your mood, goals,
                     and what you need today.
                   </p>
                   <span
@@ -2854,8 +2915,7 @@ export function CreateWorkspace({
                       Pick a meditation style
                     </span>
                     <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
-                      You start by choosing a meditation style in chat. The guide then asks
-                      follow-up questions so that style is shaped around your mood, goals,
+                      You start by choosing a meditation type, then chat so that style is shaped around your mood, goals,
                       and what you need today.
                     </p>
                   </div>
@@ -3068,30 +3128,95 @@ export function CreateWorkspace({
                   beginStylePath();
                 } else if (pendingModeChoice === "freeflow") {
                   beginFreeFlowPath();
+                  setCreateStripStep(1);
                 } else if (pendingModeChoice === "journalReflect") {
                   beginJournalReflectPath();
+                  setCreateStripStep(1);
                 } else if (pendingModeChoice === "goal") {
                   beginGoalPath();
+                  setCreateStripStep(1);
                 }
-                setCreateStripStep(1);
               }}
               className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
               aria-label={
-                pendingModeChoice === "journalReflect"
+                pendingModeChoice === "style"
+                  ? "Continue and pick a meditation type"
+                  : pendingModeChoice === "journalReflect"
                   ? "Continue and pick journal entries in chat"
                   : pendingModeChoice === "goal"
                     ? "Continue and pick a goal in chat"
                   : "Continue to script and chat"
               }
             >
-              <span>Script</span>
+              <span>
+                {pendingModeChoice === "style"
+                  ? "Choose meditation type"
+                  : "Script"}
+              </span>
               <IconChevronRight className="text-accent" />
             </button>
             </div>
           </div>
         </div>
         ) : null}
-        {workspaceSectionStep === 1 ? (
+        {showStyleTypePick ? (
+          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+              <h2 className="shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
+                What type of meditation?
+              </h2>
+              <p className="shrink-0 text-sm text-muted sm:text-base">
+                Choose the practice you want to build. Next you’ll chat with the
+                guide so it fits your mood and what you need today.
+              </p>
+              <MeditationTypeCardGrid
+                selected={pendingStyleType ?? ""}
+                onSelect={setPendingStyleType}
+                titles={meditationStyleTooltip}
+              />
+              {pendingStyleType ? (
+                <div className="shrink-0 rounded-2xl border border-border bg-card px-4 py-3 sm:px-5 sm:py-4">
+                  <p className="text-sm font-semibold text-foreground">
+                    {pendingStyleType}
+                  </p>
+                  <p className="mt-1.5 text-sm leading-relaxed text-muted">
+                    {descriptionForMeditationStyle(pendingStyleType)}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+            <div className="shrink-0 border-t border-border/60 bg-background pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreationPath("pending");
+                    setPhase("style");
+                    setPendingModeChoice("style");
+                    setPendingStyleType(null);
+                    setCreateStripStep(0);
+                  }}
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                  aria-label="Back to how you generate the script"
+                >
+                  <IconChevronLeft className="shrink-0 text-accent" />
+                  <span>Back</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!pendingStyleType}
+                  onClick={confirmStyleTypePick}
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                  aria-label="Continue to chat with this meditation type"
+                >
+                  <span>Script</span>
+                  <IconChevronRight className="text-accent" />
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {workspaceSectionStep === 1 && !showStyleTypePick ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <h2 className="mb-2 shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:mb-3 sm:text-xl">

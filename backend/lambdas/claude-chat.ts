@@ -12,6 +12,7 @@ import {
   getFleetScriptWordTargets,
   scriptDurationPlanningAppendix,
 } from "../lib/script-duration-planning-prompt";
+import { SCRIPT_PAUSE_PROMPT_RULES } from "../lib/script-pause-bands";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const MODEL = "claude-haiku-4-5";
@@ -206,16 +207,12 @@ async function streamHandler(
       "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
       "Use gender-neutral language throughout; never assume anyone's gender. Avoid he/she/his/her—prefer 'you' or singular 'they' where needed.",
       "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
-      "Use **liberal** natural pauses with inline markers `[[PAUSE xs]]` (e.g. `[[PAUSE 3s]]`, `[[PAUSE 6s]]`): include them **often**—after most sentences or sense-units, at **every** meaningful transition (arrival → practice, shifts in technique or imagery, closing), and wherever a human guide would breathe or let a phrase land—not only at rare dramatic beats.",
-      "Place **every** pause **intelligently**: each gap must fit the moment—what was just said, the emotional or somatic weight, the transition, and what comes next. Pauses are not filler; avoid random, uniform, or excessive markers that would break rhythm or feel mechanical.",
-      "Vary pause lengths by context: **short** bridges can be ~1.5s–2.5s when momentum matters; **typical** gaps between lines are often **2.5s–5s**; use **5s–9s** (sometimes longer) after heavier invitations, imagery, or emotional lines. Default toward **longer and slightly more frequent** silence than a dense script—still never gratuitous.",
-      "When the listener follows in their own time—breath or body at their own pace, counting breaths or steps themselves, slow body scan, open-ended visualization, or resting in silence—**intelligently** add **extra** time so the voice does not crowd them: longer gaps where the invitation truly needs room (often **5s–14s**, sometimes more), sometimes several markers in a row when one sustained silence fits; never rush the next line while they are meant to be practising alone, and never stack long silence where the script does not call for it.",
-      "Place pause markers on their own or immediately after a sentence, never splitting words.",
+      SCRIPT_PAUSE_PROMPT_RULES,
       "Important formatting constraints:",
       "1) Do NOT output any title, heading, or preamble of any kind.",
       "2) The very first spoken content must start immediately (first non-whitespace characters must be the guide's words).",
-      "3) Do NOT start the script with a pause marker like [[PAUSE 1s]]; only include pauses after speaking has begun.",
-      "Output **only** the words the guide speaks and these [[PAUSE xs]] markers; do not output other markdown or commentary.",
+      "3) Do NOT start the script with a pause marker; only include pauses after speaking has begun.",
+      "Output **only** the words the guide speaks and these [[PAUSE …]] named-band markers; do not output other markdown or commentary.",
       scriptDurationPlanningAppendix(meditationTargetMinutes, { speechSpeed }),
     ].join("\n");
 

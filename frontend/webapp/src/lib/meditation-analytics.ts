@@ -6,7 +6,36 @@ import { claudeHaiku45UsdFromTokens } from "./claude-pricing";
  */
 export const FISH_USD_PER_UTF8_BYTE = 15 / 1_000_000;
 
-const PAUSE_RE = /\[\[PAUSE\s+([0-9]+(?:\.[0-9])?)s?\]\]/gi;
+const PAUSE_RE = /\[\[PAUSE\s+([^\]]+)\]\]/gi;
+
+/** Keep in sync with backend/lib/script-pause-bands.ts */
+const PAUSE_BAND_SECONDS: Record<string, number> = {
+  "extra-short": 1.5,
+  "extra short": 1.5,
+  xs: 1.5,
+  extrashort: 1.5,
+  short: 2.5,
+  s: 2.5,
+  medium: 4,
+  med: 4,
+  m: 4,
+  typical: 4,
+  long: 7,
+  l: 7,
+  "extra long": 12,
+  "extra-long": 12,
+  extralong: 12,
+  xl: 12,
+  xlong: 12,
+};
+
+function secondsForPauseSpec(raw: string): number {
+  const key = raw.trim().toLowerCase().replace(/[_]+/g, " ").replace(/\s+/g, " ");
+  if (key in PAUSE_BAND_SECONDS) return PAUSE_BAND_SECONDS[key]!;
+  const n = parseFloat(raw.trim().replace(/s$/i, ""));
+  if (Number.isFinite(n) && n > 0) return n;
+  return 0;
+}
 
 export function sumPauseSecondsFromScript(script: string): number {
   if (!script) return 0;
@@ -14,8 +43,7 @@ export function sumPauseSecondsFromScript(script: string): number {
   let total = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(script)) !== null) {
-    const p = parseFloat(m[1] ?? "0");
-    if (Number.isFinite(p) && p > 0) total += p;
+    total += secondsForPauseSpec(m[1] ?? "");
   }
   return total;
 }
@@ -23,7 +51,7 @@ export function sumPauseSecondsFromScript(script: string): number {
 export function stripPauseMarkers(script: string): string {
   if (!script) return "";
   return script
-    .replace(/\[\[PAUSE\s+([0-9]+(?:\.[0-9])?)s?\]\]/gi, " ")
+    .replace(new RegExp(PAUSE_RE.source, PAUSE_RE.flags), " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -381,7 +409,7 @@ export function buildScriptDurationPlanningBlurb(
     return [
       "### Voice stem planning",
       "",
-      "Voice stem length is approximately: **sum of [[PAUSE …]] seconds** plus **time Fish spends speaking the words**.",
+      "Voice stem length is approximately: **sum of [[PAUSE …]] bands** (resolved to seconds at render) plus **time Fish spends speaking the words**.",
       "Add more pause time and you need fewer words for the same stem length (and the opposite).",
       "This table does not yet have enough rows to infer a median speaking pace from your fleet.",
     ].join("\n");
@@ -428,7 +456,7 @@ export function buildScriptDurationPlanningBlurb(
   }
 
   lines.push(
-    "Pauses and words trade off: for a fixed stem budget, every extra second in `[[PAUSE …]]` is one less second of talking at your typical pace.",
+    "Pauses and words trade off: for a fixed stem budget, every extra second from `[[PAUSE …]]` bands is one less second of talking at your typical pace.",
   );
 
   return lines.join("\n");

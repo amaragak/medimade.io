@@ -74,6 +74,19 @@ export class MedimadeStack extends cdk.Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
+      cors: [
+        {
+          allowedMethods: [
+            s3.HttpMethods.PUT,
+            s3.HttpMethods.GET,
+            s3.HttpMethods.HEAD,
+          ],
+          allowedOrigins: ["*"],
+          allowedHeaders: ["*"],
+          exposedHeaders: ["ETag", "etag"],
+          maxAge: 3600,
+        },
+      ],
     });
 
     const mediaOai = new cloudfront.OriginAccessIdentity(this, "MediaOAI");
@@ -90,6 +103,9 @@ export class MedimadeStack extends cdk.Stack {
           }),
           viewerProtocolPolicy:
             cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          // Browser Web Audio (waveform trim) fetches MP3s with CORS.
+          responseHeadersPolicy:
+            cloudfront.ResponseHeadersPolicy.CORS_ALLOW_ALL_ORIGINS,
         },
       },
     );
@@ -121,6 +137,26 @@ export class MedimadeStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    /** Background-sound catalog: tags, in-use flag, trim window (S3 files stay under background-audio/). */
+    const soundCatalogTable = new dynamodb.Table(this, "SoundCatalogTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    /** Per-listener mix overrides for public/community meditations (creator mix stays on the catalog row). */
+    const meditationListenerMixTable = new dynamodb.Table(
+      this,
+      "MeditationListenerMixTable",
+      {
+        partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+        sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+        billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      },
+    );
+
     /** HS256 secret for session JWTs (magic-link auth). */
     const authJwtSecret = new secretsmanager.Secret(this, "MedimadeAuthJwtSecret", {
       description: "Medimade user session JWT signing secret",
@@ -151,6 +187,10 @@ export class MedimadeStack extends cdk.Stack {
     const authEmailFrom =
       (this.node.tryGetContext("authEmailFrom") as string | undefined)?.trim() ||
       "medimadeaws@gmail.com";
+    const adminEmails =
+      (this.node.tryGetContext("adminEmails") as string | undefined)?.trim() ||
+      process.env.ADMIN_EMAILS?.trim() ||
+      authEmailFrom;
 
     const authMagicRequest = new lambda_nodejs.NodejsFunction(this, "AuthMagicRequestFunction", {
       entry: path.join(__dirname, "../lambdas/auth-magic-request.ts"),
@@ -214,8 +254,9 @@ export class MedimadeStack extends cdk.Stack {
       entry: path.join(__dirname, "../lambdas/bg-audio-normalize.ts"),
       handler: "handler",
       runtime: lambda.Runtime.NODEJS_20_X,
-      timeout: cdk.Duration.seconds(60),
-      memorySize: 1024,
+      timeout: cdk.Duration.seconds(180),
+      memorySize: 2048,
+      ephemeralStorageSize: cdk.Size.mebibytes(2048),
       layers: [ffmpegLayer],
       environment: {
         MEDIA_BUCKET_NAME: mediaBucket.bucketName,
@@ -494,6 +535,7 @@ export class MedimadeStack extends cdk.Stack {
         memorySize: 512,
         environment: {
           MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+          MEDITATION_LISTENER_MIX_TABLE_NAME: meditationListenerMixTable.tableName,
           MEDIA_BUCKET_NAME: mediaBucket.bucketName,
           MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
           AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
@@ -501,6 +543,7 @@ export class MedimadeStack extends cdk.Stack {
       },
     );
     meditationAnalyticsTable.grantReadData(libraryList);
+    meditationListenerMixTable.grantReadData(libraryList);
     authJwtSecret.grantRead(libraryList);
     libraryList.addToRolePolicy(
       new iam.PolicyStatement({
@@ -673,6 +716,33 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    const meditationPublic = new lambda_nodejs.NodejsFunction(
+      this,
+      "MeditationPublicFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/meditation-public.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+        environment: {
+          MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        },
+      },
+    );
+    meditationAnalyticsTable.grantWriteData(meditationPublic);
+    authJwtSecret.grantRead(meditationPublic);
+
+    httpApi.addRoutes({
+      path: "/library/meditations/public",
+      methods: [apigwv2.HttpMethod.PATCH],
+      integration: new integrations.HttpLambdaIntegration(
+        "MeditationPublicIntegration",
+        meditationPublic,
+      ),
+    });
+
     const meditationMix = new lambda_nodejs.NodejsFunction(
       this,
       "MeditationMixFunction",
@@ -684,11 +754,13 @@ export class MedimadeStack extends cdk.Stack {
         memorySize: 256,
         environment: {
           MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
+          MEDITATION_LISTENER_MIX_TABLE_NAME: meditationListenerMixTable.tableName,
           AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
         },
       },
     );
     meditationAnalyticsTable.grantWriteData(meditationMix);
+    meditationListenerMixTable.grantReadWriteData(meditationMix);
     authJwtSecret.grantRead(meditationMix);
 
     httpApi.addRoutes({
@@ -712,10 +784,79 @@ export class MedimadeStack extends cdk.Stack {
         environment: {
           MEDIA_BUCKET_NAME: mediaBucket.bucketName,
           MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
+          SOUND_CATALOG_TABLE_NAME: soundCatalogTable.tableName,
         },
       },
     );
     mediaBucket.grantRead(listBackgroundAudio);
+    soundCatalogTable.grantReadData(listBackgroundAudio);
+
+    const adminSounds = new lambda_nodejs.NodejsFunction(this, "AdminSoundsFunction", {
+      entry: path.join(__dirname, "../lambdas/admin-sounds.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(120),
+      memorySize: 512,
+      environment: {
+        MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+        MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
+        SOUND_CATALOG_TABLE_NAME: soundCatalogTable.tableName,
+        AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        ADMIN_EMAILS: adminEmails,
+        CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,
+      },
+    });
+    mediaBucket.grantReadWrite(adminSounds);
+    mediaBucket.grantDelete(adminSounds);
+    soundCatalogTable.grantReadWriteData(adminSounds);
+    authJwtSecret.grantRead(adminSounds);
+    claudeApiKeySecret.grantRead(adminSounds);
+
+    httpApi.addRoutes({
+      path: "/admin/sounds",
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.PATCH,
+        apigwv2.HttpMethod.POST,
+        apigwv2.HttpMethod.OPTIONS,
+      ],
+      integration: new integrations.HttpLambdaIntegration(
+        "AdminSoundsIntegration",
+        adminSounds,
+      ),
+    });
+
+    const adminSoundsTrim = new lambda_nodejs.NodejsFunction(
+      this,
+      "AdminSoundsTrimFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/admin-sounds-trim.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(180),
+        memorySize: 2048,
+        ephemeralStorageSize: cdk.Size.mebibytes(2048),
+        layers: [ffmpegLayer],
+        environment: {
+          MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+          SOUND_CATALOG_TABLE_NAME: soundCatalogTable.tableName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+          ADMIN_EMAILS: adminEmails,
+        },
+      },
+    );
+    mediaBucket.grantReadWrite(adminSoundsTrim);
+    soundCatalogTable.grantReadWriteData(adminSoundsTrim);
+    authJwtSecret.grantRead(adminSoundsTrim);
+
+    httpApi.addRoutes({
+      path: "/admin/sounds/trim",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "AdminSoundsTrimIntegration",
+        adminSoundsTrim,
+      ),
+    });
 
     httpApi.addRoutes({
       path: "/media/background-audio",

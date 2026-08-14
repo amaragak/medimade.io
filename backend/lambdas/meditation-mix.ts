@@ -3,9 +3,13 @@ import type {
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
 import { optionalUserJson } from "../lib/medimade-auth-http";
 import { updateMeditationRowFirstMatchingPartition } from "../lib/meditation-library-update";
+import {
+  mixListenerPk,
+  mixOverrideSk,
+} from "../lib/meditation-listener-mix";
 import {
   LEGACY_MEDITATION_PARTITION_PK,
   meditationGlobalUserPk,
@@ -80,6 +84,60 @@ export async function handler(
   const backgroundMusicGain = optGain(body.backgroundMusicGain, 50);
   const backgroundNoiseGain = optGain(body.backgroundNoiseGain, 10);
 
+  const mixFields = {
+    liveMix: true,
+    backgroundNatureKey,
+    backgroundMusicKey,
+    backgroundNoiseKey,
+    backgroundNatureGain,
+    backgroundMusicGain,
+    backgroundNoiseGain,
+  };
+
+  const community =
+    body.community === true ||
+    body.community === "1" ||
+    body.listenerMix === true;
+
+  if (community) {
+    const mixTable = process.env.MEDITATION_LISTENER_MIX_TABLE_NAME;
+    if (!mixTable) {
+      return json(500, { error: "MEDITATION_LISTENER_MIX_TABLE_NAME is not set" });
+    }
+    const s3Key = optKey(body.s3Key);
+    if (!s3Key) {
+      return json(400, { error: "`s3Key` is required for a listener mix" });
+    }
+    const pk = mixListenerPk({
+      userSub: auth?.sub,
+      guestListenerId: body.listenerId,
+    });
+    if (!pk) {
+      return json(400, {
+        error: "Sign in or pass a `listenerId` to save a personal mix",
+      });
+    }
+    try {
+      await ddb.send(
+        new PutCommand({
+          TableName: mixTable,
+          Item: {
+            pk,
+            sk: mixOverrideSk(s3Key),
+            s3Key,
+            meditationSk: sk,
+            updatedAt: new Date().toISOString(),
+            ...mixFields,
+          },
+        }),
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Update failed";
+      return json(500, { error: msg });
+    }
+    return json(200, { ok: true, listenerMix: true, ...mixFields });
+  }
+
   try {
     const ok = await updateMeditationRowFirstMatchingPartition({
       ddb,
@@ -88,7 +146,7 @@ export async function handler(
       sk,
       update: {
         UpdateExpression:
-          "SET liveMix = :lm, backgroundNatureKey = :nk, backgroundMusicKey = :mk, backgroundNoiseKey = :zk, backgroundNatureGain = :ng, backgroundMusicGain = :mg, backgroundNoiseGain = :zg",
+          "SET liveMix = :lm, backgroundNatureKey = :nk, backgroundMusicKey = :mk, backgroundNoiseKey = :zk, backgroundNatureGain = :ng, backgroundMusicGain = :mg, backgroundNoiseGain = :zg, createdBackgroundNatureKey = if_not_exists(createdBackgroundNatureKey, backgroundNatureKey), createdBackgroundMusicKey = if_not_exists(createdBackgroundMusicKey, backgroundMusicKey), createdBackgroundNoiseKey = if_not_exists(createdBackgroundNoiseKey, backgroundNoiseKey), createdBackgroundNatureGain = if_not_exists(createdBackgroundNatureGain, backgroundNatureGain), createdBackgroundMusicGain = if_not_exists(createdBackgroundMusicGain, backgroundMusicGain), createdBackgroundNoiseGain = if_not_exists(createdBackgroundNoiseGain, backgroundNoiseGain)",
         ExpressionAttributeValues: {
           ":lm": true,
           ":nk": backgroundNatureKey,
@@ -109,14 +167,5 @@ export async function handler(
     return json(500, { error: msg });
   }
 
-  return json(200, {
-    ok: true,
-    liveMix: true,
-    backgroundNatureKey,
-    backgroundMusicKey,
-    backgroundNoiseKey,
-    backgroundNatureGain,
-    backgroundMusicGain,
-    backgroundNoiseGain,
-  });
+  return json(200, { ok: true, ...mixFields });
 }

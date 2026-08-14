@@ -3,12 +3,17 @@ import type {
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
 import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import {
+  BG_AUDIO_CATEGORIES,
+  BG_AUDIO_PREFIX,
+  mergeByStemPreferMp3,
+  parseAnyBgAudioKey,
+  type BgAudioCategory,
+  type ListedBgItem,
+} from "../lib/background-audio-keys";
+import { listAllSoundRows, soundIsInCustomerPicker } from "../lib/sound-catalog";
 
 const s3 = new S3Client({});
-const PREFIX = "background-audio/";
-
-const CATEGORIES = ["nature", "music", "drums", "noise"] as const;
-type Category = (typeof CATEGORIES)[number];
 
 function json(
   statusCode: number,
@@ -18,75 +23,12 @@ function json(
     statusCode,
     headers: {
       "Content-Type": "application/json",
-      // Allow browser + extension clients to fetch this public catalog.
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET,OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type,Authorization",
     },
     body: JSON.stringify(payload),
   };
-}
-
-function itemFromKey(key: string): { key: string; name: string; size: number | null } | null {
-  if (!key || key.endsWith("/")) return null;
-  const lower = key.toLowerCase();
-  if (!lower.endsWith(".mp3") && !lower.endsWith(".wav")) return null;
-  const withoutPrefix = key.startsWith(PREFIX) ? key.slice(PREFIX.length) : key;
-  const firstSlash = withoutPrefix.indexOf("/");
-  if (firstSlash <= 0) return null;
-  const category = withoutPrefix.slice(0, firstSlash) as Category;
-  if (!CATEGORIES.includes(category)) return null;
-  const rest = withoutPrefix.slice(firstSlash + 1);
-  if (!rest || rest.endsWith("/")) return null;
-  const lastSlash = rest.lastIndexOf("/");
-  const leaf = lastSlash >= 0 ? rest.slice(lastSlash + 1) : rest;
-  if (!leaf) return null;
-  const dot = leaf.lastIndexOf(".");
-  const base = dot > 0 ? leaf.slice(0, dot) : leaf;
-  return {
-    key,
-    name: base || leaf,
-    size: null,
-  };
-}
-
-type ListedBgItem = {
-  key: string;
-  name: string;
-  size: number | null;
-  /** S3 key for normalized WAV when MP3 is used as `key` (streaming). */
-  wavKey?: string;
-};
-
-/** One row per stem: prefer MP3 for `key`; attach sibling `wavKey` when both exist. */
-function mergeByNamePreferMp3(
-  items: { key: string; name: string; size: number | null }[],
-): ListedBgItem[] {
-  const byName = new Map<
-    string,
-    { mp3?: (typeof items)[number]; wav?: (typeof items)[number] }
-  >();
-  for (const item of items) {
-    const lower = item.key.toLowerCase();
-    const rec = byName.get(item.name) ?? {};
-    if (lower.endsWith(".mp3")) rec.mp3 = item;
-    else if (lower.endsWith(".wav")) rec.wav = item;
-    byName.set(item.name, rec);
-  }
-  const out: ListedBgItem[] = [];
-  for (const [name, rec] of byName) {
-    if (rec.mp3) {
-      out.push({
-        key: rec.mp3.key,
-        name,
-        size: rec.mp3.size,
-        ...(rec.wav ? { wavKey: rec.wav.key } : {}),
-      });
-    } else if (rec.wav) {
-      out.push({ key: rec.wav.key, name, size: rec.wav.size });
-    }
-  }
-  return out;
 }
 
 export async function handler(
@@ -105,34 +47,67 @@ export async function handler(
   const baseUrl = domain ? `https://${domain}` : undefined;
 
   try {
-    const out = await s3.send(
-      new ListObjectsV2Command({
-        Bucket: bucket,
-        Prefix: PREFIX,
-      }),
-    );
+    const objects: { Key?: string; Size?: number }[] = [];
+    let token: string | undefined;
+    do {
+      const page = await s3.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: BG_AUDIO_PREFIX,
+          ContinuationToken: token,
+        }),
+      );
+      objects.push(...(page.Contents ?? []));
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
 
-    const buckets: Record<Category, ListedBgItem[]> = {
+    const buckets: Record<BgAudioCategory, ListedBgItem[]> = {
       nature: [],
       music: [],
       drums: [],
       noise: [],
     };
 
-    for (const o of out.Contents ?? []) {
-      if (!o.Key) continue;
-      const parsed = itemFromKey(o.Key);
-      if (!parsed) continue;
-      parsed.size = o.Size ?? null;
-      const withoutPrefix = o.Key.startsWith(PREFIX) ? o.Key.slice(PREFIX.length) : o.Key;
-      const cat = withoutPrefix.slice(0, withoutPrefix.indexOf("/")) as Category;
-      if (CATEGORIES.includes(cat)) {
-        buckets[cat].push(parsed);
+    const skip = new Set<string>();
+    const categoryOverride = new Map<string, BgAudioCategory>();
+    if (process.env.SOUND_CATALOG_TABLE_NAME) {
+      try {
+        const rows = await listAllSoundRows();
+        for (const row of rows) {
+          if (!soundIsInCustomerPicker(row)) skip.add(row.sk);
+          if (row.category && BG_AUDIO_CATEGORIES.includes(row.category)) {
+            categoryOverride.set(row.sk, row.category);
+          }
+        }
+      } catch (e) {
+        console.warn("sound catalog overlay skipped", e);
       }
     }
 
-    for (const c of CATEGORIES) {
-      buckets[c] = mergeByNamePreferMp3(buckets[c]);
+    for (const o of objects) {
+      if (!o.Key) continue;
+      const parsed = parseAnyBgAudioKey(o.Key);
+      if (!parsed) continue;
+      const item = {
+        key: parsed.key,
+        name: parsed.name,
+        size: o.Size ?? null,
+      };
+      const lower = parsed.key.toLowerCase();
+      const catalogKey = lower.endsWith(".wav")
+        ? `${parsed.key.slice(0, -4)}.mp3`
+        : parsed.key;
+      if (skip.has(catalogKey) || skip.has(parsed.key)) continue;
+      const cat =
+        categoryOverride.get(catalogKey) ??
+        categoryOverride.get(parsed.key) ??
+        parsed.folderCategory;
+      if (!cat) continue;
+      buckets[cat].push(item);
+    }
+
+    for (const c of BG_AUDIO_CATEGORIES) {
+      buckets[c] = mergeByStemPreferMp3(buckets[c]);
       buckets[c].sort((a, b) => a.name.localeCompare(b.name));
     }
 

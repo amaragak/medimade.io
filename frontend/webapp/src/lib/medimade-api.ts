@@ -37,6 +37,24 @@ function medimadeJsonHeaders(): Record<string, string> {
   return { "Content-Type": "application/json", ...medimadeApiAuthHeaders() };
 }
 
+const MIX_LISTENER_STORAGE_KEY = "medimade.mix-listener-id";
+const MIX_LISTENER_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Stable anonymous id so guest mix overrides persist in the listener mix table. */
+export function getOrCreateMixListenerId(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const existing = window.localStorage.getItem(MIX_LISTENER_STORAGE_KEY)?.trim() ?? "";
+    if (MIX_LISTENER_ID_RE.test(existing)) return existing.toLowerCase();
+    const id = crypto.randomUUID();
+    window.localStorage.setItem(MIX_LISTENER_STORAGE_KEY, id);
+    return id;
+  } catch {
+    return "";
+  }
+}
+
 export type MedimadeChatTurn = { role: "user" | "assistant"; content: string };
 
 export function getMedimadeApiBase(): string | null {
@@ -1120,6 +1138,249 @@ export async function getMeditationAudioJobStatus(
   return { ...data, jobId: data.jobId ?? id };
 }
 
+export type AdminSoundCategory = "nature" | "music" | "drums" | "noise";
+
+export type AdminSoundItem = {
+  key: string;
+  wavKey?: string;
+  name: string;
+  size: number | null;
+  packPath?: string | null;
+  folderCategory: AdminSoundCategory | null;
+  category: AdminSoundCategory;
+  subcategory: string;
+  suggestedCategory: AdminSoundCategory | null;
+  suggestedSubcategory: string | null;
+  tags: string[];
+  enabled: boolean;
+  status: "in_use" | "pending" | "unused";
+  notes: string;
+  originalKey?: string;
+  trimStartSec: number;
+  trimEndSec: number | null;
+  inCatalog: boolean;
+  ready: boolean;
+  hasRaw?: boolean;
+  importedAt: string | null;
+  updatedAt: string | null;
+};
+
+export type AdminSoundsList = {
+  baseUrl?: string;
+  categories: AdminSoundCategory[];
+  counts: { total: number; inUse: number; pending: number; unused: number; inCatalog: number };
+  items: AdminSoundItem[];
+};
+
+export async function listAdminSounds(): Promise<AdminSoundsList> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/sounds`, { headers: medimadeApiAuthHeaders() });
+  const data = (await res.json()) as AdminSoundsList & { error?: string; detail?: string };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  return {
+    baseUrl: data.baseUrl,
+    categories: data.categories ?? ["nature", "music", "drums", "noise"],
+    counts: {
+      total: data.counts?.total ?? 0,
+      inUse: data.counts?.inUse ?? 0,
+      pending: data.counts?.pending ?? 0,
+      unused: data.counts?.unused ?? 0,
+      inCatalog: data.counts?.inCatalog ?? 0,
+    },
+    items: (data.items ?? []).map((it) => ({
+      ...it,
+      status: it.status ?? (it.enabled ? "in_use" : "unused"),
+      importedAt: it.importedAt ?? it.updatedAt ?? null,
+    })),
+  };
+}
+
+export async function patchAdminSound(body: {
+  key: string;
+  enabled?: boolean;
+  status?: "in_use" | "pending" | "unused";
+  category?: AdminSoundCategory;
+  subcategory?: string;
+  tags?: string[];
+  name?: string;
+  notes?: string;
+}): Promise<{ key: string }> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/sounds`, {
+    method: "PATCH",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json()) as { key?: string; error?: string; detail?: string };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  return { key: data.key ?? body.key };
+}
+
+export async function createAdminSoundUploads(params: {
+  files: Array<{ relativePath: string; contentType: string; size: number }>;
+}): Promise<{
+  uploads: AdminSoundUpload[];
+  skippedCount: number;
+}> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/sounds`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ files: params.files }),
+  });
+  const data = (await res.json()) as {
+    uploads?: AdminSoundUpload[];
+    skippedCount?: number;
+    skipped?: string[];
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  return {
+    uploads: data.uploads ?? [],
+    skippedCount: data.skippedCount ?? data.skipped?.length ?? 0,
+  };
+}
+
+export type AdminSoundUpload = {
+  filename: string;
+  relativePath: string;
+  url?: string;
+  multipart?: { uploadId: string; partSize: number; urls: string[] };
+  rawKey: string;
+  key: string;
+  wavKey: string;
+  contentType: string;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function putS3WithRetry(url: string, body: Blob): Promise<Response> {
+  let lastStatus = 0;
+  let lastDetail = "";
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const res = await fetch(url, { method: "PUT", body, cache: "no-store" });
+      if (res.ok) return res;
+      lastStatus = res.status;
+      lastDetail = await res.text().catch(() => "");
+      const retryable = res.status === 403 || res.status === 408 || res.status === 429 || res.status >= 500;
+      if (!retryable) break;
+    } catch (e) {
+      lastStatus = 0;
+      lastDetail = e instanceof Error ? e.message : "network error";
+    }
+    await sleep(500 * 2 ** attempt);
+  }
+  throw new Error(
+    lastStatus
+      ? `${lastStatus}${lastDetail ? `: ${lastDetail.slice(0, 120)}` : ""}`
+      : lastDetail || "upload failed",
+  );
+}
+
+async function completeAdminSoundMultipart(body: {
+  rawKey: string;
+  uploadId: string;
+  parts: Array<{ partNumber: number; etag: string }>;
+}): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/sounds`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ completeMultipart: body }),
+  });
+  const data = (await res.json()) as { error?: string; detail?: string };
+  if (!res.ok) throw new Error(data.detail ?? data.error ?? res.statusText);
+}
+
+async function abortAdminSoundMultipart(rawKey: string, uploadId: string): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) return;
+  await fetch(`${base}/admin/sounds`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ abortMultipart: { rawKey, uploadId } }),
+  }).catch(() => undefined);
+}
+
+export async function suggestAdminSoundCategories(paths: string[]): Promise<number> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  let updated = 0;
+  for (let i = 0; i < paths.length; i += 40) {
+    const slice = paths.slice(i, i + 40);
+    const res = await fetch(`${base}/admin/sounds`, {
+      method: "POST",
+      headers: medimadeJsonHeaders(),
+      body: JSON.stringify({ suggest: { paths: slice } }),
+    });
+    const data = (await res.json()) as { updated?: number; error?: string; detail?: string };
+    if (!res.ok) throw new Error(data.detail ?? data.error ?? res.statusText);
+    updated += data.updated ?? 0;
+  }
+  return updated;
+}
+
+export async function uploadAdminSoundToS3(u: AdminSoundUpload, file: File): Promise<void> {
+  if (u.multipart?.urls?.length) {
+    const etags: Array<{ partNumber: number; etag: string }> = [];
+    try {
+      const partSize = u.multipart.partSize;
+      for (let i = 0; i < u.multipart.urls.length; i++) {
+        const url = u.multipart.urls[i];
+        if (!url) throw new Error("missing part URL");
+        const blob = file.slice(i * partSize, Math.min((i + 1) * partSize, file.size));
+        const res = await putS3WithRetry(url, blob);
+        const etag = res.headers.get("ETag") || res.headers.get("etag");
+        if (!etag) throw new Error("S3 part missing ETag");
+        etags.push({ partNumber: i + 1, etag });
+      }
+      await completeAdminSoundMultipart({
+        rawKey: u.rawKey,
+        uploadId: u.multipart.uploadId,
+        parts: etags,
+      });
+    } catch (e) {
+      await abortAdminSoundMultipart(u.rawKey, u.multipart.uploadId);
+      throw e;
+    }
+    return;
+  }
+  if (!u.url) throw new Error("missing upload url");
+  await putS3WithRetry(u.url, file);
+}
+
+export async function trimAdminSound(body: {
+  key: string;
+  startSec: number;
+  endSec: number | null;
+}): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/sounds/trim`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json()) as { error?: string; detail?: string };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+}
+
 export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
@@ -1185,6 +1446,7 @@ export type LibraryMeditationItem = {
   rating: number | null;
   favourite: boolean;
   archived: boolean;
+  isPublic?: boolean;
   catalogued: boolean;
   mp3Bytes: number | null;
   /** Saved create-flow draft (not shown in main library list). */
@@ -1197,6 +1459,18 @@ export type LibraryMeditationItem = {
   backgroundNatureGain?: number | null;
   backgroundMusicGain?: number | null;
   backgroundNoiseGain?: number | null;
+  createdBackgroundNatureKey?: string | null;
+  createdBackgroundMusicKey?: string | null;
+  createdBackgroundNoiseKey?: string | null;
+  createdBackgroundNatureGain?: number | null;
+  createdBackgroundMusicGain?: number | null;
+  createdBackgroundNoiseGain?: number | null;
+  publisherBackgroundNatureKey?: string | null;
+  publisherBackgroundMusicKey?: string | null;
+  publisherBackgroundNoiseKey?: string | null;
+  publisherBackgroundNatureGain?: number | null;
+  publisherBackgroundMusicGain?: number | null;
+  publisherBackgroundNoiseGain?: number | null;
 };
 
 export const MEDITATION_DRAFT_STATE_VERSION = 1 as const;
@@ -1322,10 +1596,24 @@ export async function getMeditationDraft(sk: string): Promise<{
 }
 
 /** Lists `meditations/*.mp3` in the media bucket merged with DynamoDB library metadata. */
-export async function listLibraryMeditations(): Promise<LibraryMeditationItem[]> {
+export async function listLibraryMeditations(opts?: {
+  community?: boolean;
+}): Promise<LibraryMeditationItem[]> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/library/meditations`, { headers: medimadeApiAuthHeaders() });
+  const qs = opts?.community
+    ? (() => {
+        const p = new URLSearchParams({ community: "1" });
+        if (!getMedimadeSessionJwt()) {
+          const listenerId = getOrCreateMixListenerId();
+          if (listenerId) p.set("listenerId", listenerId);
+        }
+        return `?${p.toString()}`;
+      })()
+    : "";
+  const res = await fetch(`${base}/library/meditations${qs}`, {
+    headers: medimadeApiAuthHeaders(),
+  });
   const data = (await res.json()) as {
     items?: LibraryMeditationItem[];
     error?: string;
@@ -1384,15 +1672,41 @@ export async function patchMeditationBackgroundMix(
     backgroundMusicGain: number;
     backgroundNoiseGain: number;
   },
+  opts?: { community?: boolean; s3Key?: string },
 ): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const listenerId = getOrCreateMixListenerId();
   const res = await fetch(`${base}/library/meditations/mix`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
       sk,
       ...mix,
+      ...(opts?.community ? { community: true, s3Key: opts.s3Key ?? "" } : {}),
+      ...(listenerId ? { listenerId } : {}),
+      ...(sessionTokenForBody() ? { sessionToken: sessionTokenForBody() } : {}),
+    }),
+  });
+  const data = (await res.json()) as { error?: string; detail?: string };
+  if (!res.ok) {
+    const msg = data.detail ?? data.error ?? res.statusText;
+    throw new Error(msg);
+  }
+}
+
+export async function patchMeditationPublic(
+  sk: string,
+  isPublic: boolean,
+): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/library/meditations/public`, {
+    method: "PATCH",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      sk,
+      isPublic,
       ...(sessionTokenForBody() ? { sessionToken: sessionTokenForBody() } : {}),
     }),
   });
