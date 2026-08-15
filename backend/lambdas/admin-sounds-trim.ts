@@ -21,7 +21,7 @@ import {
   parseBgAudioKey,
   siblingWavKey,
 } from "../lib/background-audio-keys";
-import { listAllSoundRows, putSoundRow, type SoundCatalogRow } from "../lib/sound-catalog";
+import { listAllSoundRows, putSoundRow, soundEnabledFromStatus, type SoundCatalogRow } from "../lib/sound-catalog";
 
 const s3 = new S3Client({});
 const execFileAsync = promisify(execFile);
@@ -244,7 +244,7 @@ export async function handler(
       category: existing?.category ?? parsed?.category ?? "nature",
       tags: existing?.tags ?? [],
       status: existing?.status ?? "in_use",
-      enabled: (existing?.status ?? "in_use") === "in_use",
+      enabled: soundEnabledFromStatus(existing?.status ?? "in_use"),
       notes: existing?.notes,
       originalKey: origMp3,
       trimStartSec: startSec,

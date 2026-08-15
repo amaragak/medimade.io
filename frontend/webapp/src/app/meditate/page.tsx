@@ -3,7 +3,7 @@ import Link from "next/link";
 export const metadata = {
   title: "Meditate",
   description:
-    "Create on-the-fly guided meditations: chat through mood and intention, then generate a bespoke session with the sounds, voice, and structure you want.",
+    "AI guided meditations that actually sound good. Chat through mood and intention, then generate a session with the voice, ambience, and pacing you want.",
 };
 
 const pillars = [
@@ -42,15 +42,15 @@ export default function MeditateMarketingPage() {
             Guided meditation
           </p>
           <h1 className="text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
-            <span className="font-display">Meditations made</span>{" "}
+            <span className="font-display">AI guided meditations</span>{" "}
             <span className="font-hand text-[1.12em] font-medium leading-snug text-accent tracking-normal">
-              just for you
+              that actually sound good
             </span>
           </h1>
           <p className="mt-5 max-w-lg text-lg text-muted">
-            An app for on-the-fly guided meditations: chat through mood and
-            intention, then generate a bespoke session with the sounds, voice,
-            and structure you want.
+            Chat through mood and intention, then generate a session with the
+            voice, ambience, and pacing you want—made for you, not a generic
+            track.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <Link

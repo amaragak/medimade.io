@@ -10,9 +10,10 @@ const secrets = new SecretsManagerClient({});
 let cachedClaudeKey: string | undefined;
 
 export type SoundCategorySuggestion = {
-  path: string;
+  id: string;
   category: BgAudioCategory;
   subcategory: string;
+  name: string;
 };
 
 async function getClaudeApiKey(): Promise<string> {
@@ -45,30 +46,34 @@ function normalizeSubcategory(raw: string): string {
     .slice(0, 40);
 }
 
+function normalizeDisplayName(raw: string): string {
+  return raw.trim().replace(/\s+/g, " ").slice(0, 80);
+}
+
 /**
- * Suggest mixer category + subcategory from Splice pack paths / filenames.
- * Default is music unless the name clearly indicates nature, drums, or noise.
+ * Suggest mixer category, subcategory, and a short human-readable title from filenames.
  */
 export async function suggestSoundCategories(
-  paths: string[],
-): Promise<Map<string, { category: BgAudioCategory; subcategory: string }>> {
-  const out = new Map<string, { category: BgAudioCategory; subcategory: string }>();
-  if (paths.length === 0) return out;
+  items: Array<{ id: string; filename: string }>,
+): Promise<Map<string, { category: BgAudioCategory; subcategory: string; name: string }>> {
+  const out = new Map<string, { category: BgAudioCategory; subcategory: string; name: string }>();
+  if (items.length === 0) return out;
 
   const apiKey = await getClaudeApiKey();
   const system = [
-    "You classify meditation background audio stems from Splice sample packs.",
-    "Use only the relative path and Splice-style filename (BPM, key, pack folders, descriptive tokens).",
+    "You classify meditation background audio stems from Splice sample packs and filenames.",
+    "Use only the filename / relative path (BPM, key, pack folders, descriptive tokens).",
     "Pick exactly one category: music, nature, drums, noise.",
     "The vast majority of Splice beds, loops, pads, keys, guitars, drones, and atmospheres are music.",
     "nature = rain, ocean, wind, birds, forest, fire, water, insects — environmental recordings.",
     "drums = drum loops, percussion, kicks, hats, shakers, taiko, hand drums used as rhythm beds.",
     "noise = white/pink/brown noise, static, fan, hiss used as a noise bed — not musical texture.",
     "Also pick a short subcategory slug (lowercase, hyphens): e.g. ambient, pad, piano, guitar, drone, lofi, cinematic, strings, bells, rain, ocean, birds, forest, kick, percussion, white-noise.",
-    "Return ONLY a JSON array of {\"path\",\"category\",\"subcategory\"} with the same path strings you were given.",
+    "Also pick a short human-readable name (Title Case, 2–6 words). No file extension, no BPM, no musical key, no pack IDs or hashes. Example: 'Soft Rain Loop', 'Warm Pad Bed'.",
+    "Return ONLY a JSON array of {\"id\",\"category\",\"subcategory\",\"name\"} using the same id strings you were given.",
   ].join(" ");
 
-  const user = `Classify these files:\n${JSON.stringify(paths, null, 2)}`;
+  const user = `Classify these files:\n${JSON.stringify(items, null, 2)}`;
 
   const res = await fetch(ANTHROPIC_URL, {
     method: "POST",
@@ -79,7 +84,7 @@ export async function suggestSoundCategories(
     },
     body: JSON.stringify({
       model: CLAUDE_HAIKU_45_MODEL_ID,
-      max_tokens: 4096,
+      max_tokens: 8192,
       system,
       messages: [{ role: "user", content: user }],
     }),
@@ -100,15 +105,21 @@ export async function suggestSoundCategories(
   for (const row of parsed) {
     if (!row || typeof row !== "object") continue;
     const rec = row as Record<string, unknown>;
-    const path = typeof rec.path === "string" ? rec.path : "";
+    const id = typeof rec.id === "string" ? rec.id : typeof rec.path === "string" ? rec.path : "";
     const category =
       typeof rec.category === "string" && isBgAudioCategory(rec.category)
         ? rec.category
         : "music";
     const subcategory =
       typeof rec.subcategory === "string" ? normalizeSubcategory(rec.subcategory) : "";
-    if (!path) continue;
-    out.set(path, { category, subcategory: subcategory || "uncategorized" });
+    const name =
+      typeof rec.name === "string" ? normalizeDisplayName(rec.name) : "";
+    if (!id) continue;
+    out.set(id, {
+      category,
+      subcategory: subcategory || "uncategorized",
+      name: name || "Untitled",
+    });
   }
   return out;
 }

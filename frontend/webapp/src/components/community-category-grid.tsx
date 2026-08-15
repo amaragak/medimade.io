@@ -6,7 +6,7 @@ import {
 } from "@/lib/community-library";
 
 /** Lucide (ISC) paths, 24×24. Body scan from Tabler Icons (MIT). */
-function iconProps() {
+function iconProps(className: string) {
   return {
     viewBox: "0 0 24 24",
     fill: "none",
@@ -14,17 +14,19 @@ function iconProps() {
     strokeWidth: 2,
     strokeLinecap: "round" as const,
     strokeLinejoin: "round" as const,
-    className: "h-12 w-12 sm:h-14 sm:w-14",
+    className,
     "aria-hidden": true,
   };
 }
 
 function CommunityCategoryIcon({
   name,
+  className = "h-12 w-12 sm:h-14 sm:w-14",
 }: {
   name: LibraryMeditationCategory | "all";
+  className?: string;
 }) {
-  const p = iconProps();
+  const p = iconProps(className);
   switch (name) {
     case "all":
       return (
@@ -239,6 +241,41 @@ export function MeditationTypeCardGrid({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+export function MeditationTypeCard({
+  name,
+  className = "",
+}: {
+  name: string;
+  className?: string;
+}) {
+  const idx = LIBRARY_MEDITATION_CATEGORIES.indexOf(
+    name as LibraryMeditationCategory,
+  );
+  const fillIndex = idx >= 0 ? idx + 1 : 1;
+  const [light, dark] =
+    CATEGORY_CARD_FILLS[fillIndex % CATEGORY_CARD_FILLS.length]!;
+  const iconName: LibraryMeditationCategory | "all" =
+    idx >= 0 ? LIBRARY_MEDITATION_CATEGORIES[idx]! : "all";
+  return (
+    <div
+      aria-label={name}
+      style={{
+        colorScheme: "light dark",
+        backgroundColor: `light-dark(${light}, ${dark})`,
+      }}
+      className={`flex aspect-square w-[5.25rem] shrink-0 flex-col items-center justify-center gap-1.5 rounded-2xl border border-transparent px-1.5 py-2 text-center text-foreground shadow-sm sm:w-24 ${className}`}
+    >
+      <CommunityCategoryIcon
+        name={iconName}
+        className="h-8 w-8 sm:h-9 sm:w-9"
+      />
+      <span className="text-[11px] font-semibold leading-tight sm:text-xs">
+        {name}
+      </span>
     </div>
   );
 }

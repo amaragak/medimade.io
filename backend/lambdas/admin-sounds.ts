@@ -39,6 +39,7 @@ import {
   normalizeTags,
   parseSoundReviewStatus,
   putSoundRow,
+  soundEnabledFromStatus,
   type SoundCatalogRow,
   type SoundReviewStatus,
 } from "../lib/sound-catalog";
@@ -212,9 +213,10 @@ async function handleGet(bucket: string, baseUrl: string | undefined) {
       subcategory: meta?.subcategory ?? "",
       suggestedCategory: meta?.suggestedCategory ?? null,
       suggestedSubcategory: meta?.suggestedSubcategory ?? null,
+      suggestedName: meta?.suggestedName ?? null,
       tags: meta?.tags ?? [],
       status: meta?.status ?? "in_use",
-      enabled: (meta?.status ?? "in_use") === "in_use",
+      enabled: soundEnabledFromStatus(meta?.status ?? "in_use"),
       notes: meta?.notes ?? "",
       originalKey: meta?.originalKey,
       trimStartSec: meta?.trimStartSec ?? 0,
@@ -254,11 +256,12 @@ async function handleGet(bucket: string, baseUrl: string | undefined) {
   const inUse = items.filter((i) => i.status === "in_use").length;
   const pending = items.filter((i) => i.status === "pending").length;
   const unused = items.filter((i) => i.status === "unused").length;
+  const categorised = items.filter((i) => i.status === "categorised").length;
 
   return json(200, {
     ...(baseUrl ? { baseUrl } : {}),
     categories: BG_AUDIO_CATEGORIES,
-    counts: { total: items.length, inUse, pending, unused, inCatalog: rows.length },
+    counts: { total: items.length, inUse, pending, unused, categorised, inCatalog: rows.length },
     items,
   });
 }
@@ -317,7 +320,7 @@ async function handlePatch(event: APIGatewayProxyEventV2, bucket: string) {
     category,
     tags: Array.isArray(body.tags) ? normalizeTags(body.tags) : existing?.tags ?? [],
     status,
-    enabled: status === "in_use",
+    enabled: soundEnabledFromStatus(status),
     notes:
       typeof body.notes === "string"
         ? body.notes.slice(0, 500)
@@ -328,6 +331,7 @@ async function handlePatch(event: APIGatewayProxyEventV2, bucket: string) {
         : existing?.subcategory,
     suggestedCategory: existing?.suggestedCategory,
     suggestedSubcategory: existing?.suggestedSubcategory,
+    suggestedName: existing?.suggestedName,
     packPath: existing?.packPath,
     importedAt: existing?.importedAt ?? existing?.updatedAt,
     originalKey: existing?.originalKey
@@ -353,6 +357,9 @@ async function handlePost(event: APIGatewayProxyEventV2, bucket: string) {
   }
   if (body.abortMultipart && typeof body.abortMultipart === "object") {
     return handleAbortMultipart(bucket, body.abortMultipart as Record<string, unknown>);
+  }
+  if (body.analyseTitles && typeof body.analyseTitles === "object") {
+    return handleAnalyseTitles(body.analyseTitles as Record<string, unknown>);
   }
   if (body.suggest && typeof body.suggest === "object") {
     return handleSuggest(body.suggest as Record<string, unknown>);
@@ -417,9 +424,12 @@ async function handleSuggest(rec: Record<string, unknown>) {
   if (rels.length === 0) return json(200, { updated: 0 });
   if (rels.length > 40) return json(400, { error: "At most 40 paths per suggest request" });
 
-  let suggestions = new Map<string, { category: BgAudioCategory; subcategory: string }>();
+  let suggestions = new Map<
+    string,
+    { category: BgAudioCategory; subcategory: string; name: string }
+  >();
   try {
-    suggestions = await suggestSoundCategories(rels);
+    suggestions = await suggestSoundCategories(rels.map((rel) => ({ id: rel, filename: rel })));
   } catch (e) {
     console.warn("sound category suggest failed", e);
     return json(200, { updated: 0, error: "suggest failed" });
@@ -439,6 +449,53 @@ async function handleSuggest(rec: Record<string, unknown>) {
       ...row,
       suggestedCategory: hint.category,
       suggestedSubcategory: hint.subcategory,
+      suggestedName: hint.name,
+      updatedAt: new Date().toISOString(),
+    });
+    updated += 1;
+  }
+  return json(200, { updated });
+}
+
+async function handleAnalyseTitles(rec: Record<string, unknown>) {
+  const rawKeys = Array.isArray(rec.keys) ? rec.keys : [];
+  const keys = rawKeys.filter((k): k is string => typeof k === "string" && k.startsWith(BG_AUDIO_PREFIX));
+  const unique = [...new Set(keys)];
+  if (unique.length === 0) return json(200, { updated: 0 });
+  if (unique.length > 40) return json(400, { error: "At most 40 keys per analyse request" });
+
+  const catalog = await listAllSoundRows();
+  const bySk = new Map(catalog.map((r) => [r.sk, r]));
+  const payload: Array<{ id: string; filename: string }> = [];
+  for (const key of unique) {
+    const row = bySk.get(key);
+    if (!row) continue;
+    const filename = row.packPath || row.name || key.split("/").pop() || key;
+    payload.push({ id: key, filename });
+  }
+  if (payload.length === 0) return json(200, { updated: 0 });
+
+  let suggestions = new Map<
+    string,
+    { category: BgAudioCategory; subcategory: string; name: string }
+  >();
+  try {
+    suggestions = await suggestSoundCategories(payload);
+  } catch (e) {
+    console.warn("sound title analyse failed", e);
+    return json(500, { error: "analyse failed", detail: e instanceof Error ? e.message : String(e) });
+  }
+
+  let updated = 0;
+  for (const item of payload) {
+    const hint = suggestions.get(item.id);
+    const row = bySk.get(item.id);
+    if (!hint || !row) continue;
+    await putSoundRow({
+      ...row,
+      suggestedCategory: hint.category,
+      suggestedSubcategory: hint.subcategory,
+      suggestedName: hint.name,
       updatedAt: new Date().toISOString(),
     });
     updated += 1;

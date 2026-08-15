@@ -35,7 +35,7 @@ export default function HomePage() {
             </span>
           </h1>
           <p className="mt-2 text-lg font-medium text-foreground/90">
-            Live consciously—with meditations built for you and a journal that
+            AI guided meditations that actually sound good—and a journal that
             remembers the story.
           </p>
           <p className="mt-5 max-w-lg text-lg text-muted">

@@ -1151,9 +1151,10 @@ export type AdminSoundItem = {
   subcategory: string;
   suggestedCategory: AdminSoundCategory | null;
   suggestedSubcategory: string | null;
+  suggestedName: string | null;
   tags: string[];
   enabled: boolean;
-  status: "in_use" | "pending" | "unused";
+  status: "in_use" | "pending" | "unused" | "categorised";
   notes: string;
   originalKey?: string;
   trimStartSec: number;
@@ -1168,7 +1169,14 @@ export type AdminSoundItem = {
 export type AdminSoundsList = {
   baseUrl?: string;
   categories: AdminSoundCategory[];
-  counts: { total: number; inUse: number; pending: number; unused: number; inCatalog: number };
+  counts: {
+    total: number;
+    inUse: number;
+    pending: number;
+    unused: number;
+    categorised: number;
+    inCatalog: number;
+  };
   items: AdminSoundItem[];
 };
 
@@ -1188,11 +1196,13 @@ export async function listAdminSounds(): Promise<AdminSoundsList> {
       inUse: data.counts?.inUse ?? 0,
       pending: data.counts?.pending ?? 0,
       unused: data.counts?.unused ?? 0,
+      categorised: data.counts?.categorised ?? 0,
       inCatalog: data.counts?.inCatalog ?? 0,
     },
     items: (data.items ?? []).map((it) => ({
       ...it,
       status: it.status ?? (it.enabled ? "in_use" : "unused"),
+      suggestedName: it.suggestedName ?? null,
       importedAt: it.importedAt ?? it.updatedAt ?? null,
     })),
   };
@@ -1201,7 +1211,7 @@ export async function listAdminSounds(): Promise<AdminSoundsList> {
 export async function patchAdminSound(body: {
   key: string;
   enabled?: boolean;
-  status?: "in_use" | "pending" | "unused";
+  status?: "in_use" | "pending" | "unused" | "categorised";
   category?: AdminSoundCategory;
   subcategory?: string;
   tags?: string[];
@@ -1224,9 +1234,11 @@ export async function patchAdminSound(body: {
 
 export async function createAdminSoundUploads(params: {
   files: Array<{ relativePath: string; contentType: string; size: number }>;
+  signal?: AbortSignal;
 }): Promise<{
   uploads: AdminSoundUpload[];
   skippedCount: number;
+  skipped: string[];
 }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
@@ -1234,6 +1246,7 @@ export async function createAdminSoundUploads(params: {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ files: params.files }),
+    signal: params.signal,
   });
   const data = (await res.json()) as {
     uploads?: AdminSoundUpload[];
@@ -1248,6 +1261,7 @@ export async function createAdminSoundUploads(params: {
   return {
     uploads: data.uploads ?? [],
     skippedCount: data.skippedCount ?? data.skipped?.length ?? 0,
+    skipped: data.skipped ?? [],
   };
 }
 
@@ -1266,18 +1280,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function putS3WithRetry(url: string, body: Blob): Promise<Response> {
+async function putS3WithRetry(url: string, body: Blob, signal?: AbortSignal): Promise<Response> {
   let lastStatus = 0;
   let lastDetail = "";
   for (let attempt = 0; attempt < 4; attempt++) {
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     try {
-      const res = await fetch(url, { method: "PUT", body, cache: "no-store" });
+      const res = await fetch(url, { method: "PUT", body, cache: "no-store", signal });
       if (res.ok) return res;
       lastStatus = res.status;
       lastDetail = await res.text().catch(() => "");
       const retryable = res.status === 403 || res.status === 408 || res.status === 429 || res.status >= 500;
       if (!retryable) break;
     } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw e;
       lastStatus = 0;
       lastDetail = e instanceof Error ? e.message : "network error";
     }
@@ -1316,6 +1332,24 @@ async function abortAdminSoundMultipart(rawKey: string, uploadId: string): Promi
   }).catch(() => undefined);
 }
 
+export async function analyseAdminSoundTitles(keys: string[]): Promise<number> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  let updated = 0;
+  for (let i = 0; i < keys.length; i += 40) {
+    const slice = keys.slice(i, i + 40);
+    const res = await fetch(`${base}/admin/sounds`, {
+      method: "POST",
+      headers: medimadeJsonHeaders(),
+      body: JSON.stringify({ analyseTitles: { keys: slice } }),
+    });
+    const data = (await res.json()) as { updated?: number; error?: string; detail?: string };
+    if (!res.ok) throw new Error(data.detail ?? data.error ?? res.statusText);
+    updated += data.updated ?? 0;
+  }
+  return updated;
+}
+
 export async function suggestAdminSoundCategories(paths: string[]): Promise<number> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
@@ -1334,7 +1368,11 @@ export async function suggestAdminSoundCategories(paths: string[]): Promise<numb
   return updated;
 }
 
-export async function uploadAdminSoundToS3(u: AdminSoundUpload, file: File): Promise<void> {
+export async function uploadAdminSoundToS3(
+  u: AdminSoundUpload,
+  file: File,
+  signal?: AbortSignal,
+): Promise<void> {
   if (u.multipart?.urls?.length) {
     const etags: Array<{ partNumber: number; etag: string }> = [];
     try {
@@ -1343,7 +1381,7 @@ export async function uploadAdminSoundToS3(u: AdminSoundUpload, file: File): Pro
         const url = u.multipart.urls[i];
         if (!url) throw new Error("missing part URL");
         const blob = file.slice(i * partSize, Math.min((i + 1) * partSize, file.size));
-        const res = await putS3WithRetry(url, blob);
+        const res = await putS3WithRetry(url, blob, signal);
         const etag = res.headers.get("ETag") || res.headers.get("etag");
         if (!etag) throw new Error("S3 part missing ETag");
         etags.push({ partNumber: i + 1, etag });
@@ -1360,7 +1398,7 @@ export async function uploadAdminSoundToS3(u: AdminSoundUpload, file: File): Pro
     return;
   }
   if (!u.url) throw new Error("missing upload url");
-  await putS3WithRetry(u.url, file);
+  await putS3WithRetry(u.url, file, signal);
 }
 
 export async function trimAdminSound(body: {
@@ -1420,7 +1458,10 @@ export function libraryMeditationCategoryLabel(m: {
   const rawStyle = m.meditationStyle?.trim() ?? "";
   const styleOk =
     rawStyle && rawStyle.toLowerCase() !== "general" ? rawStyle : "";
-  if (type && styleOk) return `${type} · ${styleOk}`;
+  if (type && styleOk) {
+    if (type.toLowerCase() === styleOk.toLowerCase()) return type;
+    return `${type} · ${styleOk}`;
+  }
   if (type) return type;
   if (styleOk) return styleOk;
   return "—";
@@ -1511,6 +1552,8 @@ export type MeditationDraftStateV1 = {
   mobileCreateStep: "chat" | "audio";
   lastUsedScript: string | null;
   meditationTargetMinutes?: MeditationTargetMinutes;
+  /** Style-path intake: 3 targeted answers + optional "anything else". */
+  styleQuestionAnswers?: string[];
 };
 
 export async function saveMeditationDraft(params: {

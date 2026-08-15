@@ -8,10 +8,12 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 
 export const SOUND_PK = "SOUND";
 
-export type SoundReviewStatus = "in_use" | "pending" | "unused";
+export type SoundReviewStatus = "in_use" | "pending" | "unused" | "categorised";
 
 export function storedSoundReviewStatus(raw: unknown): SoundReviewStatus | null {
-  if (raw === "pending" || raw === "unused" || raw === "in_use") return raw;
+  if (raw === "pending" || raw === "unused" || raw === "in_use" || raw === "categorised") {
+    return raw;
+  }
   return null;
 }
 
@@ -39,7 +41,11 @@ export function parseSoundReviewStatus(raw: unknown): SoundReviewStatus {
 }
 
 export function soundIsInCustomerPicker(row: { status: SoundReviewStatus }): boolean {
-  return row.status === "in_use";
+  return row.status === "in_use" || row.status === "categorised";
+}
+
+export function soundEnabledFromStatus(status: SoundReviewStatus): boolean {
+  return soundIsInCustomerPicker({ status });
 }
 
 export type SoundCatalogRow = {
@@ -50,9 +56,10 @@ export type SoundCatalogRow = {
   subcategory?: string;
   suggestedCategory?: BgAudioCategory;
   suggestedSubcategory?: string;
+  suggestedName?: string;
   packPath?: string;
   tags: string[];
-  /** in_use = mixer; pending = fresh import; unused = reviewed skip */
+  /** in_use = approved for mixer; categorised = approved + tagged; pending = fresh import; unused = skip */
   status: SoundReviewStatus;
   enabled: boolean;
   notes?: string;
@@ -111,10 +118,11 @@ export async function listAllSoundRows(): Promise<SoundCatalogRow[]> {
           : undefined,
         suggestedSubcategory:
           typeof it.suggestedSubcategory === "string" ? it.suggestedSubcategory : undefined,
+        suggestedName: typeof it.suggestedName === "string" ? it.suggestedName : undefined,
         packPath: typeof it.packPath === "string" ? it.packPath : undefined,
         tags: normalizeTags(it.tags),
         status,
-        enabled: status === "in_use",
+        enabled: soundEnabledFromStatus(status),
         notes: typeof it.notes === "string" ? it.notes : undefined,
         originalKey: typeof it.originalKey === "string" ? it.originalKey : undefined,
         trimStartSec: typeof it.trimStartSec === "number" ? it.trimStartSec : undefined,

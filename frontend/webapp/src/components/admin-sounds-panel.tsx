@@ -8,6 +8,7 @@ import {
   createAdminSoundUploads,
   uploadAdminSoundToS3,
   suggestAdminSoundCategories,
+  analyseAdminSoundTitles,
   getMedimadeMediaBaseUrl,
   listAdminSounds,
   patchAdminSound,
@@ -15,6 +16,62 @@ import {
 } from "@/lib/medimade-api";
 
 const CATEGORIES: AdminSoundCategory[] = ["nature", "music", "drums", "noise"];
+
+type UseFilter = "all" | "in" | "pending" | "skip" | "categorised";
+
+function mixerEnabled(status: AdminSoundItem["status"]): boolean {
+  return status === "in_use" || status === "categorised";
+}
+
+function statusMatchesFilter(status: AdminSoundItem["status"], filter: UseFilter): boolean {
+  if (filter === "skip") return status === "unused";
+  if (filter === "in") return status === "in_use";
+  if (filter === "pending") return status === "pending";
+  if (filter === "categorised") return status === "categorised";
+  return status === "in_use" || status === "pending";
+}
+
+function isStatusReviewFilter(filter: UseFilter): boolean {
+  return filter === "pending" || filter === "in";
+}
+
+function suggestionFields(item: AdminSoundItem): {
+  name: string;
+  category: AdminSoundCategory;
+  subcategory: string;
+} {
+  const raw = item.packPath || item.name || item.key;
+  const base = (raw.split("/").pop() ?? raw).replace(/\.(mp3|wav)$/i, "");
+  const fallback = base.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim() || item.name;
+  return {
+    name: (item.suggestedName ?? "").trim() || fallback,
+    category: item.suggestedCategory ?? item.category,
+    subcategory: item.suggestedSubcategory ?? item.subcategory,
+  };
+}
+
+type ImportRowStatus = "queued" | "preparing" | "uploading" | "done" | "skipped" | "failed" | "aborted";
+
+type ImportRow = { path: string; status: ImportRowStatus; detail?: string };
+
+function importStatusLabel(status: ImportRowStatus): string {
+  if (status === "queued") return "Queued";
+  if (status === "preparing") return "Preparing";
+  if (status === "uploading") return "Uploading";
+  if (status === "done") return "Uploaded";
+  if (status === "skipped") return "Already on S3";
+  if (status === "aborted") return "Stopped";
+  return "Failed";
+}
+
+function importStatusClass(status: ImportRowStatus): string {
+  if (status === "uploading") return "text-sky-700 dark:text-sky-400";
+  if (status === "preparing") return "text-amber-700 dark:text-amber-400";
+  if (status === "done") return "text-emerald-700 dark:text-emerald-400";
+  if (status === "failed") return "text-red-700 dark:text-red-400";
+  if (status === "aborted") return "text-amber-800 dark:text-amber-400";
+  return "text-muted";
+}
 
 function mediaUrl(baseUrl: string | undefined, key: string, bust?: string | null): string {
   const root = (baseUrl ?? getMedimadeMediaBaseUrl() ?? "").replace(/\/$/, "");
@@ -99,17 +156,35 @@ export function AdminSoundsPanel() {
     inUse: 0,
     pending: 0,
     unused: 0,
+    categorised: 0,
     inCatalog: 0,
   });
   const [q, setQ] = useState("");
   const [catFilter, setCatFilter] = useState<"all" | AdminSoundCategory>("all");
-  const [useFilter, setUseFilter] = useState<"all" | "in" | "pending" | "skip">("all");
+  const [useFilter, setUseFilter] = useState<UseFilter>("all");
   const [subFilter, setSubFilter] = useState("");
   const [sortBy, setSortBy] = useState<"imported-desc" | "imported-asc" | "name">("imported-desc");
+  const [fadingKeys, setFadingKeys] = useState<Set<string>>(() => new Set());
+  const fadeTimers = useRef<Map<string, number>>(new Map());
   const [importing, setImporting] = useState(false);
   const [importNote, setImportNote] = useState<string | null>(null);
+  const [importRows, setImportRows] = useState<ImportRow[]>([]);
   const [activePlayKey, setActivePlayKey] = useState<string | null>(null);
+  const [reviewMode, setReviewMode] = useState(false);
+  const [reviewKey, setReviewKey] = useState<string | null>(null);
+  const [reviewPlaySeq, setReviewPlaySeq] = useState(0);
+  const [analysingTitles, setAnalysingTitles] = useState(false);
+  const [editPopup, setEditPopup] = useState<{
+    key: string;
+    name: string;
+    category: AdminSoundCategory;
+    subcategory: string;
+  } | null>(null);
+  const editNameRef = useRef<HTMLInputElement | null>(null);
+  const editPopupRef = useRef(editPopup);
+  editPopupRef.current = editPopup;
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const el = fileRef.current;
@@ -128,6 +203,7 @@ export function AdminSoundsPanel() {
       inUse: data.counts.inUse,
       pending: data.counts.pending,
       unused: data.counts.unused,
+      categorised: data.counts.categorised ?? 0,
       inCatalog: data.counts.inCatalog ?? data.items.filter((i) => i.inCatalog).length,
     });
   }, []);
@@ -170,9 +246,11 @@ export function AdminSoundsPanel() {
     const sub = subFilter.trim().toLowerCase();
     const filtered = items.filter((it) => {
       if (catFilter !== "all" && it.category !== catFilter) return false;
-      if (useFilter === "in" && it.status !== "in_use") return false;
-      if (useFilter === "pending" && it.status !== "pending") return false;
-      if (useFilter === "skip" && it.status !== "unused") return false;
+      if (fadingKeys.has(it.key)) {
+        /* keep on screen while fading out of the active list */
+      } else if (!statusMatchesFilter(it.status, useFilter)) {
+        return false;
+      }
       if (sub) {
         const a = (it.subcategory || "").toLowerCase();
         const b = (it.suggestedSubcategory || "").toLowerCase();
@@ -192,17 +270,231 @@ export function AdminSoundsPanel() {
       if (sortBy === "imported-asc") return diff || a.name.localeCompare(b.name);
       return -diff || a.name.localeCompare(b.name);
     });
-  }, [items, q, catFilter, useFilter, subFilter, sortBy]);
+  }, [items, q, catFilter, useFilter, subFilter, sortBy, fadingKeys]);
+
+  function bumpStatusCounts(from: AdminSoundItem["status"], to: AdminSoundItem["status"]) {
+    if (from === to) return;
+    setCounts((c) => {
+      const next = { ...c };
+      if (from === "in_use") next.inUse -= 1;
+      else if (from === "pending") next.pending -= 1;
+      else if (from === "unused") next.unused -= 1;
+      else if (from === "categorised") next.categorised -= 1;
+      if (to === "in_use") next.inUse += 1;
+      else if (to === "pending") next.pending += 1;
+      else if (to === "unused") next.unused += 1;
+      else if (to === "categorised") next.categorised += 1;
+      return next;
+    });
+  }
+
+  function beginFadeOut(key: string) {
+    const existing = fadeTimers.current.get(key);
+    if (existing) window.clearTimeout(existing);
+    setFadingKeys((prev) => new Set(prev).add(key));
+    const t = window.setTimeout(() => {
+      fadeTimers.current.delete(key);
+      setFadingKeys((prev) => {
+        const n = new Set(prev);
+        n.delete(key);
+        return n;
+      });
+    }, 520);
+    fadeTimers.current.set(key, t);
+  }
+
+  function cancelFadeOut(key: string) {
+    const existing = fadeTimers.current.get(key);
+    if (existing) window.clearTimeout(existing);
+    fadeTimers.current.delete(key);
+    setFadingKeys((prev) => {
+      const n = new Set(prev);
+      n.delete(key);
+      return n;
+    });
+  }
+
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const reviewModeRef = useRef(reviewMode);
+  reviewModeRef.current = reviewMode;
+  const reviewKeyRef = useRef(reviewKey);
+  reviewKeyRef.current = reviewKey;
+  const useFilterRef = useRef(useFilter);
+  useFilterRef.current = useFilter;
+
+  const applyItemStatus = useCallback(
+    (item: AdminSoundItem, status: AdminSoundItem["status"]) => {
+      const next: AdminSoundItem = { ...item, status, enabled: mixerEnabled(status) };
+      if (item.status !== status) bumpStatusCounts(item.status, status);
+      setItems((list) => list.map((p) => (p.key === item.key ? next : p)));
+      if (!statusMatchesFilter(status, useFilterRef.current)) beginFadeOut(item.key);
+      else cancelFadeOut(item.key);
+      void patchAdminSound({
+        key: item.key,
+        status,
+        category: item.category,
+        subcategory: item.subcategory,
+        name: item.name,
+        notes: item.notes,
+      }).catch(() => {
+        cancelFadeOut(item.key);
+        if (item.status !== status) bumpStatusCounts(status, item.status);
+        setItems((list) => list.map((p) => (p.key === item.key ? item : p)));
+      });
+    },
+    [],
+  );
+
+  const applyCategorise = useCallback(
+    (
+      item: AdminSoundItem,
+      fields: { name: string; category: AdminSoundCategory; subcategory: string },
+    ) => {
+      const status = "categorised" as const;
+      const next: AdminSoundItem = {
+        ...item,
+        ...fields,
+        name: fields.name.trim() || item.name,
+        status,
+        enabled: mixerEnabled(status),
+      };
+      if (item.status !== status) bumpStatusCounts(item.status, status);
+      setItems((list) => list.map((p) => (p.key === item.key ? next : p)));
+      if (!statusMatchesFilter(status, useFilterRef.current)) beginFadeOut(item.key);
+      else cancelFadeOut(item.key);
+      void patchAdminSound({
+        key: item.key,
+        status,
+        category: next.category,
+        subcategory: next.subcategory,
+        name: next.name,
+        notes: item.notes,
+      }).catch(() => {
+        cancelFadeOut(item.key);
+        if (item.status !== status) bumpStatusCounts(status, item.status);
+        setItems((list) => list.map((p) => (p.key === item.key ? item : p)));
+      });
+    },
+    [],
+  );
+
+  const advanceApprovedReview = useCallback((pool: AdminSoundItem[], currentKey: string) => {
+    const idx = pool.findIndex((i) => i.key === currentKey);
+    const next = idx >= 0 ? pool[idx + 1] ?? null : pool[0] ?? null;
+    if (next && next.key !== currentKey) {
+      setReviewKey(next.key);
+      setReviewPlaySeq((n) => n + 1);
+    } else {
+      setReviewKey(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!editPopup) return;
+    const t = window.setTimeout(() => editNameRef.current?.focus(), 20);
+    return () => window.clearTimeout(t);
+  }, [editPopup]);
+
+  useEffect(() => {
+    if (!isStatusReviewFilter(useFilter)) {
+      setReviewMode(false);
+      setReviewKey(null);
+      setEditPopup(null);
+    }
+  }, [useFilter]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (editPopupRef.current) return;
+      if (!reviewModeRef.current || !isStatusReviewFilter(useFilterRef.current)) return;
+      if (!e.metaKey && !e.ctrlKey) return;
+      const filter = useFilterRef.current;
+      const pendingDecide =
+        filter === "pending" && (e.key === "ArrowLeft" || e.key === "ArrowRight")
+          ? e.key === "ArrowLeft"
+            ? "unused"
+            : "in_use"
+          : null;
+      const approvedLeft = filter === "in" && e.key === "ArrowLeft";
+      const approvedRight = filter === "in" && e.key === "ArrowRight";
+      const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : pendingDecide ? 1 : 0;
+      if (!pendingDecide && !approvedLeft && !approvedRight && step === 0) return;
+      const t = e.target;
+      if (t instanceof HTMLElement) {
+        const tag = t.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable) return;
+      }
+      e.preventDefault();
+      const pool = visibleRef.current.filter((i) =>
+        filter === "pending" ? i.status === "pending" : i.status === "in_use",
+      );
+      if (pool.length === 0) return;
+      const currentKey = reviewKeyRef.current;
+      const current = pool.find((i) => i.key === currentKey) ?? pool[0];
+      if (!current) return;
+      const idx = pool.findIndex((i) => i.key === current.key);
+      if (pendingDecide) {
+        const next = pool[idx + 1] ?? null;
+        applyItemStatus(current, pendingDecide);
+        if (next) {
+          setReviewKey(next.key);
+          setReviewPlaySeq((n) => n + 1);
+        } else {
+          setReviewKey(null);
+        }
+        return;
+      }
+      if (approvedRight) {
+        applyCategorise(current, suggestionFields(current));
+        advanceApprovedReview(pool, current.key);
+        return;
+      }
+      if (approvedLeft) {
+        setReviewKey(current.key);
+        setEditPopup({ key: current.key, ...suggestionFields(current) });
+        return;
+      }
+      const nextIdx = Math.min(pool.length - 1, Math.max(0, idx + step));
+      const next = pool[nextIdx];
+      if (!next || next.key === current.key) return;
+      setReviewKey(next.key);
+      setReviewPlaySeq((n) => n + 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [applyItemStatus, applyCategorise, advanceApprovedReview]);
 
   async function onImportFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const signal = ac.signal;
     setImporting(true);
     setImportNote(null);
     setError(null);
+    const markLeftovers = (detail: string) => {
+      setImportRows((prev) =>
+        prev.map((r) =>
+          r.status === "queued" || r.status === "preparing" || r.status === "uploading"
+            ? { ...r, status: "aborted" as const, detail }
+            : r,
+        ),
+      );
+    };
     try {
       const list = [...files].filter((f) => /\.(mp3|wav)$/i.test(f.name));
       if (list.length === 0) throw new Error("That folder has no .mp3 or .wav files");
       const byPath = new Map(list.map((f) => [fileRelativePath(f), f]));
+      const rows: ImportRow[] = list.map((f) => ({
+        path: fileRelativePath(f),
+        status: "queued",
+      }));
+      setImportRows(rows);
+      const patchRow = (path: string, next: Partial<ImportRow>) => {
+        setImportRows((prev) => prev.map((r) => (r.path === path ? { ...r, ...next } : r)));
+      };
       const failed: string[] = [];
       const uploadedPaths: string[] = [];
       let ok = 0;
@@ -210,36 +502,51 @@ export function AdminSoundsPanel() {
       const chunkSize = 8;
       const total = list.length;
       for (let i = 0; i < list.length; i += chunkSize) {
+        if (signal.aborted) throw new DOMException("Aborted", "AbortError");
         const slice = list.slice(i, i + chunkSize);
-        setImportNote(`Preparing ${i + 1}–${Math.min(i + chunkSize, total)} of ${total}…`);
-        const { uploads, skippedCount: skipped } = await createAdminSoundUploads({
+        for (const f of slice) patchRow(fileRelativePath(f), { status: "preparing", detail: undefined });
+        setImportNote(`Preparing ${i + 1}–${Math.min(i + chunkSize, total)} of ${total}`);
+        const { uploads, skippedCount: skipped, skipped: skippedPaths } = await createAdminSoundUploads({
           files: slice.map((f) => ({
             relativePath: fileRelativePath(f),
             contentType:
               f.type || (f.name.toLowerCase().endsWith(".wav") ? "audio/wav" : "audio/mpeg"),
             size: f.size,
           })),
+          signal,
         });
         skippedCount += skipped;
+        for (const path of skippedPaths) {
+          patchRow(path, { status: "skipped" });
+        }
+        const wanted = new Set(slice.map((f) => fileRelativePath(f)));
+        const returned = new Set([...uploads.map((u) => u.relativePath), ...skippedPaths]);
+        for (const path of wanted) {
+          if (!returned.has(path)) patchRow(path, { status: "failed", detail: "Not accepted for upload" });
+        }
         let cursor = 0;
-        const workers = Array.from({ length: Math.min(2, uploads.length) }, async () => {
+        const workers = Array.from({ length: Math.min(4, uploads.length) }, async () => {
           while (cursor < uploads.length) {
+            if (signal.aborted) throw new DOMException("Aborted", "AbortError");
             const u = uploads[cursor++];
             if (!u) break;
             const file = byPath.get(u.relativePath) ?? byPath.get(u.filename);
             if (!file) {
               failed.push(u.relativePath);
+              patchRow(u.relativePath, { status: "failed", detail: "File missing from folder pick" });
               continue;
             }
-            setImportNote(`Uploading ${ok + failed.length + 1} of ${total}… ${u.relativePath}`);
+            patchRow(u.relativePath, { status: "uploading", detail: undefined });
             try {
-              await uploadAdminSoundToS3(u, file);
+              await uploadAdminSoundToS3(u, file, signal);
               ok += 1;
               uploadedPaths.push(u.relativePath);
+              patchRow(u.relativePath, { status: "done" });
             } catch (e) {
-              failed.push(
-                `${u.relativePath} (${e instanceof Error ? e.message : "network error"})`,
-              );
+              if (e instanceof DOMException && e.name === "AbortError") throw e;
+              const detail = e instanceof Error ? e.message : "network error";
+              failed.push(`${u.relativePath} (${detail})`);
+              patchRow(u.relativePath, { status: "failed", detail });
             }
           }
         });
@@ -263,36 +570,94 @@ export function AdminSoundsPanel() {
           );
         }
       }
-      setImportNote(
-        `${parts.join(". ")}. Keep this tab open until uploading finishes. Re-import the same folder to retry any missing files.`,
-      );
+      setImportNote(parts.join(". "));
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed");
+      const aborted = e instanceof DOMException && e.name === "AbortError";
+      markLeftovers(aborted ? "Stopped" : e instanceof Error ? e.message : "Import failed");
+      setImportNote(aborted ? "Import stopped. File statuses below are kept." : null);
+      if (!aborted) setError(e instanceof Error ? e.message : "Import failed");
     } finally {
       setImporting(false);
+      abortRef.current = null;
       if (fileRef.current) fileRef.current.value = "";
     }
   }
 
+  async function onAnalyseTitles() {
+    const keys = items.filter((i) => i.status === "in_use").map((i) => i.key);
+    if (keys.length === 0) {
+      setError("No approved sounds to analyse.");
+      return;
+    }
+    setAnalysingTitles(true);
+    setError(null);
+    try {
+      const updated = await analyseAdminSoundTitles(keys);
+      await load();
+      if (updated === 0) setError("No suggestions returned. Try again in a moment.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not analyse titles");
+    } finally {
+      setAnalysingTitles(false);
+    }
+  }
+
+  function submitEditPopup() {
+    if (!editPopup) return;
+    const item = items.find((i) => i.key === editPopup.key);
+    if (!item) {
+      setEditPopup(null);
+      return;
+    }
+    const pool = visible.filter((i) => i.status === "in_use");
+    applyCategorise(item, {
+      name: editPopup.name,
+      category: editPopup.category,
+      subcategory: editPopup.subcategory,
+    });
+    setEditPopup(null);
+    advanceApprovedReview(pool, item.key);
+  }
+
   return (
     <div>
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-5">
         <div className="rounded-2xl border border-border bg-card p-4">
           <div className="text-xs font-semibold uppercase tracking-wide text-muted">Listed</div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums">{counts.total}</div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{counts.total}</div>
         </div>
-        <div className="rounded-2xl border border-border bg-card p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted">In use</div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums">{counts.inUse}</div>
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/30">
+          <div className="text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">
+            Not using
+          </div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-red-700 dark:text-red-400">
+            {counts.unused}
+          </div>
         </div>
-        <div className="rounded-2xl border border-border bg-card p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted">Pending</div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums">{counts.pending}</div>
+        <div className="rounded-2xl border border-stone-300 bg-stone-100 p-4 dark:border-stone-600 dark:bg-stone-800/50">
+          <div className="text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-300">
+            Pending
+          </div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-stone-700 dark:text-stone-200">
+            {counts.pending}
+          </div>
         </div>
-        <div className="rounded-2xl border border-border bg-card p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted">Not using</div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums">{counts.unused}</div>
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/30">
+          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+            Approved
+          </div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+            {counts.inUse}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900/60 dark:bg-sky-950/30">
+          <div className="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-400">
+            Categorised
+          </div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-sky-700 dark:text-sky-400">
+            {counts.categorised}
+          </div>
         </div>
       </div>
 
@@ -301,9 +666,9 @@ export function AdminSoundsPanel() {
         <p className="mt-1 text-xs text-muted">
           Choose a Splice pack folder. Large WAVs upload in 8 MB parts with retries. Keep this tab
           open until the counter finishes. Re-import the same folder to retry anything still
-          missing. New files stay pending until you mark them In use.
+          missing. New files stay pending until you mark them Approved.
         </p>
-        <div className="mt-3">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
             disabled={importing}
@@ -312,6 +677,15 @@ export function AdminSoundsPanel() {
           >
             {importing ? "Uploading… keep this tab open" : "Import folder"}
           </button>
+          {importing ? (
+            <button
+              type="button"
+              onClick={() => abortRef.current?.abort()}
+              className="rounded-xl border border-border px-4 py-2 text-sm hover:bg-background"
+            >
+              Stop
+            </button>
+          ) : null}
           <input
             ref={fileRef}
             type="file"
@@ -322,6 +696,43 @@ export function AdminSoundsPanel() {
           />
         </div>
         {importNote ? <p className="mt-2 text-xs text-muted">{importNote}</p> : null}
+        {importRows.length > 0 ? (
+          <div className="mt-4">
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
+              <span>{importRows.length} files</span>
+              <span className="text-sky-700 dark:text-sky-400">
+                {importRows.filter((r) => r.status === "uploading").length} uploading
+              </span>
+              <span className="text-emerald-700 dark:text-emerald-400">
+                {importRows.filter((r) => r.status === "done").length} uploaded
+              </span>
+              <span>{importRows.filter((r) => r.status === "skipped").length} skipped</span>
+              <span className="text-red-700 dark:text-red-400">
+                {importRows.filter((r) => r.status === "failed").length} failed
+              </span>
+              <span className="text-amber-800 dark:text-amber-400">
+                {importRows.filter((r) => r.status === "aborted").length} stopped
+              </span>
+              <span>{importRows.filter((r) => r.status === "queued").length} queued</span>
+            </div>
+            <ul className="mt-2 max-h-80 overflow-auto rounded-xl border border-border bg-background">
+              {importRows.map((row) => (
+                <li
+                  key={row.path}
+                  className="flex items-start justify-between gap-3 border-b border-border px-3 py-1.5 last:border-b-0"
+                >
+                  <span className="min-w-0 flex-1 break-all font-mono text-[11px] text-foreground">
+                    {row.path}
+                  </span>
+                  <span className={`shrink-0 text-[11px] font-medium ${importStatusClass(row.status)}`}>
+                    {importStatusLabel(row.status)}
+                    {row.detail ? ` · ${row.detail}` : ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </section>
 
       <div className="mt-6 flex flex-wrap items-center gap-2">
@@ -358,13 +769,51 @@ export function AdminSoundsPanel() {
         <select
           className="rounded-xl border border-border bg-card px-3 py-2 text-sm"
           value={useFilter}
-          onChange={(e) => setUseFilter(e.target.value as "all" | "in" | "pending" | "skip")}
+          onChange={(e) => setUseFilter(e.target.value as UseFilter)}
         >
-          <option value="all">All review states</option>
-          <option value="in">In use</option>
-          <option value="pending">Pending</option>
           <option value="skip">Not using</option>
+          <option value="pending">Pending</option>
+          <option value="in">Approved</option>
+          <option value="categorised">Categorised</option>
+          <option value="all">Approved & pending</option>
         </select>
+        {isStatusReviewFilter(useFilter) ? (
+          <label className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm">
+            <span className="text-foreground">Review mode</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={reviewMode}
+              onClick={() => setReviewMode((v) => !v)}
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                reviewMode ? "bg-accent" : "bg-border"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                  reviewMode ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+            {reviewMode ? (
+              <span className="hidden text-[11px] text-muted sm:inline">
+                {useFilter === "pending"
+                  ? "⌘← not using · ⌘→ approved · ⌘↑↓ skip"
+                  : "⌘← edit · ⌘→ categorise · ⌘↑↓ skip"}
+              </span>
+            ) : null}
+          </label>
+        ) : null}
+        {useFilter === "in" ? (
+          <button
+            type="button"
+            disabled={analysingTitles || loading}
+            onClick={() => void onAnalyseTitles()}
+            className="rounded-xl border border-border bg-card px-3 py-2 text-sm hover:bg-background disabled:opacity-60"
+          >
+            {analysingTitles ? "Analysing titles…" : "Analyse titles"}
+          </button>
+        ) : null}
         <select
           className="rounded-xl border border-border bg-card px-3 py-2 text-sm"
           value={sortBy}
@@ -396,17 +845,99 @@ export function AdminSoundsPanel() {
             key={it.key}
             item={it}
             baseUrl={baseUrl}
+            fading={fadingKeys.has(it.key)}
+            useFilter={useFilter}
+            reviewSelected={reviewMode && reviewKey === it.key}
+            reviewAutoPlaySeq={reviewMode && reviewKey === it.key ? reviewPlaySeq : 0}
+            onReviewSelect={() => setReviewKey(it.key)}
             activePlayKey={activePlayKey}
             onPlayKeyChange={setActivePlayKey}
             onChanged={() => void load()}
             onLocal={(next) =>
-              setItems((prev) => prev.map((p) => (p.key === it.key || p.key === next.key ? next : p)))
+              setItems((list) => list.map((p) => (p.key === it.key || p.key === next.key ? next : p)))
             }
+            onStatusDelta={bumpStatusCounts}
+            onBeginFadeOut={beginFadeOut}
+            onCancelFadeOut={cancelFadeOut}
           />
         ))}
       </ul>
       {!loading && visible.length === 0 ? (
         <p className="mt-6 text-sm text-muted">No sounds match these filters.</p>
+      ) : null}
+      {editPopup ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-suggestion-title"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setEditPopup(null);
+          }}
+        >
+          <form
+            className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitEditPopup();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setEditPopup(null);
+              }
+            }}
+          >
+            <h2 id="edit-suggestion-title" className="font-display text-lg font-medium">
+              Edit suggestion
+            </h2>
+            <label className="mt-4 block">
+              <span className="text-sm font-medium text-foreground">Suggested name</span>
+              <input
+                ref={editNameRef}
+                value={editPopup.name}
+                onChange={(e) =>
+                  setEditPopup((p) => (p ? { ...p, name: e.target.value } : p))
+                }
+                className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
+              />
+            </label>
+            <label className="mt-3 block">
+              <span className="text-sm font-medium text-foreground">Category</span>
+              <select
+                value={editPopup.category}
+                onChange={(e) =>
+                  setEditPopup((p) =>
+                    p ? { ...p, category: e.target.value as AdminSoundCategory } : p,
+                  )
+                }
+                className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
+              >
+                {CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="mt-3 text-xs text-muted">Enter to save as categorised. Esc to cancel.</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditPopup(null)}
+                className="rounded-xl border border-border px-3 py-2 text-sm hover:bg-background"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="rounded-xl bg-accent px-3 py-2 text-sm font-medium text-white dark:text-deep"
+              >
+                Save & categorise
+              </button>
+            </div>
+          </form>
+        </div>
       ) : null}
     </div>
   );
@@ -415,17 +946,33 @@ export function AdminSoundsPanel() {
 function SoundRow({
   item,
   baseUrl,
+  fading,
+  useFilter,
+  reviewSelected,
+  reviewAutoPlaySeq,
+  onReviewSelect,
   activePlayKey,
   onPlayKeyChange,
   onChanged,
   onLocal,
+  onStatusDelta,
+  onBeginFadeOut,
+  onCancelFadeOut,
 }: {
   item: AdminSoundItem;
   baseUrl?: string;
+  fading: boolean;
+  useFilter: UseFilter;
+  reviewSelected: boolean;
+  reviewAutoPlaySeq: number;
+  onReviewSelect: () => void;
   activePlayKey: string | null;
   onPlayKeyChange: (key: string | null | ((current: string | null) => string | null)) => void;
   onChanged: () => void;
   onLocal: (next: AdminSoundItem) => void;
+  onStatusDelta: (from: AdminSoundItem["status"], to: AdminSoundItem["status"]) => void;
+  onBeginFadeOut: (key: string) => void;
+  onCancelFadeOut: (key: string) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const startRef = useRef(item.trimStartSec ?? 0);
@@ -437,9 +984,20 @@ function SoundRow({
   const [duration, setDuration] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [fadeDim, setFadeDim] = useState(false);
+  const cardRef = useRef<HTMLLIElement | null>(null);
 
   startRef.current = startSec;
   endRef.current = endSec;
+
+  useEffect(() => {
+    if (!fading) {
+      setFadeDim(false);
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => setFadeDim(true));
+    return () => window.cancelAnimationFrame(frame);
+  }, [fading]);
 
   useEffect(() => {
     if (activePlayKey === item.key) return;
@@ -447,17 +1005,54 @@ function SoundRow({
     if (el && !el.paused) el.pause();
   }, [activePlayKey, item.key]);
 
+  useEffect(() => {
+    if (!reviewSelected) return;
+    cardRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [reviewSelected]);
+
+  useEffect(() => {
+    if (!reviewAutoPlaySeq) return;
+    const el = audioRef.current;
+    if (!el) return;
+    onReviewSelect();
+    onPlayKeyChange(item.key);
+    el.currentTime = startRef.current;
+    void el.play().catch((e) => {
+      setErr(e instanceof Error ? e.message : "Could not play");
+    });
+  }, [reviewAutoPlaySeq]);
+
   const playKey = streamingPlayKey(item.originalKey || item.key);
   const src = item.ready ? mediaUrl(baseUrl, playKey, item.updatedAt) : "";
   const waveformSrc = src;
-  const suggestion =
-    item.suggestedCategory || item.suggestedSubcategory
-      ? `${item.suggestedCategory ?? "music"}${item.suggestedSubcategory ? ` / ${item.suggestedSubcategory}` : ""}`
-      : null;
+  const suggestion = item.suggestedName || item.suggestedCategory || item.suggestedSubcategory
+    ? [
+        item.suggestedName?.trim() || null,
+        item.suggestedCategory
+          ? `${item.suggestedCategory}${item.suggestedSubcategory ? ` / ${item.suggestedSubcategory}` : ""}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
 
   async function savePatch(partial: Partial<AdminSoundItem>) {
     setErr(null);
-    setBusy("save");
+    const next: AdminSoundItem = {
+      ...item,
+      ...partial,
+      enabled: mixerEnabled(partial.status ?? item.status),
+    };
+    if (next.status !== item.status) onStatusDelta(item.status, next.status);
+    onLocal(next);
+    if (partial.status && partial.status !== item.status) {
+      if (!statusMatchesFilter(partial.status, useFilter)) {
+        audioRef.current?.pause();
+        onBeginFadeOut(item.key);
+      } else {
+        onCancelFadeOut(item.key);
+      }
+    }
     try {
       const res = await patchAdminSound({
         key: item.key,
@@ -468,11 +1063,11 @@ function SoundRow({
         notes: partial.notes ?? item.notes,
       });
       if (res.key !== item.key) onChanged();
-      else onLocal({ ...item, ...partial, key: res.key });
     } catch (e) {
+      onCancelFadeOut(item.key);
+      if (next.status !== item.status) onStatusDelta(next.status, item.status);
+      onLocal(item);
       setErr(e instanceof Error ? e.message : "Save failed");
-    } finally {
-      setBusy(null);
     }
   }
 
@@ -483,6 +1078,7 @@ function SoundRow({
   function playFromTrimStart() {
     const el = audioRef.current;
     if (!el) return;
+    onReviewSelect();
     onPlayKeyChange(item.key);
     el.currentTime = startRef.current;
     void el.play().catch((e) => {
@@ -497,6 +1093,7 @@ function SoundRow({
       el.pause();
       return;
     }
+    onReviewSelect();
     onPlayKeyChange(item.key);
     const start = startRef.current;
     const end = loopEnd();
@@ -541,7 +1138,12 @@ function SoundRow({
   }
 
   return (
-    <li className="relative rounded-2xl border border-border bg-card p-4">
+    <li
+      ref={cardRef}
+      className={`relative rounded-2xl border border-border bg-card p-4 transition-opacity duration-500 ${
+        fading && fadeDim ? "pointer-events-none opacity-0" : "opacity-100"
+      } ${reviewSelected ? "ring-2 ring-accent ring-offset-2 ring-offset-background" : ""}`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="font-medium">{item.name}</div>
@@ -595,9 +1197,10 @@ function SoundRow({
           <div className="flex rounded-full border border-border p-0.5 text-xs">
             {(
               [
-                ["pending", "Pending"],
-                ["in_use", "In use"],
                 ["unused", "Not using"],
+                ["pending", "Pending"],
+                ["in_use", "Approved"],
+                ["categorised", "Categorised"],
               ] as const
             ).map(([value, label]) => {
               const selected = item.status === value;
@@ -606,6 +1209,10 @@ function SoundRow({
                   ? selected
                     ? "bg-emerald-600 text-white dark:bg-emerald-500 dark:text-white"
                     : "text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                  : value === "categorised"
+                    ? selected
+                      ? "bg-sky-600 text-white dark:bg-sky-500 dark:text-white"
+                      : "text-sky-700 hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-950/40"
                   : value === "unused"
                     ? selected
                       ? "bg-red-600 text-white dark:bg-red-500 dark:text-white"
@@ -617,9 +1224,9 @@ function SoundRow({
                 <button
                   key={value}
                   type="button"
-                  disabled={busy !== null}
+                  disabled={busy === "trim"}
                   onClick={() =>
-                    void savePatch({ status: value, enabled: value === "in_use" })
+                    void savePatch({ status: value, enabled: mixerEnabled(value) })
                   }
                   className={`rounded-full px-2.5 py-1 font-medium ${tone}`}
                 >

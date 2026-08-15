@@ -574,7 +574,10 @@ export function libraryMeditationCategoryLabel(m: {
   const rawStyle = m.meditationStyle?.trim() ?? "";
   const styleOk =
     rawStyle && rawStyle.toLowerCase() !== "general" ? rawStyle : "";
-  if (type && styleOk) return `${type} · ${styleOk}`;
+  if (type && styleOk) {
+    if (type.toLowerCase() === styleOk.toLowerCase()) return type;
+    return `${type} · ${styleOk}`;
+  }
   if (type) return type;
   if (styleOk) return styleOk;
   return "—";

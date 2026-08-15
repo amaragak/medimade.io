@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Switch from "@radix-ui/react-switch";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import { MeditationTypeCardGrid } from "@/components/community-category-grid";
+import {
+  MeditationTypeCard,
+  MeditationTypeCardGrid,
+} from "@/components/community-category-grid";
 import {
   type MedimadeChatTurn,
   type MeditationDraftStateV1,
@@ -526,7 +529,234 @@ function descriptionForMeditationStyle(label: string): string | null {
   return null;
 }
 
-type Phase = "stylePick" | "style" | "feeling" | "claude" | "journalPick" | "goalPick";
+const STYLE_ANYTHING_ELSE_PROMPT = "Anything else you would like to add?";
+
+/** Three targeted intake questions per preset type (style path; not chat). */
+const STYLE_INTAKE_QUESTIONS: Record<(typeof meditationStyles)[number], [string, string, string]> = {
+  "Body scan": [
+    "Where in your body are you holding the most tension or discomfort right now?",
+    "Would you like a full head-to-toe scan, or to linger on a few areas?",
+    "What would you like to feel in your body by the end?",
+  ],
+  Visualization: [
+    "What scene, place, or future moment do you want to picture yourself in?",
+    "What’s the first vivid sensory detail you can picture (sight, sound, or touch)?",
+    "How do you want to feel while you’re there?",
+  ],
+  "Breath-led": [
+    "Do you want counted or patterned breathwork, or simply following the breath as it is?",
+    "How do you feel right now—wired, tired, scattered, something else?",
+    "Do you want a slow, long breath, or to keep a natural pace?",
+  ],
+  Manifestation: [
+    "What do you want to manifest?",
+    "Is anything getting in the way of this—doubt, fear, a practical obstacle?",
+    "How would you feel if this actually came true?",
+  ],
+  "Affirmation loop": [
+    "How do you want to feel when you’re done?",
+    "Are there words or phrases that already feel true or comforting, or should we find new ones?",
+    "What self-talk or inner voice are you hoping to soften?",
+  ],
+  Story: [
+    "What kind of journey or setting should this story take place in?",
+    "Who are you in the story—an observer, a traveler, or a younger self?",
+    "What feeling should the ending leave you with?",
+  ],
+  Reflection: [
+    "What are you processing or wondering about?",
+    "Is there a decision, relationship, or experience that needs space?",
+    "What would a helpful insight or shift look like when you’re done?",
+  ],
+  Sleep: [
+    "What’s making it hard to settle tonight?",
+    "Do you prefer almost no story (just body and breath), or a drifting scene?",
+    "How do you want to feel as you fall asleep?",
+  ],
+  "Loving-kindness": [
+    "Who is this practice for today—yourself, someone else, or both?",
+    "Is there a particular hurt you’re meeting, in yourself or toward someone else?",
+    "What kind of kindness do you most need (warmth, forgiveness, belonging)?",
+  ],
+  "Anxiety relief": [
+    "What’s the main worry or pressure right now?",
+    "Where do you feel it in the body?",
+    "What would relief feel like by the end of this session?",
+  ],
+  "Movement meditation": [
+    "Will you be walking, stretching in place, or something else?",
+    "How does your body feel as you start—restless, stiff, tired?",
+    "Any limits we should work around—injury, tight space, needing to stay quiet?",
+  ],
+  "Open awareness": [
+    "What tends to pull your attention away most (thoughts, sounds, restlessness)?",
+    "Are you sitting, lying down, or somewhere with a lot of sound around you?",
+    "When thoughts show up, do you want to let them pass, notice them briefly, or something else?",
+  ],
+};
+
+function intakeQuestionsForStyle(style: string): [string, string, string] {
+  if ((meditationStyles as readonly string[]).includes(style)) {
+    return STYLE_INTAKE_QUESTIONS[style as (typeof meditationStyles)[number]];
+  }
+  const trimmed = style.trim() || "this";
+  return [
+    `How are you feeling today, and what do you want this “${trimmed}” practice to support?`,
+    "Is there a situation, person, or inner state we should keep in mind?",
+    "How do you want to feel when the meditation ends?",
+  ];
+}
+
+function emptyStyleQuestionAnswers(): [string, string, string, string] {
+  return ["", "", "", ""];
+}
+
+/** How many intake fields to show: 1–4 (3 questions + optional anything else). */
+function revealedCountFromStyleAnswers(
+  answers: [string, string, string, string],
+): number {
+  let n = 1;
+  for (let i = 0; i < 3; i += 1) {
+    if (!answers[i].trim()) break;
+    n = i + 2;
+  }
+  return Math.min(4, n);
+}
+
+function StyleIntakeField({
+  label,
+  optional,
+  value,
+  onChange,
+  onAdvance,
+  autoFocus,
+  scrollOnEnter,
+}: {
+  label: string;
+  optional?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  onAdvance?: () => void;
+  autoFocus?: boolean;
+  scrollOnEnter?: boolean;
+}) {
+  const [entered, setEntered] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const shouldFocusRef = useRef(Boolean(autoFocus));
+  shouldFocusRef.current = Boolean(autoFocus);
+  const setTextareaRef = useCallback((el: HTMLTextAreaElement | null) => {
+    textareaRef.current = el;
+    if (el && shouldFocusRef.current) el.focus();
+  }, []);
+  useEffect(() => {
+    const reduce =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) {
+      setEntered(true);
+      return;
+    }
+    const t = window.setTimeout(() => setEntered(true), 20);
+    return () => window.clearTimeout(t);
+  }, []);
+  useLayoutEffect(() => {
+    if (!autoFocus) return;
+    textareaRef.current?.focus();
+  }, [autoFocus, entered]);
+  useEffect(() => {
+    if (!autoFocus || !entered) return;
+    if (scrollOnEnter) {
+      textareaRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+      });
+    }
+    textareaRef.current?.focus();
+  }, [entered, scrollOnEnter, autoFocus]);
+  return (
+    <div
+      className={`rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm transition-[opacity,transform] duration-500 ease-out sm:p-6 dark:border-neutral-300 dark:bg-white ${
+        entered ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
+      }`}
+    >
+      <label className="block">
+        <span className="font-display text-lg font-medium tracking-tight text-neutral-900 sm:text-xl">
+          {label}
+        </span>
+        {optional ? (
+          <span className="mt-1 block text-xs text-neutral-500">Optional</span>
+        ) : null}
+        <textarea
+          ref={setTextareaRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" || e.shiftKey) return;
+            if (!onAdvance) return;
+            e.preventDefault();
+            if (!value.trim()) return;
+            onAdvance();
+          }}
+          rows={1}
+          className="mt-4 w-full resize-y rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm leading-relaxed text-neutral-900 outline-none ring-accent/30 focus:ring-2 sm:text-base"
+        />
+      </label>
+    </div>
+  );
+}
+
+function parseStyleQuestionAnswers(
+  raw: unknown,
+): [string, string, string, string] | null {
+  if (!Array.isArray(raw) || raw.length < 3) return null;
+  const next = emptyStyleQuestionAnswers();
+  for (let i = 0; i < 4; i += 1) {
+    const v = raw[i];
+    next[i] = typeof v === "string" ? v : "";
+  }
+  return next;
+}
+
+function transcriptFromStyleAnswers(
+  style: string,
+  answers: [string, string, string, string],
+): { messages: ChatMessage[]; claudeThread: MedimadeChatTurn[] } {
+  const questions = intakeQuestionsForStyle(style);
+  const messages: ChatMessage[] = [
+    {
+      role: "assistant",
+      text: `We'll shape a ${style} meditation from your answers.`,
+      variant: "chat",
+    },
+  ];
+  questions.forEach((q, i) => {
+    messages.push({ role: "assistant", text: q, variant: "chat" });
+    messages.push({ role: "user", text: answers[i].trim() });
+  });
+  const extra = answers[3].trim();
+  if (extra) {
+    messages.push({
+      role: "assistant",
+      text: STYLE_ANYTHING_ELSE_PROMPT,
+      variant: "chat",
+    });
+    messages.push({ role: "user", text: extra });
+  }
+  const claudeThread: MedimadeChatTurn[] = messages.map((m) => ({
+    role: m.role,
+    content: m.text,
+  }));
+  return { messages, claudeThread };
+}
+
+type Phase =
+  | "stylePick"
+  | "styleQuestions"
+  | "style"
+  | "feeling"
+  | "claude"
+  | "journalPick"
+  | "goalPick";
 
 /** Before chat: user picks style-first vs free-flow vs journal-reflect creation. */
 type CreationPath =
@@ -790,6 +1020,14 @@ function isDraftStateV1(raw: unknown): raw is MeditationDraftStateV1 {
       return false;
     }
   }
+  if (o.styleQuestionAnswers != null) {
+    if (
+      !Array.isArray(o.styleQuestionAnswers) ||
+      !o.styleQuestionAnswers.every((x) => typeof x === "string")
+    ) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -962,6 +1200,10 @@ export function CreateWorkspace({
     null | "style" | "freeflow" | "journalReflect" | "goal"
   >(null);
   const [pendingStyleType, setPendingStyleType] = useState<string | null>(null);
+  const [styleQuestionAnswers, setStyleQuestionAnswers] = useState<
+    [string, string, string, string]
+  >(() => emptyStyleQuestionAnswers());
+  const [styleQuestionsRevealed, setStyleQuestionsRevealed] = useState(1);
   const [workspaceModeMenuOpen, setWorkspaceModeMenuOpen] = useState(false);
   const workspaceModeMenuRef = useRef<HTMLDivElement>(null);
   const chooserCardsRef = useRef<HTMLDivElement | null>(null);
@@ -1011,7 +1253,9 @@ export function CreateWorkspace({
     const phaseForDraft: MeditationDraftStateV1["phase"] =
       phase === "stylePick"
         ? "style"
-        : phase === "journalPick" || phase === "goalPick"
+        : phase === "styleQuestions" ||
+            phase === "journalPick" ||
+            phase === "goalPick"
           ? "feeling"
           : phase;
     return {
@@ -1036,6 +1280,7 @@ export function CreateWorkspace({
       lastUsedScript,
       meditationTargetMinutes,
       journalMode: journalMode === true,
+      styleQuestionAnswers,
     };
   }
 
@@ -1090,11 +1335,10 @@ export function CreateWorkspace({
           backgroundDrumsKey?: string;
           backgroundDrumsGain?: number;
         };
-        setPhase(
-          s.phase === "style" && !s.meditationStyle?.trim()
-            ? "stylePick"
-            : s.phase,
-        );
+        const restoredAnswers = parseStyleQuestionAnswers(s.styleQuestionAnswers);
+        const answers = restoredAnswers ?? emptyStyleQuestionAnswers();
+        setStyleQuestionAnswers(answers);
+        setStyleQuestionsRevealed(revealedCountFromStyleAnswers(answers));
         setMeditationStyle(s.meditationStyle);
         setMessages(s.messages);
         setClaudeThread(s.claudeThread);
@@ -1133,7 +1377,26 @@ export function CreateWorkspace({
         const path = inferCreationPathFromDraft(s);
         setCreationPath(path);
         setJournalMode(path === "freeflow");
-        setCreateStripStep(s.mobileCreateStep === "audio" ? 2 : 1);
+        const styleIntake =
+          path === "style" &&
+          Boolean(s.meditationStyle?.trim()) &&
+          restoredAnswers != null &&
+          restoredAnswers.slice(0, 3).some((a) => a.trim().length > 0);
+        if (s.phase === "style" && !s.meditationStyle?.trim()) {
+          setPhase("stylePick");
+        } else if (styleIntake) {
+          setPhase("styleQuestions");
+          setPendingStyleType(s.meditationStyle);
+        } else {
+          setPhase(s.phase);
+        }
+        setCreateStripStep(
+          s.mobileCreateStep === "audio"
+            ? 2
+            : styleIntake
+              ? 0
+              : 1,
+        );
         setDraftSk(row.sk);
         if (!cancelled) setDraftHydrated(true);
       } catch (e) {
@@ -1751,6 +2014,8 @@ export function CreateWorkspace({
       setMessages([{ role: "assistant", text: "", variant: "chat" }]);
     } else if (creationPath === "style") {
       setPendingStyleType(null);
+      setStyleQuestionAnswers(emptyStyleQuestionAnswers());
+      setStyleQuestionsRevealed(1);
       setPhase("stylePick");
       setMessages([]);
     } else {
@@ -1773,6 +2038,8 @@ export function CreateWorkspace({
     setClaudeThread([]);
     setMeditationStyle(null);
     setPendingStyleType(null);
+    setStyleQuestionAnswers(emptyStyleQuestionAnswers());
+    setStyleQuestionsRevealed(1);
     setInput("");
     setIntroTypingDone(false);
     setMessages([]);
@@ -1784,10 +2051,38 @@ export function CreateWorkspace({
   function confirmStyleTypePick() {
     const label = pendingStyleType?.trim();
     if (!label) return;
+    if (meditationStyle !== label) {
+      setStyleQuestionAnswers(emptyStyleQuestionAnswers());
+      setStyleQuestionsRevealed(1);
+    } else {
+      setStyleQuestionsRevealed(
+        revealedCountFromStyleAnswers(styleQuestionAnswers),
+      );
+    }
+    setMeditationStyle(label);
+    setMessages([]);
+    setClaudeThread([]);
+    setChatLoading(false);
+    setScriptLoading(false);
     setIntroTypingDone(true);
-    setMessages([{ role: "assistant", text: OPENING_STYLE, variant: "chat" }]);
-    setCreateStripStep(1);
-    pickStyle(label);
+    setPhase("styleQuestions");
+  }
+
+  function confirmStyleQuestions() {
+    const style = meditationStyle?.trim();
+    if (!style) return;
+    if (
+      !styleQuestionAnswers[0].trim() ||
+      !styleQuestionAnswers[1].trim() ||
+      !styleQuestionAnswers[2].trim()
+    ) {
+      return;
+    }
+    const built = transcriptFromStyleAnswers(style, styleQuestionAnswers);
+    setMessages(built.messages);
+    setClaudeThread(built.claudeThread);
+    setMobileCreateStep("audio");
+    setCreateStripStep(2);
   }
 
   function beginFreeFlowPath() {
@@ -2080,7 +2375,8 @@ export function CreateWorkspace({
   }
 
   async function send() {
-    if (phase === "journalPick" || phase === "goalPick") return;
+    if (phase === "journalPick" || phase === "goalPick" || phase === "styleQuestions")
+      return;
     const trimmed = input.trim();
     if (!trimmed || chatLoading || scriptLoading) return;
 
@@ -2795,7 +3091,17 @@ export function CreateWorkspace({
 
   const showPathChooser = creationPath === "pending";
   const showStyleTypePick =
-    creationPath === "style" && phase === "stylePick";
+    creationPath === "style" &&
+    phase === "stylePick" &&
+    workspaceSectionStep !== 2;
+  const showStyleQuestions =
+    creationPath === "style" &&
+    phase === "styleQuestions" &&
+    workspaceSectionStep !== 2;
+  const styleQuestionsReady =
+    styleQuestionAnswers[0].trim().length > 0 &&
+    styleQuestionAnswers[1].trim().length > 0 &&
+    styleQuestionAnswers[2].trim().length > 0;
   const activeWorkspaceMode: null | "style" | "freeflow" | "journalReflect" | "goal" =
     creationPath === "style"
       ? "style"
@@ -2817,33 +3123,35 @@ export function CreateWorkspace({
       <audio ref={previewMusicRef} className="hidden" playsInline />
       <audio ref={previewNoiseRef} className="hidden" playsInline />
       <audio ref={speakerSampleRef} className="hidden" playsInline />
-      <div className="mb-6 shrink-0">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="mb-6 flex shrink-0 items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
           <h1 className="font-display text-3xl font-medium tracking-tight">
             Create a meditation
           </h1>
-          {isLocalDevHost() && showPathChooser ? (
-            <button
-              type="button"
-              onClick={beginDevSkipToAudio}
-              className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent-soft/70"
-              aria-label="Dev: skip chat and go to audio setup with a random script on generate"
-            >
-              Skip to audio
-            </button>
-          ) : null}
+          {showPathChooser || showStyleTypePick || showStyleQuestions ? (
+            <p className="mt-2 text-muted">
+              Create a personalised meditation just for you.
+            </p>
+          ) : (
+            <p className="mt-2 text-muted">
+              Chat with the guide to shape your script, then pick a voice, mix
+              nature sounds, music, and noise, and preview the blend before you
+              generate your meditation audio.
+            </p>
+          )}
         </div>
-        {showPathChooser || showStyleTypePick ? (
-          <p className="mt-2 text-muted">
-            Create a personalised meditation just for you.
-          </p>
-        ) : (
-          <p className="mt-2 text-muted">
-            Chat with the guide to shape your script, then pick a voice, mix
-            nature sounds, music, and noise, and preview the blend before you
-            generate your meditation audio.
-          </p>
-        )}
+        {showStyleQuestions && meditationStyle ? (
+          <MeditationTypeCard name={meditationStyle} />
+        ) : isLocalDevHost() && showPathChooser ? (
+          <button
+            type="button"
+            onClick={beginDevSkipToAudio}
+            className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent-soft/70"
+            aria-label="Dev: skip chat and go to audio setup with a random script on generate"
+          >
+            Skip to audio
+          </button>
+        ) : null}
       </div>
 
       {draftLoadError ? (
@@ -2892,7 +3200,8 @@ export function CreateWorkspace({
                     Pick a meditation style
                   </span>
                   <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                    You start by choosing a meditation type, then chat so that style is shaped around your mood, goals,
+                    You start by choosing a meditation type, then answer a few
+                    questions so that style is shaped around your mood, goals,
                     and what you need today.
                   </p>
                   <span
@@ -2915,7 +3224,8 @@ export function CreateWorkspace({
                       Pick a meditation style
                     </span>
                     <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
-                      You start by choosing a meditation type, then chat so that style is shaped around your mood, goals,
+                      You start by choosing a meditation type, then answer a few
+                      questions so that style is shaped around your mood, goals,
                       and what you need today.
                     </p>
                   </div>
@@ -3166,8 +3476,8 @@ export function CreateWorkspace({
                 What type of meditation?
               </h2>
               <p className="shrink-0 text-sm text-muted sm:text-base">
-                Choose the practice you want to build. Next you’ll chat with the
-                guide so it fits your mood and what you need today.
+                Choose the practice you want to build. Next you’ll answer a few
+                short questions so it fits what you need today.
               </p>
               <MeditationTypeCardGrid
                 selected={pendingStyleType ?? ""}
@@ -3207,16 +3517,98 @@ export function CreateWorkspace({
                   disabled={!pendingStyleType}
                   onClick={confirmStyleTypePick}
                   className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
-                  aria-label="Continue to chat with this meditation type"
+                  aria-label="Continue to questions for this meditation type"
                 >
-                  <span>Script</span>
+                  <span>Questions</span>
                   <IconChevronRight className="text-accent" />
                 </button>
               </div>
             </div>
           </div>
         ) : null}
-        {workspaceSectionStep === 1 && !showStyleTypePick ? (
+        {showStyleQuestions ? (
+          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">
+              <div className="space-y-10 pb-4">
+                {intakeQuestionsForStyle(meditationStyle ?? "")
+                  .slice(0, Math.min(3, styleQuestionsRevealed))
+                  .map((q, i) => (
+                    <StyleIntakeField
+                      key={`${meditationStyle ?? "style"}-${i}`}
+                      label={q}
+                      value={styleQuestionAnswers[i]}
+                      autoFocus={i === styleQuestionsRevealed - 1}
+                      scrollOnEnter={i > 0}
+                      onAdvance={() => {
+                        setStyleQuestionsRevealed((r) => Math.max(r, i + 2));
+                      }}
+                      onChange={(v) => {
+                        setStyleQuestionAnswers((prev) => {
+                          const next = [...prev] as [
+                            string,
+                            string,
+                            string,
+                            string,
+                          ];
+                          next[i] = v;
+                          return next;
+                        });
+                      }}
+                    />
+                  ))}
+                {styleQuestionsRevealed >= 4 ? (
+                  <StyleIntakeField
+                    key={`${meditationStyle ?? "style"}-else`}
+                    label={STYLE_ANYTHING_ELSE_PROMPT}
+                    optional
+                    value={styleQuestionAnswers[3]}
+                    autoFocus
+                    scrollOnEnter
+                    onChange={(v) => {
+                      setStyleQuestionAnswers((prev) => {
+                        const next = [...prev] as [
+                          string,
+                          string,
+                          string,
+                          string,
+                        ];
+                        next[3] = v;
+                        return next;
+                      });
+                    }}
+                  />
+                ) : null}
+              </div>
+            </div>
+            <div className="shrink-0 border-t border-border/60 bg-background pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPhase("stylePick");
+                    setPendingStyleType(meditationStyle);
+                  }}
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                  aria-label="Back to meditation type"
+                >
+                  <IconChevronLeft className="shrink-0 text-accent" />
+                  <span>Type</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!styleQuestionsReady}
+                  onClick={confirmStyleQuestions}
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                  aria-label="Continue to audio and voice settings"
+                >
+                  <span>Audio & voice</span>
+                  <IconChevronRight className="text-accent" />
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {workspaceSectionStep === 1 && !showStyleTypePick && !showStyleQuestions ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <h2 className="mb-2 shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:mb-3 sm:text-xl">
@@ -4045,14 +4437,24 @@ export function CreateWorkspace({
                   goBackToChatStyle();
                   return;
                 }
+                if (creationPath === "style") {
+                  setPhase("styleQuestions");
+                  setMobileCreateStep("chat");
+                  setCreateStripStep(0);
+                  return;
+                }
                 setMobileCreateStep("chat");
                 setCreateStripStep(1);
               }}
               className="flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
-              aria-label="Back to script and chat"
+              aria-label={
+                creationPath === "style"
+                  ? "Back to questions"
+                  : "Back to script and chat"
+              }
             >
               <IconChevronLeft className="shrink-0 text-accent" />
-              Script
+              {creationPath === "style" ? "Questions" : "Script"}
             </button>
             <div className="ml-auto flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
               <button
