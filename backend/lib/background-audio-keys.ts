@@ -2,11 +2,28 @@ export const BG_AUDIO_PREFIX = "background-audio/";
 export const BG_AUDIO_RAW_PREFIX = "background-audio-raw/";
 export const BG_AUDIO_ORIGINAL_PREFIX = "background-audio-original/";
 
-export const BG_AUDIO_CATEGORIES = ["nature", "music", "drums", "noise"] as const;
+export const BG_AUDIO_CATEGORIES = ["music", "ambience", "drums", "noise"] as const;
 export type BgAudioCategory = (typeof BG_AUDIO_CATEGORIES)[number];
+
+/** Legacy S3 folder / catalog value `nature` maps to ambience. */
+const FOLDER_TO_CATEGORY: Record<string, BgAudioCategory> = {
+  music: "music",
+  ambience: "ambience",
+  nature: "ambience",
+  drums: "drums",
+  noise: "noise",
+};
 
 export function isBgAudioCategory(v: string): v is BgAudioCategory {
   return (BG_AUDIO_CATEGORIES as readonly string[]).includes(v);
+}
+
+export function normalizeBgAudioCategory(v: string): BgAudioCategory | null {
+  return FOLDER_TO_CATEGORY[v.trim().toLowerCase()] ?? null;
+}
+
+export function categoryFromFolderSegment(seg: string): BgAudioCategory | null {
+  return FOLDER_TO_CATEGORY[seg.trim().toLowerCase()] ?? null;
 }
 
 export function isAudioKey(key: string): boolean {
@@ -52,7 +69,7 @@ export function parseAnyBgAudioKey(key: string): {
     key,
     name: leafNameFromKey(key),
     rel,
-    folderCategory: first && isBgAudioCategory(first) ? first : null,
+    folderCategory: first ? categoryFromFolderSegment(first) : null,
   };
 }
 
@@ -64,7 +81,8 @@ export function parseBgAudioKey(key: string): {
 } | null {
   const any = parseAnyBgAudioKey(key);
   if (!any?.folderCategory) return null;
-  const rest = any.rel.slice(any.folderCategory.length + 1);
+  const firstSlash = any.rel.indexOf("/");
+  const rest = firstSlash > 0 ? any.rel.slice(firstSlash + 1) : "";
   if (!rest) return null;
   return {
     key: any.key,
@@ -79,6 +97,7 @@ export type ListedBgItem = {
   name: string;
   size: number | null;
   wavKey?: string;
+  subcategory?: string;
 };
 
 export function mergeByNamePreferMp3(
@@ -104,7 +123,10 @@ export function mergeByStemPreferMp3(
   }
   const out: ListedBgItem[] = [];
   for (const [stem, rec] of byStem) {
-    const name = leafNameFromKey(stem);
+    const name =
+      rec.mp3?.name?.trim() ||
+      rec.wav?.name?.trim() ||
+      leafNameFromKey(stem);
     if (rec.mp3) {
       out.push({
         key: rec.mp3.key,
@@ -208,7 +230,7 @@ export function publicKeysForCategoryMove(
   const fromWav = `${fromMp3.slice(0, -4)}.wav`;
   let rest = any.rel.replace(/\.(mp3|wav)$/i, "");
   const slash = rest.indexOf("/");
-  if (slash > 0 && isBgAudioCategory(rest.slice(0, slash))) {
+  if (slash > 0 && categoryFromFolderSegment(rest.slice(0, slash))) {
     rest = rest.slice(slash + 1);
   }
   if (!rest) return null;

@@ -38,7 +38,7 @@ export function PlanResistanceThreadBanner({
         },
       ],
     });
-    router.push("/meditate/create?fromIdeate=1");
+    router.push("/meditate/create/from-chat?fromIdeate=1");
   }
 
   return (

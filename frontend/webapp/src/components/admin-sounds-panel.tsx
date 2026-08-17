@@ -14,13 +14,17 @@ import {
   patchAdminSound,
   trimAdminSound,
 } from "@/lib/medimade-api";
-
-const CATEGORIES: AdminSoundCategory[] = ["nature", "music", "drums", "noise"];
+import {
+  SOUND_CATEGORIES,
+  categoryLabel,
+  coerceSoundSubcategory,
+  subcategoryOptions,
+} from "@/lib/sound-taxonomy";
 
 type UseFilter = "all" | "in" | "pending" | "skip" | "categorised";
 
 function mixerEnabled(status: AdminSoundItem["status"]): boolean {
-  return status === "in_use" || status === "categorised";
+  return status === "categorised";
 }
 
 function statusMatchesFilter(status: AdminSoundItem["status"], filter: UseFilter): boolean {
@@ -33,21 +37,6 @@ function statusMatchesFilter(status: AdminSoundItem["status"], filter: UseFilter
 
 function isStatusReviewFilter(filter: UseFilter): boolean {
   return filter === "pending" || filter === "in";
-}
-
-function suggestionFields(item: AdminSoundItem): {
-  name: string;
-  category: AdminSoundCategory;
-  subcategory: string;
-} {
-  const raw = item.packPath || item.name || item.key;
-  const base = (raw.split("/").pop() ?? raw).replace(/\.(mp3|wav)$/i, "");
-  const fallback = base.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim() || item.name;
-  return {
-    name: (item.suggestedName ?? "").trim() || fallback,
-    category: item.suggestedCategory ?? item.category,
-    subcategory: item.suggestedSubcategory ?? item.subcategory,
-  };
 }
 
 type ImportRowStatus = "queued" | "preparing" | "uploading" | "done" | "skipped" | "failed" | "aborted";
@@ -161,7 +150,7 @@ export function AdminSoundsPanel() {
   });
   const [q, setQ] = useState("");
   const [catFilter, setCatFilter] = useState<"all" | AdminSoundCategory>("all");
-  const [useFilter, setUseFilter] = useState<UseFilter>("all");
+  const [useFilter, setUseFilter] = useState<UseFilter>("in");
   const [subFilter, setSubFilter] = useState("");
   const [sortBy, setSortBy] = useState<"imported-desc" | "imported-asc" | "name">("imported-desc");
   const [fadingKeys, setFadingKeys] = useState<Set<string>>(() => new Set());
@@ -233,13 +222,13 @@ export function AdminSoundsPanel() {
   }, [items, load]);
 
   const subcategories = useMemo(() => {
-    const s = new Set<string>();
-    for (const it of items) {
-      const sub = (it.subcategory || it.suggestedSubcategory || "").trim();
-      if (sub) s.add(sub);
+    if (catFilter === "all") {
+      return SOUND_CATEGORIES.flatMap((c) =>
+        subcategoryOptions(c).map((o) => ({ id: o.id, label: `${categoryLabel(c)} · ${o.label}` })),
+      );
     }
-    return [...s].sort();
-  }, [items]);
+    return subcategoryOptions(catFilter).map((o) => ({ id: o.id, label: o.label }));
+  }, [catFilter]);
 
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -446,13 +435,22 @@ export function AdminSoundsPanel() {
         return;
       }
       if (approvedRight) {
-        applyCategorise(current, suggestionFields(current));
+        applyCategorise(current, {
+          name: current.name,
+          category: current.category,
+          subcategory: current.subcategory,
+        });
         advanceApprovedReview(pool, current.key);
         return;
       }
       if (approvedLeft) {
         setReviewKey(current.key);
-        setEditPopup({ key: current.key, ...suggestionFields(current) });
+        setEditPopup({
+          key: current.key,
+          name: current.name,
+          category: current.category,
+          subcategory: current.subcategory,
+        });
         return;
       }
       const nextIdx = Math.min(pool.length - 1, Math.max(0, idx + step));
@@ -587,7 +585,7 @@ export function AdminSoundsPanel() {
   async function onAnalyseTitles() {
     const keys = items.filter((i) => i.status === "in_use").map((i) => i.key);
     if (keys.length === 0) {
-      setError("No approved sounds to analyse.");
+      setError("No uncategorised sounds to analyse.");
       return;
     }
     setAnalysingTitles(true);
@@ -627,38 +625,74 @@ export function AdminSoundsPanel() {
           <div className="text-xs font-semibold uppercase tracking-wide text-muted">Listed</div>
           <div className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{counts.total}</div>
         </div>
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-900/60 dark:bg-red-950/30">
+        <button
+          type="button"
+          onClick={() => setUseFilter("skip")}
+          aria-pressed={useFilter === "skip"}
+          className={`rounded-2xl border p-4 text-left transition-shadow ${
+            useFilter === "skip"
+              ? "border-red-400 ring-2 ring-red-400/40"
+              : "border-red-200 hover:border-red-300"
+          } bg-red-50 dark:border-red-900/60 dark:bg-red-950/30`}
+        >
           <div className="text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">
             Not using
           </div>
           <div className="mt-1 text-2xl font-semibold tabular-nums text-red-700 dark:text-red-400">
             {counts.unused}
           </div>
-        </div>
-        <div className="rounded-2xl border border-stone-300 bg-stone-100 p-4 dark:border-stone-600 dark:bg-stone-800/50">
+        </button>
+        <button
+          type="button"
+          onClick={() => setUseFilter("pending")}
+          aria-pressed={useFilter === "pending"}
+          className={`rounded-2xl border p-4 text-left transition-shadow ${
+            useFilter === "pending"
+              ? "border-stone-500 ring-2 ring-stone-400/50"
+              : "border-stone-300 hover:border-stone-400"
+          } bg-stone-100 dark:border-stone-600 dark:bg-stone-800/50`}
+        >
           <div className="text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-300">
             Pending
           </div>
           <div className="mt-1 text-2xl font-semibold tabular-nums text-stone-700 dark:text-stone-200">
             {counts.pending}
           </div>
-        </div>
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/60 dark:bg-emerald-950/30">
+        </button>
+        <button
+          type="button"
+          onClick={() => setUseFilter("in")}
+          aria-pressed={useFilter === "in"}
+          className={`rounded-2xl border p-4 text-left transition-shadow ${
+            useFilter === "in"
+              ? "border-emerald-500 ring-2 ring-emerald-400/50"
+              : "border-emerald-200 hover:border-emerald-300"
+          } bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/30`}
+        >
           <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
-            Approved
+            Uncategorised
           </div>
           <div className="mt-1 text-2xl font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
             {counts.inUse}
           </div>
-        </div>
-        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-900/60 dark:bg-sky-950/30">
+        </button>
+        <button
+          type="button"
+          onClick={() => setUseFilter("categorised")}
+          aria-pressed={useFilter === "categorised"}
+          className={`rounded-2xl border p-4 text-left transition-shadow ${
+            useFilter === "categorised"
+              ? "border-sky-500 ring-2 ring-sky-400/50"
+              : "border-sky-200 hover:border-sky-300"
+          } bg-sky-50 dark:border-sky-900/60 dark:bg-sky-950/30`}
+        >
           <div className="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-400">
             Categorised
           </div>
           <div className="mt-1 text-2xl font-semibold tabular-nums text-sky-700 dark:text-sky-400">
             {counts.categorised}
           </div>
-        </div>
+        </button>
       </div>
 
       <section className="mt-6 rounded-2xl border border-border bg-card p-4 sm:p-5">
@@ -666,7 +700,8 @@ export function AdminSoundsPanel() {
         <p className="mt-1 text-xs text-muted">
           Choose a Splice pack folder. Large WAVs upload in 8 MB parts with retries. Keep this tab
           open until the counter finishes. Re-import the same folder to retry anything still
-          missing. New files stay pending until you mark them Approved.
+          missing. New files stay pending until you mark them Uncategorised.
+          Only Categorised sounds appear in the mixer.
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
@@ -745,12 +780,15 @@ export function AdminSoundsPanel() {
         <select
           className="rounded-xl border border-border bg-card px-3 py-2 text-sm"
           value={catFilter}
-          onChange={(e) => setCatFilter(e.target.value as "all" | AdminSoundCategory)}
+          onChange={(e) => {
+            setCatFilter(e.target.value as "all" | AdminSoundCategory);
+            setSubFilter("");
+          }}
         >
           <option value="all">All categories</option>
-          {CATEGORIES.map((c) => (
+          {SOUND_CATEGORIES.map((c) => (
             <option key={c} value={c}>
-              {c}
+              {categoryLabel(c)}
             </option>
           ))}
         </select>
@@ -761,8 +799,8 @@ export function AdminSoundsPanel() {
         >
           <option value="">All subcategories</option>
           {subcategories.map((t) => (
-            <option key={t} value={t}>
-              {t}
+            <option key={`${t.id}-${t.label}`} value={t.id}>
+              {t.label}
             </option>
           ))}
         </select>
@@ -773,9 +811,9 @@ export function AdminSoundsPanel() {
         >
           <option value="skip">Not using</option>
           <option value="pending">Pending</option>
-          <option value="in">Approved</option>
+          <option value="in">Uncategorised</option>
           <option value="categorised">Categorised</option>
-          <option value="all">Approved & pending</option>
+          <option value="all">Uncategorised & pending</option>
         </select>
         {isStatusReviewFilter(useFilter) ? (
           <label className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm">
@@ -798,13 +836,13 @@ export function AdminSoundsPanel() {
             {reviewMode ? (
               <span className="hidden text-[11px] text-muted sm:inline">
                 {useFilter === "pending"
-                  ? "⌘← not using · ⌘→ approved · ⌘↑↓ skip"
+                  ? "⌘← not using · ⌘→ uncategorised · ⌘↑↓ skip"
                   : "⌘← edit · ⌘→ categorise · ⌘↑↓ skip"}
               </span>
             ) : null}
           </label>
         ) : null}
-        {useFilter === "in" ? (
+        {useFilter === "in" && reviewMode ? (
           <button
             type="button"
             disabled={analysingTitles || loading}
@@ -847,6 +885,7 @@ export function AdminSoundsPanel() {
             baseUrl={baseUrl}
             fading={fadingKeys.has(it.key)}
             useFilter={useFilter}
+            reviewMode={reviewMode}
             reviewSelected={reviewMode && reviewKey === it.key}
             reviewAutoPlaySeq={reviewMode && reviewKey === it.key ? reviewPlaySeq : 0}
             onReviewSelect={() => setReviewKey(it.key)}
@@ -907,19 +946,43 @@ export function AdminSoundsPanel() {
               <select
                 value={editPopup.category}
                 onChange={(e) =>
-                  setEditPopup((p) =>
-                    p ? { ...p, category: e.target.value as AdminSoundCategory } : p,
-                  )
+                  setEditPopup((p) => {
+                    if (!p) return p;
+                    const category = e.target.value as AdminSoundCategory;
+                    return {
+                      ...p,
+                      category,
+                      subcategory: coerceSoundSubcategory(category, p.subcategory),
+                    };
+                  })
                 }
                 className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
               >
-                {CATEGORIES.map((c) => (
+                {SOUND_CATEGORIES.map((c) => (
                   <option key={c} value={c}>
-                    {c}
+                    {categoryLabel(c)}
                   </option>
                 ))}
               </select>
             </label>
+            {subcategoryOptions(editPopup.category).length > 0 ? (
+              <label className="mt-3 block">
+                <span className="text-sm font-medium text-foreground">Subcategory</span>
+                <select
+                  value={editPopup.subcategory}
+                  onChange={(e) =>
+                    setEditPopup((p) => (p ? { ...p, subcategory: e.target.value } : p))
+                  }
+                  className="mt-1.5 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
+                >
+                  {subcategoryOptions(editPopup.category).map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
             <p className="mt-3 text-xs text-muted">Enter to save as categorised. Esc to cancel.</p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -948,6 +1011,7 @@ function SoundRow({
   baseUrl,
   fading,
   useFilter,
+  reviewMode,
   reviewSelected,
   reviewAutoPlaySeq,
   onReviewSelect,
@@ -963,6 +1027,7 @@ function SoundRow({
   baseUrl?: string;
   fading: boolean;
   useFilter: UseFilter;
+  reviewMode: boolean;
   reviewSelected: boolean;
   reviewAutoPlaySeq: number;
   onReviewSelect: () => void;
@@ -985,10 +1050,15 @@ function SoundRow({
   const [currentTime, setCurrentTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [fadeDim, setFadeDim] = useState(false);
+  const [nameDraft, setNameDraft] = useState(item.name);
   const cardRef = useRef<HTMLLIElement | null>(null);
 
   startRef.current = startSec;
   endRef.current = endSec;
+
+  useEffect(() => {
+    setNameDraft(item.name);
+  }, [item.key, item.name]);
 
   useEffect(() => {
     if (!fading) {
@@ -1025,16 +1095,6 @@ function SoundRow({
   const playKey = streamingPlayKey(item.originalKey || item.key);
   const src = item.ready ? mediaUrl(baseUrl, playKey, item.updatedAt) : "";
   const waveformSrc = src;
-  const suggestion = item.suggestedName || item.suggestedCategory || item.suggestedSubcategory
-    ? [
-        item.suggestedName?.trim() || null,
-        item.suggestedCategory
-          ? `${item.suggestedCategory}${item.suggestedSubcategory ? ` / ${item.suggestedSubcategory}` : ""}`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : null;
 
   async function savePatch(partial: Partial<AdminSoundItem>) {
     setErr(null);
@@ -1144,10 +1204,31 @@ function SoundRow({
         fading && fadeDim ? "pointer-events-none opacity-0" : "opacity-100"
       } ${reviewSelected ? "ring-2 ring-accent ring-offset-2 ring-offset-background" : ""}`}
     >
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="font-medium">{item.name}</div>
-          <div className="mt-0.5 font-mono text-[11px] text-muted">{item.packPath || item.key}</div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {useFilter === "categorised" || (useFilter === "in" && reviewMode) ? (
+            <input
+              value={nameDraft}
+              disabled={busy !== null}
+              aria-label="Title"
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={() => {
+                const name = nameDraft.trim() || item.name;
+                setNameDraft(name);
+                if (name !== item.name) void savePatch({ name });
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                }
+              }}
+              className="w-full rounded-xl border border-border bg-background px-2.5 py-1.5 font-medium outline-none ring-accent/30 focus:ring-2"
+            />
+          ) : (
+            <div className="font-medium">{item.name}</div>
+          )}
+          <div className="mt-0.5 break-all font-mono text-[11px] text-muted">{item.packPath || item.key}</div>
           <div className="mt-1 text-xs text-muted">
             {formatSize(item.size)}
             {formatImportedAt(item.importedAt) ? ` · ${formatImportedAt(item.importedAt)}` : ""}
@@ -1155,51 +1236,46 @@ function SoundRow({
             {item.ready ? "" : " · processing…"}
             {item.originalKey ? " · original archived for re-trim" : ""}
           </div>
-          {suggestion ? (
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
-              <span>
-                Suggested: <span className="text-foreground">{suggestion}</span>
-              </span>
-              <button
-                type="button"
-                disabled={busy !== null}
-                className="rounded-full border border-border px-2 py-0.5 text-xs hover:bg-background"
-                onClick={() =>
-                  void savePatch({
-                    category: item.suggestedCategory ?? item.category,
-                    subcategory: item.suggestedSubcategory ?? item.subcategory,
-                  })
-                }
-              >
-                Apply suggestion
-              </button>
-            </div>
-          ) : null}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           <select
             className="rounded-xl border border-border bg-background px-2 py-1.5 text-sm"
             value={item.category}
             disabled={busy !== null}
-            onChange={(e) => void savePatch({ category: e.target.value as AdminSoundCategory })}
+            onChange={(e) => {
+              const category = e.target.value as AdminSoundCategory;
+              void savePatch({
+                category,
+                subcategory: coerceSoundSubcategory(category, item.subcategory),
+              });
+            }}
           >
-            {CATEGORIES.map((c) => (
+            {SOUND_CATEGORIES.map((c) => (
               <option key={c} value={c}>
-                {c}
+                {categoryLabel(c)}
               </option>
             ))}
           </select>
-          {item.subcategory ? (
-            <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
-              {item.subcategory}
-            </span>
+          {subcategoryOptions(item.category).length > 0 ? (
+            <select
+              className="rounded-xl border border-border bg-background px-2 py-1.5 text-sm"
+              value={coerceSoundSubcategory(item.category, item.subcategory)}
+              disabled={busy !== null}
+              onChange={(e) => void savePatch({ subcategory: e.target.value })}
+            >
+              {subcategoryOptions(item.category).map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
           ) : null}
           <div className="flex rounded-full border border-border p-0.5 text-xs">
             {(
               [
                 ["unused", "Not using"],
                 ["pending", "Pending"],
-                ["in_use", "Approved"],
+                ["in_use", "Uncategorised"],
                 ["categorised", "Categorised"],
               ] as const
             ).map(([value, label]) => {

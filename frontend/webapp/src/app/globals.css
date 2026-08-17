@@ -58,6 +58,91 @@ body {
   font-family: var(--font-hand), "Segoe Print", "Bradley Hand", cursive;
 }
 
+/* iMessage-style chat tails. The ::after mask matches the create chat card. */
+.chat-bubble {
+  box-shadow:
+    0 1px 3px rgb(44 38 33 / 0.10),
+    0 3px 10px rgb(44 38 33 / 0.12);
+}
+
+.chat-bubble-tail-right,
+.chat-bubble-tail-left {
+  position: relative;
+}
+
+.chat-bubble-tail-right::before,
+.chat-bubble-tail-left::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
+  background: inherit;
+}
+
+.chat-bubble-tail-right::before {
+  right: -8px;
+  border-bottom-left-radius: 16px;
+  box-shadow: 2px 3px 6px rgb(44 38 33 / 0.14);
+}
+
+.chat-bubble-tail-left::before {
+  left: -8px;
+  border-bottom-right-radius: 16px;
+  box-shadow: -2px 3px 6px rgb(44 38 33 / 0.14);
+}
+
+.chat-bubble-tail-right::after,
+.chat-bubble-tail-left::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  bottom: -1px;
+  width: 10px;
+  height: 21px;
+  background: var(--card);
+}
+
+.chat-bubble-tail-right::after {
+  right: -10px;
+  border-bottom-left-radius: 10px;
+}
+
+.chat-bubble-tail-left::after {
+  left: -10px;
+  border-bottom-right-radius: 10px;
+}
+
+@keyframes chat-typing-bounce {
+  0%,
+  32%,
+  100% {
+    transform: translateY(0);
+  }
+  16% {
+    transform: translateY(-4px);
+  }
+}
+
+.chat-typing-dot {
+  animation: chat-typing-bounce 0.9s ease-in-out infinite;
+}
+
+.chat-typing-dot:nth-child(2) {
+  animation-delay: 0.3s;
+}
+
+.chat-typing-dot:nth-child(3) {
+  animation-delay: 0.6s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-typing-dot {
+    animation: none;
+  }
+}
+
 .mesh-hero {
   background:
     radial-gradient(ellipse 80% 60% at 70% 20%, rgb(184 107 72 / 0.14), transparent 55%),

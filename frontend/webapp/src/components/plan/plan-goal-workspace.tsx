@@ -146,7 +146,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
     };
     writePlanCreateHandoff(handoff);
     patch({ meditationsGenerated: dream.meditationsGenerated + 1 });
-    router.push("/meditate/create?fromIdeate=1");
+    router.push("/meditate/create/from-chat?fromIdeate=1");
   }
 
   if (missing || !dream) {

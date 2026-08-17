@@ -19,9 +19,6 @@ const navRest = [
   { href: "/journal", label: "Journal" },
   { href: "/ideate", label: "Ideate" },
   { href: "/focus", label: "Focus" },
-  ...(process.env.NODE_ENV !== "production"
-    ? [{ href: "/analytics", label: "Analytics" }]
-    : []),
   { href: "/admin", label: "Admin" },
   { href: "/settings", label: "API" },
 ] as const;

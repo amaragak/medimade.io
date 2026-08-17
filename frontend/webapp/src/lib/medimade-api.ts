@@ -716,6 +716,7 @@ export type BackgroundAudioItem = {
   size: number | null;
   /** Normalized WAV sibling for pro-tier / high-quality download when present. */
   wavKey?: string;
+  subcategory?: string;
 };
 
 /** Prefer CDN MP3 for previews and mixer jobs (`background-audio/…` beds). */
@@ -799,7 +800,9 @@ export async function listFishSpeakers(): Promise<FishSpeaker[]> {
     const msg = data.detail ?? data.error ?? res.statusText;
     throw new Error(msg);
   }
-  return data.speakers ?? [];
+  return (data.speakers ?? []).filter(
+    (s) => s.modelId !== "8d797adca9af48ca9e8a1c7284db1d6c",
+  );
 }
 
 export async function listOrpheusSpeakers(): Promise<OrpheusSpeaker[]> {
@@ -1138,7 +1141,7 @@ export async function getMeditationAudioJobStatus(
   return { ...data, jobId: data.jobId ?? id };
 }
 
-export type AdminSoundCategory = "nature" | "music" | "drums" | "noise";
+export type AdminSoundCategory = "music" | "ambience" | "drums" | "noise";
 
 export type AdminSoundItem = {
   key: string;
@@ -1190,7 +1193,7 @@ export async function listAdminSounds(): Promise<AdminSoundsList> {
   }
   return {
     baseUrl: data.baseUrl,
-    categories: data.categories ?? ["nature", "music", "drums", "noise"],
+    categories: data.categories ?? ["music", "ambience", "drums", "noise"],
     counts: {
       total: data.counts?.total ?? 0,
       inUse: data.counts?.inUse ?? 0,
@@ -1199,12 +1202,24 @@ export async function listAdminSounds(): Promise<AdminSoundsList> {
       categorised: data.counts?.categorised ?? 0,
       inCatalog: data.counts?.inCatalog ?? 0,
     },
-    items: (data.items ?? []).map((it) => ({
-      ...it,
-      status: it.status ?? (it.enabled ? "in_use" : "unused"),
-      suggestedName: it.suggestedName ?? null,
-      importedAt: it.importedAt ?? it.updatedAt ?? null,
-    })),
+    items: (data.items ?? []).map((it) => {
+      const rawCat = String(it.category ?? "");
+      const rawFolder = it.folderCategory ? String(it.folderCategory) : null;
+      const rawSuggested = it.suggestedCategory ? String(it.suggestedCategory) : null;
+      return {
+        ...it,
+        category: (rawCat === "nature" ? "ambience" : it.category) as AdminSoundCategory,
+        folderCategory: (rawFolder === "nature" ? "ambience" : it.folderCategory) as
+          | AdminSoundCategory
+          | null,
+        suggestedCategory: (rawSuggested === "nature" ? "ambience" : it.suggestedCategory) as
+          | AdminSoundCategory
+          | null,
+        status: it.status ?? (it.enabled ? "in_use" : "unused"),
+        suggestedName: it.suggestedName ?? null,
+        importedAt: it.importedAt ?? it.updatedAt ?? null,
+      };
+    }),
   };
 }
 
@@ -1419,6 +1434,102 @@ export async function trimAdminSound(body: {
   }
 }
 
+export type AdminVoiceSpeaker = {
+  name: string;
+  modelId: string;
+  hidden: boolean;
+  sort: number;
+  hasSample?: boolean;
+  sampleUrl?: string | null;
+};
+
+export type AdminPauseBands = {
+  "extra-short": number;
+  short: number;
+  medium: number;
+  long: number;
+  "extra-long": number;
+};
+
+export type AdminVoiceState = {
+  baseUrl?: string;
+  speakers: AdminVoiceSpeaker[];
+  pauses: AdminPauseBands;
+};
+
+export async function listAdminVoice(): Promise<AdminVoiceState> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/voice`, { headers: medimadeApiAuthHeaders() });
+  const data = (await res.json()) as AdminVoiceState & { error?: string; detail?: string };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  return {
+    baseUrl: data.baseUrl,
+    speakers: data.speakers ?? [],
+    pauses: data.pauses,
+  };
+}
+
+export async function patchAdminVoice(body: {
+  pauses?: Partial<AdminPauseBands>;
+  speaker?: { name: string; modelId: string; hidden?: boolean; sort?: number };
+}): Promise<{ pauses?: AdminPauseBands; speaker?: AdminVoiceSpeaker }> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/voice`, {
+    method: "PATCH",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json()) as {
+    pauses?: AdminPauseBands;
+    speaker?: AdminVoiceSpeaker;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  return data;
+}
+
+export async function deleteAdminVoiceSpeaker(modelId: string): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/voice`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ action: "delete", modelId }),
+  });
+  const data = (await res.json()) as { error?: string; detail?: string };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+}
+
+export async function generateAdminVoiceSample(
+  modelId: string,
+): Promise<{ sampleUrl?: string | null }> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/voice`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ action: "sample", modelId }),
+  });
+  const data = (await res.json()) as {
+    sampleUrl?: string | null;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  return data;
+}
+
 export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
@@ -1426,6 +1537,7 @@ export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> 
   const data = (await res.json()) as {
     baseUrl?: string;
     nature?: BackgroundAudioItem[];
+    ambience?: BackgroundAudioItem[];
     music?: BackgroundAudioItem[];
     drums?: BackgroundAudioItem[];
     noise?: BackgroundAudioItem[];
@@ -1439,7 +1551,7 @@ export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> 
   }
   return {
     baseUrl: data.baseUrl,
-    nature: data.nature ?? [],
+    nature: data.ambience ?? data.nature ?? [],
     music: data.music ?? [],
     drums: data.drums ?? [],
     noise: data.noise ?? [],
@@ -1496,21 +1608,27 @@ export type LibraryMeditationItem = {
   liveMix?: boolean;
   backgroundNatureKey?: string | null;
   backgroundMusicKey?: string | null;
+  backgroundDrumsKey?: string | null;
   backgroundNoiseKey?: string | null;
   backgroundNatureGain?: number | null;
   backgroundMusicGain?: number | null;
+  backgroundDrumsGain?: number | null;
   backgroundNoiseGain?: number | null;
   createdBackgroundNatureKey?: string | null;
   createdBackgroundMusicKey?: string | null;
+  createdBackgroundDrumsKey?: string | null;
   createdBackgroundNoiseKey?: string | null;
   createdBackgroundNatureGain?: number | null;
   createdBackgroundMusicGain?: number | null;
+  createdBackgroundDrumsGain?: number | null;
   createdBackgroundNoiseGain?: number | null;
   publisherBackgroundNatureKey?: string | null;
   publisherBackgroundMusicKey?: string | null;
+  publisherBackgroundDrumsKey?: string | null;
   publisherBackgroundNoiseKey?: string | null;
   publisherBackgroundNatureGain?: number | null;
   publisherBackgroundMusicGain?: number | null;
+  publisherBackgroundDrumsGain?: number | null;
   publisherBackgroundNoiseGain?: number | null;
 };
 
@@ -1545,9 +1663,11 @@ export type MeditationDraftStateV1 = {
   speakerFxPreviewOn?: boolean;
   backgroundNatureKey: string;
   backgroundMusicKey: string;
+  backgroundDrumsKey?: string;
   backgroundNoiseKey: string;
   backgroundNatureGain: number;
   backgroundMusicGain: number;
+  backgroundDrumsGain?: number;
   backgroundNoiseGain: number;
   mobileCreateStep: "chat" | "audio";
   lastUsedScript: string | null;
@@ -1710,9 +1830,11 @@ export async function patchMeditationBackgroundMix(
   mix: {
     backgroundNatureKey: string;
     backgroundMusicKey: string;
+    backgroundDrumsKey: string;
     backgroundNoiseKey: string;
     backgroundNatureGain: number;
     backgroundMusicGain: number;
+    backgroundDrumsGain: number;
     backgroundNoiseGain: number;
   },
   opts?: { community?: boolean; s3Key?: string },

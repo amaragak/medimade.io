@@ -12,6 +12,10 @@ import {
   type ListedBgItem,
 } from "../lib/background-audio-keys";
 import { listAllSoundRows, soundIsInCustomerPicker } from "../lib/sound-catalog";
+import {
+  coerceSoundSubcategory,
+  inferSoundSubcategory,
+} from "../lib/sound-taxonomy";
 
 const s3 = new S3Client({});
 
@@ -62,63 +66,134 @@ export async function handler(
     } while (token);
 
     const buckets: Record<BgAudioCategory, ListedBgItem[]> = {
-      nature: [],
+      ambience: [],
       music: [],
       drums: [],
       noise: [],
     };
 
-    const skip = new Set<string>();
+    const mixerKeys = new Set<string>();
+    const nameOverride = new Map<string, string>();
     const categoryOverride = new Map<string, BgAudioCategory>();
-    if (process.env.SOUND_CATALOG_TABLE_NAME) {
-      try {
-        const rows = await listAllSoundRows();
-        for (const row of rows) {
-          if (!soundIsInCustomerPicker(row)) skip.add(row.sk);
-          if (row.category && BG_AUDIO_CATEGORIES.includes(row.category)) {
-            categoryOverride.set(row.sk, row.category);
-          }
-        }
-      } catch (e) {
-        console.warn("sound catalog overlay skipped", e);
+    const subcategoryOverride = new Map<string, string>();
+    const catalogConfigured = Boolean(process.env.SOUND_CATALOG_TABLE_NAME);
+    const catalogRows = catalogConfigured
+      ? await listAllSoundRows().catch((e) => {
+          console.warn("sound catalog overlay skipped", e);
+          return [];
+        })
+      : [];
+    for (const row of catalogRows) {
+      if (soundIsInCustomerPicker(row)) mixerKeys.add(row.sk);
+      const displayName = row.name.trim();
+      if (displayName) nameOverride.set(row.sk, displayName);
+      if (row.category && BG_AUDIO_CATEGORIES.includes(row.category)) {
+        categoryOverride.set(row.sk, row.category);
+        subcategoryOverride.set(
+          row.sk,
+          coerceSoundSubcategory(
+            row.category,
+            row.subcategory || inferSoundSubcategory(row.category, row.packPath || row.sk),
+          ),
+        );
       }
     }
 
+    const rawItems: { key: string; name: string; size: number | null; category: BgAudioCategory; subcategory: string }[] =
+      [];
     for (const o of objects) {
       if (!o.Key) continue;
       const parsed = parseAnyBgAudioKey(o.Key);
       if (!parsed) continue;
-      const item = {
-        key: parsed.key,
-        name: parsed.name,
-        size: o.Size ?? null,
-      };
       const lower = parsed.key.toLowerCase();
       const catalogKey = lower.endsWith(".wav")
         ? `${parsed.key.slice(0, -4)}.mp3`
         : parsed.key;
-      if (skip.has(catalogKey) || skip.has(parsed.key)) continue;
+      if (
+        catalogConfigured &&
+        !mixerKeys.has(catalogKey) &&
+        !mixerKeys.has(parsed.key)
+      ) {
+        continue;
+      }
       const cat =
         categoryOverride.get(catalogKey) ??
         categoryOverride.get(parsed.key) ??
         parsed.folderCategory;
       if (!cat) continue;
-      buckets[cat].push(item);
+      const subcategory =
+        subcategoryOverride.get(catalogKey) ??
+        subcategoryOverride.get(parsed.key) ??
+        coerceSoundSubcategory(cat, inferSoundSubcategory(cat, parsed.rel || parsed.key));
+      rawItems.push({
+        key: parsed.key,
+        name:
+          nameOverride.get(catalogKey) ??
+          nameOverride.get(parsed.key) ??
+          parsed.name,
+        size: o.Size ?? null,
+        category: cat,
+        subcategory,
+      });
+    }
+
+    const seen = new Set<string>();
+    for (const item of rawItems) {
+      const k = item.key.toLowerCase().endsWith(".wav")
+        ? `${item.key.slice(0, -4)}.mp3`
+        : item.key;
+      seen.add(k);
+      seen.add(item.key);
+      buckets[item.category].push(item);
+    }
+    for (const row of catalogRows) {
+      if (!soundIsInCustomerPicker(row)) continue;
+      if (seen.has(row.sk)) continue;
+      const cat = row.category;
+      if (!BG_AUDIO_CATEGORIES.includes(cat)) continue;
+      buckets[cat].push({
+        key: row.sk,
+        name: row.name,
+        size: null,
+        subcategory:
+          subcategoryOverride.get(row.sk) ??
+          coerceSoundSubcategory(cat, inferSoundSubcategory(cat, row.packPath || row.sk)),
+      });
     }
 
     for (const c of BG_AUDIO_CATEGORIES) {
-      buckets[c] = mergeByStemPreferMp3(buckets[c]);
+      const merged = mergeByStemPreferMp3(buckets[c]);
+      const subByStem = new Map<string, string>();
+      for (const it of buckets[c]) {
+        const stem = it.key.replace(/\.(mp3|wav)$/i, "");
+        if (it.subcategory && !subByStem.has(stem)) subByStem.set(stem, it.subcategory);
+      }
+      buckets[c] = merged.map((it) => {
+        const stem = it.key.replace(/\.(mp3|wav)$/i, "");
+        return {
+          ...it,
+          name:
+            nameOverride.get(it.key) ??
+            nameOverride.get(`${stem}.mp3`) ??
+            nameOverride.get(`${stem}.wav`) ??
+            it.name,
+          subcategory:
+            subByStem.get(stem) ??
+            coerceSoundSubcategory(c, inferSoundSubcategory(c, it.key)),
+        };
+      });
       buckets[c].sort((a, b) => a.name.localeCompare(b.name));
     }
 
     return json(200, {
       ...(baseUrl ? { baseUrl } : {}),
-      nature: buckets.nature,
+      nature: buckets.ambience,
+      ambience: buckets.ambience,
       music: buckets.music,
       drums: buckets.drums,
       noise: buckets.noise,
       /** @deprecated flat list; prefer nature/music/drums/noise */
-      items: [...buckets.nature, ...buckets.music, ...buckets.drums, ...buckets.noise],
+      items: [...buckets.ambience, ...buckets.music, ...buckets.drums, ...buckets.noise],
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "ListObjects failed";

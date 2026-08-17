@@ -93,13 +93,13 @@ function getStyleFollowupQuestion(style: string): string {
     return "How do you want to feel when you’re done—and what words would land gently for you right now?";
   }
   if (s === "sleep") {
-    return "What’s keeping you awake tonight—and how do you want to feel as you drift off?";
+    return "How are you feeling as you get ready for sleep—do you want a drifting scene or just body and breath—and how do you want to feel as you drift off?";
   }
   if (s === "loving-kindness" || s === "loving kindness" || s === "metta") {
     return "Who would you like to send kindness to today—yourself, someone else, or both?";
   }
   if (s === "anxiety relief" || s === "anxiety") {
-    return "What’s the main worry or pressure right now—and what would feel like relief by the end of this session?";
+    return "What’s the main worry or pressure right now—and how do you want to feel by the end of this session?";
   }
   if (s === "breath-led" || s === "breath led" || s === "breath") {
     return "Do you want a breathwork-style session, or a simple “follow your breath” meditation?";
@@ -111,13 +111,13 @@ function getStyleFollowupQuestion(style: string): string {
     return "Do you imagine moving in place, walking slowly, or something else—and what do you want your body to feel by the end?";
   }
   if (s === "open awareness") {
-    return "What tends to pull your attention away most—and how would you like to relate to that during this practice?";
+    return "What pulls your attention away most, what’s your position, and what’s the environment like?";
   }
   if (s === "story") {
-    return "What kind of journey or scene should this story hold—and what feeling do you want to land on by the end?";
+    return "What style of story is this (zen parable, kids’ tale, fable…), what is it about, and what feeling should it leave you with?";
   }
   if (s === "reflection") {
-    return "What are you processing or wondering about—and what would feel like a helpful insight or shift when you’re done?";
+    return "What do you need to process, do you want an answer or just to sit with it, and what would a helpful insight or shift look like when you’re done?";
   }
   const trimmed = style.trim();
   if (trimmed) {

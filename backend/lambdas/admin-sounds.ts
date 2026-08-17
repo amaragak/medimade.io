@@ -20,8 +20,8 @@ import {
   BG_AUDIO_CATEGORIES,
   BG_AUDIO_PREFIX,
   BG_AUDIO_RAW_PREFIX,
-  isBgAudioCategory,
   mergeByStemPreferMp3,
+  normalizeBgAudioCategory,
   originalKeyForPublicKey,
   parseAnyBgAudioKey,
   parseBgAudioKey,
@@ -31,6 +31,7 @@ import {
   spliceFilenameId,
   type BgAudioCategory,
 } from "../lib/background-audio-keys";
+import { coerceSoundSubcategory } from "../lib/sound-taxonomy";
 import { listAllS3Objects } from "../lib/s3-list-all";
 import { suggestSoundCategories } from "../lib/sound-category-suggest";
 import {
@@ -124,6 +125,33 @@ async function copyIfExists(bucket: string, fromKey: string, toKey: string): Pro
   return true;
 }
 
+async function movePublicSoundToCategory(
+  bucket: string,
+  key: string,
+  existing: SoundCatalogRow | undefined,
+  toCategory: BgAudioCategory,
+): Promise<{ nextKey: string; category: BgAudioCategory } | null> {
+  const current =
+    normalizeBgAudioCategory(existing?.category ?? "") ??
+    parseBgAudioKey(key)?.category ??
+    "music";
+  if (toCategory === current) return { nextKey: key, category: current };
+  const move = publicKeysForCategoryMove(key, toCategory);
+  if (!move) return null;
+  await copyIfExists(bucket, move.fromMp3, move.toMp3);
+  await copyIfExists(bucket, move.fromWav, move.toWav);
+  const fromOrigMp3 = originalKeyForPublicKey(move.fromMp3);
+  const fromOrigWav = originalKeyForPublicKey(move.fromWav);
+  await copyIfExists(bucket, fromOrigMp3, originalKeyForPublicKey(move.toMp3));
+  await copyIfExists(bucket, fromOrigWav, originalKeyForPublicKey(move.toWav));
+  if (move.fromMp3 !== move.toMp3) {
+    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: move.fromMp3 })).catch(() => undefined);
+    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: move.fromWav })).catch(() => undefined);
+  }
+  if (existing) await deleteSoundRow(existing.sk);
+  return { nextKey: move.toMp3, category: toCategory };
+}
+
 export async function handler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
@@ -199,9 +227,9 @@ async function handleGet(bucket: string, baseUrl: string | undefined) {
       rawKeysForPublicMp3(item.key, meta?.packPath).some((k) => rawKeySet.has(k));
     const folderCategory = folderCatByKey.get(item.key) ?? parseAnyBgAudioKey(item.key)?.folderCategory ?? null;
     const category: BgAudioCategory =
-      meta?.category && isBgAudioCategory(meta.category)
-        ? meta.category
-        : folderCategory ?? "music";
+      (meta?.category && normalizeBgAudioCategory(meta.category)) ||
+      folderCategory ||
+      "music";
     return {
       key: item.key,
       wavKey: item.wavKey,
@@ -281,27 +309,19 @@ async function handlePatch(event: APIGatewayProxyEventV2, bucket: string) {
   const rows = await listAllSoundRows();
   const existing = rows.find((r) => r.sk === key);
   const parsed = parseBgAudioKey(key);
-  let nextKey = key;
+  const requestedCategory =
+    typeof body.category === "string" ? normalizeBgAudioCategory(body.category) : null;
   let category: BgAudioCategory =
-    existing?.category ?? parsed?.category ?? "music";
+    normalizeBgAudioCategory(existing?.category ?? "") ??
+    parsed?.category ??
+    "music";
 
-  if (typeof body.category === "string" && isBgAudioCategory(body.category) && body.category !== category) {
-    const move = publicKeysForCategoryMove(key, body.category);
-    if (!move) return json(400, { error: "Cannot recategorize this key" });
-    await copyIfExists(bucket, move.fromMp3, move.toMp3);
-    await copyIfExists(bucket, move.fromWav, move.toWav);
-    const fromOrigMp3 = originalKeyForPublicKey(move.fromMp3);
-    const fromOrigWav = originalKeyForPublicKey(move.fromWav);
-    await copyIfExists(bucket, fromOrigMp3, originalKeyForPublicKey(move.toMp3));
-    await copyIfExists(bucket, fromOrigWav, originalKeyForPublicKey(move.toWav));
-    if (move.fromMp3 !== move.toMp3) {
-      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: move.fromMp3 })).catch(() => undefined);
-      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: move.fromWav })).catch(() => undefined);
-    }
-    if (existing) await deleteSoundRow(existing.sk);
-    nextKey = move.toMp3;
-    category = body.category;
-  }
+  const relocated = requestedCategory
+    ? await movePublicSoundToCategory(bucket, key, existing, requestedCategory)
+    : { nextKey: key, category };
+  if (!relocated) return json(400, { error: "Cannot recategorize this key" });
+  const nextKey = relocated.nextKey;
+  category = relocated.category;
 
   let status: SoundReviewStatus = existing?.status ?? "in_use";
   if (typeof body.status === "string") {
@@ -325,10 +345,10 @@ async function handlePatch(event: APIGatewayProxyEventV2, bucket: string) {
       typeof body.notes === "string"
         ? body.notes.slice(0, 500)
         : existing?.notes,
-    subcategory:
-      typeof body.subcategory === "string"
-        ? body.subcategory.trim().toLowerCase().slice(0, 40)
-        : existing?.subcategory,
+    subcategory: coerceSoundSubcategory(
+      category,
+      typeof body.subcategory === "string" ? body.subcategory : existing?.subcategory,
+    ),
     suggestedCategory: existing?.suggestedCategory,
     suggestedSubcategory: existing?.suggestedSubcategory,
     suggestedName: existing?.suggestedName,
@@ -359,7 +379,7 @@ async function handlePost(event: APIGatewayProxyEventV2, bucket: string) {
     return handleAbortMultipart(bucket, body.abortMultipart as Record<string, unknown>);
   }
   if (body.analyseTitles && typeof body.analyseTitles === "object") {
-    return handleAnalyseTitles(body.analyseTitles as Record<string, unknown>);
+    return handleAnalyseTitles(bucket, body.analyseTitles as Record<string, unknown>);
   }
   if (body.suggest && typeof body.suggest === "object") {
     return handleSuggest(body.suggest as Record<string, unknown>);
@@ -457,7 +477,7 @@ async function handleSuggest(rec: Record<string, unknown>) {
   return json(200, { updated });
 }
 
-async function handleAnalyseTitles(rec: Record<string, unknown>) {
+async function handleAnalyseTitles(bucket: string, rec: Record<string, unknown>) {
   const rawKeys = Array.isArray(rec.keys) ? rec.keys : [];
   const keys = rawKeys.filter((k): k is string => typeof k === "string" && k.startsWith(BG_AUDIO_PREFIX));
   const unique = [...new Set(keys)];
@@ -491,11 +511,18 @@ async function handleAnalyseTitles(rec: Record<string, unknown>) {
     const hint = suggestions.get(item.id);
     const row = bySk.get(item.id);
     if (!hint || !row) continue;
+    const relocated = await movePublicSoundToCategory(bucket, item.id, row, hint.category);
+    if (!relocated) continue;
     await putSoundRow({
       ...row,
+      sk: relocated.nextKey,
+      name: hint.name || row.name,
+      category: relocated.category,
+      subcategory: hint.subcategory,
       suggestedCategory: hint.category,
       suggestedSubcategory: hint.subcategory,
       suggestedName: hint.name,
+      originalKey: row.originalKey ? originalKeyForPublicKey(relocated.nextKey) : row.originalKey,
       updatedAt: new Date().toISOString(),
     });
     updated += 1;

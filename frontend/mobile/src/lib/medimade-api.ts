@@ -328,7 +328,9 @@ export async function listFishSpeakers(): Promise<FishSpeaker[]> {
     const msg = data.detail ?? data.error ?? res.statusText;
     throw new Error(msg);
   }
-  return data.speakers ?? [];
+  return (data.speakers ?? []).filter(
+    (s) => s.modelId !== "8d797adca9af48ca9e8a1c7284db1d6c",
+  );
 }
 
 export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> {

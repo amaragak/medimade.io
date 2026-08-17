@@ -145,6 +145,14 @@ export class MedimadeStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    /** Fish speakers, hidden flags, and script pause band seconds. */
+    const voiceAdminTable = new dynamodb.Table(this, "VoiceAdminTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     /** Per-listener mix overrides for public/community meditations (creator mix stays on the catalog row). */
     const meditationListenerMixTable = new dynamodb.Table(
       this,
@@ -429,6 +437,7 @@ export class MedimadeStack extends cdk.Stack {
           MEDITATION_ANALYTICS_TABLE_NAME: meditationAnalyticsTable.tableName,
           MEDITATION_JOBS_TABLE_NAME: meditationJobsTable.tableName,
           FISH_TTS_MODEL: "s2.1-pro-free",
+          VOICE_ADMIN_TABLE_NAME: voiceAdminTable.tableName,
         },
       },
     );
@@ -440,6 +449,7 @@ export class MedimadeStack extends cdk.Stack {
     mediaBucket.grantRead(meditationAudioWorker);
     meditationAnalyticsTable.grantWriteData(meditationAudioWorker);
     meditationJobsTable.grantReadWriteData(meditationAudioWorker);
+    voiceAdminTable.grantReadData(meditationAudioWorker);
 
     const createMeditationJob = new lambda_nodejs.NodejsFunction(
       this,
@@ -539,12 +549,14 @@ export class MedimadeStack extends cdk.Stack {
           MEDIA_BUCKET_NAME: mediaBucket.bucketName,
           MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
           AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+          VOICE_ADMIN_TABLE_NAME: voiceAdminTable.tableName,
         },
       },
     );
     meditationAnalyticsTable.grantReadData(libraryList);
     meditationListenerMixTable.grantReadData(libraryList);
     authJwtSecret.grantRead(libraryList);
+    voiceAdminTable.grantReadData(libraryList);
     libraryList.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ["s3:ListBucket"],
@@ -602,8 +614,12 @@ export class MedimadeStack extends cdk.Stack {
         runtime: lambda.Runtime.NODEJS_20_X,
         timeout: cdk.Duration.seconds(10),
         memorySize: 256,
+        environment: {
+          VOICE_ADMIN_TABLE_NAME: voiceAdminTable.tableName,
+        },
       },
     );
+    voiceAdminTable.grantReadData(fishSpeakersList);
 
     httpApi.addRoutes({
       path: "/fish/speakers",
@@ -855,6 +871,44 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "AdminSoundsTrimIntegration",
         adminSoundsTrim,
+      ),
+    });
+
+    const adminVoice = new lambda_nodejs.NodejsFunction(this, "AdminVoiceFunction", {
+      entry: path.join(__dirname, "../lambdas/admin-voice.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(180),
+      memorySize: 2048,
+      ephemeralStorageSize: cdk.Size.mebibytes(1024),
+      layers: [ffmpegLayer],
+      environment: {
+        MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+        MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
+        VOICE_ADMIN_TABLE_NAME: voiceAdminTable.tableName,
+        AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        ADMIN_EMAILS: adminEmails,
+        FISH_AUDIO_SECRET_ARN: fishApiKeySecret.secretArn,
+        FISH_TTS_MODEL: "s2.1-pro-free",
+        MEDIMADE_API_URL: httpApi.apiEndpoint,
+      },
+    });
+    mediaBucket.grantReadWrite(adminVoice);
+    voiceAdminTable.grantReadWriteData(adminVoice);
+    authJwtSecret.grantRead(adminVoice);
+    fishApiKeySecret.grantRead(adminVoice);
+
+    httpApi.addRoutes({
+      path: "/admin/voice",
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.PATCH,
+        apigwv2.HttpMethod.POST,
+        apigwv2.HttpMethod.OPTIONS,
+      ],
+      integration: new integrations.HttpLambdaIntegration(
+        "AdminVoiceIntegration",
+        adminVoice,
       ),
     });
 

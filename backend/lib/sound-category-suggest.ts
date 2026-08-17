@@ -3,7 +3,8 @@ import {
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import { CLAUDE_HAIKU_45_MODEL_ID } from "./anthropic-pricing";
-import { isBgAudioCategory, type BgAudioCategory } from "./background-audio-keys";
+import { normalizeBgAudioCategory, type BgAudioCategory } from "./background-audio-keys";
+import { coerceSoundSubcategory } from "./sound-taxonomy";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const secrets = new SecretsManagerClient({});
@@ -35,19 +36,54 @@ function extractJsonArray(text: string): unknown {
   return JSON.parse(trimmed.slice(start, end + 1)) as unknown;
 }
 
-function normalizeSubcategory(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[_/]+/g, "-")
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 40);
-}
-
 function normalizeDisplayName(raw: string): string {
   return raw.trim().replace(/\s+/g, " ").slice(0, 80);
+}
+
+/** Drop "Binaural" from ambience / drums / noise titles. Music may keep it. */
+function stripBinauralUnlessMusic(name: string, category: BgAudioCategory): string {
+  if (category === "music") return name;
+  return name
+    .replace(/\bbinaural\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const CATEGORY_TITLE_SKIP: Record<BgAudioCategory, string[]> = {
+  music: ["music"],
+  ambience: ["ambience", "ambient"],
+  drums: ["drum", "drums"],
+  noise: ["noise"],
+};
+
+const SUBCATEGORY_TITLE_SKIP: Record<string, string[]> = {
+  "pads-drones": ["pad", "pads", "drone", "drones"],
+  instruments: ["instrument", "instruments"],
+  melodic: ["melodic", "melody"],
+  voices: ["voice", "voices", "vocal", "vocals"],
+  nature: ["nature"],
+  spaces: ["space", "spaces"],
+  "lo-fi-beats": ["beat", "beats", "lofi", "lo-fi"],
+  shamanic: ["shamanic", "shaman"],
+};
+
+/** Drop category/subcategory words from titles unless they are all that remains. */
+function stripRedundantTaxonomyWords(
+  name: string,
+  category: BgAudioCategory,
+  subcategory: string,
+): string {
+  const skip = new Set(
+    [...(CATEGORY_TITLE_SKIP[category] ?? []), ...(SUBCATEGORY_TITLE_SKIP[subcategory] ?? [])].map(
+      (w) => w.toLowerCase(),
+    ),
+  );
+  if (skip.size === 0) return name;
+  const words = name.split(/\s+/).filter(Boolean);
+  const kept = words.filter((w) => !skip.has(w.replace(/[^a-z0-9-]+/gi, "").toLowerCase()));
+  const next = kept.join(" ").trim();
+  if (!next || next.length < 3) return name;
+  return next;
 }
 
 /**
@@ -63,14 +99,17 @@ export async function suggestSoundCategories(
   const system = [
     "You classify meditation background audio stems from Splice sample packs and filenames.",
     "Use only the filename / relative path (BPM, key, pack folders, descriptive tokens).",
-    "Pick exactly one category: music, nature, drums, noise.",
+    "Pick exactly one category: music, ambience, drums, noise.",
     "The vast majority of Splice beds, loops, pads, keys, guitars, drones, and atmospheres are music.",
-    "nature = rain, ocean, wind, birds, forest, fire, water, insects — environmental recordings.",
-    "drums = drum loops, percussion, kicks, hats, shakers, taiko, hand drums used as rhythm beds.",
-    "noise = white/pink/brown noise, static, fan, hiss used as a noise bed — not musical texture.",
-    "Also pick a short subcategory slug (lowercase, hyphens): e.g. ambient, pad, piano, guitar, drone, lofi, cinematic, strings, bells, rain, ocean, birds, forest, kick, percussion, white-noise.",
-    "Also pick a short human-readable name (Title Case, 2–6 words). No file extension, no BPM, no musical key, no pack IDs or hashes. Example: 'Soft Rain Loop', 'Warm Pad Bed'.",
-    "Return ONLY a JSON array of {\"id\",\"category\",\"subcategory\",\"name\"} using the same id strings you were given.",
+    "music subcategories — pick exactly one of: pads-drones, instruments, melodic, voices (choirs, chants, vocal beds).",
+    "ambience = environmental / spatial recordings, not musical beds. Subcategories — pick exactly one of: nature (wildlife, beach, weather, forest, rain, ocean), spaces (rooms, cities, cafes, interiors, crowds).",
+    "drums is its own category, not a music subcategory. Subcategories — pick exactly one of: lo-fi-beats (lo-fi / hip-hop beats), shamanic (ritual, frame drums, taiko, tribal), other (everything else).",
+    "noise = white/pink/brown noise, static, fan, hiss used as a noise bed — not musical texture. Subcategory must be empty.",
+    "Never invent other subcategory strings. Use only the ids listed above.",
+    "Also pick a short human-readable name (Title Case, 2–5 words) from the distinctive filename tokens only. No file extension, no BPM, no musical key, no pack IDs or hashes.",
+    "Do not repeat the category or subcategory in the name. The UI already shows those. Example: Crystal Bowl, not Crystal Bowl Drone, when subcategory is pads-drones. Soft Rain, not Soft Rain Nature. Only keep Pad/Drone/Nature/etc if no other distinctive words remain.",
+    "Do not include the word Binaural in the name when category is ambience, drums, or noise.",
+    "Return ONLY a JSON array of {\"id\",\"category\",\"subcategory\",\"name\"} using the same id strings you were given. For noise, set subcategory to an empty string.",
   ].join(" ");
 
   const user = `Classify these files:\n${JSON.stringify(items, null, 2)}`;
@@ -107,17 +146,25 @@ export async function suggestSoundCategories(
     const rec = row as Record<string, unknown>;
     const id = typeof rec.id === "string" ? rec.id : typeof rec.path === "string" ? rec.path : "";
     const category =
-      typeof rec.category === "string" && isBgAudioCategory(rec.category)
-        ? rec.category
+      typeof rec.category === "string"
+        ? normalizeBgAudioCategory(rec.category) ?? "music"
         : "music";
-    const subcategory =
-      typeof rec.subcategory === "string" ? normalizeSubcategory(rec.subcategory) : "";
-    const name =
-      typeof rec.name === "string" ? normalizeDisplayName(rec.name) : "";
+    const subcategory = coerceSoundSubcategory(
+      category,
+      typeof rec.subcategory === "string" ? rec.subcategory : "",
+    );
+    const name = stripRedundantTaxonomyWords(
+      stripBinauralUnlessMusic(
+        typeof rec.name === "string" ? normalizeDisplayName(rec.name) : "",
+        category,
+      ),
+      category,
+      subcategory,
+    );
     if (!id) continue;
     out.set(id, {
       category,
-      subcategory: subcategory || "uncategorized",
+      subcategory,
       name: name || "Untitled",
     });
   }

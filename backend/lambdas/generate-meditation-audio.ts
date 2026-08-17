@@ -41,6 +41,7 @@ import {
   sumPauseMarkerSeconds,
   TITLE_PAUSE_MARKER,
 } from "../lib/script-pause-bands";
+import { loadPauseBandSeconds } from "../lib/voice-admin";
 import fs from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -171,9 +172,11 @@ function clampGain(n: unknown): number {
   return Math.min(100, Math.max(0, n));
 }
 
+const BED_GAIN_PEAK_VOLUME = 0.5;
+
 /**
  * Mix speech (input 0) with one or more looped background beds.
- * Each layer gain is 0–100; effective ffmpeg volume is (gain/100) per layer.
+ * Each layer gain is 0–100; mixer peak (100) is volume 0.5 so speech at 1.0 stays louder.
  */
 async function mixSpeechWithBackgrounds(params: {
   speechBuf: Buffer;
@@ -229,7 +232,7 @@ async function mixSpeechWithBackgrounds(params: {
           ).toFixed(2)}:d=${tailSeconds.toFixed(2)}`
         : "";
 
-    const vols = layers.map((l) => clampGain(l.gain) / 100);
+    const vols = layers.map((l) => (clampGain(l.gain) / 100) * BED_GAIN_PEAK_VOLUME);
     const chainParts: string[] = [];
     const bedLabels: string[] = [];
 
@@ -804,8 +807,9 @@ async function synthesizeScriptWithPauses(params: {
   script: string;
   voiceId: string;
   speed: number;
+  pauseBands?: Awaited<ReturnType<typeof loadPauseBandSeconds>>;
 }): Promise<{ audio: Buffer; utf8Bytes: number }> {
-  const segments = parseScriptIntoSegments(params.script);
+  const segments = parseScriptIntoSegments(params.script, params.pauseBands);
   if (segments.length === 0) {
     const clean = sanitizeScriptForTts(params.script);
     const audio = await synthesizeSegmentMp3({
@@ -1344,7 +1348,8 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     // Speak the meditation title first, then pause, then the script.
     // Note: `scriptTextUsed` is stored/displayed without the title (script should not include it).
     const ttsScript = `${libraryTitle}\n\n${TITLE_PAUSE_MARKER}\n\n${scriptTextUsed}`;
-    pauseSecondsTotal = sumPauseMarkerSeconds(ttsScript) * PAUSE_RENDER_SCALE;
+    const pauseBands = await loadPauseBandSeconds().catch(() => undefined);
+    pauseSecondsTotal = sumPauseMarkerSeconds(ttsScript, pauseBands) * PAUSE_RENDER_SCALE;
     const spokenPlain = spokenPlainWithoutPauses(ttsScript);
     spokenUtf8Bytes = Buffer.byteLength(spokenPlain, "utf8");
     spokenWordCount = spokenPlain
@@ -1357,6 +1362,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       script: ttsScript,
       voiceId: referenceId,
       speed: speechSpeed,
+      pauseBands,
     });
     mp3Buf = audio;
     scriptUtf8Bytes = utf8Bytes;
@@ -1498,6 +1504,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
           liveMix: true,
           backgroundNatureKey: nk ?? "",
           backgroundMusicKey: mk ?? "",
+          backgroundDrumsKey: dk ?? "",
           backgroundNoiseKey: zk ?? "",
           backgroundNatureGain:
             typeof body.backgroundNatureGain === "number" &&
@@ -1509,6 +1516,11 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
             Number.isFinite(body.backgroundMusicGain)
               ? Math.min(100, Math.max(0, body.backgroundMusicGain))
               : 50,
+          backgroundDrumsGain:
+            typeof body.backgroundDrumsGain === "number" &&
+            Number.isFinite(body.backgroundDrumsGain)
+              ? Math.min(100, Math.max(0, body.backgroundDrumsGain))
+              : 40,
           backgroundNoiseGain:
             typeof body.backgroundNoiseGain === "number" &&
             Number.isFinite(body.backgroundNoiseGain)
@@ -1516,6 +1528,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
               : 10,
           createdBackgroundNatureKey: nk ?? "",
           createdBackgroundMusicKey: mk ?? "",
+          createdBackgroundDrumsKey: dk ?? "",
           createdBackgroundNoiseKey: zk ?? "",
           createdBackgroundNatureGain:
             typeof body.backgroundNatureGain === "number" &&
@@ -1527,6 +1540,11 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
             Number.isFinite(body.backgroundMusicGain)
               ? Math.min(100, Math.max(0, body.backgroundMusicGain))
               : 50,
+          createdBackgroundDrumsGain:
+            typeof body.backgroundDrumsGain === "number" &&
+            Number.isFinite(body.backgroundDrumsGain)
+              ? Math.min(100, Math.max(0, body.backgroundDrumsGain))
+              : 40,
           createdBackgroundNoiseGain:
             typeof body.backgroundNoiseGain === "number" &&
             Number.isFinite(body.backgroundNoiseGain)

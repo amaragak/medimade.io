@@ -282,7 +282,7 @@ async function streamHandler(
       targetMinutes: meditationTargetMinutes,
     });
 
-    maxTokens = 1024;
+    maxTokens = 256;
   }
 
   const upstream = await fetch(ANTHROPIC_URL, {

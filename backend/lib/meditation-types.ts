@@ -57,7 +57,7 @@ const TYPE_ADHERENCE_LINES: Record<KnownMeditationType, string> = {
   "Body scan":
     "The main practice must progressively move attention through the body (or clearly defined regions), inviting release of tension—not only breath or abstract imagery unless the user steers away in chat.",
   Visualization:
-    "The main practice must use sustained guided imagery tied to what they want to see or feel; keep scenes concrete and revisit the visualization—not only breath counting or generic grounding.",
+    "The main practice must use sustained guided imagery tied to what they want to see or feel — a place, object, being, or presence; keep it concrete and revisit the visualization—not only breath counting or generic grounding.",
   "Breath-led":
     "The main practice must center on the breath as the primary anchor (cadence, sensations, or simple breath-based regulation)—not substitute a different core technique unless the user asks.",
   Manifestation:
@@ -65,7 +65,7 @@ const TYPE_ADHERENCE_LINES: Record<KnownMeditationType, string> = {
   "Affirmation loop":
     "The main practice must return several times to short, gentle affirmations or phrases the listener can repeat internally—spoken with calm pacing, not a one-off line buried in unrelated content.",
   Story:
-    "The main practice must follow a coherent narrative arc with sensory detail and emotional resolution—not a disjointed list of instructions framed as a single metaphor line.",
+    "The main practice must follow a coherent narrative arc with sensory detail and emotional resolution. Do not assume first person: match the style they asked for (zen teaching story, children’s tale, fable, myth, etc.). Third-person parable or narrator-led stories are valid—not a disjointed list of instructions framed as a single metaphor line.",
   Reflection:
     "The main practice must invite inquiry into meaning, values, or what they are carrying—questions or prompts to notice and integrate—not only breath or body without reflective pauses.",
   Sleep:

@@ -326,7 +326,7 @@ export function useCreateAudioPreview(p: CreateAudioPreviewParams) {
       }
 
       const uri = mediaFileUrl(base, backgroundAudioStreamingKey(key));
-      const vol = Math.min(1, Math.max(0, gain / 100));
+      const vol = Math.min(0.5, Math.max(0, (gain / 100) * 0.5));
       const keyChanged = lastBgKeysRef.current[track] !== key;
       lastBgKeysRef.current[track] = key;
       const wantPlay = keyChanged || playingRef.current[track];

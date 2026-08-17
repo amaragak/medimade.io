@@ -1,9 +1,5 @@
-import { AdminPageClient } from "@/components/admin-page-client";
-
-export const metadata = {
-  title: "Admin",
-};
+import { redirect } from "next/navigation";
 
 export default function AdminPage() {
-  return <AdminPageClient />;
+  redirect("/admin/sounds");
 }

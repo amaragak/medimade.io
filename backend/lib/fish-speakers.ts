@@ -15,6 +15,15 @@ export const FISH_SPEAKERS: FishSpeaker[] = [
   { name: "Dina", modelId: "b2e60b7079c3400d96f168a132336837" },
 ];
 
+/** Temporarily hidden from voice pickers (audio artifacts). Names still resolve. */
+export const HIDDEN_FISH_SPEAKER_MODEL_IDS = new Set<string>([
+  "8d797adca9af48ca9e8a1c7284db1d6c",
+]);
+
+export function fishSpeakersForPicker(): FishSpeaker[] {
+  return FISH_SPEAKERS.filter((s) => !HIDDEN_FISH_SPEAKER_MODEL_IDS.has(s.modelId));
+}
+
 export function speakerNameForModelId(
   modelId: string | null | undefined,
 ): string | null {

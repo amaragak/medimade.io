@@ -5,7 +5,7 @@ import type {
 import { S3Client, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
-import { speakerNameForModelId } from "../lib/fish-speakers";
+import { listVoiceSpeakers } from "../lib/voice-admin";
 import { meditationPlaybackS3Key } from "../lib/playback-keys";
 import { optionalUserJson } from "../lib/medimade-auth-http";
 import { mixListenerPk } from "../lib/meditation-listener-mix";
@@ -66,21 +66,27 @@ type OutItem = {
   liveMix: boolean;
   backgroundNatureKey: string | null;
   backgroundMusicKey: string | null;
+  backgroundDrumsKey: string | null;
   backgroundNoiseKey: string | null;
   backgroundNatureGain: number | null;
   backgroundMusicGain: number | null;
+  backgroundDrumsGain: number | null;
   backgroundNoiseGain: number | null;
   createdBackgroundNatureKey: string | null;
   createdBackgroundMusicKey: string | null;
+  createdBackgroundDrumsKey: string | null;
   createdBackgroundNoiseKey: string | null;
   createdBackgroundNatureGain: number | null;
   createdBackgroundMusicGain: number | null;
+  createdBackgroundDrumsGain: number | null;
   createdBackgroundNoiseGain: number | null;
   publisherBackgroundNatureKey: string | null;
   publisherBackgroundMusicKey: string | null;
+  publisherBackgroundDrumsKey: string | null;
   publisherBackgroundNoiseKey: string | null;
   publisherBackgroundNatureGain: number | null;
   publisherBackgroundMusicGain: number | null;
+  publisherBackgroundDrumsGain: number | null;
   publisherBackgroundNoiseGain: number | null;
 };
 
@@ -180,12 +186,16 @@ function applyListenerMixOverlay(
         optTrimKey(o.backgroundNatureKey) ?? item.backgroundNatureKey,
       backgroundMusicKey:
         optTrimKey(o.backgroundMusicKey) ?? item.backgroundMusicKey,
+      backgroundDrumsKey:
+        optTrimKey(o.backgroundDrumsKey) ?? item.backgroundDrumsKey,
       backgroundNoiseKey:
         optTrimKey(o.backgroundNoiseKey) ?? item.backgroundNoiseKey,
       backgroundNatureGain:
         optGain(o.backgroundNatureGain) ?? item.backgroundNatureGain,
       backgroundMusicGain:
         optGain(o.backgroundMusicGain) ?? item.backgroundMusicGain,
+      backgroundDrumsGain:
+        optGain(o.backgroundDrumsGain) ?? item.backgroundDrumsGain,
       backgroundNoiseGain:
         optGain(o.backgroundNoiseGain) ?? item.backgroundNoiseGain,
     };
@@ -287,8 +297,9 @@ function buildLibraryItems(params: {
   s3Objects: Array<{ key: string; lastModified: string | null; size: number | null }>;
   cfDomain: string;
   draftUserFallback?: string;
+  speakerNames: Map<string, string>;
 }): OutItem[] {
-  const { ddbItems, s3Objects, cfDomain, draftUserFallback } = params;
+  const { ddbItems, s3Objects, cfDomain, draftUserFallback, speakerNames } = params;
   const merged = new Map<string, OutItem>();
 
   for (const row of ddbItems) {
@@ -372,16 +383,18 @@ function buildLibraryItems(params: {
       isPublic,
       description,
       speakerModelId: referenceId,
-      speakerName: speakerNameForModelId(referenceId),
+      speakerName: referenceId ? speakerNames.get(referenceId) ?? null : null,
       catalogued: !isDraft,
       mp3Bytes,
       isDraft,
       liveMix: row.liveMix === true,
       backgroundNatureKey: optTrimKey(row.backgroundNatureKey),
       backgroundMusicKey: optTrimKey(row.backgroundMusicKey),
+      backgroundDrumsKey: optTrimKey(row.backgroundDrumsKey),
       backgroundNoiseKey: optTrimKey(row.backgroundNoiseKey),
       backgroundNatureGain: optGain(row.backgroundNatureGain),
       backgroundMusicGain: optGain(row.backgroundMusicGain),
+      backgroundDrumsGain: optGain(row.backgroundDrumsGain),
       backgroundNoiseGain: optGain(row.backgroundNoiseGain),
       createdBackgroundNatureKey:
         optTrimKey(row.createdBackgroundNatureKey) ??
@@ -389,6 +402,9 @@ function buildLibraryItems(params: {
       createdBackgroundMusicKey:
         optTrimKey(row.createdBackgroundMusicKey) ??
         optTrimKey(row.backgroundMusicKey),
+      createdBackgroundDrumsKey:
+        optTrimKey(row.createdBackgroundDrumsKey) ??
+        optTrimKey(row.backgroundDrumsKey),
       createdBackgroundNoiseKey:
         optTrimKey(row.createdBackgroundNoiseKey) ??
         optTrimKey(row.backgroundNoiseKey),
@@ -398,14 +414,19 @@ function buildLibraryItems(params: {
       createdBackgroundMusicGain:
         optGain(row.createdBackgroundMusicGain) ??
         optGain(row.backgroundMusicGain),
+      createdBackgroundDrumsGain:
+        optGain(row.createdBackgroundDrumsGain) ??
+        optGain(row.backgroundDrumsGain),
       createdBackgroundNoiseGain:
         optGain(row.createdBackgroundNoiseGain) ??
         optGain(row.backgroundNoiseGain),
       publisherBackgroundNatureKey: optTrimKey(row.backgroundNatureKey),
       publisherBackgroundMusicKey: optTrimKey(row.backgroundMusicKey),
+      publisherBackgroundDrumsKey: optTrimKey(row.backgroundDrumsKey),
       publisherBackgroundNoiseKey: optTrimKey(row.backgroundNoiseKey),
       publisherBackgroundNatureGain: optGain(row.backgroundNatureGain),
       publisherBackgroundMusicGain: optGain(row.backgroundMusicGain),
+      publisherBackgroundDrumsGain: optGain(row.backgroundDrumsGain),
       publisherBackgroundNoiseGain: optGain(row.backgroundNoiseGain),
     });
   }
@@ -438,21 +459,27 @@ function buildLibraryItems(params: {
       liveMix: false,
       backgroundNatureKey: null,
       backgroundMusicKey: null,
+      backgroundDrumsKey: null,
       backgroundNoiseKey: null,
       backgroundNatureGain: null,
       backgroundMusicGain: null,
+      backgroundDrumsGain: null,
       backgroundNoiseGain: null,
       createdBackgroundNatureKey: null,
       createdBackgroundMusicKey: null,
+      createdBackgroundDrumsKey: null,
       createdBackgroundNoiseKey: null,
       createdBackgroundNatureGain: null,
       createdBackgroundMusicGain: null,
+      createdBackgroundDrumsGain: null,
       createdBackgroundNoiseGain: null,
       publisherBackgroundNatureKey: null,
       publisherBackgroundMusicKey: null,
+      publisherBackgroundDrumsKey: null,
       publisherBackgroundNoiseKey: null,
       publisherBackgroundNatureGain: null,
       publisherBackgroundMusicGain: null,
+      publisherBackgroundDrumsGain: null,
       publisherBackgroundNoiseGain: null,
     });
   }
@@ -484,9 +511,12 @@ export async function handler(
   }
 
   try {
+    const speakerRows = await listVoiceSpeakers().catch(() => []);
+    const speakerNames = new Map(speakerRows.map((s) => [s.modelId, s.name]));
+
     if (community) {
       const ddbItems = await scanPublicMeditationItems(tableName);
-      const items = buildLibraryItems({ ddbItems, s3Objects: [], cfDomain });
+      const items = buildLibraryItems({ ddbItems, s3Objects: [], cfDomain, speakerNames });
       const mixTable = process.env.MEDITATION_LISTENER_MIX_TABLE_NAME;
       const listenerPk = mixTable
         ? mixListenerPk({
@@ -509,7 +539,7 @@ export async function handler(
         listAllMeditationMp3Keys(bucket),
       ]);
       return json(200, {
-        items: buildLibraryItems({ ddbItems, s3Objects, cfDomain }),
+        items: buildLibraryItems({ ddbItems, s3Objects, cfDomain, speakerNames }),
       });
     }
 
@@ -544,6 +574,7 @@ export async function handler(
         s3Objects: [...s3ByKey.values()],
         cfDomain,
         draftUserFallback: user.sub,
+        speakerNames,
       }),
     });
   } catch (e) {

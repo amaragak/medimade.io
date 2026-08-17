@@ -1,6 +1,7 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, DeleteCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { isBgAudioCategory, type BgAudioCategory } from "./background-audio-keys";
+import { normalizeBgAudioCategory, type BgAudioCategory } from "./background-audio-keys";
+import { coerceSoundSubcategory } from "./sound-taxonomy";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -25,7 +26,7 @@ export function defaultSoundReviewStatus(row: {
   if (row.importedAt) return "pending";
   const rel = row.sk.replace(/^background-audio\//, "");
   const folder = rel.split("/")[0] ?? "";
-  if (isBgAudioCategory(folder)) return "in_use";
+  if (normalizeBgAudioCategory(folder)) return "in_use";
   return "pending";
 }
 
@@ -41,7 +42,7 @@ export function parseSoundReviewStatus(raw: unknown): SoundReviewStatus {
 }
 
 export function soundIsInCustomerPicker(row: { status: SoundReviewStatus }): boolean {
-  return row.status === "in_use" || row.status === "categorised";
+  return row.status === "categorised";
 }
 
 export function soundEnabledFromStatus(status: SoundReviewStatus): boolean {
@@ -59,7 +60,7 @@ export type SoundCatalogRow = {
   suggestedName?: string;
   packPath?: string;
   tags: string[];
-  /** in_use = approved for mixer; categorised = approved + tagged; pending = fresh import; unused = skip */
+  /** in_use = approved but uncategorised (not in mixer); categorised = in mixer; pending = fresh import; unused = skip */
   status: SoundReviewStatus;
   enabled: boolean;
   notes?: string;
@@ -107,17 +108,23 @@ export async function listAllSoundRows(): Promise<SoundCatalogRow[]> {
       if (typeof it.sk !== "string" || !it.sk) continue;
       const importedAt = typeof it.importedAt === "string" ? it.importedAt : undefined;
       const status = resolveSoundReviewStatus(it.status, { sk: it.sk, importedAt });
+      const category =
+        normalizeBgAudioCategory(String(it.category ?? "")) ?? "music";
+      const suggestedCategory = normalizeBgAudioCategory(String(it.suggestedCategory ?? ""));
       items.push({
         pk: SOUND_PK,
         sk: it.sk,
         name: typeof it.name === "string" ? it.name : it.sk,
-        category: (it.category as BgAudioCategory) || "music",
-        subcategory: typeof it.subcategory === "string" ? it.subcategory : undefined,
-        suggestedCategory: isBgAudioCategory(String(it.suggestedCategory ?? ""))
-          ? (it.suggestedCategory as BgAudioCategory)
-          : undefined,
+        category,
+        subcategory:
+          typeof it.subcategory === "string" && it.subcategory.trim()
+            ? coerceSoundSubcategory(category, it.subcategory)
+            : undefined,
+        suggestedCategory: suggestedCategory ?? undefined,
         suggestedSubcategory:
-          typeof it.suggestedSubcategory === "string" ? it.suggestedSubcategory : undefined,
+          typeof it.suggestedSubcategory === "string"
+            ? coerceSoundSubcategory(suggestedCategory ?? category, it.suggestedSubcategory)
+            : undefined,
         suggestedName: typeof it.suggestedName === "string" ? it.suggestedName : undefined,
         packPath: typeof it.packPath === "string" ? it.packPath : undefined,
         tags: normalizeTags(it.tags),

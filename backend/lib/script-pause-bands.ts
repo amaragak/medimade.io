@@ -52,21 +52,28 @@ export function normalizePauseBand(raw: string): ScriptPauseBand | null {
   return BAND_ALIASES[key] ?? null;
 }
 
-export function secondsForPauseSpec(raw: string): number {
+export function secondsForPauseSpec(
+  raw: string,
+  bands?: Record<ScriptPauseBand, number>,
+): number {
+  const map = bands ?? SCRIPT_PAUSE_BAND_SECONDS;
   const band = normalizePauseBand(raw);
-  if (band) return SCRIPT_PAUSE_BAND_SECONDS[band];
+  if (band) return map[band];
   const n = parseFloat(raw.trim().replace(/s$/i, ""));
   if (Number.isFinite(n) && n > 0) return n;
   return 0;
 }
 
-export function sumPauseMarkerSeconds(script: string): number {
+export function sumPauseMarkerSeconds(
+  script: string,
+  bands?: Record<ScriptPauseBand, number>,
+): number {
   if (!script) return 0;
   const re = new RegExp(SCRIPT_PAUSE_MARKER_RE.source, SCRIPT_PAUSE_MARKER_RE.flags);
   let total = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(script)) !== null) {
-    total += secondsForPauseSpec(m[1] ?? "");
+    total += secondsForPauseSpec(m[1] ?? "", bands);
   }
   return total;
 }
@@ -84,7 +91,10 @@ export type ScriptSegment = {
   pauseSeconds: number;
 };
 
-export function parseScriptIntoSegments(script: string): ScriptSegment[] {
+export function parseScriptIntoSegments(
+  script: string,
+  bands?: Record<ScriptPauseBand, number>,
+): ScriptSegment[] {
   const segments: ScriptSegment[] = [];
   if (!script) return segments;
   const re = new RegExp(SCRIPT_PAUSE_MARKER_RE.source, SCRIPT_PAUSE_MARKER_RE.flags);
@@ -94,7 +104,7 @@ export function parseScriptIntoSegments(script: string): ScriptSegment[] {
   while ((match = re.exec(script)) !== null) {
     const raw = script.slice(lastIndex, match.index);
     const text = raw.trim();
-    const pause = secondsForPauseSpec(match[1] ?? "");
+    const pause = secondsForPauseSpec(match[1] ?? "", bands);
     if (text) {
       segments.push({
         text,

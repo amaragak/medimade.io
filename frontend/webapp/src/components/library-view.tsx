@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Switch from "@radix-ui/react-switch";
+import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
+import { SoundFolderSelect } from "@/components/sound-folder-select";
+import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
 import {
   type LibraryMeditationItem,
   libraryMeditationCategoryLabel,
@@ -28,6 +31,7 @@ import {
 } from "@/lib/meditation-analytics";
 import { communityLibraryAsItems, itemMatchesLibraryCategory } from "@/lib/community-library";
 import { CommunityCategoryGrid } from "@/components/community-category-grid";
+import { bedElementVolume } from "@/lib/bed-volume";
 
 function formatDuration(seconds: number | null): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) {
@@ -153,9 +157,11 @@ function mixValuesFromItem(
     return {
       natureKey: key(m.createdBackgroundNatureKey, m.backgroundNatureKey),
       musicKey: key(m.createdBackgroundMusicKey, m.backgroundMusicKey),
+      drumsKey: key(m.createdBackgroundDrumsKey, m.backgroundDrumsKey),
       noiseKey: key(m.createdBackgroundNoiseKey, m.backgroundNoiseKey),
       natureGain: gain(m.createdBackgroundNatureGain, m.backgroundNatureGain, 25),
       musicGain: gain(m.createdBackgroundMusicGain, m.backgroundMusicGain, 50),
+      drumsGain: gain(m.createdBackgroundDrumsGain, m.backgroundDrumsGain, 40),
       noiseGain: gain(m.createdBackgroundNoiseGain, m.backgroundNoiseGain, 10),
     };
   }
@@ -163,6 +169,7 @@ function mixValuesFromItem(
     return {
       natureKey: key(m.publisherBackgroundNatureKey, m.backgroundNatureKey),
       musicKey: key(m.publisherBackgroundMusicKey, m.backgroundMusicKey),
+      drumsKey: key(m.publisherBackgroundDrumsKey, m.backgroundDrumsKey),
       noiseKey: key(m.publisherBackgroundNoiseKey, m.backgroundNoiseKey),
       natureGain: gain(
         m.publisherBackgroundNatureGain,
@@ -170,15 +177,18 @@ function mixValuesFromItem(
         25,
       ),
       musicGain: gain(m.publisherBackgroundMusicGain, m.backgroundMusicGain, 50),
+      drumsGain: gain(m.publisherBackgroundDrumsGain, m.backgroundDrumsGain, 40),
       noiseGain: gain(m.publisherBackgroundNoiseGain, m.backgroundNoiseGain, 10),
     };
   }
   return {
     natureKey: key(m.backgroundNatureKey, ""),
     musicKey: key(m.backgroundMusicKey, ""),
+    drumsKey: key(m.backgroundDrumsKey, ""),
     noiseKey: key(m.backgroundNoiseKey, ""),
     natureGain: gain(m.backgroundNatureGain, null, 25),
     musicGain: gain(m.backgroundMusicGain, null, 50),
+    drumsGain: gain(m.backgroundDrumsGain, null, 40),
     noiseGain: gain(m.backgroundNoiseGain, null, 10),
   };
 }
@@ -265,9 +275,11 @@ type ActiveTrack = {
   liveMix?: boolean;
   natureKey?: string;
   musicKey?: string;
+  drumsKey?: string;
   noiseKey?: string;
   natureGain?: number;
   musicGain?: number;
+  drumsGain?: number;
   noiseGain?: number;
 };
 
@@ -285,9 +297,11 @@ function trackFromLibraryItem(m: LibraryMeditationItem): ActiveTrack {
     liveMix: m.liveMix === true,
     natureKey: m.backgroundNatureKey ?? "",
     musicKey: m.backgroundMusicKey ?? "",
+    drumsKey: m.backgroundDrumsKey ?? "",
     noiseKey: m.backgroundNoiseKey ?? "",
     natureGain: m.backgroundNatureGain ?? 25,
     musicGain: m.backgroundMusicGain ?? 50,
+    drumsGain: m.backgroundDrumsGain ?? 40,
     noiseGain: m.backgroundNoiseGain ?? 10,
   };
 }
@@ -297,9 +311,11 @@ function liveMixTrack(
   mix: {
     natureKey: string;
     musicKey: string;
+    drumsKey: string;
     noiseKey: string;
     natureGain: number;
     musicGain: number;
+    drumsGain: number;
     noiseGain: number;
   },
 ): ActiveTrack {
@@ -310,9 +326,11 @@ function liveMixTrack(
     liveMix: true,
     natureKey: backgroundAudioStreamingKey(mix.natureKey),
     musicKey: backgroundAudioStreamingKey(mix.musicKey),
+    drumsKey: backgroundAudioStreamingKey(mix.drumsKey),
     noiseKey: backgroundAudioStreamingKey(mix.noiseKey),
     natureGain: mix.natureGain,
     musicGain: mix.musicGain,
+    drumsGain: mix.drumsGain,
     noiseGain: mix.noiseGain,
   };
 }
@@ -320,13 +338,37 @@ function liveMixTrack(
 type LibraryMixValues = {
   natureKey: string;
   musicKey: string;
+  drumsKey: string;
   noiseKey: string;
   natureGain: number;
   musicGain: number;
+  drumsGain: number;
   noiseGain: number;
 };
 
-type BedVolumeChannel = "nature" | "music" | "noise";
+type BedVolumeChannel = "nature" | "music" | "drums" | "noise";
+
+function mixWithGain(
+  mix: LibraryMixValues,
+  channel: BedVolumeChannel,
+  gain: number,
+): LibraryMixValues {
+  if (channel === "music") return { ...mix, musicGain: gain };
+  if (channel === "nature") return { ...mix, natureGain: gain };
+  if (channel === "drums") return { ...mix, drumsGain: gain };
+  return { ...mix, noiseGain: gain };
+}
+
+function mixWithKey(
+  mix: LibraryMixValues,
+  channel: BedVolumeChannel,
+  key: string,
+): LibraryMixValues {
+  if (channel === "music") return { ...mix, musicKey: key };
+  if (channel === "nature") return { ...mix, natureKey: key };
+  if (channel === "drums") return { ...mix, drumsKey: key };
+  return { ...mix, noiseKey: key };
+}
 
 type LibraryBedVolumeApi = {
   setBedVolume: (channel: BedVolumeChannel, gain: number) => void;
@@ -405,17 +447,17 @@ const MixVerticalFader = memo(function MixVerticalFader({
   }
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col items-center gap-1">
-      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+    <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
+      <span className="text-xs font-semibold uppercase tracking-wide text-muted">
         {label}
       </span>
       <span
         ref={labelRef}
-        className="tabular-nums text-[10px] text-muted"
+        className="tabular-nums text-xs text-muted"
       >
         {initialGain}%
       </span>
-      <div className="flex h-28 w-8 items-center justify-center">
+      <div className="flex h-36 w-10 items-center justify-center">
         <input
           ref={inputRef}
           type="range"
@@ -431,7 +473,7 @@ const MixVerticalFader = memo(function MixVerticalFader({
           onMouseUp={commit}
           onTouchEnd={commit}
           onKeyUp={commit}
-          className="h-8 w-28 origin-center -rotate-90 cursor-pointer accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-10 w-36 origin-center -rotate-90 cursor-pointer accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
           aria-label={`${label} level`}
           aria-orientation="vertical"
         />
@@ -448,6 +490,7 @@ function LibraryMixEditorModal({
   anchorEl,
   natureItems,
   musicItems,
+  drumsItems,
   noiseItems,
   error,
   resetMix,
@@ -461,6 +504,7 @@ function LibraryMixEditorModal({
   anchorEl: HTMLElement | null;
   natureItems: BackgroundAudioItem[];
   musicItems: BackgroundAudioItem[];
+  drumsItems: BackgroundAudioItem[];
   noiseItems: BackgroundAudioItem[];
   error: string | null;
   resetMix: LibraryMixValues;
@@ -478,27 +522,35 @@ function LibraryMixEditorModal({
   const [musicKey, setMusicKey] = useState(
     () => backgroundAudioStreamingKey(item.backgroundMusicKey ?? ""),
   );
+  const [drumsKey, setDrumsKey] = useState(
+    () => backgroundAudioStreamingKey(item.backgroundDrumsKey ?? ""),
+  );
   const [noiseKey, setNoiseKey] = useState(
     () => backgroundAudioStreamingKey(item.backgroundNoiseKey ?? ""),
   );
   const [natureGain, setNatureGain] = useState(item.backgroundNatureGain ?? 25);
   const [musicGain, setMusicGain] = useState(item.backgroundMusicGain ?? 50);
+  const [drumsGain, setDrumsGain] = useState(item.backgroundDrumsGain ?? 40);
   const [noiseGain, setNoiseGain] = useState(item.backgroundNoiseGain ?? 10);
   const mixRef = useRef<LibraryMixValues>({
     natureKey,
     musicKey,
+    drumsKey,
     noiseKey,
     natureGain,
     musicGain,
+    drumsGain,
     noiseGain,
   });
 
   mixRef.current = {
     natureKey,
     musicKey,
+    drumsKey,
     noiseKey,
     natureGain,
     musicGain,
+    drumsGain,
     noiseGain,
   };
 
@@ -510,9 +562,11 @@ function LibraryMixEditorModal({
     const next = resetMix;
     setNatureKey(next.natureKey);
     setMusicKey(next.musicKey);
+    setDrumsKey(next.drumsKey);
     setNoiseKey(next.noiseKey);
     setNatureGain(next.natureGain);
     setMusicGain(next.musicGain);
+    setDrumsGain(next.drumsGain);
     setNoiseGain(next.noiseGain);
     mixRef.current = next;
     previewNow(next);
@@ -526,6 +580,8 @@ function LibraryMixEditorModal({
   }, [onClose, onPersist]);
 
   closeRef.current = closeAndSave;
+
+  const drumsLockedForMelodic = isMelodicMusicKey(musicItems, musicKey);
 
   useLayoutEffect(() => {
     function place() {
@@ -578,14 +634,14 @@ function LibraryMixEditorModal({
       ref={panelRef}
       role="dialog"
       aria-label="Background mix"
-      className="fixed z-[80] w-[17.5rem] rounded-xl border border-border bg-card p-3 text-sm text-foreground shadow-xl"
+      className="fixed z-[80] w-[28rem] overflow-visible rounded-xl border border-border bg-card p-4 text-sm text-foreground shadow-xl"
       style={{
         top: pos?.top ?? -9999,
         left: pos?.left ?? -9999,
       }}
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="min-w-0 truncate text-xs font-semibold text-foreground">
+        <p className="min-w-0 truncate text-sm font-semibold text-foreground">
           {item.title}
         </p>
         <button
@@ -601,7 +657,7 @@ function LibraryMixEditorModal({
           <IconMixReset />
         </button>
       </div>
-      <div className="mt-2 flex items-end justify-center gap-2">
+      <div className="mt-3 flex items-end justify-center gap-3">
         {(
           [
             {
@@ -611,16 +667,28 @@ function LibraryMixEditorModal({
               gain: musicGain,
               setGain: setMusicGain,
               items: musicItems,
+              category: "music" as const,
               channel: "music" as const,
             },
             {
-              label: "Nature",
+              label: "Ambience",
               key: natureKey,
               setKey: setNatureKey,
               gain: natureGain,
               setGain: setNatureGain,
               items: natureItems,
+              category: "ambience" as const,
               channel: "nature" as const,
+            },
+            {
+              label: "Drums",
+              key: drumsKey,
+              setKey: setDrumsKey,
+              gain: drumsGain,
+              setGain: setDrumsGain,
+              items: drumsItems,
+              category: "drums" as const,
+              channel: "drums" as const,
             },
             {
               label: "Noise",
@@ -629,72 +697,49 @@ function LibraryMixEditorModal({
               gain: noiseGain,
               setGain: setNoiseGain,
               items: noiseItems,
+              category: "noise" as const,
               channel: "noise" as const,
             },
           ] as const
-        ).map((row) => (
-          <div
+        ).map((row) => {
+          const drumsLocked = row.channel === "drums" && drumsLockedForMelodic;
+          return (
+          <DrumsLockedWrap
             key={row.label}
+            locked={drumsLocked}
             className="flex min-w-0 flex-1 flex-col items-center gap-1"
           >
             <MixVerticalFader
               label={row.label}
-              disabled={!row.key}
+              disabled={!row.key || drumsLocked}
               initialGain={row.gain}
               onLiveChange={(gain) => {
-                mixRef.current = {
-                  ...mixRef.current,
-                  ...(row.channel === "music"
-                    ? { musicGain: gain }
-                    : row.channel === "nature"
-                      ? { natureGain: gain }
-                      : { noiseGain: gain }),
-                };
+                mixRef.current = mixWithGain(mixRef.current, row.channel, gain);
                 onLiveVolume(row.channel, gain);
               }}
               onCommit={(gain) => {
-                const next: LibraryMixValues = {
-                  ...mixRef.current,
-                  ...(row.channel === "music"
-                    ? { musicGain: gain }
-                    : row.channel === "nature"
-                      ? { natureGain: gain }
-                      : { noiseGain: gain }),
-                };
-                if (row.channel === "music") setMusicGain(gain);
-                else if (row.channel === "nature") setNatureGain(gain);
-                else setNoiseGain(gain);
+                const next = mixWithGain(mixRef.current, row.channel, gain);
+                row.setGain(gain);
                 mixRef.current = next;
                 previewNow(next);
               }}
             />
-            <select
-              className="w-full min-w-0 rounded-lg border border-border bg-background px-1 py-1 text-[10px]"
+            <SoundFolderSelect
+              category={row.category}
+              items={row.items}
               value={row.key}
-              onChange={(e) => {
-                const value = e.target.value;
+              compact
+              disabled={drumsLocked}
+              onChange={(value) => {
                 row.setKey(value);
-                const next: LibraryMixValues = {
-                  ...mixRef.current,
-                  ...(row.channel === "music"
-                    ? { musicKey: value }
-                    : row.channel === "nature"
-                      ? { natureKey: value }
-                      : { noiseKey: value }),
-                };
+                const next = mixWithKey(mixRef.current, row.channel, value);
                 mixRef.current = next;
                 previewNow(next);
               }}
-            >
-              <option value="">None</option>
-              {row.items.map((s) => (
-                <option key={s.key} value={s.key}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        ))}
+            />
+          </DrumsLockedWrap>
+          );
+        })}
       </div>
       {error ? (
         <p className="mt-2 text-xs text-red-700 dark:text-red-300">{error}</p>
@@ -790,6 +835,7 @@ function stripPauseMarkers(text: string): string {
 
 function LibraryAudioStrip({
   track,
+  musicItems,
   onDismiss,
   playbackToggleNonce,
   elevated = false,
@@ -798,6 +844,7 @@ function LibraryAudioStrip({
   onPlaybackTimeChange,
 }: {
   track: ActiveTrack | null;
+  musicItems: BackgroundAudioItem[];
   onDismiss: () => void;
   playbackToggleNonce: number;
   elevated?: boolean;
@@ -808,6 +855,7 @@ function LibraryAudioStrip({
   const audioRef = useRef<HTMLAudioElement>(null);
   const natureRef = useRef<HTMLAudioElement>(null);
   const musicRef = useRef<HTMLAudioElement>(null);
+  const drumsRef = useRef<HTMLAudioElement>(null);
   const noiseRef = useRef<HTMLAudioElement>(null);
   const seekingRef = useRef(false);
   const [playing, setPlaying] = useState(false);
@@ -818,6 +866,7 @@ function LibraryAudioStrip({
   const liveBedGainsRef = useRef({
     nature: track?.natureGain ?? 0,
     music: track?.musicGain ?? 0,
+    drums: track?.drumsGain ?? 0,
     noise: track?.noiseGain ?? 0,
   });
   const mediaBase = getMedimadeMediaBaseUrl();
@@ -845,9 +894,10 @@ function LibraryAudioStrip({
     liveBedGainsRef.current = {
       nature: track?.natureGain ?? 0,
       music: track?.musicGain ?? 0,
+      drums: track?.drumsGain ?? 0,
       noise: track?.noiseGain ?? 0,
     };
-  }, [track?.natureGain, track?.musicGain, track?.noiseGain]);
+  }, [track?.natureGain, track?.musicGain, track?.drumsGain, track?.noiseGain]);
 
   useEffect(() => {
     if (!bedVolumeApiRef) return;
@@ -859,8 +909,10 @@ function LibraryAudioStrip({
             ? natureRef.current
             : channel === "music"
               ? musicRef.current
-              : noiseRef.current;
-        if (el) el.volume = Math.min(1, Math.max(0, gain / 100));
+              : channel === "drums"
+                ? drumsRef.current
+                : noiseRef.current;
+        if (el) el.volume = bedElementVolume(gain);
       },
     };
     return () => {
@@ -897,6 +949,15 @@ function LibraryAudioStrip({
         key: track?.liveMix ? track.musicKey ?? "" : "",
       },
       {
+        channel: "drums",
+        el: drumsRef.current,
+        key: track?.liveMix
+          ? isMelodicMusicKey(musicItems, track.musicKey ?? "")
+            ? ""
+            : track.drumsKey ?? ""
+          : "",
+      },
+      {
         channel: "noise",
         el: noiseRef.current,
         key: track?.liveMix ? track.noiseKey ?? "" : "",
@@ -906,10 +967,7 @@ function LibraryAudioStrip({
       const el = bed.el;
       if (!el) continue;
       el.loop = true;
-      el.volume = Math.min(
-        1,
-        Math.max(0, liveBedGainsRef.current[bed.channel] / 100),
-      );
+      el.volume = bedElementVolume(liveBedGainsRef.current[bed.channel]);
       if (!mediaBase || !bed.key.trim()) {
         el.pause();
         if (el.getAttribute("src")) {
@@ -930,12 +988,15 @@ function LibraryAudioStrip({
     track?.liveMix,
     track?.natureKey,
     track?.musicKey,
+    track?.drumsKey,
     track?.noiseKey,
     track?.natureGain,
     track?.musicGain,
+    track?.drumsGain,
     track?.noiseGain,
     playing,
     mediaBase,
+    musicItems,
   ]);
 
   useEffect(() => {
@@ -1026,6 +1087,7 @@ function LibraryAudioStrip({
       />
       <audio ref={natureRef} className="hidden" loop playsInline />
       <audio ref={musicRef} className="hidden" loop playsInline />
+      <audio ref={drumsRef} className="hidden" loop playsInline />
       <audio ref={noiseRef} className="hidden" loop playsInline />
 
       <div className="mx-auto flex w-full max-w-6xl min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
@@ -1217,6 +1279,7 @@ export default function LibraryView({
   const mixCloseRef = useRef<(() => void) | null>(null);
   const [mixNature, setMixNature] = useState<BackgroundAudioItem[]>([]);
   const [mixMusic, setMixMusic] = useState<BackgroundAudioItem[]>([]);
+  const [mixDrums, setMixDrums] = useState<BackgroundAudioItem[]>([]);
   const [mixNoise, setMixNoise] = useState<BackgroundAudioItem[]>([]);
   const bedVolumeApiRef = useRef<LibraryBedVolumeApi | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>("newest");
@@ -1268,12 +1331,14 @@ export default function LibraryView({
         if (cancelled) return;
         setMixNature(data.nature ?? []);
         setMixMusic(data.music ?? []);
+        setMixDrums(data.drums ?? []);
         setMixNoise(data.noise ?? []);
       })
       .catch(() => {
         if (cancelled) return;
         setMixNature([]);
         setMixMusic([]);
+        setMixDrums([]);
         setMixNoise([]);
       });
     return () => {
@@ -1927,18 +1992,22 @@ export default function LibraryView({
     setMixError(null);
     const natureKey = backgroundAudioStreamingKey(m.backgroundNatureKey ?? "");
     const musicKey = backgroundAudioStreamingKey(m.backgroundMusicKey ?? "");
+    const drumsKey = backgroundAudioStreamingKey(m.backgroundDrumsKey ?? "");
     const noiseKey = backgroundAudioStreamingKey(m.backgroundNoiseKey ?? "");
     const natureGain = m.backgroundNatureGain ?? 25;
     const musicGain = m.backgroundMusicGain ?? 50;
+    const drumsGain = m.backgroundDrumsGain ?? 40;
     const noiseGain = m.backgroundNoiseGain ?? 10;
     setNowPlaying((p) => {
       if (!p || p.s3Key !== m.s3Key) return p;
       return liveMixTrack(m, {
         natureKey,
         musicKey,
+        drumsKey,
         noiseKey,
         natureGain,
         musicGain,
+        drumsGain,
         noiseGain,
       });
     });
@@ -1962,6 +2031,7 @@ export default function LibraryView({
     const sk = item.sk;
     const natureKey = backgroundAudioStreamingKey(mix.natureKey.trim());
     const musicKey = backgroundAudioStreamingKey(mix.musicKey.trim());
+    const drumsKey = backgroundAudioStreamingKey(mix.drumsKey.trim());
     const noiseKey = backgroundAudioStreamingKey(mix.noiseKey.trim());
     try {
       await patchMeditationBackgroundMix(
@@ -1969,9 +2039,11 @@ export default function LibraryView({
         {
           backgroundNatureKey: natureKey,
           backgroundMusicKey: musicKey,
+          backgroundDrumsKey: drumsKey,
           backgroundNoiseKey: noiseKey,
           backgroundNatureGain: mix.natureGain,
           backgroundMusicGain: mix.musicGain,
+          backgroundDrumsGain: mix.drumsGain,
           backgroundNoiseGain: mix.noiseGain,
         },
         libraryTab === "community"
@@ -1983,9 +2055,11 @@ export default function LibraryView({
         liveMix: true,
         backgroundNatureKey: natureKey || null,
         backgroundMusicKey: musicKey || null,
+        backgroundDrumsKey: drumsKey || null,
         backgroundNoiseKey: noiseKey || null,
         backgroundNatureGain: mix.natureGain,
         backgroundMusicGain: mix.musicGain,
+        backgroundDrumsGain: mix.drumsGain,
         backgroundNoiseGain: mix.noiseGain,
       };
       if (libraryTab === "community") {
@@ -2003,9 +2077,11 @@ export default function LibraryView({
           ? liveMixTrack(item, {
               natureKey,
               musicKey,
+              drumsKey,
               noiseKey,
               natureGain: mix.natureGain,
               musicGain: mix.musicGain,
+              drumsGain: mix.drumsGain,
               noiseGain: mix.noiseGain,
             })
           : p,
@@ -2952,6 +3028,7 @@ export default function LibraryView({
     <LibraryAudioStrip
         key={nowPlaying?.s3Key ?? "none"}
       track={nowPlaying}
+      musicItems={mixMusic}
       onDismiss={() => setNowPlaying(null)}
         playbackToggleNonce={playbackToggleNonce}
         bedVolumeApiRef={bedVolumeApiRef}
@@ -2971,6 +3048,7 @@ export default function LibraryView({
         anchorEl={mixAnchorEl}
         natureItems={mixNature}
         musicItems={mixMusic}
+        drumsItems={mixDrums}
         noiseItems={mixNoise}
         error={mixError}
         resetMix={mixValuesFromItem(

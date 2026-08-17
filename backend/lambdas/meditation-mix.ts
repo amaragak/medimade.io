@@ -79,18 +79,22 @@ export async function handler(
 
   const backgroundNatureKey = optKey(body.backgroundNatureKey);
   const backgroundMusicKey = optKey(body.backgroundMusicKey);
+  const backgroundDrumsKey = optKey(body.backgroundDrumsKey);
   const backgroundNoiseKey = optKey(body.backgroundNoiseKey);
   const backgroundNatureGain = optGain(body.backgroundNatureGain, 25);
   const backgroundMusicGain = optGain(body.backgroundMusicGain, 50);
+  const backgroundDrumsGain = optGain(body.backgroundDrumsGain, 40);
   const backgroundNoiseGain = optGain(body.backgroundNoiseGain, 10);
 
   const mixFields = {
     liveMix: true,
     backgroundNatureKey,
     backgroundMusicKey,
+    backgroundDrumsKey,
     backgroundNoiseKey,
     backgroundNatureGain,
     backgroundMusicGain,
+    backgroundDrumsGain,
     backgroundNoiseGain,
   };
 
@@ -146,14 +150,16 @@ export async function handler(
       sk,
       update: {
         UpdateExpression:
-          "SET liveMix = :lm, backgroundNatureKey = :nk, backgroundMusicKey = :mk, backgroundNoiseKey = :zk, backgroundNatureGain = :ng, backgroundMusicGain = :mg, backgroundNoiseGain = :zg, createdBackgroundNatureKey = if_not_exists(createdBackgroundNatureKey, backgroundNatureKey), createdBackgroundMusicKey = if_not_exists(createdBackgroundMusicKey, backgroundMusicKey), createdBackgroundNoiseKey = if_not_exists(createdBackgroundNoiseKey, backgroundNoiseKey), createdBackgroundNatureGain = if_not_exists(createdBackgroundNatureGain, backgroundNatureGain), createdBackgroundMusicGain = if_not_exists(createdBackgroundMusicGain, backgroundMusicGain), createdBackgroundNoiseGain = if_not_exists(createdBackgroundNoiseGain, backgroundNoiseGain)",
+          "SET liveMix = :lm, backgroundNatureKey = :nk, backgroundMusicKey = :mk, backgroundDrumsKey = :dk, backgroundNoiseKey = :zk, backgroundNatureGain = :ng, backgroundMusicGain = :mg, backgroundDrumsGain = :dg, backgroundNoiseGain = :zg, createdBackgroundNatureKey = if_not_exists(createdBackgroundNatureKey, backgroundNatureKey), createdBackgroundMusicKey = if_not_exists(createdBackgroundMusicKey, backgroundMusicKey), createdBackgroundDrumsKey = if_not_exists(createdBackgroundDrumsKey, backgroundDrumsKey), createdBackgroundNoiseKey = if_not_exists(createdBackgroundNoiseKey, backgroundNoiseKey), createdBackgroundNatureGain = if_not_exists(createdBackgroundNatureGain, backgroundNatureGain), createdBackgroundMusicGain = if_not_exists(createdBackgroundMusicGain, backgroundMusicGain), createdBackgroundDrumsGain = if_not_exists(createdBackgroundDrumsGain, backgroundDrumsGain), createdBackgroundNoiseGain = if_not_exists(createdBackgroundNoiseGain, backgroundNoiseGain)",
         ExpressionAttributeValues: {
           ":lm": true,
           ":nk": backgroundNatureKey,
           ":mk": backgroundMusicKey,
+          ":dk": backgroundDrumsKey,
           ":zk": backgroundNoiseKey,
           ":ng": backgroundNatureGain,
           ":mg": backgroundMusicGain,
+          ":dg": backgroundDrumsGain,
           ":zg": backgroundNoiseGain,
         },
         ConditionExpression: "attribute_exists(s3Key)",

@@ -1,13 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Switch from "@radix-ui/react-switch";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { ChatMarkdown } from "@/components/chat-markdown";
+import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
+import { SoundFolderSelect } from "@/components/sound-folder-select";
+import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
 import {
-  MeditationTypeCard,
+  CREATE_MEDITATE_ROOT,
+  createMeditationHref,
+  createMeditationHrefWithDraft,
+  createMeditationPathStartHref,
+  createRouteNeedsPriorState,
+  parseCreateMeditationPathname,
+  type CreateMeditationPath,
+} from "@/lib/create-meditation-path";
+import {
+  clearCreateSession,
+  createSessionSatisfiesRoute,
+  readCreateSession,
+  writeCreateSession,
+  type CreateSessionV1,
+} from "@/lib/create-session-storage";
+import {
   MeditationTypeCardGrid,
 } from "@/components/community-category-grid";
 import {
@@ -71,6 +88,8 @@ import {
   readPlanCreateHandoff,
 } from "@/lib/plan-create-handoff";
 import { loadPlanDreamsStore, type PlanDream } from "@/lib/plan-dreams";
+import { ChatMarkdown } from "@/components/chat-markdown";
+import { bedElementVolume } from "@/lib/bed-volume";
 
 function mediaFileUrl(base: string, key: string): string {
   const b = base.replace(/\/$/, "");
@@ -212,6 +231,22 @@ function maybeScrollChatToBottom(
   });
 }
 
+function ChatTypingIndicator() {
+  return (
+    <div
+      className="mb-3 flex w-full justify-start px-3.5 py-2.5"
+      aria-live="polite"
+      aria-label="Guide is typing"
+    >
+      <div className="flex h-4 items-end gap-1.5">
+        <span className="chat-typing-dot h-2 w-2 rounded-full bg-accent" />
+        <span className="chat-typing-dot h-2 w-2 rounded-full bg-accent" />
+        <span className="chat-typing-dot h-2 w-2 rounded-full bg-accent" />
+      </div>
+    </div>
+  );
+}
+
 function IconResetArrow({ className }: { className?: string }) {
   return (
     <svg
@@ -273,25 +308,6 @@ function IconChevronLeft({ className }: { className?: string }) {
   );
 }
 
-function IconChevronDown({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M6 9l6 6 6-6" />
-    </svg>
-  );
-}
-
 function IconGoalTarget({ className }: { className?: string }) {
   return (
     <svg
@@ -312,13 +328,6 @@ function IconGoalTarget({ className }: { className?: string }) {
     </svg>
   );
 }
-
-const WORKSPACE_GENERATION_MODES = [
-  { value: "style" as const, label: "Pick a meditation style" },
-  { value: "freeflow" as const, label: "Free flow chat" },
-  { value: "journalReflect" as const, label: "Reflect on a journal entry" },
-  { value: "goal" as const, label: "Move towards a goal" },
-];
 
 /**
  * Lucide “flower-2” (lucide-static v0.460, ISC) — creation picker, pick a style.
@@ -408,7 +417,7 @@ function IconPaperAirplane({ className }: { className?: string }) {
   );
 }
 
-type SoloTrack = "speaker" | "nature" | "music" | "noise";
+type SoloTrack = "speaker" | "nature" | "music" | "drums" | "noise";
 
 function PreviewPlayPauseIcon({ playing }: { playing: boolean }) {
   return playing ? (
@@ -450,6 +459,8 @@ type ChatMessage = {
   kind?: "divider";
   /** When set on a user message, render expandable journal entry cards below `text`. */
   journalSegments?: JournalHandoffSegment[];
+  /** Pin the proceed-to-audio control under this recap message. */
+  audioReadyCta?: boolean;
 };
 
 const meditationStyles = [
@@ -471,7 +482,7 @@ const meditationStyleTooltip: Record<(typeof meditationStyles)[number], string> 
   "Body scan":
     "Slowly move attention through the body to release tension and build calm awareness.",
   Visualization:
-    "Guided imagery to shift mood, build confidence, or rehearse a desired state.",
+    "Guided imagery of a place, object, or presence (including the sacred) to shift mood or rest with what matters to you.",
   "Breath-led":
     "Breath-focused practice to steady attention and regulate the nervous system.",
   Manifestation:
@@ -479,7 +490,7 @@ const meditationStyleTooltip: Record<(typeof meditationStyles)[number], string> 
   "Affirmation loop":
     "Repetitive positive statements to reinforce belief, safety, and self-trust.",
   Story:
-    "A calm, guided narrative with sensory detail and emotional resolution.",
+    "A calm narrative—zen parable, kids’ tale, fable, or a story you inhabit—with sensory detail and a gentle arc.",
   Reflection:
     "A gentle reflective practice to process experience and clarify what matters.",
   Sleep:
@@ -499,7 +510,7 @@ const meditationStyleDescription: Record<(typeof meditationStyles)[number], stri
   "Body scan":
     "You rest still while attention moves slowly through the body—feet, legs, torso, arms, face. Noticing sensation (warmth, tightness, space) helps release holding and settle the nervous system. Good when you feel scattered, tense, or disconnected from the body.",
   Visualization:
-    "The guide paints scenes you can see and feel: a place, a future moment, or an inner quality made vivid. You stay with the imagery so mood and confidence can shift. Choose this when you want to rehearse a state, not only relax.",
+    "The guide paints images you can see and feel: a place, a future moment, an object, an inner quality, or a figure or presence you want to be with—including the sacred, if that’s yours. You stay with the imagery so mood and confidence can shift. Choose this when you want to rehearse a state or rest with something meaningful, not only relax.",
   "Breath-led":
     "The breath is the main anchor—its rhythm, the feel of air, or a simple count. Attention keeps returning to inhaling and exhaling to steady the mind and downshift arousal. A clear choice when you want something simple and regulating.",
   Manifestation:
@@ -507,7 +518,7 @@ const meditationStyleDescription: Record<(typeof meditationStyles)[number], stri
   "Affirmation loop":
     "Short phrases repeat throughout the practice so they can land in the body, not just the mind (“I am safe,” “I can meet this”). Pacing stays calm; you rest between lines. Helpful for rebuilding self-trust or a kinder inner voice.",
   Story:
-    "A coherent narrative carries you—setting, sensory detail, a gentle arc that resolves. You’re invited to inhabit the story rather than follow a list of techniques. Fits when metaphor and journey feel more natural than instructions.",
+    "A coherent narrative unfolds—setting, sensory detail, a gentle arc. It might be a zen parable, a kids’ tale, a fable, or a story you step into. Fits when metaphor and story feel more natural than instructions.",
   Reflection:
     "Quiet prompts help you look at what you’re carrying: meaning, values, a decision, or an experience that needs space. There are pauses to notice and integrate, not only to relax. Choose this when you want insight, not only calm.",
   Sleep:
@@ -534,17 +545,17 @@ const STYLE_ANYTHING_ELSE_PROMPT = "Anything else you would like to add?";
 /** Three targeted intake questions per preset type (style path; not chat). */
 const STYLE_INTAKE_QUESTIONS: Record<(typeof meditationStyles)[number], [string, string, string]> = {
   "Body scan": [
-    "Where in your body are you holding the most tension or discomfort right now?",
     "Would you like a full head-to-toe scan, or to linger on a few areas?",
+    "Where in your body are you holding the most tension or discomfort right now?",
     "What would you like to feel in your body by the end?",
   ],
   Visualization: [
-    "What scene, place, or future moment do you want to picture yourself in?",
-    "What’s the first vivid sensory detail you can picture (sight, sound, or touch)?",
-    "How do you want to feel while you’re there?",
+    "What do you want to picture — a place, object, or presence that matters to you?",
+    "What’s the first vivid detail you notice (sight, sound, touch, or a sense of presence)?",
+    "How do you want to feel as you stay with this image?",
   ],
   "Breath-led": [
-    "Do you want counted or patterned breathwork, or simply following the breath as it is?",
+    "Do you want counted breaths, or to follow the breath as it is?",
     "How do you feel right now—wired, tired, scattered, something else?",
     "Do you want a slow, long breath, or to keep a natural pace?",
   ],
@@ -554,34 +565,34 @@ const STYLE_INTAKE_QUESTIONS: Record<(typeof meditationStyles)[number], [string,
     "How would you feel if this actually came true?",
   ],
   "Affirmation loop": [
-    "How do you want to feel when you’re done?",
-    "Are there words or phrases that already feel true or comforting, or should we find new ones?",
-    "What self-talk or inner voice are you hoping to soften?",
+    "What feeling are you trying to generate?",
+    "Is there a goal you’re moving towards?",
+    "Are there any words or phrases you want to use specifically?",
   ],
   Story: [
-    "What kind of journey or setting should this story take place in?",
-    "Who are you in the story—an observer, a traveler, or a younger self?",
-    "What feeling should the ending leave you with?",
+    "What style should the story be—zen story, kids’ story, fable, something else?",
+    "Are you in the story, or is it about someone else?",
+    "What feeling should it leave you with?",
   ],
   Reflection: [
-    "What are you processing or wondering about?",
-    "Is there a decision, relationship, or experience that needs space?",
+    "What do you need to process?",
+    "Do you want to look for an answer, or just sit with it?",
     "What would a helpful insight or shift look like when you’re done?",
   ],
   Sleep: [
-    "What’s making it hard to settle tonight?",
-    "Do you prefer almost no story (just body and breath), or a drifting scene?",
+    "How are you feeling as you get ready for sleep?",
+    "Do you want a drifting scene, or just body and breath?",
     "How do you want to feel as you fall asleep?",
   ],
   "Loving-kindness": [
     "Who is this practice for today—yourself, someone else, or both?",
-    "Is there a particular hurt you’re meeting, in yourself or toward someone else?",
-    "What kind of kindness do you most need (warmth, forgiveness, belonging)?",
+    "How do you feel toward them—or toward yourself—right now?",
+    "What kind of kindness is most needed (warmth, forgiveness, belonging)?",
   ],
   "Anxiety relief": [
     "What’s the main worry or pressure right now?",
-    "Where do you feel it in the body?",
-    "What would relief feel like by the end of this session?",
+    "Do you feel it in your body, and if so, where?",
+    "How do you want to feel by the end of this session?",
   ],
   "Movement meditation": [
     "Will you be walking, stretching in place, or something else?",
@@ -589,9 +600,9 @@ const STYLE_INTAKE_QUESTIONS: Record<(typeof meditationStyles)[number], [string,
     "Any limits we should work around—injury, tight space, needing to stay quiet?",
   ],
   "Open awareness": [
-    "What tends to pull your attention away most (thoughts, sounds, restlessness)?",
-    "Are you sitting, lying down, or somewhere with a lot of sound around you?",
-    "When thoughts show up, do you want to let them pass, notice them briefly, or something else?",
+    "What pulls your attention away most—thoughts, sounds, restlessness?",
+    "What’s your position—sitting, standing, lying down, or walking?",
+    "Where are you right now? Is it quiet or noisy?",
   ],
 };
 
@@ -759,12 +770,7 @@ type Phase =
   | "goalPick";
 
 /** Before chat: user picks style-first vs free-flow vs journal-reflect creation. */
-type CreationPath =
-  | "pending"
-  | "style"
-  | "freeflow"
-  | "journalReflect"
-  | "goal";
+type CreationPath = CreateMeditationPath;
 
 function inferCreationPathFromDraft(
   s: MeditationDraftStateV1,
@@ -786,7 +792,43 @@ const JOURNAL_REFLECT_PICK_INTRO =
 
 const GOAL_PICK_INTRO = "Which goal would you like to move towards?";
 const OPENING_GOAL =
-  "Great. I’ll write a visualization and manifestation-style meditation around this goal.\n\nBefore I draft anything: what would success look like, and what would it feel like in your body?";
+  "I’ll write a visualization around this goal. What would success look like, and how would it feel?";
+
+function parseCoachDisplayText(raw: string): { text: string; ready: boolean } {
+  let ready = false;
+  let s = raw.replace(/\[\[\s*READY\s*\]\]/gi, () => {
+    ready = true;
+    return "";
+  });
+  s = s.replace(/\[\[[^\]]*\]\]/g, "");
+  const open = s.lastIndexOf("[[");
+  if (open !== -1 && !s.slice(open).includes("]]")) {
+    s = s.slice(0, open);
+  }
+  if (s.endsWith("[")) s = s.slice(0, -1);
+  s = s.replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n");
+  return { text: s.trimEnd(), ready };
+}
+
+function pinAudioReadyCtaOnLastAssistant(messages: ChatMessage[]): ChatMessage[] {
+  const next = [...messages];
+  for (let i = next.length - 1; i >= 0; i -= 1) {
+    const msg = next[i];
+    if (msg.kind === "divider" || msg.muted) continue;
+    if (msg.role === "assistant" && msg.variant !== "script") {
+      next[i] = { ...msg, audioReadyCta: true };
+      return next;
+    }
+  }
+  return messages;
+}
+
+function coachChatBubbles(text: string): string[] {
+  return text
+    .split(/\n{2,}/g)
+    .map((s) => s.replace(/[ \t]*\n+[ \t]*/g, " ").trim())
+    .filter(Boolean);
+}
 
 function reflectableJournalEntriesForPicker(entries: JournalEntry[]): JournalEntry[] {
   return entries
@@ -1051,13 +1093,13 @@ function getStyleFollowupQuestion(style: string): string {
     return "How do you want to feel when you’re done—and what words would land gently for you right now?";
   }
   if (s === "sleep") {
-    return "What’s keeping you awake tonight—and how do you want to feel as you drift off?";
+    return "How are you feeling as you get ready for sleep—do you want a drifting scene or just body and breath—and how do you want to feel as you drift off?";
   }
   if (s === "loving-kindness" || s === "loving kindness" || s === "metta") {
     return "Who would you like to send kindness to today—yourself, someone else, or both?";
   }
   if (s === "anxiety relief" || s === "anxiety") {
-    return "What’s the main worry or pressure right now—and what would feel like relief by the end of this session?";
+    return "What’s the main worry or pressure right now—and how do you want to feel by the end of this session?";
   }
   if (s === "breath-led" || s === "breath led" || s === "breath") {
     return "Do you want a breathwork-style session, or a simple “follow your breath” meditation?";
@@ -1069,13 +1111,13 @@ function getStyleFollowupQuestion(style: string): string {
     return "Do you imagine moving in place, walking slowly, or something else—and what do you want your body to feel by the end?";
   }
   if (s === "open awareness") {
-    return "What tends to pull your attention away most—and how would you like to relate to that during this practice?";
+    return "What pulls your attention away most, what’s your position, and what’s the environment like?";
   }
   if (s === "story") {
-    return "What kind of journey or scene should this story hold—and what feeling do you want to land on by the end?";
+    return "What style of story is this (zen parable, kids’ tale, fable…), what is it about, and what feeling should it leave you with?";
   }
   if (s === "reflection") {
-    return "What are you processing or wondering about—and what would feel like a helpful insight or shift when you’re done?";
+    return "What do you need to process, do you want an answer or just to sit with it, and what would a helpful insight or shift look like when you’re done?";
   }
   const trimmed = style.trim();
   if (trimmed) {
@@ -1090,27 +1132,45 @@ export function CreateWorkspace({
   seedPlanContext = false,
 }: CreateWorkspaceProps) {
   const router = useRouter();
+  const pathname = usePathname() || CREATE_MEDITATE_ROOT;
+  const parsedCreateRoute = parseCreateMeditationPathname(pathname);
   const isRedirectingToLibraryRef = useRef(false);
   const seedFromHandoff = seedJournalContext || seedPlanContext;
+  const initedCreatePathsRef = useRef(new Set<CreationPath>());
+  const pendingUrlSyncRef = useRef<string | null>(null);
   const [mobileCreateStep, setMobileCreateStep] = useState<"chat" | "audio">(
     "chat",
   );
   /** 0 = chooser, 1 = script/chat, 2 = audio — same horizontal strip at every viewport width. */
-  const [createStripStep, setCreateStripStep] = useState<0 | 1 | 2>(() =>
-    seedFromHandoff ? 1 : 0,
-  );
+  const [createStripStep, setCreateStripStep] = useState<0 | 1 | 2>(() => {
+    if (seedFromHandoff) return 1;
+    if (parsedCreateRoute.mix) return 2;
+    if (parsedCreateRoute.path === "pending") return 0;
+    if (parsedCreateRoute.path === "style") return 0;
+    return 1;
+  });
 
   // Reduce perceived navigation latency (and any browser "redirecting" UI) by prefetching Library.
   useEffect(() => {
     router.prefetch("/meditate/library");
   }, [router]);
 
-  const [phase, setPhase] = useState<Phase>(() =>
-    seedFromHandoff ? "claude" : "style",
-  );
+  const [phase, setPhase] = useState<Phase>(() => {
+    if (seedFromHandoff) return "claude";
+    if (parsedCreateRoute.path === "style") {
+      return parsedCreateRoute.styleStep === "questions"
+        ? "styleQuestions"
+        : "stylePick";
+    }
+    if (parsedCreateRoute.path === "journalReflect") return "journalPick";
+    if (parsedCreateRoute.path === "goal") return "goalPick";
+    if (parsedCreateRoute.path === "freeflow") return "feeling";
+    return "style";
+  });
   const [meditationStyle, setMeditationStyle] = useState<string | null>(null);
   const [claudeThread, setClaudeThread] = useState<MedimadeChatTurn[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
+  const [coachAudioReady, setCoachAudioReady] = useState(false);
   const [scriptLoading, setScriptLoading] = useState(false);
   const [audioLoading, setAudioLoading] = useState(false);
   const [audioModalUrl, setAudioModalUrl] = useState<string | null>(null);
@@ -1131,29 +1191,42 @@ export function CreateWorkspace({
   const [backgroundNoise, setBackgroundNoise] = useState<BackgroundAudioItem[]>(
     [],
   );
+  const [backgroundDrums, setBackgroundDrums] = useState<BackgroundAudioItem[]>(
+    [],
+  );
   const [mediaBaseUrl, setMediaBaseUrl] = useState<string | null>(null);
   const [backgroundNatureKey, setBackgroundNatureKey] = useState<string>("");
   const [backgroundMusicKey, setBackgroundMusicKey] = useState<string>("");
   const [backgroundNoiseKey, setBackgroundNoiseKey] = useState<string>("");
+  const [backgroundDrumsKey, setBackgroundDrumsKey] = useState<string>("");
   const [backgroundNatureGain, setBackgroundNatureGain] = useState(25);
   const [backgroundMusicGain, setBackgroundMusicGain] = useState(50);
   const [backgroundNoiseGain, setBackgroundNoiseGain] = useState(10);
+  const [backgroundDrumsGain, setBackgroundDrumsGain] = useState(40);
   const [playAllActive, setPlayAllActive] = useState(false);
   const [playing, setPlaying] = useState<Record<SoloTrack, boolean>>({
     speaker: false,
     nature: false,
     music: false,
+    drums: false,
     noise: false,
   });
   const previewNatureRef = useRef<HTMLAudioElement | null>(null);
   const previewMusicRef = useRef<HTMLAudioElement | null>(null);
+  const previewDrumsRef = useRef<HTMLAudioElement | null>(null);
   const previewNoiseRef = useRef<HTMLAudioElement | null>(null);
   const speakerSampleRef = useRef<HTMLAudioElement | null>(null);
   const speakerGapTimeoutRef = useRef<number | null>(null);
   const speakerRepeatWantedRef = useRef(false);
-  const lastBgKeysRef = useRef<{ nature: string; music: string; noise: string }>({
+  const lastBgKeysRef = useRef<{
+    nature: string;
+    music: string;
+    drums: string;
+    noise: string;
+  }>({
     nature: "",
     music: "",
+    drums: "",
     noise: "",
   });
   // Speakers come from backend `GET /fish/speakers` (single source of truth).
@@ -1172,6 +1245,13 @@ export function CreateWorkspace({
   /** Bumped on reset so intro typing re-runs even when `messages.length` stays 1. */
   const [introTypingSession, setIntroTypingSession] = useState(0);
   const introTypingTimerRef = useRef<number | null>(null);
+  const coachTypeTargetRef = useRef("");
+  const coachTypeRevealRef = useRef(0);
+  const coachTypePauseTicksRef = useRef(0);
+  const coachTypeTimerRef = useRef<number | null>(null);
+  const coachTypeNetworkDoneRef = useRef(false);
+  const coachTypeOwnsMessageRef = useRef(false);
+  const coachTypeCaughtUpRef = useRef<(() => void) | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const isAtBottomRef = useRef(true);
@@ -1179,9 +1259,15 @@ export function CreateWorkspace({
   const chatInputRef = useRef<HTMLInputElement | null>(null);
   const initialChatAutofocusDoneRef = useRef(false);
   const [speakerModelId, setSpeakerModelId] = useState<string>("");
-  const [journalMode, setJournalMode] = useState(() => Boolean(seedFromHandoff));
+  const [journalMode, setJournalMode] = useState(
+    () =>
+      Boolean(seedFromHandoff) ||
+      parsedCreateRoute.path === "freeflow" ||
+      parsedCreateRoute.path === "journalReflect" ||
+      parsedCreateRoute.path === "goal",
+  );
   const [creationPath, setCreationPath] = useState<CreationPath>(() =>
-    seedFromHandoff ? "freeflow" : "pending",
+    seedFromHandoff ? "freeflow" : parsedCreateRoute.path,
   );
   /** Which full-width section to show; pending path always maps to chooser (avoids strip/chat flash races). */
   const workspaceSectionStep: 0 | 1 | 2 =
@@ -1204,8 +1290,6 @@ export function CreateWorkspace({
     [string, string, string, string]
   >(() => emptyStyleQuestionAnswers());
   const [styleQuestionsRevealed, setStyleQuestionsRevealed] = useState(1);
-  const [workspaceModeMenuOpen, setWorkspaceModeMenuOpen] = useState(false);
-  const workspaceModeMenuRef = useRef<HTMLDivElement>(null);
   const chooserCardsRef = useRef<HTMLDivElement | null>(null);
   /** Default to 2×2 until measured — avoids a one-frame “skinny 4-up” layout. */
   const [chooserLayout, setChooserLayout] = useState<"row4" | "grid2">("grid2");
@@ -1240,6 +1324,122 @@ export function CreateWorkspace({
    * only after mount, we never briefly show the chooser then jump to chat.
    */
   const [draftHydrated, setDraftHydrated] = useState(false);
+  const [sessionHydrated, setSessionHydrated] = useState(false);
+
+  function createHrefForNav(opts: {
+    path: CreationPath;
+    styleStep?: "type" | "questions";
+    mix?: boolean;
+  }): string {
+    return createMeditationHrefWithDraft(
+      createMeditationHref(opts),
+      draftSk ?? initialDraftSk,
+    );
+  }
+
+  function pathOnly(href: string): string {
+    return href.split("?")[0] ?? href;
+  }
+
+  function pushCreate(opts: {
+    path: CreationPath;
+    styleStep?: "type" | "questions";
+    mix?: boolean;
+  }) {
+    const href = createHrefForNav(opts);
+    pendingUrlSyncRef.current = pathOnly(href);
+    router.push(href);
+  }
+
+  function applyCreateSession(s: CreateSessionV1) {
+    const answers = parseStyleQuestionAnswers(s.styleQuestionAnswers)
+      ?? emptyStyleQuestionAnswers();
+    setStyleQuestionAnswers(answers);
+    setStyleQuestionsRevealed(
+      Math.max(s.styleQuestionsRevealed, revealedCountFromStyleAnswers(answers)),
+    );
+    setMeditationStyle(s.meditationStyle);
+    setPendingStyleType(s.pendingStyleType);
+    setMessages(
+      s.coachAudioReady && !s.messages.some((m) => m.audioReadyCta)
+        ? pinAudioReadyCtaOnLastAssistant(s.messages)
+        : s.messages,
+    );
+    setClaudeThread(s.claudeThread);
+    setCoachAudioReady(s.coachAudioReady === true);
+    setInput(s.input);
+    setSpeakerModelId(s.speakerModelId);
+    setTtsProvider(s.ttsProvider === "orpheus" ? "orpheus" : "fish");
+    setOrpheusVoiceId(s.orpheusVoiceId || DEFAULT_ORPHEUS_VOICE_ID);
+    setSpeakerFxPreviewOn(s.speakerFxPreviewOn);
+    setBackgroundNatureKey(backgroundAudioStreamingKey(s.backgroundNatureKey));
+    setBackgroundMusicKey(backgroundAudioStreamingKey(s.backgroundMusicKey));
+    setBackgroundDrumsKey(backgroundAudioStreamingKey(s.backgroundDrumsKey));
+    setBackgroundNoiseKey(backgroundAudioStreamingKey(s.backgroundNoiseKey));
+    setBackgroundNatureGain(s.backgroundNatureGain);
+    setBackgroundMusicGain(s.backgroundMusicGain);
+    setBackgroundDrumsGain(s.backgroundDrumsGain);
+    setBackgroundNoiseGain(s.backgroundNoiseGain);
+    setCreateStripStep(s.createStripStep);
+    setMobileCreateStep(s.mobileCreateStep);
+    setLastUsedScript(s.lastUsedScript);
+    setMeditationTargetMinutes(s.meditationTargetMinutes);
+    setCreationPath(s.creationPath);
+    setJournalMode(s.journalMode);
+    setPhase(s.phase === "style" ? "stylePick" : s.phase);
+    setPendingModeChoice(s.pendingModeChoice);
+    setJournalReflectSelectedIds(new Set(s.journalReflectSelectedIds));
+    setGoalSelectedId(s.goalSelectedId);
+    if (s.draftSk) setDraftSk(s.draftSk);
+    setIntroTypingDone(true);
+    initedCreatePathsRef.current = new Set(s.initedPaths);
+    if (s.creationPath !== "pending") {
+      initedCreatePathsRef.current.add(s.creationPath);
+    }
+  }
+
+  useLayoutEffect(() => {
+    if (initialDraftSk?.trim() || seedJournalContext || seedPlanContext) {
+      setSessionHydrated(true);
+      return;
+    }
+    const parsed = parseCreateMeditationPathname(pathname);
+    const session = readCreateSession();
+    const sessionOk =
+      session != null &&
+      parsed.valid &&
+      createSessionSatisfiesRoute(
+        session,
+        parsed.path,
+        parsed.styleStep,
+        parsed.mix,
+      );
+    if (sessionOk && session) {
+      applyCreateSession(session);
+      setSessionHydrated(true);
+      return;
+    }
+    if (parsed.valid && createRouteNeedsPriorState(parsed)) {
+      const href = createMeditationPathStartHref(parsed);
+      pendingUrlSyncRef.current = href;
+      router.replace(href);
+    }
+    setSessionHydrated(true);
+    // Restore once per mount (full refresh). Client navigations keep the layout.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const drumsLockedForMelodic = isMelodicMusicKey(
+    backgroundMusic,
+    backgroundMusicKey,
+  );
+  const drumsPreviewKey = drumsLockedForMelodic ? "" : backgroundDrumsKey;
+
+  useEffect(() => {
+    if (!drumsLockedForMelodic) return;
+    previewDrumsRef.current?.pause();
+    setPlaying((p) => (p.drums ? { ...p, drums: false } : p));
+  }, [drumsLockedForMelodic]);
 
   useEffect(() => {
     if (initialChatAutofocusDoneRef.current) return;
@@ -1271,10 +1471,11 @@ export function CreateWorkspace({
       orpheusVoiceId,
       backgroundNatureKey: backgroundAudioStreamingKey(backgroundNatureKey),
       backgroundMusicKey: backgroundAudioStreamingKey(backgroundMusicKey),
-      // Stored as noise; old drafts used drums.
+      backgroundDrumsKey: backgroundAudioStreamingKey(backgroundDrumsKey),
       backgroundNoiseKey: backgroundAudioStreamingKey(backgroundNoiseKey),
       backgroundNatureGain,
       backgroundMusicGain,
+      backgroundDrumsGain,
       backgroundNoiseGain,
       mobileCreateStep,
       lastUsedScript,
@@ -1360,17 +1561,16 @@ export function CreateWorkspace({
         setBackgroundMusicKey(
           backgroundAudioStreamingKey(s.backgroundMusicKey),
         );
-        // Back-compat: if noise wasn't saved yet, reuse drums selection.
+        setBackgroundDrumsKey(
+          backgroundAudioStreamingKey(s.backgroundDrumsKey ?? ""),
+        );
         setBackgroundNoiseKey(
-          backgroundAudioStreamingKey(
-            s.backgroundNoiseKey ?? s.backgroundDrumsKey ?? "",
-          ),
+          backgroundAudioStreamingKey(s.backgroundNoiseKey ?? ""),
         );
         setBackgroundNatureGain(s.backgroundNatureGain);
         setBackgroundMusicGain(s.backgroundMusicGain);
-        setBackgroundNoiseGain(
-          s.backgroundNoiseGain ?? s.backgroundDrumsGain ?? 10,
-        );
+        setBackgroundDrumsGain(s.backgroundDrumsGain ?? 40);
+        setBackgroundNoiseGain(s.backgroundNoiseGain ?? 10);
         setMobileCreateStep(s.mobileCreateStep);
         setLastUsedScript(s.lastUsedScript);
         setMeditationTargetMinutes(parseMeditationTargetMinutes(s.meditationTargetMinutes));
@@ -1398,7 +1598,29 @@ export function CreateWorkspace({
               : 1,
         );
         setDraftSk(row.sk);
-        if (!cancelled) setDraftHydrated(true);
+        initedCreatePathsRef.current.add(path);
+        const restoredStrip =
+          s.mobileCreateStep === "audio" ? 2 : styleIntake ? 0 : 1;
+        const restoredPhase =
+          s.phase === "style" && !s.meditationStyle?.trim()
+            ? "stylePick"
+            : styleIntake
+              ? "styleQuestions"
+              : s.phase;
+        if (!cancelled) {
+          const href = createMeditationHrefWithDraft(
+            createMeditationHref({
+              path,
+              styleStep:
+                restoredPhase === "styleQuestions" ? "questions" : "type",
+              mix: restoredStrip === 2,
+            }),
+            row.sk,
+          );
+          pendingUrlSyncRef.current = href.split("?")[0] ?? href;
+          setDraftHydrated(true);
+          router.replace(href);
+        }
       } catch (e) {
         if (!cancelled) {
           setDraftLoadError(
@@ -1492,7 +1714,7 @@ export function CreateWorkspace({
     return () => ro.disconnect();
   }, [workspaceSectionStep]);
 
-  /** Chooser cards + chat header select stay aligned with the active path. */
+  /** Chooser cards stay aligned with the active path. */
   useEffect(() => {
     if (creationPath === "pending") return;
     if (creationPath === "style") setPendingModeChoice("style");
@@ -1500,23 +1722,6 @@ export function CreateWorkspace({
     else if (creationPath === "journalReflect") setPendingModeChoice("journalReflect");
     else if (creationPath === "goal") setPendingModeChoice("goal");
   }, [creationPath]);
-
-  useEffect(() => {
-    if (!workspaceModeMenuOpen) return;
-    function onPointerDown(e: PointerEvent) {
-      const el = workspaceModeMenuRef.current;
-      if (el && !el.contains(e.target as Node)) setWorkspaceModeMenuOpen(false);
-    }
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setWorkspaceModeMenuOpen(false);
-    }
-    document.addEventListener("pointerdown", onPointerDown, true);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [workspaceModeMenuOpen]);
 
   useEffect(() => {
     if (!seedJournalContext) return;
@@ -1542,7 +1747,8 @@ export function CreateWorkspace({
       rawJson = null;
     }
 
-    router.replace("/meditate/create");
+    pendingUrlSyncRef.current = createMeditationHref({ path: "freeflow" });
+    router.replace(pendingUrlSyncRef.current);
 
     const payload = parseJournalMeditationPayload(rawJson);
     if (!payload?.segments.length) {
@@ -1569,6 +1775,7 @@ export function CreateWorkspace({
     ];
 
     setCreationPath("freeflow");
+    initedCreatePathsRef.current.add("freeflow");
     setJournalMode(true);
     setIntroTypingDone(true);
     setPhase("claude");
@@ -1586,31 +1793,12 @@ export function CreateWorkspace({
 
     void (async () => {
       try {
-        let acc = "";
-        let assistantBubbleStarted = false;
-        const text = await streamMedimadeChat(
+        const text = await streamCoachChat(
           {
             meditationStyle: styleHint,
             messages: history,
             journalMode: true,
             meditationTargetMinutes,
-          },
-          (d) => {
-            acc += d;
-            if (!assistantBubbleStarted) {
-              assistantBubbleStarted = true;
-              setMessages((m) => [...m, { role: "assistant", text: acc }]);
-              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-            } else {
-              setMessages((m) => {
-                const next = [...m];
-                const last = next[next.length - 1];
-                if (last?.role !== "assistant") return m;
-                next[next.length - 1] = { role: "assistant", text: acc };
-                return next;
-              });
-              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-            }
           },
         );
         setClaudeThread([...history, { role: "assistant", content: text }]);
@@ -1651,7 +1839,8 @@ export function CreateWorkspace({
     }
 
     const handoff = readPlanCreateHandoff();
-    router.replace("/meditate/create");
+    pendingUrlSyncRef.current = createMeditationHref({ path: "freeflow" });
+    router.replace(pendingUrlSyncRef.current);
 
     const vision = handoff?.visionText?.trim() ?? "";
     if (!handoff || !vision) {
@@ -1667,6 +1856,7 @@ export function CreateWorkspace({
     ];
 
     setCreationPath("freeflow");
+    initedCreatePathsRef.current.add("freeflow");
     setJournalMode(true);
     setIntroTypingDone(true);
     setPhase("claude");
@@ -1684,31 +1874,12 @@ export function CreateWorkspace({
 
     void (async () => {
       try {
-        let acc = "";
-        let assistantBubbleStarted = false;
-        const text = await streamMedimadeChat(
+        const text = await streamCoachChat(
           {
             meditationStyle: styleHint,
             messages: history,
             journalMode: true,
             meditationTargetMinutes,
-          },
-          (d) => {
-            acc += d;
-            if (!assistantBubbleStarted) {
-              assistantBubbleStarted = true;
-              setMessages((m) => [...m, { role: "assistant", text: acc }]);
-              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-            } else {
-              setMessages((m) => {
-                const next = [...m];
-                const last = next[next.length - 1];
-                if (last?.role !== "assistant") return m;
-                next[next.length - 1] = { role: "assistant", text: acc };
-                return next;
-              });
-              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-            }
           },
         );
         setClaudeThread([...history, { role: "assistant", content: text }]);
@@ -1746,6 +1917,15 @@ export function CreateWorkspace({
         // Keep existing fallback constants if the endpoint isn't reachable.
       });
   }, []);
+
+  useEffect(() => {
+    if (fishSpeakers.length === 0) return;
+    setSpeakerModelId((current) => {
+      if (current && fishSpeakers.some((s) => s.modelId === current)) return current;
+      const emily = fishSpeakers.find((s) => s.name.toLowerCase() === "emily");
+      return emily?.modelId ?? fishSpeakers[0].modelId;
+    });
+  }, [fishSpeakers, speakerModelId]);
 
   useEffect(() => {
     void listOrpheusSpeakers()
@@ -1837,7 +2017,7 @@ export function CreateWorkspace({
     // After we scroll, we know we're at the bottom again.
     const el = chatScrollRef.current;
     if (el) isAtBottomRef.current = true;
-  }, [messages.length]);
+  }, [messages.length, chatLoading]);
 
   function pickStyle(label: string) {
     const trimmed = label.trim();
@@ -1849,35 +2029,15 @@ export function CreateWorkspace({
 
     const style = trimmed;
     const history: MedimadeChatTurn[] = [{ role: "user", content: trimmed }];
-    let acc = "";
-    let assistantBubbleStarted = false;
-
     setClaudeThread(history);
     setChatLoading(true);
 
-    void streamMedimadeChat(
+    void streamCoachChat(
       {
         meditationStyle: style,
         messages: history,
         journalMode: journalMode === true,
         meditationTargetMinutes,
-      },
-      (d) => {
-        acc += d;
-        if (!assistantBubbleStarted) {
-          assistantBubbleStarted = true;
-          setMessages((m) => [...m, { role: "assistant", text: acc }]);
-          maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-        } else {
-          setMessages((m) => {
-            const next = [...m];
-            const last = next[next.length - 1];
-            if (last?.role !== "assistant") return m;
-            next[next.length - 1] = { role: "assistant", text: acc };
-            return next;
-          });
-          maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-        }
       },
     )
       .then((text) => {
@@ -1897,6 +2057,161 @@ export function CreateWorkspace({
       .finally(() => {
         setChatLoading(false);
       });
+  }
+
+  function abortCoachLetterStream() {
+    if (coachTypeTimerRef.current !== null) {
+      window.clearInterval(coachTypeTimerRef.current);
+      coachTypeTimerRef.current = null;
+    }
+    coachTypeTargetRef.current = "";
+    coachTypeRevealRef.current = 0;
+    coachTypePauseTicksRef.current = 0;
+    coachTypeNetworkDoneRef.current = true;
+    coachTypeOwnsMessageRef.current = false;
+    const done = coachTypeCaughtUpRef.current;
+    coachTypeCaughtUpRef.current = null;
+    done?.();
+  }
+
+  function applyCoachRevealedText(displayed: string) {
+    const parsed = parseCoachDisplayText(displayed);
+    if (parsed.ready) setCoachAudioReady(true);
+    if (!parsed.text && !coachTypeOwnsMessageRef.current) return;
+    setMessages((m) => {
+      const pinCta = parsed.ready && !m.some((msg) => msg.audioReadyCta);
+      if (!coachTypeOwnsMessageRef.current) {
+        coachTypeOwnsMessageRef.current = true;
+        return [
+          ...m,
+          {
+            role: "assistant",
+            text: parsed.text,
+            variant: "chat",
+            ...(pinCta ? { audioReadyCta: true } : {}),
+          },
+        ];
+      }
+      const next = [...m];
+      for (let i = next.length - 1; i >= 0; i -= 1) {
+        const msg = next[i];
+        if (msg.kind === "divider" || msg.muted) continue;
+        if (msg.role === "assistant" && msg.variant !== "script") {
+          const updated: ChatMessage = {
+            ...msg,
+            text: parsed.text,
+            ...(pinCta ? { audioReadyCta: true } : {}),
+          };
+          if (
+            updated.text === msg.text &&
+            Boolean(updated.audioReadyCta) === Boolean(msg.audioReadyCta)
+          ) {
+            return m;
+          }
+          next[i] = updated;
+          return next;
+        }
+        break;
+      }
+      return [
+        ...m,
+        {
+          role: "assistant",
+          text: parsed.text,
+          variant: "chat",
+          ...(pinCta ? { audioReadyCta: true } : {}),
+        },
+      ];
+    });
+    maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
+  }
+
+  function beginCoachLetterStream() {
+    abortCoachLetterStream();
+    coachTypeTargetRef.current = "";
+    coachTypeRevealRef.current = 0;
+    coachTypePauseTicksRef.current = 0;
+    coachTypeNetworkDoneRef.current = false;
+    coachTypeOwnsMessageRef.current = false;
+    const tickMs = 14;
+    coachTypeTimerRef.current = window.setInterval(() => {
+      if (coachTypePauseTicksRef.current > 0) {
+        coachTypePauseTicksRef.current -= 1;
+        return;
+      }
+      const target = coachTypeTargetRef.current;
+      let i = coachTypeRevealRef.current;
+      if (i >= target.length) {
+        if (coachTypeNetworkDoneRef.current) {
+          if (coachTypeTimerRef.current !== null) {
+            window.clearInterval(coachTypeTimerRef.current);
+            coachTypeTimerRef.current = null;
+          }
+          const done = coachTypeCaughtUpRef.current;
+          coachTypeCaughtUpRef.current = null;
+          done?.();
+        }
+        return;
+      }
+      if (target[i] === "[" && target[i + 1] === "[") {
+        const close = target.indexOf("]]", i + 2);
+        if (close === -1) {
+          if (coachTypeNetworkDoneRef.current) {
+            coachTypeRevealRef.current = target.length;
+            applyCoachRevealedText(target);
+          }
+          return;
+        }
+        coachTypeRevealRef.current = close + 2;
+        applyCoachRevealedText(target.slice(0, close + 2));
+        return;
+      }
+      i += 1;
+      if (target[i - 1] === "\n" && target[i] === "\n") {
+        i += 1;
+        coachTypePauseTicksRef.current = 18;
+      }
+      coachTypeRevealRef.current = i;
+      applyCoachRevealedText(target.slice(0, i));
+    }, tickMs);
+  }
+
+  function onCoachStreamDelta(d: string) {
+    coachTypeTargetRef.current += d;
+  }
+
+  function endCoachLetterStream(): Promise<void> {
+    coachTypeNetworkDoneRef.current = true;
+    if (
+      coachTypeTimerRef.current === null ||
+      coachTypeRevealRef.current >= coachTypeTargetRef.current.length
+    ) {
+      if (coachTypeTimerRef.current !== null) {
+        window.clearInterval(coachTypeTimerRef.current);
+        coachTypeTimerRef.current = null;
+      }
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      coachTypeCaughtUpRef.current = resolve;
+    });
+  }
+
+  async function streamCoachChat(
+    params: Parameters<typeof streamMedimadeChat>[0],
+  ): Promise<string> {
+    beginCoachLetterStream();
+    try {
+      const text = await streamMedimadeChat(params, onCoachStreamDelta);
+      await endCoachLetterStream();
+      const parsed = parseCoachDisplayText(text);
+      if (parsed.ready) setCoachAudioReady(true);
+      // Keep [[READY]] in the Claude thread so later turns stay in post-ready mode.
+      return text;
+    } catch (e) {
+      abortCoachLetterStream();
+      throw e;
+    }
   }
 
   function clearIntroTyping() {
@@ -1993,6 +2308,8 @@ export function CreateWorkspace({
 
   function resetChatKeepMode() {
     // Keep creation path / journal mode as-is; reset chat and retrigger the intro typing animation.
+    abortCoachLetterStream();
+    setCoachAudioReady(false);
     setChatLoading(false);
     setClaudeThread([]);
     setMeditationStyle(null);
@@ -2030,6 +2347,9 @@ export function CreateWorkspace({
   }
 
   function beginStylePath() {
+    initedCreatePathsRef.current.add("style");
+    abortCoachLetterStream();
+    setCoachAudioReady(false);
     setCreationPath("style");
     setJournalMode(false);
     setPhase("stylePick");
@@ -2066,6 +2386,7 @@ export function CreateWorkspace({
     setScriptLoading(false);
     setIntroTypingDone(true);
     setPhase("styleQuestions");
+    pushCreate({ path: "style", styleStep: "questions" });
   }
 
   function confirmStyleQuestions() {
@@ -2083,9 +2404,12 @@ export function CreateWorkspace({
     setClaudeThread(built.claudeThread);
     setMobileCreateStep("audio");
     setCreateStripStep(2);
+    pushCreate({ path: "style", styleStep: "questions", mix: true });
   }
 
   function beginFreeFlowPath() {
+    initedCreatePathsRef.current.add("freeflow");
+    setCoachAudioReady(false);
     setCreationPath("freeflow");
     setJournalMode(true);
     setPhase("feeling");
@@ -2108,6 +2432,8 @@ export function CreateWorkspace({
       next.add(recent[i].id);
     }
     setJournalReflectSelectedIds(next);
+    initedCreatePathsRef.current.add("journalReflect");
+    setCoachAudioReady(false);
     setCreationPath("journalReflect");
     setJournalMode(true);
     setPhase("journalPick");
@@ -2125,6 +2451,8 @@ export function CreateWorkspace({
   }
 
   function beginGoalPath() {
+    initedCreatePathsRef.current.add("goal");
+    setCoachAudioReady(false);
     setCreationPath("goal");
     setJournalMode(true);
     setGoalSelectedId(null);
@@ -2146,6 +2474,7 @@ export function CreateWorkspace({
     const seed = pickDevRandomScriptSeed();
     devRandomTranscriptRef.current = seed.transcript;
     setDevSkipToAudio(true);
+    initedCreatePathsRef.current.add("style");
     setCreationPath("style");
     setJournalMode(false);
     setPhase("claude");
@@ -2163,6 +2492,7 @@ export function CreateWorkspace({
     setCreateStripStep(2);
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
+    pushCreate({ path: "style", mix: true });
   }
 
   async function confirmGoalSelection() {
@@ -2206,29 +2536,10 @@ export function CreateWorkspace({
     setChatLoading(true);
 
     try {
-      let acc = "";
-      let assistantBubbleStarted = false;
-      const text = await streamMedimadeChat(
+      const text = await streamCoachChat(
         {
           meditationStyle: styleHint,
           messages: history,
-        },
-        (d) => {
-          acc += d;
-          if (!assistantBubbleStarted) {
-            assistantBubbleStarted = true;
-            setMessages((m) => [...m, { role: "assistant", text: acc }]);
-            maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-          } else {
-            setMessages((m) => {
-              const next = [...m];
-              const last = next[next.length - 1];
-              if (last?.role !== "assistant") return m;
-              next[next.length - 1] = { role: "assistant", text: acc };
-              return next;
-            });
-            maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-          }
         },
       );
       setClaudeThread([...history, { role: "assistant", content: text }]);
@@ -2287,31 +2598,12 @@ export function CreateWorkspace({
     setChatLoading(true);
 
     try {
-      let acc = "";
-      let assistantBubbleStarted = false;
-      const text = await streamMedimadeChat(
+      const text = await streamCoachChat(
         {
           meditationStyle: styleHint,
           messages: history,
           journalMode: true,
           meditationTargetMinutes,
-        },
-        (d) => {
-          acc += d;
-          if (!assistantBubbleStarted) {
-            assistantBubbleStarted = true;
-            setMessages((m) => [...m, { role: "assistant", text: acc }]);
-            maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-          } else {
-            setMessages((m) => {
-              const next = [...m];
-              const last = next[next.length - 1];
-              if (last?.role !== "assistant") return m;
-              next[next.length - 1] = { role: "assistant", text: acc };
-              return next;
-            });
-            maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-          }
         },
       );
       setClaudeThread([...history, { role: "assistant", content: text }]);
@@ -2348,31 +2640,189 @@ export function CreateWorkspace({
     setDevSkipToAudio(false);
     devRandomTranscriptRef.current = null;
     initialChatAutofocusDoneRef.current = false;
+    pushCreate({ path: "pending" });
   }
 
-  function applyWorkspaceModeChange(
-    v: "style" | "freeflow" | "journalReflect" | "goal",
-  ) {
-    if (v === "journalReflect" && (!journalPickerListReady || !hasReflectableJournal))
-      return;
-    if (v === "goal" && (!planGoalsReady || !hasPlanGoals)) return;
-    const currentMode: null | "style" | "freeflow" | "journalReflect" | "goal" =
-      creationPath === "style"
-        ? "style"
-        : creationPath === "freeflow"
-          ? "freeflow"
-          : creationPath === "journalReflect"
-            ? "journalReflect"
-            : creationPath === "goal"
-              ? "goal"
-            : null;
-    if (v === currentMode) return;
-    setPendingModeChoice(v);
-    if (v === "style") beginStylePath();
-    else if (v === "freeflow") beginFreeFlowPath();
-    else if (v === "journalReflect") beginJournalReflectPath();
-    else beginGoalPath();
+  function goToAudioSettings() {
+    if (!coachAudioReady) return;
+    setMobileCreateStep("audio");
+    setCreateStripStep(2);
+    pushCreate({
+      path: creationPath === "pending" ? "freeflow" : creationPath,
+      styleStep:
+        creationPath === "style" && phase === "styleQuestions"
+          ? "questions"
+          : "type",
+      mix: true,
+    });
   }
+
+  useEffect(() => {
+    if (!sessionHydrated) return;
+    if (initialDraftSk?.trim() && !draftHydrated) return;
+    if (seedJournalContext || seedPlanContext) {
+      const parsedHandoff = parseCreateMeditationPathname(pathname);
+      if (parsedHandoff.path === "pending") return;
+    }
+    if (pendingUrlSyncRef.current && pathname !== pendingUrlSyncRef.current) {
+      return;
+    }
+    pendingUrlSyncRef.current = null;
+    const parsed = parseCreateMeditationPathname(pathname);
+    if (!parsed.valid) {
+      router.replace(CREATE_MEDITATE_ROOT);
+      return;
+    }
+    if (parsed.path === "pending") {
+      setCreationPath("pending");
+      setCreateStripStep(0);
+      setMobileCreateStep("chat");
+      return;
+    }
+    if (parsed.path === "style") {
+      if (!initedCreatePathsRef.current.has("style")) beginStylePath();
+      else setCreationPath("style");
+      setJournalMode(false);
+      if (parsed.mix) {
+        setCreateStripStep(2);
+        setMobileCreateStep("audio");
+      } else {
+        setCreateStripStep(0);
+        setMobileCreateStep("chat");
+        setPhase(
+          parsed.styleStep === "questions" ? "styleQuestions" : "stylePick",
+        );
+      }
+      return;
+    }
+    if (parsed.path === "freeflow") {
+      if (!initedCreatePathsRef.current.has("freeflow")) beginFreeFlowPath();
+      else {
+        setCreationPath("freeflow");
+        setJournalMode(true);
+      }
+      if (parsed.mix) {
+        setCreateStripStep(2);
+        setMobileCreateStep("audio");
+      } else {
+        setCreateStripStep(1);
+        setMobileCreateStep("chat");
+      }
+      return;
+    }
+    if (parsed.path === "journalReflect") {
+      if (!initedCreatePathsRef.current.has("journalReflect")) {
+        beginJournalReflectPath();
+      } else {
+        setCreationPath("journalReflect");
+        setJournalMode(true);
+      }
+      if (parsed.mix) {
+        setCreateStripStep(2);
+        setMobileCreateStep("audio");
+      } else {
+        setCreateStripStep(1);
+        setMobileCreateStep("chat");
+      }
+      return;
+    }
+    if (parsed.path === "goal") {
+      if (!initedCreatePathsRef.current.has("goal")) beginGoalPath();
+      else {
+        setCreationPath("goal");
+        setJournalMode(true);
+      }
+      if (parsed.mix) {
+        setCreateStripStep(2);
+        setMobileCreateStep("audio");
+      } else {
+        setCreateStripStep(1);
+        setMobileCreateStep("chat");
+      }
+    }
+  }, [pathname, draftHydrated, sessionHydrated, initialDraftSk, router, seedJournalContext, seedPlanContext]);
+
+  useEffect(() => {
+    if (!sessionHydrated) return;
+    if (isRedirectingToLibraryRef.current) return;
+    if (initialDraftSk?.trim() && !draftHydrated) return;
+    const t = window.setTimeout(() => {
+      const snapshot: CreateSessionV1 = {
+        v: 1,
+        pathname,
+        creationPath,
+        initedPaths: Array.from(initedCreatePathsRef.current),
+        phase,
+        journalMode,
+        meditationStyle,
+        pendingStyleType,
+        styleQuestionAnswers,
+        styleQuestionsRevealed,
+        messages,
+        claudeThread,
+        input,
+        speakerModelId,
+        ttsProvider,
+        orpheusVoiceId,
+        speakerFxPreviewOn,
+        backgroundNatureKey,
+        backgroundMusicKey,
+        backgroundDrumsKey,
+        backgroundNoiseKey,
+        backgroundNatureGain,
+        backgroundMusicGain,
+        backgroundDrumsGain,
+        backgroundNoiseGain,
+        createStripStep,
+        mobileCreateStep,
+        lastUsedScript,
+        meditationTargetMinutes,
+        pendingModeChoice,
+        journalReflectSelectedIds: Array.from(journalReflectSelectedIds),
+        goalSelectedId,
+        draftSk,
+        coachAudioReady,
+      };
+      writeCreateSession(snapshot);
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [
+    sessionHydrated,
+    draftHydrated,
+    initialDraftSk,
+    pathname,
+    creationPath,
+    phase,
+    journalMode,
+    meditationStyle,
+    pendingStyleType,
+    styleQuestionAnswers,
+    styleQuestionsRevealed,
+    messages,
+    claudeThread,
+    input,
+    speakerModelId,
+    ttsProvider,
+    orpheusVoiceId,
+    speakerFxPreviewOn,
+    backgroundNatureKey,
+    backgroundMusicKey,
+    backgroundDrumsKey,
+    backgroundNoiseKey,
+    backgroundNatureGain,
+    backgroundMusicGain,
+    backgroundDrumsGain,
+    backgroundNoiseGain,
+    createStripStep,
+    mobileCreateStep,
+    lastUsedScript,
+    meditationTargetMinutes,
+    pendingModeChoice,
+    journalReflectSelectedIds,
+    goalSelectedId,
+    draftSk,
+    coachAudioReady,
+  ]);
 
   async function send() {
     if (phase === "journalPick" || phase === "goalPick" || phase === "styleQuestions")
@@ -2395,31 +2845,12 @@ export function CreateWorkspace({
       setInput("");
       setChatLoading(true);
       try {
-        let acc = "";
-        let assistantBubbleStarted = false;
-        const text = await streamMedimadeChat(
+        const text = await streamCoachChat(
           {
             meditationStyle: styleHint,
             messages: history,
             journalMode: true,
             meditationTargetMinutes,
-          },
-          (d) => {
-            acc += d;
-            if (!assistantBubbleStarted) {
-              assistantBubbleStarted = true;
-              setMessages((m) => [...m, { role: "assistant", text: acc }]);
-              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-            } else {
-              setMessages((m) => {
-                const next = [...m];
-                const last = next[next.length - 1];
-                if (last?.role !== "assistant") return m;
-                next[next.length - 1] = { role: "assistant", text: acc };
-                return next;
-              });
-              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-            }
           },
         );
         setClaudeThread([...history, { role: "assistant", content: text }]);
@@ -2449,31 +2880,12 @@ export function CreateWorkspace({
       setInput("");
       setChatLoading(true);
       try {
-        let acc = "";
-        let assistantBubbleStarted = false;
-        const text = await streamMedimadeChat(
+        const text = await streamCoachChat(
           {
             meditationStyle: style,
             messages: history,
             journalMode: journalMode === true,
             meditationTargetMinutes,
-          },
-          (d) => {
-            acc += d;
-            if (!assistantBubbleStarted) {
-              assistantBubbleStarted = true;
-              setMessages((m) => [...m, { role: "assistant", text: acc }]);
-              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-            } else {
-              setMessages((m) => {
-                const next = [...m];
-                const last = next[next.length - 1];
-                if (last?.role !== "assistant") return m;
-                next[next.length - 1] = { role: "assistant", text: acc };
-                return next;
-              });
-              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-            }
           },
         );
         setClaudeThread([
@@ -2513,31 +2925,12 @@ export function CreateWorkspace({
       setInput("");
       setChatLoading(true);
       try {
-        let acc = "";
-        let assistantBubbleStarted = false;
-        const text = await streamMedimadeChat(
+        const text = await streamCoachChat(
           {
             meditationStyle: style,
             messages: nextMessages,
             journalMode: journalMode === true,
             meditationTargetMinutes,
-          },
-          (d) => {
-            acc += d;
-            if (!assistantBubbleStarted) {
-              assistantBubbleStarted = true;
-              setMessages((m) => [...m, { role: "assistant", text: acc }]);
-              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-            } else {
-              setMessages((m) => {
-                const next = [...m];
-                const last = next[next.length - 1];
-                if (last?.role !== "assistant") return m;
-                next[next.length - 1] = { role: "assistant", text: acc };
-                return next;
-              });
-              maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-            }
           },
         );
         setClaudeThread([
@@ -2569,31 +2962,12 @@ export function CreateWorkspace({
     setInput("");
     setChatLoading(true);
     try {
-      let acc = "";
-      let assistantBubbleStarted = false;
-      const text = await streamMedimadeChat(
+      const text = await streamCoachChat(
         {
           meditationStyle: style,
           messages: history,
           journalMode: journalMode === true,
           meditationTargetMinutes,
-        },
-        (d) => {
-          acc += d;
-          if (!assistantBubbleStarted) {
-            assistantBubbleStarted = true;
-            setMessages((m) => [...m, { role: "assistant", text: acc }]);
-            maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-          } else {
-            setMessages((m) => {
-              const next = [...m];
-              const last = next[next.length - 1];
-              if (last?.role !== "assistant") return m;
-              next[next.length - 1] = { role: "assistant", text: acc };
-              return next;
-            });
-            maybeScrollChatToBottom(isAtBottomRef, messagesEndRef);
-          }
         },
       );
       setClaudeThread([
@@ -2684,6 +3058,14 @@ export function CreateWorkspace({
               backgroundMusicGain,
             }
           : {}),
+        ...(drumsPreviewKey
+          ? {
+              backgroundDrumsKey: backgroundAudioStreamingKey(
+                drumsPreviewKey,
+              ),
+              backgroundDrumsGain,
+            }
+          : {}),
         ...(backgroundNoiseKey
           ? {
               backgroundNoiseKey: backgroundAudioStreamingKey(
@@ -2752,6 +3134,7 @@ export function CreateWorkspace({
       savePendingGenerations(nextPending);
 
       isRedirectingToLibraryRef.current = true;
+      clearCreateSession();
       router.push(
         `/meditate/library?focus=${encodeURIComponent(`pending:${jobId}`)}`,
       );
@@ -2775,6 +3158,7 @@ export function CreateWorkspace({
         if (cancelled) return;
         setBackgroundNature(data.nature);
         setBackgroundMusic(data.music);
+        setBackgroundDrums(data.drums);
         setBackgroundNoise(data.noise);
         const fromApi = data.baseUrl?.trim();
         setMediaBaseUrl(fromApi || envMediaBase || null);
@@ -2782,6 +3166,7 @@ export function CreateWorkspace({
         if (cancelled) return;
         setBackgroundNature([]);
         setBackgroundMusic([]);
+        setBackgroundDrums([]);
         setBackgroundNoise([]);
         setMediaBaseUrl(envMediaBase || null);
       }
@@ -2801,9 +3186,8 @@ export function CreateWorkspace({
     ) => {
       if (!el) return;
       el.loop = true;
-      // Match backend mixing: each bed layer uses (gain/100).
-      // (See `mixSpeechWithBackgrounds` in `backend/lambdas/generate-meditation-audio.ts`.)
-      el.volume = Math.min(1, Math.max(0, gain / 100));
+      // Mixer 100% is 0.5 so speech at 1.0 stays louder.
+      el.volume = bedElementVolume(gain);
       if (base && key) {
         const next = mediaFileUrl(base, backgroundAudioStreamingKey(key));
         const prevKey = lastBgKeysRef.current[track];
@@ -2834,17 +3218,21 @@ export function CreateWorkspace({
     };
     void sync(previewNatureRef.current, backgroundNatureKey, backgroundNatureGain, "nature");
     void sync(previewMusicRef.current, backgroundMusicKey, backgroundMusicGain, "music");
+    void sync(previewDrumsRef.current, drumsPreviewKey, backgroundDrumsGain, "drums");
     void sync(previewNoiseRef.current, backgroundNoiseKey, backgroundNoiseGain, "noise");
   }, [
     mediaBaseUrl,
     backgroundNatureKey,
     backgroundMusicKey,
+    drumsPreviewKey,
     backgroundNoiseKey,
     backgroundNatureGain,
     backgroundMusicGain,
+    backgroundDrumsGain,
     backgroundNoiseGain,
     playing.nature,
     playing.music,
+    playing.drums,
     playing.noise,
   ]);
 
@@ -2856,7 +3244,7 @@ export function CreateWorkspace({
   }
 
   const anyTrackPlaying =
-    playing.speaker || playing.nature || playing.music || playing.noise;
+    playing.speaker || playing.nature || playing.music || playing.drums || playing.noise;
 
   function stopTrack(track: SoloTrack) {
     setPlayAllActive(false);
@@ -2868,6 +3256,8 @@ export function CreateWorkspace({
       previewNatureRef.current?.pause();
     } else if (track === "music") {
       previewMusicRef.current?.pause();
+    } else if (track === "drums") {
+      previewDrumsRef.current?.pause();
     } else if (track === "noise") {
       previewNoiseRef.current?.pause();
     }
@@ -2879,16 +3269,17 @@ export function CreateWorkspace({
     speakerRepeatWantedRef.current = false;
     previewNatureRef.current?.pause();
     previewMusicRef.current?.pause();
+    previewDrumsRef.current?.pause();
     previewNoiseRef.current?.pause();
     speakerSampleRef.current?.pause();
     setPlayAllActive(false);
-    setPlaying({ speaker: false, nature: false, music: false, noise: false });
+    setPlaying({ speaker: false, nature: false, music: false, drums: false, noise: false });
   }
 
   useEffect(() => {
     return () => {
       clearSpeakerGapSchedule();
-      [previewNatureRef, previewMusicRef, previewNoiseRef].forEach((r) => {
+      [previewNatureRef, previewMusicRef, previewDrumsRef, previewNoiseRef].forEach((r) => {
         const el = r.current;
         if (el) {
           el.pause();
@@ -2990,6 +3381,9 @@ export function CreateWorkspace({
     if (backgroundMusicKey && previewMusicRef.current?.src) {
       parts.push(previewMusicRef.current.play());
     }
+    if (drumsPreviewKey && previewDrumsRef.current?.src) {
+      parts.push(previewDrumsRef.current.play());
+    }
     if (backgroundNoiseKey && previewNoiseRef.current?.src) {
       parts.push(previewNoiseRef.current.play());
     }
@@ -3001,6 +3395,7 @@ export function CreateWorkspace({
       speaker: Boolean(sp?.src),
       nature: Boolean(backgroundNatureKey && previewNatureRef.current?.src),
       music: Boolean(backgroundMusicKey && previewMusicRef.current?.src),
+      drums: Boolean(drumsPreviewKey && previewDrumsRef.current?.src),
       noise: Boolean(backgroundNoiseKey && previewNoiseRef.current?.src),
     });
 
@@ -3019,6 +3414,7 @@ export function CreateWorkspace({
     }
     if (track === "nature" && !backgroundNatureKey) return;
     if (track === "music" && !backgroundMusicKey) return;
+    if (track === "drums" && (!backgroundDrumsKey || drumsLockedForMelodic)) return;
     if (track === "noise" && !backgroundNoiseKey) return;
 
     const el =
@@ -3028,7 +3424,9 @@ export function CreateWorkspace({
           ? previewNatureRef.current
           : track === "music"
             ? previewMusicRef.current
-            : previewNoiseRef.current;
+            : track === "drums"
+              ? previewDrumsRef.current
+              : previewNoiseRef.current;
 
     if (!el) return;
 
@@ -3102,56 +3500,179 @@ export function CreateWorkspace({
     styleQuestionAnswers[0].trim().length > 0 &&
     styleQuestionAnswers[1].trim().length > 0 &&
     styleQuestionAnswers[2].trim().length > 0;
-  const activeWorkspaceMode: null | "style" | "freeflow" | "journalReflect" | "goal" =
-    creationPath === "style"
-      ? "style"
-      : creationPath === "freeflow"
-        ? "freeflow"
-        : creationPath === "journalReflect"
-          ? "journalReflect"
-          : creationPath === "goal"
-            ? "goal"
-          : null;
-  const activeWorkspaceModeLabel =
-    WORKSPACE_GENERATION_MODES.find((o) => o.value === activeWorkspaceMode)
-      ?.label ?? "Mode";
+  const showChatReset =
+    !showPathChooser &&
+    !showStyleTypePick &&
+    !showStyleQuestions &&
+    workspaceSectionStep === 1;
+  const lastVisibleChat = [...messages]
+    .reverse()
+    .find((m) => !m.muted && m.kind !== "divider");
+  const lastCoachParts =
+    lastVisibleChat?.role === "assistant" && lastVisibleChat.variant !== "script"
+      ? coachChatBubbles(lastVisibleChat.text)
+      : [];
+  const awaitingCoachQuestionBubble =
+    chatLoading &&
+    lastVisibleChat?.role === "assistant" &&
+    lastVisibleChat.variant !== "script" &&
+    /\n\n/.test(lastVisibleChat.text) &&
+    lastCoachParts.length < 2;
+  const showChatTyping =
+    chatLoading &&
+    (awaitingCoachQuestionBubble ||
+      !(
+        lastVisibleChat?.role === "assistant" &&
+        lastVisibleChat.variant !== "script" &&
+        lastVisibleChat.text.trim().length > 0
+      ));
+
+  const createPageChrome: {
+    title: string;
+    blurb: string;
+    crumbs: Array<{ label: string; href?: string }>;
+  } = showPathChooser
+    ? {
+        title: "Create a meditation",
+        blurb: "Create a personalised meditation just for you.",
+        crumbs: [],
+      }
+    : showStyleTypePick
+      ? {
+          title: "What type of meditation?",
+          blurb:
+            "Choose the practice you want to build. Next you’ll answer a few short questions so it fits what you need today.",
+          crumbs: [
+            { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
+            { label: "Type" },
+          ],
+        }
+      : showStyleQuestions
+        ? {
+            title: meditationStyle?.trim() || "A few questions",
+            blurb: "These help shape the practice around what you need today.",
+            crumbs: [
+              { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
+              {
+                label: "Type",
+                href: createMeditationHref({ path: "style" }),
+              },
+              { label: meditationStyle?.trim() || "Questions" },
+            ],
+          }
+        : workspaceSectionStep === 2 && creationPath === "style"
+          ? {
+              title: "Customise how your meditation will sound",
+              blurb:
+                "Pick a voice, mix nature sounds, music, and noise, then preview the blend before you generate.",
+              crumbs: [
+                { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
+                {
+                  label: "Type",
+                  href: createMeditationHref({ path: "style" }),
+                },
+                {
+                  label: meditationStyle?.trim() || "Questions",
+                  href: createMeditationHref({
+                    path: "style",
+                    styleStep: "questions",
+                  }),
+                },
+                { label: "Audio" },
+              ],
+            }
+          : workspaceSectionStep === 2
+            ? {
+                title: "Customise how your meditation will sound",
+                blurb:
+                  "Pick a voice, mix nature sounds, music, and noise, then preview the blend before you generate.",
+                crumbs: [
+                  { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
+                  {
+                    label: creationPath === "freeflow" ? "Chat" : "Script",
+                    href: createMeditationHref({
+                      path: creationPath,
+                    }),
+                  },
+                  { label: "Audio" },
+                ],
+              }
+            : {
+                title: "Shape how your meditation script is written",
+                blurb: "Chat with the guide to shape your script.",
+                crumbs: [
+                  { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
+                  { label: creationPath === "freeflow" ? "Chat" : "Script" },
+                ],
+              };
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6">
       {/* Keep preview elements mounted on every step so src is assigned before the Audio panel. */}
       <audio ref={previewNatureRef} className="hidden" playsInline />
       <audio ref={previewMusicRef} className="hidden" playsInline />
+      <audio ref={previewDrumsRef} className="hidden" playsInline />
       <audio ref={previewNoiseRef} className="hidden" playsInline />
       <audio ref={speakerSampleRef} className="hidden" playsInline />
-      <div className="mb-6 flex shrink-0 items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <h1 className="font-display text-3xl font-medium tracking-tight">
-            Create a meditation
-          </h1>
-          {showPathChooser || showStyleTypePick || showStyleQuestions ? (
-            <p className="mt-2 text-muted">
-              Create a personalised meditation just for you.
-            </p>
-          ) : (
-            <p className="mt-2 text-muted">
-              Chat with the guide to shape your script, then pick a voice, mix
-              nature sounds, music, and noise, and preview the blend before you
-              generate your meditation audio.
-            </p>
-          )}
-        </div>
-        {showStyleQuestions && meditationStyle ? (
-          <MeditationTypeCard name={meditationStyle} />
-        ) : isLocalDevHost() && showPathChooser ? (
-          <button
-            type="button"
-            onClick={beginDevSkipToAudio}
-            className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent-soft/70"
-            aria-label="Dev: skip chat and go to audio setup with a random script on generate"
-          >
-            Skip to audio
-          </button>
-        ) : null}
+      <div className="mb-6 shrink-0">
+          {createPageChrome.crumbs.length > 0 ? (
+            <nav aria-label="Breadcrumb" className="mb-2">
+              <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
+                {createPageChrome.crumbs.map((crumb, i) => {
+                  const last = i === createPageChrome.crumbs.length - 1;
+                  return (
+                    <li key={`${crumb.label}-${i}`} className="flex min-w-0 items-center gap-1.5">
+                      {i > 0 ? (
+                        <IconChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />
+                      ) : null}
+                      {crumb.href && !last ? (
+                        <Link
+                          href={crumb.href}
+                          className="cursor-pointer font-medium text-accent underline decoration-accent/50 underline-offset-[3px] hover:decoration-accent"
+                        >
+                          {crumb.label}
+                        </Link>
+                      ) : (
+                        <span
+                          className={last ? "font-medium text-foreground" : "text-muted"}
+                          aria-current={last ? "page" : undefined}
+                        >
+                          {crumb.label}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            </nav>
+          ) : null}
+          <div className="flex items-center justify-between gap-4">
+            <h1 className="min-w-0 font-display text-3xl font-medium tracking-tight">
+              {createPageChrome.title}
+            </h1>
+            {isLocalDevHost() && showPathChooser ? (
+              <button
+                type="button"
+                onClick={beginDevSkipToAudio}
+                className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent-soft/70"
+                aria-label="Dev: skip chat and go to audio setup with a random script on generate"
+              >
+                Skip to audio
+              </button>
+            ) : showChatReset ? (
+              <button
+                type="button"
+                onClick={resetChatKeepMode}
+                disabled={chatControlsDisabled}
+                aria-label="Reset chat"
+                className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground shadow-sm transition-colors hover:border-accent/50 hover:bg-accent-soft/35 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <IconResetArrow className="h-3.5 w-3.5" />
+                Reset
+              </button>
+            ) : null}
+          </div>
+          <p className="mt-2 text-muted">{createPageChrome.blurb}</p>
       </div>
 
       {draftLoadError ? (
@@ -3163,12 +3684,13 @@ export function CreateWorkspace({
         </div>
       ) : null}
 
-      {creationPath === "pending" &&
-      initialDraftSk?.trim() &&
-      !draftHydrated &&
-      !draftLoadError ? (
+      {(!sessionHydrated && !seedFromHandoff && !initialDraftSk?.trim()) ||
+      (creationPath === "pending" &&
+        initialDraftSk?.trim() &&
+        !draftHydrated &&
+        !draftLoadError) ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-8 text-sm text-muted">
-          Loading draft…
+          {initialDraftSk?.trim() ? "Loading draft…" : "Loading…"}
         </div>
       ) : (
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -3180,7 +3702,7 @@ export function CreateWorkspace({
           </h2>
           <div
             ref={chooserCardsRef}
-            className={`grid min-h-0 flex-1 grid-cols-1 items-stretch gap-4 md:gap-6 ${
+            className={`grid grid-cols-1 items-stretch gap-4 md:gap-6 ${
               chooserLayout === "row4" ? "md:grid-cols-4" : "sm:grid-cols-2"
             }`}
           >
@@ -3212,7 +3734,7 @@ export function CreateWorkspace({
                   </span>
                 </>
               ) : (
-                <div className="flex min-h-0 flex-1 items-start gap-4">
+                <div className="flex items-start gap-4">
                   <span
                     className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
                     aria-hidden
@@ -3259,7 +3781,7 @@ export function CreateWorkspace({
                   </span>
                 </>
               ) : (
-                <div className="flex min-h-0 flex-1 items-start gap-4">
+                <div className="flex items-start gap-4">
                   <span
                     className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
                     aria-hidden
@@ -3320,7 +3842,7 @@ export function CreateWorkspace({
                   </span>
                 </>
               ) : (
-                <div className="flex min-h-0 flex-1 items-start gap-4">
+                <div className="flex items-start gap-4">
                   <span
                     className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
                     aria-hidden
@@ -3394,7 +3916,7 @@ export function CreateWorkspace({
                   </span>
                 </>
               ) : (
-                <div className="flex min-h-0 flex-1 items-start gap-4">
+                <div className="flex items-start gap-4">
                   <span
                     className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
                     aria-hidden
@@ -3427,6 +3949,7 @@ export function CreateWorkspace({
               )}
             </button>
           </div>
+          <div className="min-h-8 flex-1" aria-hidden />
           </div>
           <div className="shrink-0 border-t border-border/60 bg-background pt-4">
             <div className="flex justify-end">
@@ -3436,15 +3959,19 @@ export function CreateWorkspace({
               onClick={() => {
                 if (pendingModeChoice === "style") {
                   beginStylePath();
+                  pushCreate({ path: "style" });
                 } else if (pendingModeChoice === "freeflow") {
                   beginFreeFlowPath();
                   setCreateStripStep(1);
+                  pushCreate({ path: "freeflow" });
                 } else if (pendingModeChoice === "journalReflect") {
                   beginJournalReflectPath();
                   setCreateStripStep(1);
+                  pushCreate({ path: "journalReflect" });
                 } else if (pendingModeChoice === "goal") {
                   beginGoalPath();
                   setCreateStripStep(1);
+                  pushCreate({ path: "goal" });
                 }
               }}
               className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
@@ -3472,13 +3999,6 @@ export function CreateWorkspace({
         {showStyleTypePick ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-              <h2 className="shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
-                What type of meditation?
-              </h2>
-              <p className="shrink-0 text-sm text-muted sm:text-base">
-                Choose the practice you want to build. Next you’ll answer a few
-                short questions so it fits what you need today.
-              </p>
               <MeditationTypeCardGrid
                 selected={pendingStyleType ?? ""}
                 onSelect={setPendingStyleType}
@@ -3500,11 +4020,7 @@ export function CreateWorkspace({
                 <button
                   type="button"
                   onClick={() => {
-                    setCreationPath("pending");
-                    setPhase("style");
-                    setPendingModeChoice("style");
-                    setPendingStyleType(null);
-                    setCreateStripStep(0);
+                    pushCreate({ path: "pending" });
                   }}
                   className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
                   aria-label="Back to how you generate the script"
@@ -3585,8 +4101,7 @@ export function CreateWorkspace({
                 <button
                   type="button"
                   onClick={() => {
-                    setPhase("stylePick");
-                    setPendingStyleType(meditationStyle);
+                    pushCreate({ path: "style" });
                   }}
                   className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
                   aria-label="Back to meditation type"
@@ -3611,115 +4126,11 @@ export function CreateWorkspace({
         {workspaceSectionStep === 1 && !showStyleTypePick && !showStyleQuestions ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <h2 className="mb-2 shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:mb-3 sm:text-xl">
-          Shape how your meditation script is written
-        </h2>
-        <section className="flex w-full min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-            <h2 className="min-w-0 shrink text-base font-semibold tracking-tight">Script</h2>
-            <div className="flex shrink-0 items-center gap-2">
-              <div ref={workspaceModeMenuRef} className="relative">
-                <button
-                  type="button"
-                  id="create-workspace-mode-trigger"
-                  aria-label="How to generate your script"
-                  aria-haspopup="listbox"
-                  aria-expanded={workspaceModeMenuOpen}
-                  aria-controls="create-workspace-mode-listbox"
-                  disabled={chatControlsDisabled}
-                  onClick={() => setWorkspaceModeMenuOpen((o) => !o)}
-                  className="inline-flex h-8 max-w-[min(16rem,calc(100vw-6rem))] cursor-pointer items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1 text-left text-xs font-medium text-foreground shadow-sm transition-colors hover:border-accent/45 hover:bg-accent-soft/25 disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[18rem]"
-                >
-                  <span className="min-w-0 flex-1 truncate">
-                    {activeWorkspaceModeLabel}
-                  </span>
-                  <IconChevronDown
-                    className={`shrink-0 text-muted transition-transform ${workspaceModeMenuOpen ? "rotate-180" : ""}`}
-                  />
-                </button>
-                {workspaceModeMenuOpen ? (
-                  <div
-                    id="create-workspace-mode-listbox"
-                    role="listbox"
-                    aria-labelledby="create-workspace-mode-trigger"
-                    className="absolute right-0 top-full z-30 mt-1 w-max min-w-full max-w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-card py-1 shadow-md"
-                  >
-                    {WORKSPACE_GENERATION_MODES.map((opt) => {
-                      const selected = opt.value === activeWorkspaceMode;
-                      const journalDisabled =
-                        opt.value === "journalReflect" &&
-                        (!journalPickerListReady || !hasReflectableJournal);
-                      const goalDisabled =
-                        opt.value === "goal" && (!planGoalsReady || !hasPlanGoals);
-                      return (
-                        <button
-                          key={opt.value}
-                          type="button"
-                          role="option"
-                          aria-selected={selected}
-                          disabled={journalDisabled || goalDisabled}
-                          onClick={() => {
-                            applyWorkspaceModeChange(opt.value);
-                            setWorkspaceModeMenuOpen(false);
-                          }}
-                          className={`flex w-full cursor-pointer items-center px-3 py-2.5 text-left text-xs font-medium text-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${
-                            selected
-                              ? "bg-accent-soft/45 text-foreground"
-                              : "hover:bg-accent-soft/30"
-                          }`}
-                        >
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            <Tooltip.Provider delayDuration={250} disableHoverableContent>
-              <div className="inline-flex shrink-0 items-center gap-2">
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <button
-                      type="button"
-                      onClick={resetChatKeepMode}
-                      aria-label="Reset chat"
-                      disabled={chatControlsDisabled}
-                      className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md text-muted transition-colors hover:bg-accent-soft/35 hover:text-foreground"
-                      title="Reset chat"
-                    >
-                      <IconResetArrow />
-                    </button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Portal>
-                    <Tooltip.Content
-                      side="top"
-                      align="center"
-                      sideOffset={8}
-                      className="max-w-[12rem] rounded-lg border border-border bg-card px-2.5 py-2 text-xs text-foreground shadow-md"
-                    >
-                      Reset chat
-                      <Tooltip.Arrow className="fill-card stroke-border" />
-                    </Tooltip.Content>
-                  </Tooltip.Portal>
-                </Tooltip.Root>
-              </div>
-            </Tooltip.Provider>
-            </div>
-            {/* Preview script — hidden for now
-            <button
-              type="button"
-              onClick={() => void generateScript()}
-              disabled={scriptLoading || chatControlsDisabled}
-              className="ml-3 shrink-0 cursor-pointer rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground shadow-sm transition-colors hover:border-accent/50 hover:bg-accent-soft/35 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {scriptLoading ? "…" : "Preview script"}
-            </button>
-            */}
-          </div>
-          <div className="flex min-h-0 flex-1 flex-col p-4">
+        <section className="flex w-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden p-4">
             <div
               ref={chatScrollRef}
-              className="min-h-0 flex-1 space-y-3 overflow-y-auto"
+              className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3"
               onScroll={() => {
                 const el = chatScrollRef.current;
                 if (!el) return;
@@ -3730,7 +4141,7 @@ export function CreateWorkspace({
               }}
             >
               {/* Track whether user is already at bottom so streaming doesn't yank scroll */}
-              {messages.filter((m) => !m.muted).map((msg, i) => {
+              {messages.filter((m) => !m.muted).map((msg, i, visible) => {
                 const isScript =
                   msg.role === "assistant" && msg.variant === "script";
                 if (msg.kind === "divider") {
@@ -3743,87 +4154,110 @@ export function CreateWorkspace({
                     </div>
                   );
                 }
+                const next = visible[i + 1];
+                const groupedWithNext =
+                  !msg.audioReadyCta &&
+                  !!next &&
+                  next.kind !== "divider" &&
+                  next.role === msg.role &&
+                  (msg.role !== "assistant" ||
+                    (msg.variant === "script") === (next.variant === "script"));
                 const muted = msg.muted ? "opacity-50" : "";
-                const row =
-                  msg.role === "user"
-                    ? "flex w-full justify-end"
-                    : "flex w-full justify-start";
-                const bubbleBase = "inline-block w-fit max-w-full rounded-xl px-3 py-2";
-                const bubble =
-                  msg.role === "user"
-                    ? `${bubbleBase} bg-border/40 text-[15px] text-foreground ${muted}`
-                    : isScript
-                      ? `${bubbleBase} border border-gold/45 bg-gold/5 text-foreground shadow-sm ${muted}`
-                      : `${bubbleBase} bg-accent-soft/80 text-[15px] text-foreground ${muted}`;
-
-                // Treat *paragraph breaks* in Claude responses as separate bubbles.
-                // (Single newlines are kept so bullet lists stay in one bubble.)
+                const isUser = msg.role === "user";
+                const isLastVisible = i === visible.length - 1;
+                const moreCoachBubblesComing =
+                  chatLoading &&
+                  isLastVisible &&
+                  !isUser &&
+                  !isScript &&
+                  /\n\n/.test(msg.text) &&
+                  coachChatBubbles(msg.text).length < 2;
                 const assistantParts =
-                  msg.role === "assistant" && !isScript
-                    ? msg.text
-                        .split(/\n{2,}/g)
-                        .map((s) => s.trim())
-                        .filter(Boolean)
-                        // If a lead-in ends with ":" and the next paragraph is a bullet list,
-                        // keep them in the same bubble (even if the model inserted a blank line).
-                        .reduce<string[]>((acc, part) => {
-                          const prev = acc[acc.length - 1];
-                          const isBulletList =
-                            /^[-*•]\s+/.test(part) || /^\d+\.\s+/.test(part);
-                          if (
-                            prev &&
-                            /:\s*$/.test(prev) &&
-                            isBulletList
-                          ) {
-                            acc[acc.length - 1] = `${prev}\n${part}`;
-                            return acc;
-                          }
-                          acc.push(part);
-                          return acc;
-                        }, [])
-                    : null;
+                  !isUser && !isScript ? coachChatBubbles(msg.text) : null;
+                const parts =
+                  assistantParts && assistantParts.length > 0
+                    ? assistantParts
+                    : [msg.text];
                 return (
-                  <div key={`${msg.role}-${i}-${msg.variant ?? "u"}`} className={row}>
-                    {assistantParts ? (
-                      <div className="flex w-fit max-w-[92%] flex-col items-start gap-2">
-                        {assistantParts.map((part, pi) => (
-                          <div key={pi} className={bubble}>
-                            <ChatMarkdown
-                              text={part}
-                              className="text-[15px] leading-snug"
-                            />
+                  <div
+                    key={`${msg.role}-${i}-${msg.variant ?? "u"}`}
+                    className={`flex w-full min-w-0 flex-col ${
+                      isUser ? "items-end" : "items-start"
+                    } ${groupedWithNext ? "mb-1" : "mb-3"}`}
+                  >
+                    {parts.map((part, pi) => {
+                      const lastPart = pi === parts.length - 1;
+                      const showTail =
+                        lastPart &&
+                        !groupedWithNext &&
+                        !isScript &&
+                        !moreCoachBubblesComing;
+                      const radius = isUser
+                        ? showTail
+                          ? "rounded-[1.25rem] rounded-br-sm"
+                          : "rounded-[1.25rem]"
+                        : showTail
+                          ? "rounded-[1.25rem] rounded-bl-sm"
+                          : "rounded-[1.25rem]";
+                      const bubbleBase = `chat-bubble relative inline-block w-fit max-w-[calc(100%-16px)] px-3.5 py-2.5 ${radius}`;
+                      const bubble = isUser
+                        ? `${bubbleBase} bg-border/40 text-lg text-foreground ${
+                            showTail ? "chat-bubble-tail-right" : ""
+                          } ${muted}`
+                        : isScript
+                          ? `${bubbleBase} border border-gold/45 bg-gold/5 text-foreground ${muted}`
+                          : `${bubbleBase} bg-accent-soft/80 text-lg text-foreground ${
+                              showTail ? "chat-bubble-tail-left" : ""
+                            } ${muted}`;
+                      return (
+                        <div
+                          key={pi}
+                          className={`flex w-full min-w-0 ${
+                            isUser ? "justify-end" : "justify-start"
+                          } ${lastPart ? "" : "mb-1"}`}
+                        >
+                          <div className={bubble}>
+                            {isScript ? (
+                              <>
+                                <div className="mb-2 inline-flex items-center rounded-full border border-gold/40 bg-gold/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gold">
+                                  Meditation script · ~5 min
+                                </div>
+                                <ChatMarkdown
+                                  text={msg.text}
+                                  className="font-serif text-base leading-relaxed text-foreground/95"
+                                />
+                              </>
+                            ) : isUser &&
+                              msg.journalSegments &&
+                              msg.journalSegments.length > 0 ? (
+                              <div className="text-lg leading-snug">
+                                <p className="whitespace-pre-wrap">{msg.text}</p>
+                                <JournalHandoffEntryCards
+                                  segments={msg.journalSegments}
+                                />
+                              </div>
+                            ) : (
+                              <ChatMarkdown
+                                text={part}
+                                className="relative z-[2] text-lg leading-snug"
+                              />
+                            )}
                           </div>
-                        ))}
+                        </div>
+                      );
+                    })}
+                    {msg.audioReadyCta ? (
+                      <div className="mt-2 flex w-full justify-start">
+                        <button
+                          type="button"
+                          onClick={goToAudioSettings}
+                          className="flex cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                        >
+                          <span>Proceed to audio settings</span>
+                          <IconChevronRight className="text-accent" />
+                        </button>
                       </div>
-                    ) : (
-                      <div className={bubble}>
-                        {isScript ? (
-                          <>
-                            <div className="mb-2 inline-flex items-center rounded-full border border-gold/40 bg-gold/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gold">
-                              Meditation script · ~5 min
-                            </div>
-                            <ChatMarkdown
-                              text={msg.text}
-                              className="font-serif text-[14px] leading-relaxed text-foreground/95"
-                            />
-                          </>
-                        ) : msg.role === "user" &&
-                          msg.journalSegments &&
-                          msg.journalSegments.length > 0 ? (
-                          <div className="text-[15px] leading-snug">
-                            <p className="whitespace-pre-wrap">{msg.text}</p>
-                            <JournalHandoffEntryCards
-                              segments={msg.journalSegments}
-                            />
-                          </div>
-                        ) : (
-                          <ChatMarkdown
-                            text={msg.text}
-                            className="text-[15px] leading-snug"
-                          />
-                        )}
-                      </div>
-                    )}
+                    ) : null}
                   </div>
                 );
               })}
@@ -3981,6 +4415,7 @@ export function CreateWorkspace({
                   ) : null}
                 </div>
               ) : null}
+              {showChatTyping ? <ChatTypingIndicator /> : null}
               <div ref={messagesEndRef} />
             </div>
             {phase === "journalPick" || phase === "goalPick" ? null : (
@@ -4001,14 +4436,14 @@ export function CreateWorkspace({
                         ? "Share how you feel today…"
                         : "Reply to the guide…"
                 }
-                className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
+                className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-lg outline-none ring-accent/30 focus:ring-2"
               />
               <button
                 type="button"
                 onClick={() => void send()}
                 disabled={chatControlsDisabled || chatLoading || scriptLoading}
                 aria-label={chatLoading ? "Sending…" : "Send message"}
-                className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent text-white transition-opacity dark:text-deep disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent text-white transition-opacity dark:text-deep disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {chatLoading ? (
                   <span className="text-sm font-medium" aria-hidden>
@@ -4037,11 +4472,12 @@ export function CreateWorkspace({
             </button>
             <button
               type="button"
-              disabled={phase === "journalPick" || phase === "goalPick"}
-              onClick={() => {
-                setMobileCreateStep("audio");
-                setCreateStripStep(2);
-              }}
+              disabled={
+                !coachAudioReady ||
+                phase === "journalPick" ||
+                phase === "goalPick"
+              }
+              onClick={goToAudioSettings}
               className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
               aria-label="Next: audio and voice settings"
             >
@@ -4055,9 +4491,6 @@ export function CreateWorkspace({
         {workspaceSectionStep === 2 ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto sm:gap-3">
-          <h2 className="shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
-            Customise how your meditation will sound
-          </h2>
           <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
               <div className="min-w-0 flex-1">
@@ -4220,21 +4653,13 @@ export function CreateWorkspace({
                   <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
                     Music
                   </span>
-                  <select
-                    className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
+                  <SoundFolderSelect
+                    category="music"
+                    items={backgroundMusic}
                     value={backgroundMusicKey}
-                    onChange={(e) => {
-                      setBackgroundMusicKey(e.target.value);
-                    }}
+                    onChange={setBackgroundMusicKey}
                     disabled={soundControlsDisabled}
-                  >
-                    <option value="">None</option>
-                    {backgroundMusic.map((s) => (
-                      <option key={s.key} value={s.key}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                   <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
                     <div className="flex items-center justify-between text-xs text-muted">
                       <span>Level</span>
@@ -4274,23 +4699,15 @@ export function CreateWorkspace({
 
                 <div className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:gap-2">
                   <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
-                    Nature
+                    Ambience
                   </span>
-                  <select
-                    className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
+                  <SoundFolderSelect
+                    category="ambience"
+                    items={backgroundNature}
                     value={backgroundNatureKey}
-                    onChange={(e) => {
-                      setBackgroundNatureKey(e.target.value);
-                    }}
+                    onChange={setBackgroundNatureKey}
                     disabled={soundControlsDisabled}
-                  >
-                    <option value="">None</option>
-                    {backgroundNature.map((s) => (
-                      <option key={s.key} value={s.key}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                   <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
                     <div className="flex items-center justify-between text-xs text-muted">
                       <span>Level</span>
@@ -4299,7 +4716,7 @@ export function CreateWorkspace({
                       </span>
                     </div>
                     <input
-                      aria-label="Nature level"
+                      aria-label="Ambience level"
                       type="range"
                       min={0}
                       max={100}
@@ -4317,8 +4734,8 @@ export function CreateWorkspace({
                     disabled={soundControlsDisabled || !backgroundNatureKey}
                     aria-label={
                       playing.nature
-                        ? "Pause nature"
-                        : "Play nature"
+                        ? "Pause ambience"
+                        : "Play ambience"
                     }
                     className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -4328,26 +4745,70 @@ export function CreateWorkspace({
                   </button>
                 </div>
 
-                {/* Drums fader removed for now; replaced by Noise. */}
+                <DrumsLockedWrap
+                  locked={drumsLockedForMelodic}
+                  className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:gap-2"
+                >
+                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
+                    Drums
+                  </span>
+                  <SoundFolderSelect
+                    category="drums"
+                    items={backgroundDrums}
+                    value={backgroundDrumsKey}
+                    onChange={setBackgroundDrumsKey}
+                    disabled={soundControlsDisabled || drumsLockedForMelodic}
+                  />
+                  <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
+                    <div className="flex items-center justify-between text-xs text-muted">
+                      <span>Level</span>
+                      <span className="tabular-nums">
+                        {backgroundDrumsGain}%
+                      </span>
+                    </div>
+                    <input
+                      aria-label="Drums level"
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={backgroundDrumsGain}
+                      onChange={(e) =>
+                        setBackgroundDrumsGain(Number(e.target.value))
+                      }
+                      disabled={
+                        soundControlsDisabled ||
+                        drumsLockedForMelodic ||
+                        !backgroundDrumsKey
+                      }
+                      className="h-2 w-full accent-foreground disabled:opacity-40"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void toggleRowPreview("drums")}
+                    disabled={
+                      soundControlsDisabled ||
+                      drumsLockedForMelodic ||
+                      !backgroundDrumsKey
+                    }
+                    aria-label={playing.drums ? "Pause drums" : "Play drums"}
+                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <PreviewPlayPauseIcon playing={playing.drums} />
+                  </button>
+                </DrumsLockedWrap>
+
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
                   <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
                     Noise
                   </span>
-                  <select
-                    className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
+                  <SoundFolderSelect
+                    category="noise"
+                    items={backgroundNoise}
                     value={backgroundNoiseKey}
-                    onChange={(e) => {
-                      setBackgroundNoiseKey(e.target.value);
-                    }}
+                    onChange={setBackgroundNoiseKey}
                     disabled={soundControlsDisabled}
-                  >
-                    <option value="">None</option>
-                    {backgroundNoise.map((s) => (
-                      <option key={s.key} value={s.key}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
+                  />
                   <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
                     <div className="flex items-center justify-between text-xs text-muted">
                       <span>Level</span>
@@ -4438,13 +4899,12 @@ export function CreateWorkspace({
                   return;
                 }
                 if (creationPath === "style") {
-                  setPhase("styleQuestions");
-                  setMobileCreateStep("chat");
-                  setCreateStripStep(0);
+                  pushCreate({ path: "style", styleStep: "questions" });
                   return;
                 }
-                setMobileCreateStep("chat");
-                setCreateStripStep(1);
+                pushCreate({
+                  path: creationPath === "pending" ? "freeflow" : creationPath,
+                });
               }}
               className="flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
               aria-label={

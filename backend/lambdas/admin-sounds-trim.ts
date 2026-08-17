@@ -241,7 +241,7 @@ export async function handler(
       pk: "SOUND",
       sk: mp3Key,
       name: existing?.name ?? parsed?.name ?? mp3Key,
-      category: existing?.category ?? parsed?.category ?? "nature",
+      category: existing?.category ?? parsed?.category ?? "music",
       tags: existing?.tags ?? [],
       status: existing?.status ?? "in_use",
       enabled: soundEnabledFromStatus(existing?.status ?? "in_use"),
