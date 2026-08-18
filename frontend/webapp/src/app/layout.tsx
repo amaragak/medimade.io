@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import "./globals.css";
 import { ProfileNameGate } from "@/components/profile-name-gate";
 import { SiteHeader } from "@/components/site-header";
+import { themeRootCss } from "@/lib/theme-colors";
 // import { SiteFooter } from "@/components/site-footer";
 
 const dmSans = DM_Sans({
@@ -41,6 +42,9 @@ export default function RootLayout({
       lang="en"
       className={`${dmSans.variable} ${fraunces.variable} ${caveat.variable} h-full antialiased`}
     >
+      <head>
+        <style dangerouslySetInnerHTML={{ __html: themeRootCss }} />
+      </head>
       <body className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
         <Suspense fallback={null}>
           <ProfileNameGate />

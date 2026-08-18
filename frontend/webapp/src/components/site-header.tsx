@@ -150,7 +150,7 @@ export function SiteHeader() {
           )}
           <Link
             href="/pro"
-            className="ml-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-90 dark:text-deep"
+            className="ml-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-on-accent shadow-sm transition-opacity hover:opacity-90 dark:text-deep"
           >
             Pro
           </Link>

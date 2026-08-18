@@ -341,7 +341,7 @@ export function JournalView() {
                     {group.entries.map((e) => {
                       const isActive = e.id === activeEntryId;
                       const metaMuted = isActive
-                        ? "text-white/80 dark:text-deep/75"
+                        ? "text-on-accent/80 dark:text-deep/75"
                         : "text-muted";
                       return (
                         <li key={e.id}>
@@ -350,7 +350,7 @@ export function JournalView() {
                             onClick={() => selectEntry(e.id)}
                             className={`w-full cursor-pointer rounded-xl border px-3 py-2.5 text-left transition-colors ${
                               isActive
-                                ? "border-accent/60 bg-accent text-white shadow-sm dark:text-deep"
+                                ? "border-accent/60 bg-accent text-on-accent shadow-sm dark:text-deep"
                                 : "border-border bg-background text-foreground hover:border-accent/40"
                             }`}
                           >
@@ -360,7 +360,7 @@ export function JournalView() {
                             <span
                               className={`mt-0.5 line-clamp-2 text-xs ${
                                 isActive
-                                  ? "text-white/85 dark:text-deep/80"
+                                  ? "text-on-accent/85 dark:text-deep/80"
                                   : "text-muted"
                               }`}
                             >

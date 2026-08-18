@@ -87,7 +87,7 @@ function VerifyInner() {
       ) : null}
       {phase === "err" ? (
         <>
-          <p className="mt-4 text-sm text-red-600 dark:text-red-400">{message}</p>
+          <p className="mt-4 text-sm text-danger">{message}</p>
           <p className="mt-6 text-center text-sm">
             <Link href="/login" className="text-accent underline-offset-2 hover:underline">
               Request a new link
@@ -116,13 +116,13 @@ function VerifyInner() {
             disabled={phase === "savingName"}
           />
           {message ? (
-            <p className="text-sm text-red-600 dark:text-red-400">{message}</p>
+            <p className="text-sm text-danger">{message}</p>
           ) : null}
           <button
             type="button"
             onClick={() => void onSubmitName()}
             disabled={phase === "savingName" || !nameInput.trim()}
-            className="w-full rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40 dark:text-deep"
+            className="w-full rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40 dark:text-deep"
           >
             {phase === "savingName" ? "Saving…" : "Continue"}
           </button>

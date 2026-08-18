@@ -324,7 +324,7 @@ export function JournalRichEditor({
             </span>
           ) : null}
           {voiceError ? (
-            <span className="mt-1 block text-red-600 dark:text-red-400">
+            <span className="mt-1 block text-danger">
               {voiceError}
             </span>
           ) : null}
@@ -386,7 +386,7 @@ function ToolbarBtn({
         disabled
           ? "cursor-not-allowed opacity-50"
           : active
-            ? "cursor-pointer bg-accent text-white dark:text-deep"
+            ? "cursor-pointer bg-accent text-on-accent dark:text-deep"
             : "cursor-pointer text-muted hover:bg-accent-soft/50 hover:text-foreground"
       }`}
     >

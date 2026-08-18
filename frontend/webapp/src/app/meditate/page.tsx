@@ -55,7 +55,7 @@ export default function MeditateMarketingPage() {
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
               href="/meditate/create"
-              className="inline-flex items-center justify-center rounded-full bg-accent px-6 py-3 text-sm font-semibold text-white shadow-md transition-opacity hover:opacity-90 dark:text-deep"
+              className="inline-flex items-center justify-center rounded-full bg-accent px-6 py-3 text-sm font-semibold text-on-accent shadow-md transition-opacity hover:opacity-90 dark:text-deep"
             >
               Start creating
             </Link>
@@ -106,11 +106,7 @@ function HeroVisual() {
   return (
     <div className="relative flex min-h-[280px] items-center justify-center rounded-3xl border border-border bg-card/80 p-8 shadow-inner sm:min-h-[360px]">
       <div
-        className="absolute inset-4 rounded-2xl opacity-40"
-        style={{
-          background:
-            "radial-gradient(circle at 30% 40%, rgb(184 107 72 / 0.2), transparent 50%), radial-gradient(circle at 70% 60%, rgb(196 154 108 / 0.18), transparent 45%)",
-        }}
+        className="absolute inset-4 rounded-2xl opacity-40 hero-orb"
       />
       <div className="relative flex max-w-xs flex-col items-center text-center">
         <HeadphonesGlyph className="h-24 w-24 text-accent" />

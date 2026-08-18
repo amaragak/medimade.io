@@ -29,6 +29,8 @@ export type VoiceSpeakerRow = FishSpeaker & {
   hidden: boolean;
   sort: number;
   updatedAt: string;
+  /** How the voice sounds, for admins (and later picker copy). */
+  description: string;
 };
 
 export type PauseBandSeconds = Record<ScriptPauseBand, number>;
@@ -55,6 +57,7 @@ export function defaultVoiceSpeakers(): VoiceSpeakerRow[] {
     modelId: s.modelId,
     hidden: HIDDEN_FISH_SPEAKER_MODEL_IDS.has(s.modelId),
     sort: i,
+    description: "",
     updatedAt: now,
   }));
 }
@@ -68,6 +71,11 @@ function coercePauseSeconds(raw: unknown): PauseBandSeconds {
     if (Number.isFinite(n) && n > 0 && n <= 120) base[band] = n;
   }
   return base;
+}
+
+function coerceDescription(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  return raw.trim().slice(0, 800);
 }
 
 export async function listVoiceSpeakers(): Promise<VoiceSpeakerRow[]> {
@@ -91,6 +99,7 @@ export async function listVoiceSpeakers(): Promise<VoiceSpeakerRow[]> {
         name: typeof it.name === "string" && it.name.trim() ? it.name.trim() : it.sk,
         hidden: it.hidden === true,
         sort: typeof it.sort === "number" && Number.isFinite(it.sort) ? it.sort : 0,
+        description: coerceDescription(it.description),
         updatedAt: typeof it.updatedAt === "string" ? it.updatedAt : "",
       });
     }
@@ -126,15 +135,27 @@ export async function putVoiceSpeaker(row: {
   name: string;
   hidden?: boolean;
   sort?: number;
+  description?: string;
 }): Promise<VoiceSpeakerRow> {
   const table = requireTable();
   const modelId = row.modelId.trim();
   if (!modelId) throw new Error("modelId is required");
+  const existing = await ddb.send(
+    new GetCommand({
+      TableName: table,
+      Key: { pk: VOICE_SPEAKER_PK, sk: modelId },
+    }),
+  );
+  const prev = existing.Item;
   const next: VoiceSpeakerRow = {
     modelId,
     name: row.name.trim() || modelId,
     hidden: row.hidden === true,
     sort: typeof row.sort === "number" && Number.isFinite(row.sort) ? row.sort : 0,
+    description:
+      row.description !== undefined
+        ? coerceDescription(row.description)
+        : coerceDescription(prev?.description),
     updatedAt: new Date().toISOString(),
   };
   await ddb.send(
@@ -146,6 +167,7 @@ export async function putVoiceSpeaker(row: {
         name: next.name,
         hidden: next.hidden,
         sort: next.sort,
+        description: next.description,
         updatedAt: next.updatedAt,
       },
     }),
@@ -196,7 +218,13 @@ export async function savePauseBandSeconds(
 
 export async function listPickerFishSpeakers(): Promise<FishSpeaker[]> {
   const rows = await listVoiceSpeakers();
-  return rows.filter((s) => !s.hidden).map((s) => ({ name: s.name, modelId: s.modelId }));
+  return rows
+    .filter((s) => !s.hidden)
+    .map((s) => ({
+      name: s.name,
+      modelId: s.modelId,
+      ...(s.description ? { description: s.description } : {}),
+    }));
 }
 
 export async function resolveSpeakerName(

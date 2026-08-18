@@ -62,8 +62,8 @@ export function SoundFolderSelect({
   }, [open]);
 
   const triggerClass = compact
-    ? "w-full min-w-0 truncate rounded-lg border border-border bg-background px-2 py-1.5 text-left text-xs disabled:opacity-50"
-    : "min-w-0 flex-1 truncate rounded-xl border border-border bg-background px-3 py-2.5 text-left text-sm disabled:opacity-50";
+    ? "flex w-full min-w-0 items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-left text-sm disabled:opacity-50"
+    : "flex min-w-0 flex-1 items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2.5 text-left text-sm disabled:opacity-50";
 
   const menu = (
     <div
@@ -172,7 +172,21 @@ export function SoundFolderSelect({
         }}
         className={triggerClass}
       >
-        {label}
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <svg
+          viewBox="0 0 24 24"
+          className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.25"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
       </button>
       {open ? menu : null}
     </div>

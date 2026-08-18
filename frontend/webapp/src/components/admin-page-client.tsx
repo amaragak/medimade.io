@@ -30,7 +30,7 @@ export function AdminPageClient({ children }: { children: ReactNode }) {
               href={s.href}
               className={`rounded-full px-4 py-1.5 text-sm ${
                 active
-                  ? "bg-accent font-medium text-white dark:text-deep"
+                  ? "bg-accent font-medium text-on-accent dark:text-deep"
                   : "border border-border text-muted hover:bg-card"
               }`}
             >

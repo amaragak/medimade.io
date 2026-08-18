@@ -4,6 +4,7 @@ import {
   LIBRARY_MEDITATION_CATEGORIES,
   type LibraryMeditationCategory,
 } from "@/lib/community-library";
+import { CATEGORY_CARD_FILLS } from "@/lib/theme-colors";
 
 /** Lucide (ISC) paths, 24×24. Body scan from Tabler Icons (MIT). */
 function iconProps(className: string) {
@@ -155,23 +156,6 @@ function CommunityCategoryIcon({
       return null;
   }
 }
-
-/** Muted fills: [light bg, dark bg] — index 0 is All; types start at 1. */
-const CATEGORY_CARD_FILLS: ReadonlyArray<readonly [string, string]> = [
-  ["#e4d6c8", "#3d342e"],
-  ["#d7e0d4", "#2f382f"],
-  ["#d4dde6", "#2e3640"],
-  ["#d5e4e2", "#2d3a38"],
-  ["#eadcc4", "#3d3628"],
-  ["#e6d4d8", "#3c3034"],
-  ["#e8e0c9", "#3c382a"],
-  ["#ddd6e4", "#353040"],
-  ["#cfd8e2", "#2c3440"],
-  ["#ead3c8", "#3e302c"],
-  ["#d4e2d6", "#2e3a30"],
-  ["#dce0d0", "#34382c"],
-  ["#d8d6d2", "#383430"],
-];
 
 export function MeditationTypeCardGrid({
   selected,

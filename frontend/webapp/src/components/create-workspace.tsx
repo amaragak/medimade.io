@@ -3,10 +3,9 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import * as Switch from "@radix-ui/react-switch";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
-import { SoundFolderSelect } from "@/components/sound-folder-select";
+import { MixerChannel, MixerVoiceChannel } from "@/components/mixer-channel";
 import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
 import {
   CREATE_MEDITATE_ROOT,
@@ -53,15 +52,11 @@ import {
 import {
   DEFAULT_ORPHEUS_VOICE_ID,
   ORPHEUS_VOICES,
-  orpheusVoiceNameForId,
 } from "@/lib/orpheus-voices";
 import {
   FIXED_SPEECH_PREVIEW_SPEED,
-  speakerPreviewFxSampleKey,
   speakerPreviewLoudFxSampleKey,
   speakerPreviewLoudSampleKey,
-  orpheusSpeakerPreviewLoudFxSampleKey,
-  orpheusSpeakerPreviewLoudSampleKey,
 } from "@/lib/speaker-sample-speed";
 import {
   JOURNAL_CREATE_FIRST_MESSAGE,
@@ -89,7 +84,7 @@ import {
 } from "@/lib/plan-create-handoff";
 import { loadPlanDreamsStore, type PlanDream } from "@/lib/plan-dreams";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import { bedElementVolume } from "@/lib/bed-volume";
+import { bedElementVolume, BED_VOICE_INTRO_SECONDS } from "@/lib/bed-volume";
 
 function mediaFileUrl(base: string, key: string): string {
   const b = base.replace(/\/$/, "");
@@ -419,30 +414,6 @@ function IconPaperAirplane({ className }: { className?: string }) {
 
 type SoloTrack = "speaker" | "nature" | "music" | "drums" | "noise";
 
-function PreviewPlayPauseIcon({ playing }: { playing: boolean }) {
-  return playing ? (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="currentColor"
-      aria-hidden
-    >
-      <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
-    </svg>
-  ) : (
-    <svg
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="currentColor"
-      aria-hidden
-    >
-      <path d="M8 5v14l11-7L8 5z" />
-    </svg>
-  );
-}
-
 type JournalHandoffSegment = {
   entryId: string;
   title: string;
@@ -686,16 +657,16 @@ function StyleIntakeField({
   }, [entered, scrollOnEnter, autoFocus]);
   return (
     <div
-      className={`rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm transition-[opacity,transform] duration-500 ease-out sm:p-6 dark:border-neutral-300 dark:bg-white ${
+      className={`rounded-2xl border border-border bg-surface p-5 shadow-sm transition-[opacity,transform] duration-500 ease-out sm:p-6 dark:border-border dark:bg-surface ${
         entered ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
       }`}
     >
       <label className="block">
-        <span className="font-display text-lg font-medium tracking-tight text-neutral-900 sm:text-xl">
+        <span className="font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
           {label}
         </span>
         {optional ? (
-          <span className="mt-1 block text-xs text-neutral-500">Optional</span>
+          <span className="mt-1 block text-xs text-muted">Optional</span>
         ) : null}
         <textarea
           ref={setTextareaRef}
@@ -709,7 +680,7 @@ function StyleIntakeField({
             onAdvance();
           }}
           rows={1}
-          className="mt-4 w-full resize-y rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm leading-relaxed text-neutral-900 outline-none ring-accent/30 focus:ring-2 sm:text-base"
+          className="mt-4 w-full resize-y rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-relaxed text-foreground outline-none ring-accent/30 focus:ring-2 sm:text-base"
         />
       </label>
     </div>
@@ -1217,6 +1188,7 @@ export function CreateWorkspace({
   const previewNoiseRef = useRef<HTMLAudioElement | null>(null);
   const speakerSampleRef = useRef<HTMLAudioElement | null>(null);
   const speakerGapTimeoutRef = useRef<number | null>(null);
+  const playAllVoiceDelayRef = useRef<number | null>(null);
   const speakerRepeatWantedRef = useRef(false);
   const lastBgKeysRef = useRef<{
     nature: string;
@@ -2993,14 +2965,9 @@ export function CreateWorkspace({
     if (audioLoading) return;
     setAudioError(null);
 
-    const voiceId =
-      ttsProvider === "orpheus" ? orpheusVoiceId.trim() : speakerModelId.trim();
+    const voiceId = speakerModelId.trim();
     if (!voiceId) {
-      setAudioError(
-        ttsProvider === "orpheus"
-          ? "Choose an Orpheus voice before generating."
-          : "Choose a Fish Audio voice before generating.",
-      );
+      setAudioError("Choose a Fish Audio voice before generating.");
       return;
     }
     if (!getMedimadeApiBase()) {
@@ -3037,9 +3004,8 @@ export function CreateWorkspace({
         meditationTargetMinutes,
         transcript,
         scriptText: existingScript,
-        reference_id:
-          ttsProvider === "orpheus" ? orpheusVoiceId : speakerModelId,
-        ttsProvider,
+        reference_id: speakerModelId,
+        ttsProvider: "fish",
         speed: speechSpeed,
         voiceFxPreset: speakerFxPreviewOn ? "mixer" : null,
         ...(backgroundNatureKey
@@ -3111,12 +3077,7 @@ export function CreateWorkspace({
       }
 
       const speakerName =
-        ttsProvider === "orpheus"
-          ? (orpheusVoiceNameForId(orpheusVoiceId) ??
-            orpheusSpeakers.find((v) => v.id === orpheusVoiceId)?.name ??
-            null)
-          : (fishSpeakers.find((s) => s.modelId === speakerModelId)?.name ??
-            null);
+        fishSpeakers.find((s) => s.modelId === speakerModelId)?.name ?? null;
 
       const pending: PendingLibraryGeneration = {
         jobId,
@@ -3125,8 +3086,7 @@ export function CreateWorkspace({
         description: metaDesc,
         meditationStyle,
         speakerName,
-        speakerModelId:
-          ttsProvider === "orpheus" ? orpheusVoiceId : speakerModelId,
+        speakerModelId,
       };
       const nextPending = [pending, ...loadPendingGenerations()].filter(
         (x, idx, arr) => arr.findIndex((y) => y.jobId === x.jobId) === idx,
@@ -3237,6 +3197,10 @@ export function CreateWorkspace({
   ]);
 
   function clearSpeakerGapSchedule() {
+    if (playAllVoiceDelayRef.current !== null) {
+      clearTimeout(playAllVoiceDelayRef.current);
+      playAllVoiceDelayRef.current = null;
+    }
     if (speakerGapTimeoutRef.current !== null) {
       clearTimeout(speakerGapTimeoutRef.current);
       speakerGapTimeoutRef.current = null;
@@ -3298,16 +3262,11 @@ export function CreateWorkspace({
     const el = speakerSampleRef.current;
     if (!el) return;
 
-    const voiceId =
-      ttsProvider === "orpheus" ? orpheusVoiceId : speakerModelId;
+    const voiceId = speakerModelId;
     if (mediaBaseUrl && voiceId) {
       const key = speakerFxPreviewOn
-        ? ttsProvider === "orpheus"
-          ? orpheusSpeakerPreviewLoudFxSampleKey(voiceId, speechSpeed)
-          : speakerPreviewLoudFxSampleKey(voiceId, speechSpeed)
-        : ttsProvider === "orpheus"
-          ? orpheusSpeakerPreviewLoudSampleKey(voiceId, speechSpeed)
-          : speakerPreviewLoudSampleKey(voiceId, speechSpeed);
+        ? speakerPreviewLoudFxSampleKey(voiceId, speechSpeed)
+        : speakerPreviewLoudSampleKey(voiceId, speechSpeed);
       const next = mediaFileUrl(mediaBaseUrl, key);
       if (el.src !== next) {
         el.src = next;
@@ -3328,9 +3287,7 @@ export function CreateWorkspace({
     }
   }, [
     mediaBaseUrl,
-    ttsProvider,
     speakerModelId,
-    orpheusVoiceId,
     speechSpeed,
     speakerFxPreviewOn,
     playing.speaker,
@@ -3369,9 +3326,22 @@ export function CreateWorkspace({
 
     const parts: Promise<void>[] = [];
     const sp = speakerSampleRef.current;
+    const hasBed = Boolean(
+      (backgroundNatureKey && previewNatureRef.current?.src) ||
+        (backgroundMusicKey && previewMusicRef.current?.src) ||
+        (drumsPreviewKey && previewDrumsRef.current?.src) ||
+        (backgroundNoiseKey && previewNoiseRef.current?.src),
+    );
     if (sp?.src) {
       speakerRepeatWantedRef.current = true;
-      parts.push(sp.play());
+      if (hasBed) {
+        playAllVoiceDelayRef.current = window.setTimeout(() => {
+          playAllVoiceDelayRef.current = null;
+          void sp.play().catch(() => {});
+        }, BED_VOICE_INTRO_SECONDS * 1000);
+      } else {
+        parts.push(sp.play());
+      }
     } else {
       speakerRepeatWantedRef.current = false;
     }
@@ -3408,9 +3378,7 @@ export function CreateWorkspace({
 
   async function toggleRowPreview(track: SoloTrack) {
     if (track === "speaker") {
-      const voiceId =
-        ttsProvider === "orpheus" ? orpheusVoiceId : speakerModelId;
-      if (!mediaBaseUrl || !voiceId) return;
+      if (!mediaBaseUrl || !speakerModelId) return;
     }
     if (track === "nature" && !backgroundNatureKey) return;
     if (track === "music" && !backgroundMusicKey) return;
@@ -3431,16 +3399,10 @@ export function CreateWorkspace({
     if (!el) return;
 
     if (track === "speaker" && mediaBaseUrl) {
-      const voiceId =
-        ttsProvider === "orpheus" ? orpheusVoiceId : speakerModelId;
-      if (!voiceId) return;
+      if (!speakerModelId) return;
       const key = speakerFxPreviewOn
-        ? ttsProvider === "orpheus"
-          ? orpheusSpeakerPreviewLoudFxSampleKey(voiceId, speechSpeed)
-          : speakerPreviewLoudFxSampleKey(voiceId, speechSpeed)
-        : ttsProvider === "orpheus"
-          ? orpheusSpeakerPreviewLoudSampleKey(voiceId, speechSpeed)
-          : speakerPreviewLoudSampleKey(voiceId, speechSpeed);
+        ? speakerPreviewLoudFxSampleKey(speakerModelId, speechSpeed)
+        : speakerPreviewLoudSampleKey(speakerModelId, speechSpeed);
       const next = mediaFileUrl(mediaBaseUrl, key);
       if (el.src !== next) {
         el.src = next;
@@ -3505,6 +3467,7 @@ export function CreateWorkspace({
     !showStyleTypePick &&
     !showStyleQuestions &&
     workspaceSectionStep === 1;
+  const showAudioPlayAll = workspaceSectionStep === 2;
   const lastVisibleChat = [...messages]
     .reverse()
     .find((m) => !m.muted && m.kind !== "divider");
@@ -3669,6 +3632,20 @@ export function CreateWorkspace({
               >
                 <IconResetArrow className="h-3.5 w-3.5" />
                 Reset
+              </button>
+            ) : showAudioPlayAll ? (
+              <button
+                type="button"
+                onClick={() => void togglePlayAll()}
+                disabled={soundControlsDisabled || !mediaBaseUrl}
+                aria-label={
+                  anyTrackPlaying || playAllActive
+                    ? "Pause all previews"
+                    : "Play all selected tracks"
+                }
+                className="inline-flex shrink-0 cursor-pointer items-center rounded-full border border-border bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {anyTrackPlaying || playAllActive ? "Pause all" : "Play all"}
               </button>
             ) : null}
           </div>
@@ -3974,7 +3951,7 @@ export function CreateWorkspace({
                   pushCreate({ path: "goal" });
                 }
               }}
-              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
               aria-label={
                 pendingModeChoice === "style"
                   ? "Continue and pick a meditation type"
@@ -4022,7 +3999,7 @@ export function CreateWorkspace({
                   onClick={() => {
                     pushCreate({ path: "pending" });
                   }}
-                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                   aria-label="Back to how you generate the script"
                 >
                   <IconChevronLeft className="shrink-0 text-accent" />
@@ -4032,7 +4009,7 @@ export function CreateWorkspace({
                   type="button"
                   disabled={!pendingStyleType}
                   onClick={confirmStyleTypePick}
-                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                   aria-label="Continue to questions for this meditation type"
                 >
                   <span>Questions</span>
@@ -4103,7 +4080,7 @@ export function CreateWorkspace({
                   onClick={() => {
                     pushCreate({ path: "style" });
                   }}
-                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                   aria-label="Back to meditation type"
                 >
                   <IconChevronLeft className="shrink-0 text-accent" />
@@ -4113,7 +4090,7 @@ export function CreateWorkspace({
                   type="button"
                   disabled={!styleQuestionsReady}
                   onClick={confirmStyleQuestions}
-                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                   aria-label="Continue to audio and voice settings"
                 >
                   <span>Audio & voice</span>
@@ -4251,7 +4228,7 @@ export function CreateWorkspace({
                         <button
                           type="button"
                           onClick={goToAudioSettings}
-                          className="flex cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                          className="flex cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                         >
                           <span>Proceed to audio settings</span>
                           <IconChevronRight className="text-accent" />
@@ -4338,7 +4315,7 @@ export function CreateWorkspace({
                         chatLoading || journalReflectSelectedIds.size === 0
                       }
                       onClick={() => void confirmJournalReflectSelection()}
-                      className="cursor-pointer rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                      className="cursor-pointer rounded-full border border-border bg-surface px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:cursor-not-allowed disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                     >
                       Continue with selected
                     </button>
@@ -4406,7 +4383,7 @@ export function CreateWorkspace({
                           type="button"
                           disabled={chatLoading || !goalSelectedId}
                           onClick={() => void confirmGoalSelection()}
-                          className="cursor-pointer rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                          className="cursor-pointer rounded-full border border-border bg-surface px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:cursor-not-allowed disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                         >
                           Continue with selected
                         </button>
@@ -4443,7 +4420,7 @@ export function CreateWorkspace({
                 onClick={() => void send()}
                 disabled={chatControlsDisabled || chatLoading || scriptLoading}
                 aria-label={chatLoading ? "Sending…" : "Send message"}
-                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent text-white transition-opacity dark:text-deep disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent text-on-accent transition-opacity dark:text-deep disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {chatLoading ? (
                   <span className="text-sm font-medium" aria-hidden>
@@ -4464,7 +4441,7 @@ export function CreateWorkspace({
               type="button"
               onClick={goBackToChatStyle}
               disabled={chatControlsDisabled}
-              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
               aria-label="Back to chat style selection"
             >
               <IconChevronLeft className="shrink-0 text-accent" />
@@ -4478,7 +4455,7 @@ export function CreateWorkspace({
                 phase === "goalPick"
               }
               onClick={goToAudioSettings}
-              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:pointer-events-none disabled:opacity-40 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
               aria-label="Next: audio and voice settings"
             >
               <span>Audio & voice</span>
@@ -4492,362 +4469,103 @@ export function CreateWorkspace({
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto sm:gap-3">
           <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
-              <div className="min-w-0 flex-1">
-                <h2 className="text-base font-semibold tracking-tight">Audio</h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => void togglePlayAll()}
-                disabled={soundControlsDisabled || !mediaBaseUrl}
-                aria-label={
-                  anyTrackPlaying || playAllActive
-                    ? "Pause all previews"
-                    : "Play all selected tracks"
-                }
-                className="shrink-0 cursor-pointer rounded-lg border border-border bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {anyTrackPlaying || playAllActive
-                  ? "Pause all"
-                  : "Play all"}
-              </button>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <div className="space-y-6">
-                <div className="flex flex-col gap-3 border-b border-border pb-6">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
-                    <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
-                      Engine
-                    </span>
-                    <div className="inline-flex min-w-0 flex-1 rounded-xl border border-border bg-background p-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          stopTrack("speaker");
-                          setTtsProvider("fish");
-                        }}
-                        disabled={soundControlsDisabled}
-                        className={`min-w-0 flex-1 cursor-pointer rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                          ttsProvider === "fish"
-                            ? "bg-accent text-white dark:text-deep"
-                            : "text-foreground hover:bg-muted/40"
-                        }`}
-                      >
-                        Fish Audio
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          stopTrack("speaker");
-                          setTtsProvider("orpheus");
-                        }}
-                        disabled={soundControlsDisabled}
-                        className={`min-w-0 flex-1 cursor-pointer rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                          ttsProvider === "orpheus"
-                            ? "bg-accent text-white dark:text-deep"
-                            : "text-foreground hover:bg-muted/40"
-                        }`}
-                      >
-                        Orpheus
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
-                    <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
-                      Voice
-                    </span>
-                    {ttsProvider === "fish" ? (
-                      <select
-                        value={speakerModelId}
-                        onChange={(e) => {
-                          setSpeakerModelId(e.target.value);
-                        }}
-                        className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
-                        disabled={soundControlsDisabled}
-                      >
-                        {fishSpeakers.map((s) => (
-                          <option key={s.modelId} value={s.modelId}>
-                            {s.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <select
-                        value={orpheusVoiceId}
-                        onChange={(e) => {
-                          setOrpheusVoiceId(e.target.value);
-                        }}
-                        className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-sm"
-                        disabled={soundControlsDisabled}
-                      >
-                        {orpheusSpeakers.map((v) => (
-                          <option key={v.id} value={v.id}>
-                            {v.description ? `${v.name} — ${v.description}` : v.name}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    <div
-                      className="shrink-0 flex flex-col items-center"
-                      title={
-                        speakerFxPreviewOn
-                          ? "Preview uses mixer FX (WAV on CDN)."
-                          : "Preview uses loudness-normalized MP3 on CDN."
-                      }
-                    >
-                      <div className="relative top-[2px] mb-1 text-center text-[10px] font-semibold uppercase leading-none tracking-wide text-muted">
-                        FX
-                      </div>
-                      <Switch.Root
-                        checked={speakerFxPreviewOn}
-                        onCheckedChange={(v) =>
-                          setSpeakerFxPreviewOn(Boolean(v))
-                        }
-                        disabled={
-                          soundControlsDisabled ||
-                          !mediaBaseUrl ||
-                          (ttsProvider === "orpheus"
-                            ? !orpheusVoiceId
-                            : !speakerModelId)
-                        }
-                        aria-label={
-                          speakerFxPreviewOn
-                            ? "Turn speaker FX off"
-                            : "Turn speaker FX on"
-                        }
-                        className="relative top-[2px] h-4 w-8 cursor-pointer rounded-full border border-border bg-muted/30 align-middle transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <Switch.Thumb className="block h-3 w-3 translate-x-[2px] rounded-full bg-white shadow transition-transform will-change-transform data-[state=checked]:translate-x-[18px]" />
-                      </Switch.Root>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void toggleRowPreview("speaker")}
-                      disabled={
-                        soundControlsDisabled ||
-                        !mediaBaseUrl ||
-                        (ttsProvider === "orpheus"
-                          ? !orpheusVoiceId
-                          : !speakerModelId)
-                      }
-                      aria-label={
-                        playing.speaker
-                          ? "Pause speaker sample"
-                          : "Play speaker sample"
-                      }
-                      title={
-                        !mediaBaseUrl
-                          ? "Voice samples need your media URL."
-                          : "Play or pause this voice sample (loops with a short gap)"
-                      }
-                      className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <PreviewPlayPauseIcon playing={playing.speaker} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:gap-2">
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
-                    Music
-                  </span>
-                  <SoundFolderSelect
+            <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto p-4">
+                  <MixerVoiceChannel
+                    voices={fishSpeakers}
+                    value={speakerModelId}
+                    onChange={setSpeakerModelId}
+                    disabled={soundControlsDisabled}
+                    fxOn={speakerFxPreviewOn}
+                    onFxChange={setSpeakerFxPreviewOn}
+                    fxDisabled={
+                      soundControlsDisabled || !mediaBaseUrl || !speakerModelId
+                    }
+                    playing={playing.speaker}
+                    onTogglePreview={() => void toggleRowPreview("speaker")}
+                    playDisabled={
+                      soundControlsDisabled || !mediaBaseUrl || !speakerModelId
+                    }
+                  />
+                  <MixerChannel
+                    label="Music"
                     category="music"
                     items={backgroundMusic}
                     value={backgroundMusicKey}
                     onChange={setBackgroundMusicKey}
+                    gain={backgroundMusicGain}
+                    onGainChange={setBackgroundMusicGain}
                     disabled={soundControlsDisabled}
+                    faderDisabled={soundControlsDisabled || !backgroundMusicKey}
+                    playing={playing.music}
+                    onTogglePreview={() => void toggleRowPreview("music")}
+                    playDisabled={soundControlsDisabled || !backgroundMusicKey}
+                    playAriaLabel={playing.music ? "Pause music" : "Play music"}
                   />
-                  <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
-                    <div className="flex items-center justify-between text-xs text-muted">
-                      <span>Level</span>
-                      <span className="tabular-nums">
-                        {backgroundMusicGain}%
-                      </span>
-                    </div>
-                    <input
-                      aria-label="Music level"
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={backgroundMusicGain}
-                      onChange={(e) =>
-                        setBackgroundMusicGain(Number(e.target.value))
-                      }
-                      disabled={soundControlsDisabled || !backgroundMusicKey}
-                      className="h-2 w-full accent-foreground disabled:opacity-40"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void toggleRowPreview("music")}
-                    disabled={soundControlsDisabled || !backgroundMusicKey}
-                    aria-label={
-                      playing.music
-                        ? "Pause music"
-                        : "Play music"
-                    }
-                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <PreviewPlayPauseIcon
-                      playing={playing.music}
-                    />
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:gap-2">
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
-                    Ambience
-                  </span>
-                  <SoundFolderSelect
+                  <MixerChannel
+                    label="Ambience"
                     category="ambience"
                     items={backgroundNature}
                     value={backgroundNatureKey}
                     onChange={setBackgroundNatureKey}
+                    gain={backgroundNatureGain}
+                    onGainChange={setBackgroundNatureGain}
                     disabled={soundControlsDisabled}
-                  />
-                  <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
-                    <div className="flex items-center justify-between text-xs text-muted">
-                      <span>Level</span>
-                      <span className="tabular-nums">
-                        {backgroundNatureGain}%
-                      </span>
-                    </div>
-                    <input
-                      aria-label="Ambience level"
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={backgroundNatureGain}
-                      onChange={(e) =>
-                        setBackgroundNatureGain(Number(e.target.value))
-                      }
-                      disabled={soundControlsDisabled || !backgroundNatureKey}
-                      className="h-2 w-full accent-foreground disabled:opacity-40"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void toggleRowPreview("nature")}
-                    disabled={soundControlsDisabled || !backgroundNatureKey}
-                    aria-label={
-                      playing.nature
-                        ? "Pause ambience"
-                        : "Play ambience"
+                    faderDisabled={soundControlsDisabled || !backgroundNatureKey}
+                    playing={playing.nature}
+                    onTogglePreview={() => void toggleRowPreview("nature")}
+                    playDisabled={soundControlsDisabled || !backgroundNatureKey}
+                    playAriaLabel={
+                      playing.nature ? "Pause ambience" : "Play ambience"
                     }
-                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <PreviewPlayPauseIcon
-                      playing={playing.nature}
-                    />
-                  </button>
-                </div>
-
-                <DrumsLockedWrap
-                  locked={drumsLockedForMelodic}
-                  className="flex flex-col gap-2 border-b border-border pb-6 sm:flex-row sm:items-center sm:gap-2"
-                >
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
-                    Drums
-                  </span>
-                  <SoundFolderSelect
-                    category="drums"
-                    items={backgroundDrums}
-                    value={backgroundDrumsKey}
-                    onChange={setBackgroundDrumsKey}
-                    disabled={soundControlsDisabled || drumsLockedForMelodic}
                   />
-                  <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
-                    <div className="flex items-center justify-between text-xs text-muted">
-                      <span>Level</span>
-                      <span className="tabular-nums">
-                        {backgroundDrumsGain}%
-                      </span>
-                    </div>
-                    <input
-                      aria-label="Drums level"
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={backgroundDrumsGain}
-                      onChange={(e) =>
-                        setBackgroundDrumsGain(Number(e.target.value))
-                      }
-                      disabled={
+                  <DrumsLockedWrap
+                    locked={drumsLockedForMelodic}
+                    className="flex h-full min-w-[5.75rem] flex-1 items-stretch"
+                  >
+                    <MixerChannel
+                      label="Drums"
+                      category="drums"
+                      items={backgroundDrums}
+                      value={backgroundDrumsKey}
+                      onChange={setBackgroundDrumsKey}
+                      gain={backgroundDrumsGain}
+                      onGainChange={setBackgroundDrumsGain}
+                      disabled={soundControlsDisabled || drumsLockedForMelodic}
+                      faderDisabled={
                         soundControlsDisabled ||
                         drumsLockedForMelodic ||
                         !backgroundDrumsKey
                       }
-                      className="h-2 w-full accent-foreground disabled:opacity-40"
+                      playing={playing.drums}
+                      onTogglePreview={() => void toggleRowPreview("drums")}
+                      playDisabled={
+                        soundControlsDisabled ||
+                        drumsLockedForMelodic ||
+                        !backgroundDrumsKey
+                      }
+                      playAriaLabel={
+                        playing.drums ? "Pause drums" : "Play drums"
+                      }
                     />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void toggleRowPreview("drums")}
-                    disabled={
-                      soundControlsDisabled ||
-                      drumsLockedForMelodic ||
-                      !backgroundDrumsKey
-                    }
-                    aria-label={playing.drums ? "Pause drums" : "Play drums"}
-                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <PreviewPlayPauseIcon playing={playing.drums} />
-                  </button>
-                </DrumsLockedWrap>
-
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
-                    Noise
-                  </span>
-                  <SoundFolderSelect
+                  </DrumsLockedWrap>
+                  <MixerChannel
+                    label="Noise"
                     category="noise"
                     items={backgroundNoise}
                     value={backgroundNoiseKey}
                     onChange={setBackgroundNoiseKey}
+                    gain={backgroundNoiseGain}
+                    onGainChange={setBackgroundNoiseGain}
                     disabled={soundControlsDisabled}
+                    faderDisabled={soundControlsDisabled || !backgroundNoiseKey}
+                    playing={playing.noise}
+                    onTogglePreview={() => void toggleRowPreview("noise")}
+                    playDisabled={soundControlsDisabled || !backgroundNoiseKey}
+                    playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
                   />
-                  <div className="flex w-full flex-col gap-1 sm:w-40 sm:shrink-0">
-                    <div className="flex items-center justify-between text-xs text-muted">
-                      <span>Level</span>
-                      <span className="tabular-nums">
-                        {backgroundNoiseGain}%
-                      </span>
-                    </div>
-                    <input
-                      aria-label="Noise level"
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={backgroundNoiseGain}
-                      onChange={(e) =>
-                        setBackgroundNoiseGain(Number(e.target.value))
-                      }
-                      disabled={soundControlsDisabled || !backgroundNoiseKey}
-                      className="h-2 w-full accent-foreground disabled:opacity-40"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void toggleRowPreview("noise")}
-                    disabled={soundControlsDisabled || !backgroundNoiseKey}
-                    aria-label={
-                      playing.noise
-                        ? "Pause noise"
-                        : "Play noise"
-                    }
-                    className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <PreviewPlayPauseIcon
-                      playing={playing.noise}
-                    />
-                  </button>
-                </div>
-
-                <div className="flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:items-center sm:gap-2">
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted sm:w-[5.25rem]">
+            </div>
+            <div className="flex shrink-0 items-center gap-2 border-t border-border px-4 py-2.5">
+                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
                     Length
                   </span>
                   <select
@@ -4866,9 +4584,6 @@ export function CreateWorkspace({
                     <option value={5}>5 min</option>
                     <option value={10}>10 min</option>
                   </select>
-                </div>
-              </div>
-
             </div>
           </section>
         </div>
@@ -4883,7 +4598,7 @@ export function CreateWorkspace({
           ) : null}
           {audioError ? (
             <p
-              className="shrink-0 max-w-full break-words py-2 text-center text-sm text-red-700 dark:text-red-300 sm:text-right"
+              className="shrink-0 max-w-full break-words py-2 text-center text-sm text-danger sm:text-right"
               role="alert"
             >
               {audioError}
@@ -4906,7 +4621,7 @@ export function CreateWorkspace({
                   path: creationPath === "pending" ? "freeflow" : creationPath,
                 });
               }}
-              className="flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+              className="flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
               aria-label={
                 creationPath === "style"
                   ? "Back to questions"
@@ -4921,7 +4636,7 @@ export function CreateWorkspace({
                 type="button"
                 onClick={() => void saveCurrentDraft()}
                 disabled={draftSaving || soundControlsDisabled}
-                className="shrink-0 cursor-pointer rounded-full border border-neutral-200 bg-white px-4 py-2.5 text-sm font-medium text-neutral-900 shadow-sm transition-colors hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5 dark:border-neutral-300 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100"
+                className="shrink-0 cursor-pointer rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-medium text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
               >
                 {draftSaving ? "Saving…" : "Save draft"}
               </button>
@@ -4929,7 +4644,7 @@ export function CreateWorkspace({
                 type="button"
                 onClick={() => void generateMeditationAudioAndShow()}
                 disabled={audioLoading}
-                className={`shrink-0 cursor-pointer whitespace-nowrap rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-md transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-60 sm:px-5 ${
+                className={`shrink-0 cursor-pointer whitespace-nowrap rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-md transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-60 sm:px-5 ${
                   audioLoading ? "animate-pulse" : ""
                 }`}
               >
@@ -5002,7 +4717,7 @@ export function CreateWorkspace({
       )}
 
       {audioModalUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay/50 p-4">
           <div className="w-full max-w-md rounded-2xl border border-border bg-card p-4 shadow-xl">
             <div className="flex items-start justify-between gap-3">
               <div>

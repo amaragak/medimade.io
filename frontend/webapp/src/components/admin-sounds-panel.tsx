@@ -54,11 +54,11 @@ function importStatusLabel(status: ImportRowStatus): string {
 }
 
 function importStatusClass(status: ImportRowStatus): string {
-  if (status === "uploading") return "text-sky-700 dark:text-sky-400";
-  if (status === "preparing") return "text-amber-700 dark:text-amber-400";
-  if (status === "done") return "text-emerald-700 dark:text-emerald-400";
-  if (status === "failed") return "text-red-700 dark:text-red-400";
-  if (status === "aborted") return "text-amber-800 dark:text-amber-400";
+  if (status === "uploading") return "text-info";
+  if (status === "preparing") return "text-gold";
+  if (status === "done") return "text-success";
+  if (status === "failed") return "text-danger";
+  if (status === "aborted") return "text-gold";
   return "text-muted";
 }
 
@@ -631,14 +631,14 @@ export function AdminSoundsPanel() {
           aria-pressed={useFilter === "skip"}
           className={`rounded-2xl border p-4 text-left transition-shadow ${
             useFilter === "skip"
-              ? "border-red-400 ring-2 ring-red-400/40"
-              : "border-red-200 hover:border-red-300"
-          } bg-red-50 dark:border-red-900/60 dark:bg-red-950/30`}
+              ? "border-danger ring-2 ring-danger/40"
+              : "border-danger/40 hover:border-danger/60"
+          } bg-danger-soft dark:border-danger/40 dark:bg-danger-soft`}
         >
-          <div className="text-xs font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">
+          <div className="text-xs font-semibold uppercase tracking-wide text-danger">
             Not using
           </div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums text-red-700 dark:text-red-400">
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-danger">
             {counts.unused}
           </div>
         </button>
@@ -648,14 +648,14 @@ export function AdminSoundsPanel() {
           aria-pressed={useFilter === "pending"}
           className={`rounded-2xl border p-4 text-left transition-shadow ${
             useFilter === "pending"
-              ? "border-stone-500 ring-2 ring-stone-400/50"
-              : "border-stone-300 hover:border-stone-400"
-          } bg-stone-100 dark:border-stone-600 dark:bg-stone-800/50`}
+              ? "border-muted ring-2 ring-muted/50"
+              : "border-border hover:border-muted"
+          } bg-background dark:border-border dark:bg-background/50`}
         >
-          <div className="text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-300">
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted">
             Pending
           </div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums text-stone-700 dark:text-stone-200">
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-foreground">
             {counts.pending}
           </div>
         </button>
@@ -665,14 +665,14 @@ export function AdminSoundsPanel() {
           aria-pressed={useFilter === "in"}
           className={`rounded-2xl border p-4 text-left transition-shadow ${
             useFilter === "in"
-              ? "border-emerald-500 ring-2 ring-emerald-400/50"
-              : "border-emerald-200 hover:border-emerald-300"
-          } bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/30`}
+              ? "border-success ring-2 ring-success/50"
+              : "border-success/40 hover:border-success/70"
+          } bg-success/10 dark:border-success/40 dark:bg-success/15`}
         >
-          <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+          <div className="text-xs font-semibold uppercase tracking-wide text-success">
             Uncategorised
           </div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-success">
             {counts.inUse}
           </div>
         </button>
@@ -682,14 +682,14 @@ export function AdminSoundsPanel() {
           aria-pressed={useFilter === "categorised"}
           className={`rounded-2xl border p-4 text-left transition-shadow ${
             useFilter === "categorised"
-              ? "border-sky-500 ring-2 ring-sky-400/50"
-              : "border-sky-200 hover:border-sky-300"
-          } bg-sky-50 dark:border-sky-900/60 dark:bg-sky-950/30`}
+              ? "border-info ring-2 ring-info/50"
+              : "border-info/40 hover:border-info/70"
+          } bg-info/10 dark:border-info/40 dark:bg-info/15`}
         >
-          <div className="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-400">
+          <div className="text-xs font-semibold uppercase tracking-wide text-info">
             Categorised
           </div>
-          <div className="mt-1 text-2xl font-semibold tabular-nums text-sky-700 dark:text-sky-400">
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-info">
             {counts.categorised}
           </div>
         </button>
@@ -708,7 +708,7 @@ export function AdminSoundsPanel() {
             type="button"
             disabled={importing}
             onClick={() => fileRef.current?.click()}
-            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-60 dark:text-deep"
+            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60 dark:text-deep"
           >
             {importing ? "Uploading… keep this tab open" : "Import folder"}
           </button>
@@ -735,17 +735,17 @@ export function AdminSoundsPanel() {
           <div className="mt-4">
             <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
               <span>{importRows.length} files</span>
-              <span className="text-sky-700 dark:text-sky-400">
+              <span className="text-info">
                 {importRows.filter((r) => r.status === "uploading").length} uploading
               </span>
-              <span className="text-emerald-700 dark:text-emerald-400">
+              <span className="text-success">
                 {importRows.filter((r) => r.status === "done").length} uploaded
               </span>
               <span>{importRows.filter((r) => r.status === "skipped").length} skipped</span>
-              <span className="text-red-700 dark:text-red-400">
+              <span className="text-danger">
                 {importRows.filter((r) => r.status === "failed").length} failed
               </span>
-              <span className="text-amber-800 dark:text-amber-400">
+              <span className="text-gold">
                 {importRows.filter((r) => r.status === "aborted").length} stopped
               </span>
               <span>{importRows.filter((r) => r.status === "queued").length} queued</span>
@@ -828,7 +828,7 @@ export function AdminSoundsPanel() {
               }`}
             >
               <span
-                className={`absolute top-0.5 left-0.5 block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                className={`absolute top-0.5 left-0.5 block h-5 w-5 rounded-full bg-surface shadow transition-transform ${
                   reviewMode ? "translate-x-5" : "translate-x-0"
                 }`}
               />
@@ -906,7 +906,7 @@ export function AdminSoundsPanel() {
       ) : null}
       {editPopup ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-overlay/40 p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="edit-suggestion-title"
@@ -994,7 +994,7 @@ export function AdminSoundsPanel() {
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-accent px-3 py-2 text-sm font-medium text-white dark:text-deep"
+                className="rounded-xl bg-accent px-3 py-2 text-sm font-medium text-on-accent dark:text-deep"
               >
                 Save & categorise
               </button>
@@ -1283,18 +1283,18 @@ function SoundRow({
               const tone =
                 value === "in_use"
                   ? selected
-                    ? "bg-emerald-600 text-white dark:bg-emerald-500 dark:text-white"
-                    : "text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                    ? "bg-success text-on-accent dark:bg-success dark:text-on-accent"
+                    : "text-success hover:bg-success/10 dark:text-success dark:hover:bg-success/15"
                   : value === "categorised"
                     ? selected
-                      ? "bg-sky-600 text-white dark:bg-sky-500 dark:text-white"
-                      : "text-sky-700 hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-950/40"
+                      ? "bg-info text-on-accent dark:bg-info dark:text-on-accent"
+                      : "text-info hover:bg-info/10 dark:text-info dark:hover:bg-info/15"
                   : value === "unused"
                     ? selected
-                      ? "bg-red-600 text-white dark:bg-red-500 dark:text-white"
-                      : "text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                      ? "bg-danger text-on-accent dark:bg-danger dark:text-on-accent"
+                      : "text-danger hover:bg-danger-soft dark:text-danger dark:hover:bg-danger-soft"
                     : selected
-                      ? "bg-stone-600 text-white dark:bg-stone-400 dark:text-deep"
+                      ? "bg-muted text-on-accent dark:bg-muted dark:text-deep"
                       : "text-muted hover:bg-background";
               return (
                 <button
@@ -1322,7 +1322,7 @@ function SoundRow({
               aria-label={playing ? "Pause" : "Play from trim start"}
               disabled={!item.ready}
               onClick={togglePlay}
-              className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-accent text-white disabled:opacity-40 dark:text-deep"
+              className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-accent text-on-accent disabled:opacity-40 dark:text-deep"
             >
               {playing ? <IconPause /> : <IconPlay />}
             </button>

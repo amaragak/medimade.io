@@ -180,7 +180,7 @@ export function AdminVoicePanel() {
           type="button"
           disabled={!pauses || pauseBusy}
           onClick={() => void savePauses()}
-          className="mt-4 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-60 dark:text-deep"
+          className="mt-4 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60 dark:text-deep"
         >
           {pauseBusy ? "Saving…" : "Save pause lengths"}
         </button>
@@ -200,7 +200,7 @@ export function AdminVoicePanel() {
             type="button"
             disabled={sampleBusy || speakers.length === 0}
             onClick={() => void generateAllSamples()}
-            className="shrink-0 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-60 dark:text-deep"
+            className="shrink-0 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60 dark:text-deep"
           >
             {sampleBusy
               ? sampleProgress
@@ -226,7 +226,7 @@ export function AdminVoicePanel() {
             type="button"
             disabled={addBusy}
             onClick={() => void addSpeaker()}
-            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-60 dark:text-deep"
+            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60 dark:text-deep"
           >
             {addBusy ? "Adding…" : "Add speaker"}
           </button>
@@ -258,14 +258,16 @@ function SpeakerRow({
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [name, setName] = useState(speaker.name);
+  const [description, setDescription] = useState(speaker.description ?? "");
   const [hidden, setHidden] = useState(speaker.hidden);
   const [busy, setBusy] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
     setName(speaker.name);
+    setDescription(speaker.description ?? "");
     setHidden(speaker.hidden);
-  }, [speaker.modelId, speaker.name, speaker.hidden]);
+  }, [speaker.modelId, speaker.name, speaker.description, speaker.hidden]);
 
   useEffect(() => {
     const el = audioRef.current;
@@ -288,7 +290,13 @@ function SpeakerRow({
     onError(null);
     try {
       await patchAdminVoice({
-        speaker: { modelId: speaker.modelId, name, hidden, sort: speaker.sort },
+        speaker: {
+          modelId: speaker.modelId,
+          name,
+          hidden,
+          sort: speaker.sort,
+          description,
+        },
       });
       onChanged();
     } catch (e) {
@@ -329,6 +337,24 @@ function SpeakerRow({
             aria-label="Speaker name"
           />
           <div className="break-all font-mono text-[11px] text-muted">{speaker.modelId}</div>
+          <label className="block text-xs font-medium text-muted">
+            How this voice sounds
+            <textarea
+              className="mt-1 w-full resize-y rounded-xl border border-border bg-card px-3 py-2 text-sm font-normal text-foreground"
+              rows={2}
+              maxLength={800}
+              placeholder="Warm, unhurried, slight rasp — like a late-night radio host."
+              value={description}
+              disabled={busy !== null}
+              onChange={(e) => setDescription(e.target.value)}
+              onBlur={() => {
+                const next = description.trim();
+                const prev = (speaker.description ?? "").trim();
+                if (next !== prev) void save();
+              }}
+              aria-label="How this voice sounds"
+            />
+          </label>
           <label className="flex items-center gap-2 text-xs text-muted">
             <input
               type="checkbox"
@@ -343,6 +369,7 @@ function SpeakerRow({
                     name: name.trim() || speaker.name,
                     hidden: next,
                     sort: speaker.sort,
+                    description,
                   },
                 })
                   .then(() => onChanged())
@@ -379,7 +406,7 @@ function SpeakerRow({
             onClick={() => void remove()}
             aria-label={`Remove ${speaker.name}`}
             title="Remove"
-            className={`${ICON_BTN} border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900/60 dark:text-red-400 dark:hover:bg-red-950/30`}
+            className={`${ICON_BTN} border-danger/40 text-danger hover:bg-danger-soft dark:border-danger/40 dark:text-danger dark:hover:bg-danger-soft`}
           >
             <IconTrash />
           </button>

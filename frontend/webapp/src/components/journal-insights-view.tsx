@@ -115,7 +115,7 @@ export function JournalInsightsView() {
             type="button"
             onClick={refresh}
             disabled={!apiEnabled || !getMedimadeSessionJwt() || refreshing}
-            className="shrink-0 cursor-pointer rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:pointer-events-none disabled:opacity-40 dark:text-deep"
+            className="shrink-0 cursor-pointer rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:pointer-events-none disabled:opacity-40 dark:text-deep"
           >
             {refreshing ? "Refreshing…" : "Refresh"}
           </button>
@@ -168,7 +168,7 @@ export function JournalInsightsView() {
             </div>
           )}
           {error ? (
-            <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>
+            <p className="mt-3 text-sm text-danger">{error}</p>
           ) : null}
         </div>
       </div>

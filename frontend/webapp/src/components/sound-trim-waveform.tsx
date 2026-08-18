@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { light } from "@/lib/theme-colors";
 
 const BAR_COUNT = 900;
 const HANDLE_PX = 10;
@@ -81,10 +82,10 @@ export function SoundTrimWaveform({
     }
     ctx.clearRect(0, 0, w, h);
     const styles = getComputedStyle(canvas);
-    const accent = styles.getPropertyValue("--accent").trim() || "#b86b48";
-    const muted = styles.getPropertyValue("--muted").trim() || "#6f665e";
-    const border = styles.getPropertyValue("--border").trim() || "#ebe2d6";
-    const fg = styles.getPropertyValue("--foreground").trim() || "#2c2621";
+    const accent = styles.getPropertyValue("--accent").trim() || light.accent;
+    const muted = styles.getPropertyValue("--muted").trim() || light.muted;
+    const border = styles.getPropertyValue("--border").trim() || light.border;
+    const fg = styles.getPropertyValue("--foreground").trim() || light.foreground;
 
     ctx.fillStyle = border;
     ctx.globalAlpha = 0.35;

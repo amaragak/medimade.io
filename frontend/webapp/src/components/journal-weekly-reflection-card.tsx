@@ -117,7 +117,7 @@ export function JournalWeeklyReflectionCard() {
             type="button"
             onClick={() => void generate(Boolean(reflection))}
             disabled={!apiEnabled || generating}
-            className="cursor-pointer rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:text-deep"
+            className="cursor-pointer rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:text-deep"
           >
             {generating
               ? "Writing…"
@@ -169,7 +169,7 @@ export function JournalWeeklyReflectionCard() {
       )}
 
       {error ? (
-        <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p>
+        <p className="mt-3 text-sm text-danger">{error}</p>
       ) : null}
     </section>
   );

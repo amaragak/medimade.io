@@ -739,6 +739,7 @@ export type BackgroundAudioByCategory = {
 export type FishSpeaker = {
   name: string;
   modelId: string;
+  description?: string;
 };
 
 export type OrpheusSpeaker = {
@@ -1439,6 +1440,7 @@ export type AdminVoiceSpeaker = {
   modelId: string;
   hidden: boolean;
   sort: number;
+  description?: string;
   hasSample?: boolean;
   sampleUrl?: string | null;
 };
@@ -1474,7 +1476,13 @@ export async function listAdminVoice(): Promise<AdminVoiceState> {
 
 export async function patchAdminVoice(body: {
   pauses?: Partial<AdminPauseBands>;
-  speaker?: { name: string; modelId: string; hidden?: boolean; sort?: number };
+  speaker?: {
+    name: string;
+    modelId: string;
+    hidden?: boolean;
+    sort?: number;
+    description?: string;
+  };
 }): Promise<{ pauses?: AdminPauseBands; speaker?: AdminVoiceSpeaker }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");

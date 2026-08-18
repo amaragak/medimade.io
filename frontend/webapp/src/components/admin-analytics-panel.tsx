@@ -17,6 +17,7 @@ import {
   spokenWordBudgetForStemSeconds,
 } from "@/lib/meditation-analytics";
 import { speakerNameForModelId } from "@/lib/fish-speakers";
+import { chartSeriesColor } from "@/lib/theme-colors";
 import {
   CLAUDE_HAIKU_45_USD_PER_INPUT_TOKEN,
   CLAUDE_HAIKU_45_USD_PER_OUTPUT_TOKEN,
@@ -57,10 +58,7 @@ function median(nums: number[]): number | null {
 }
 
 function speakerColor(ref: string): string {
-  let h = 0;
-  for (let i = 0; i < ref.length; i += 1) h = (h * 31 + ref.charCodeAt(i)) >>> 0;
-  const hue = h % 360;
-  return `hsl(${hue} 55% 52%)`;
+  return chartSeriesColor(ref);
 }
 
 function buildScatterSvg(params: {
@@ -1007,7 +1005,7 @@ export function AdminAnalyticsPanel() {
               width={chartDurationVsBillable.w - chartDurationVsBillable.pad * 2}
               height={chartDurationVsBillable.h - chartDurationVsBillable.pad * 2}
               fill="transparent"
-              stroke="rgba(120,120,120,0.35)"
+              stroke="color-mix(in srgb, var(--muted) 35%, transparent)"
             />
             {chartDurationVsBillable.line ? (
               <line
@@ -1015,12 +1013,12 @@ export function AdminAnalyticsPanel() {
                 y1={chartDurationVsBillable.line.y1}
                 x2={chartDurationVsBillable.line.x2}
                 y2={chartDurationVsBillable.line.y2}
-                stroke="rgba(212,175,55,0.95)"
+                stroke="color-mix(in srgb, var(--gold) 95%, transparent)"
                 strokeWidth={2}
               />
             ) : null}
             {chartDurationVsBillable.dots.map((d, idx) => (
-              <circle key={idx} cx={d.cx} cy={d.cy} r={4.5} fill={d.fill} stroke="rgba(0,0,0,0.25)">
+              <circle key={idx} cx={d.cx} cy={d.cy} r={4.5} fill={d.fill} stroke="color-mix(in srgb, var(--overlay) 25%, transparent)">
                 <title>
                   {`${d.title}\n${d.y.toFixed(1)}s voice • ${Math.round(d.x)} bytes billable • $${fishCostUsdFromBillableBytes(d.x).toFixed(5)} Fish est.`}
                 </title>
@@ -1030,11 +1028,11 @@ export function AdminAnalyticsPanel() {
               x={chartDurationVsBillable.pad}
               y={chartDurationVsBillable.h - 8}
               fontSize={11}
-              fill="rgba(160,160,160,0.95)"
+              fill="color-mix(in srgb, var(--muted) 95%, transparent)"
             >
               Billable UTF-8 bytes (Fish input) →
             </text>
-            <text x={10} y={chartDurationVsBillable.pad - 8} fontSize={11} fill="rgba(160,160,160,0.95)">
+            <text x={10} y={chartDurationVsBillable.pad - 8} fontSize={11} fill="color-mix(in srgb, var(--muted) 95%, transparent)">
               Voice stem (s) ↑
             </text>
           </svg>
@@ -1090,7 +1088,7 @@ export function AdminAnalyticsPanel() {
               width={chartWordsVsActiveMinutes.w - chartWordsVsActiveMinutes.pad * 2}
               height={chartWordsVsActiveMinutes.h - chartWordsVsActiveMinutes.pad * 2}
               fill="transparent"
-              stroke="rgba(120,120,120,0.35)"
+              stroke="color-mix(in srgb, var(--muted) 35%, transparent)"
             />
             {chartWordsVsActiveMinutes.line ? (
               <line
@@ -1098,12 +1096,12 @@ export function AdminAnalyticsPanel() {
                 y1={chartWordsVsActiveMinutes.line.y1}
                 x2={chartWordsVsActiveMinutes.line.x2}
                 y2={chartWordsVsActiveMinutes.line.y2}
-                stroke="rgba(120,160,220,0.95)"
+                stroke="color-mix(in srgb, var(--info) 95%, transparent)"
                 strokeWidth={2}
               />
             ) : null}
             {chartWordsVsActiveMinutes.dots.map((d, idx) => (
-              <circle key={idx} cx={d.cx} cy={d.cy} r={4.5} fill={d.fill} stroke="rgba(0,0,0,0.25)">
+              <circle key={idx} cx={d.cx} cy={d.cy} r={4.5} fill={d.fill} stroke="color-mix(in srgb, var(--overlay) 25%, transparent)">
                 <title>{d.title}</title>
               </circle>
             ))}
@@ -1111,11 +1109,11 @@ export function AdminAnalyticsPanel() {
               x={chartWordsVsActiveMinutes.pad}
               y={chartWordsVsActiveMinutes.h - 8}
               fontSize={11}
-              fill="rgba(160,160,160,0.95)"
+              fill="color-mix(in srgb, var(--muted) 95%, transparent)"
             >
               Active speech minutes →
             </text>
-            <text x={10} y={chartWordsVsActiveMinutes.pad - 8} fontSize={11} fill="rgba(160,160,160,0.95)">
+            <text x={10} y={chartWordsVsActiveMinutes.pad - 8} fontSize={11} fill="color-mix(in srgb, var(--muted) 95%, transparent)">
               Spoken words ↑
             </text>
           </svg>

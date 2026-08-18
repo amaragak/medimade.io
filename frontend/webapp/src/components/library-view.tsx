@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Switch from "@radix-ui/react-switch";
 import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
 import { SoundFolderSelect } from "@/components/sound-folder-select";
@@ -31,7 +31,7 @@ import {
 } from "@/lib/meditation-analytics";
 import { communityLibraryAsItems, itemMatchesLibraryCategory } from "@/lib/community-library";
 import { CommunityCategoryGrid } from "@/components/community-category-grid";
-import { bedElementVolume } from "@/lib/bed-volume";
+import { bedElementVolume, BED_VOICE_INTRO_SECONDS } from "@/lib/bed-volume";
 
 function formatDuration(seconds: number | null): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) {
@@ -85,16 +85,65 @@ function formatWhen(iso: string | null): string {
   }
 }
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const t = hex.trim().replace(/^#/, "");
-  if (![3, 6].includes(t.length)) return null;
-  const full = t.length === 3 ? t.split("").map((c) => `${c}${c}`).join("") : t;
-  const n = Number.parseInt(full, 16);
-  if (!Number.isFinite(n)) return null;
+const MS_DAY = 86_400_000;
+
+function startOfLocalDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+function libraryListDateMarker(
+  iso: string | null,
+  now = new Date(),
+): { id: string; label: string } {
+  if (!iso) return { id: "unknown", label: "Unknown date" };
+  const dt = new Date(iso);
+  if (!Number.isFinite(dt.getTime())) return { id: "unknown", label: "Unknown date" };
+
+  const today = startOfLocalDay(now);
+  const day = startOfLocalDay(dt);
+  const daysAgo = Math.round((today - day) / MS_DAY);
+
+  if (daysAgo === 0) return { id: "today", label: "Today" };
+  if (daysAgo === 1) return { id: "yesterday", label: "Yesterday" };
+
+  const sameYear = dt.getFullYear() === now.getFullYear();
+  const sameMonth = sameYear && dt.getMonth() === now.getMonth();
+  const prevMonth =
+    now.getMonth() === 0
+      ? dt.getFullYear() === now.getFullYear() - 1 && dt.getMonth() === 11
+      : dt.getFullYear() === now.getFullYear() &&
+        dt.getMonth() === now.getMonth() - 1;
+
+  if (daysAgo >= 2 && daysAgo < 7) {
+    return {
+      id: `day-${day}`,
+      label: dt.toLocaleDateString(undefined, {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      }),
+    };
+  }
+
+  if (sameMonth) {
+    return {
+      id: `day-${day}`,
+      label: dt.toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "long",
+      }),
+    };
+  }
+
+  if (prevMonth) return { id: "last-month", label: "Last month" };
+
+  const monthKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
   return {
-    r: (n >> 16) & 255,
-    g: (n >> 8) & 255,
-    b: n & 255,
+    id: `month-${monthKey}`,
+    label: dt.toLocaleDateString(undefined, {
+      month: "long",
+      year: "numeric",
+    }),
   };
 }
 
@@ -370,11 +419,51 @@ function mixWithKey(
   return { ...mix, noiseKey: key };
 }
 
+type LocalMixOverlay = {
+  liveMix: true;
+  backgroundNatureKey: string | null;
+  backgroundMusicKey: string | null;
+  backgroundDrumsKey: string | null;
+  backgroundNoiseKey: string | null;
+  backgroundNatureGain: number;
+  backgroundMusicGain: number;
+  backgroundDrumsGain: number;
+  backgroundNoiseGain: number;
+};
+
+function localMixOverlayFromValues(mix: LibraryMixValues): LocalMixOverlay {
+  const natureKey = backgroundAudioStreamingKey(mix.natureKey.trim());
+  const musicKey = backgroundAudioStreamingKey(mix.musicKey.trim());
+  const drumsKey = backgroundAudioStreamingKey(mix.drumsKey.trim());
+  const noiseKey = backgroundAudioStreamingKey(mix.noiseKey.trim());
+  return {
+    liveMix: true,
+    backgroundNatureKey: natureKey || null,
+    backgroundMusicKey: musicKey || null,
+    backgroundDrumsKey: drumsKey || null,
+    backgroundNoiseKey: noiseKey || null,
+    backgroundNatureGain: mix.natureGain,
+    backgroundMusicGain: mix.musicGain,
+    backgroundDrumsGain: mix.drumsGain,
+    backgroundNoiseGain: mix.noiseGain,
+  };
+}
+
+function applyLocalMixOverlay(
+  list: LibraryMeditationItem[],
+  overlays: Map<string, LocalMixOverlay>,
+): LibraryMeditationItem[] {
+  if (overlays.size === 0) return list;
+  return list.map((item) => {
+    const overlay =
+      (item.sk ? overlays.get(item.sk) : undefined) ?? overlays.get(item.s3Key);
+    return overlay ? { ...item, ...overlay } : item;
+  });
+}
+
 type LibraryBedVolumeApi = {
   setBedVolume: (channel: BedVolumeChannel, gain: number) => void;
 };
-
-const MIX_VOLUME_DEBOUNCE_MS = 200;
 
 const MixVerticalFader = memo(function MixVerticalFader({
   label,
@@ -393,10 +482,11 @@ const MixVerticalFader = memo(function MixVerticalFader({
   const labelRef = useRef<HTMLSpanElement>(null);
   const gainRef = useRef(initialGain);
   const liveChangeRef = useRef(onLiveChange);
+  const commitRef = useRef(onCommit);
   const draggingRef = useRef(false);
-  const debounceTimerRef = useRef<number | null>(null);
 
   liveChangeRef.current = onLiveChange;
+  commitRef.current = onCommit;
 
   useEffect(() => {
     if (draggingRef.current) return;
@@ -406,44 +496,19 @@ const MixVerticalFader = memo(function MixVerticalFader({
     if (labelRef.current) labelRef.current.textContent = `${initialGain}%`;
   }, [initialGain]);
 
-  useEffect(() => {
-    return () => {
-      if (debounceTimerRef.current !== null) {
-        window.clearTimeout(debounceTimerRef.current);
-      }
-    };
-  }, []);
-
-  function flushLiveVolume() {
-    debounceTimerRef.current = null;
-    liveChangeRef.current(gainRef.current);
-  }
-
-  function scheduleLiveVolume() {
-    if (debounceTimerRef.current !== null) return;
-    debounceTimerRef.current = window.setTimeout(
-      flushLiveVolume,
-      MIX_VOLUME_DEBOUNCE_MS,
-    );
-  }
-
   function onInput(e: React.FormEvent<HTMLInputElement>) {
     draggingRef.current = true;
     const v = Number(e.currentTarget.value);
     if (!Number.isFinite(v)) return;
     gainRef.current = v;
     if (labelRef.current) labelRef.current.textContent = `${v}%`;
-    scheduleLiveVolume();
+    liveChangeRef.current(v);
   }
 
   function commit() {
     draggingRef.current = false;
-    if (debounceTimerRef.current !== null) {
-      window.clearTimeout(debounceTimerRef.current);
-      debounceTimerRef.current = null;
-    }
     liveChangeRef.current(gainRef.current);
-    onCommit(gainRef.current);
+    commitRef.current(gainRef.current);
   }
 
   return (
@@ -575,8 +640,8 @@ function LibraryMixEditorModal({
 
   const closeAndSave = useCallback(() => {
     const mix = mixRef.current;
-    onClose();
     void Promise.resolve(onPersist(mix)).catch(() => {});
+    onClose();
   }, [onClose, onPersist]);
 
   closeRef.current = closeAndSave;
@@ -742,7 +807,7 @@ function LibraryMixEditorModal({
         })}
       </div>
       {error ? (
-        <p className="mt-2 text-xs text-red-700 dark:text-red-300">{error}</p>
+        <p className="mt-2 text-xs text-danger">{error}</p>
       ) : null}
     </div>
   );
@@ -780,6 +845,39 @@ const PENDING_LIBRARY_GENERATIONS_LS_KEY = "mm_pending_library_generations_v1";
 
 function isPendingRow(x: LibraryRow): x is PendingLibraryMeditationItem {
   return (x as PendingLibraryMeditationItem).kind === "pending";
+}
+
+function librarySearchTokens(q: string): string[] {
+  return q
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter(Boolean);
+}
+
+function libraryRowSearchHaystack(m: LibraryRow): string {
+  if (isPendingRow(m)) {
+    return [m.title, m.description, m.meditationStyle]
+      .filter((x): x is string => Boolean(x && x.trim()))
+      .join(" ")
+      .toLowerCase();
+  }
+  return [
+    m.title,
+    m.description,
+    m.meditationType,
+    m.meditationStyle,
+    libraryMeditationCategoryLabel(m),
+  ]
+    .filter((x): x is string => Boolean(x && x.trim() && x !== "—"))
+    .join(" ")
+    .toLowerCase();
+}
+
+function libraryRowMatchesSearch(m: LibraryRow, tokens: string[]): boolean {
+  if (tokens.length === 0) return true;
+  const hay = libraryRowSearchHaystack(m);
+  return tokens.every((t) => hay.includes(t));
 }
 
 function loadPendingGenerations(): PendingLibraryGeneration[] {
@@ -863,6 +961,7 @@ function LibraryAudioStrip({
   const [duration, setDuration] = useState(0);
   const lastToggleNonceRef = useRef(playbackToggleNonce);
   const lastReportedTimeRef = useRef<number>(-Infinity);
+  const voiceIntroTimerRef = useRef<number | null>(null);
   const liveBedGainsRef = useRef({
     nature: track?.natureGain ?? 0,
     music: track?.musicGain ?? 0,
@@ -883,11 +982,55 @@ function LibraryAudioStrip({
     [track, onPlaybackTimeChange],
   );
 
+  function trackHasLiveBeds(): boolean {
+    if (!track?.liveMix) return false;
+    if ((track.natureKey ?? "").trim()) return true;
+    if ((track.musicKey ?? "").trim()) return true;
+    if ((track.noiseKey ?? "").trim()) return true;
+    const drums = (track.drumsKey ?? "").trim();
+    if (!drums) return false;
+    return !isMelodicMusicKey(musicItems, track.musicKey ?? "");
+  }
+
+  function clearVoiceIntro() {
+    if (voiceIntroTimerRef.current != null) {
+      window.clearTimeout(voiceIntroTimerRef.current);
+      voiceIntroTimerRef.current = null;
+    }
+  }
+
+  function shouldDelayVoice(atSeconds: number): boolean {
+    return trackHasLiveBeds() && atSeconds < 0.08;
+  }
+
+  function startOrResumePlayback() {
+    const el = audioRef.current;
+    if (!el || !track) return;
+    clearVoiceIntro();
+    if (shouldDelayVoice(el.currentTime)) {
+      setPlaying(true);
+      onPlayingChange?.(track.s3Key, true);
+      voiceIntroTimerRef.current = window.setTimeout(() => {
+        voiceIntroTimerRef.current = null;
+        void el.play().catch(() => {});
+      }, BED_VOICE_INTRO_SECONDS * 1000);
+      return;
+    }
+    void el.play().catch(() => {});
+  }
+
+  function pausePlayback() {
+    clearVoiceIntro();
+    audioRef.current?.pause();
+    if (track) onPlayingChange?.(track.s3Key, false);
+    setPlaying(false);
+  }
+
   function togglePlayback() {
     const el = audioRef.current;
     if (!el) return;
-    if (el.paused) void el.play();
-    else el.pause();
+    if (playing || voiceIntroTimerRef.current != null) pausePlayback();
+    else startOrResumePlayback();
   }
 
   useEffect(() => {
@@ -927,9 +1070,11 @@ function LibraryAudioStrip({
     const el = audioRef.current;
     if (!el) return;
     el.load();
-    void el.play().catch(() => {
-      // If autoplay fails, keep initial local state and let the card UI fall back to "Play".
-    });
+    startOrResumePlayback();
+    return () => {
+      clearVoiceIntro();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- restart when the stem changes
   }, [track?.s3Key, track?.url]);
 
   useEffect(() => {
@@ -1067,11 +1212,19 @@ function LibraryAudioStrip({
     const next = Math.min(end, Math.max(0, el.currentTime + delta));
     el.currentTime = next;
     setCurrent(next);
+    if (!playing && voiceIntroTimerRef.current == null) return;
+    clearVoiceIntro();
+    if (shouldDelayVoice(next)) {
+      el.pause();
+      startOrResumePlayback();
+    } else if (el.paused) {
+      void el.play().catch(() => {});
+    }
   }
 
   return (
     <div
-      className={`fixed inset-x-0 bottom-0 border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_-8px_24px_rgba(0,0,0,0.35)] sm:px-4 ${
+      className={`fixed inset-x-0 bottom-0 border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_8%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_35%,transparent)] sm:px-4 ${
         elevated ? "z-[70]" : "z-50"
       }`}
       style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
@@ -1111,13 +1264,8 @@ function LibraryAudioStrip({
             </button>
             <button
               type="button"
-              onClick={() => {
-                const el = audioRef.current;
-                if (!el) return;
-                if (el.paused) void el.play();
-                else el.pause();
-              }}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-white dark:text-deep"
+                onClick={() => togglePlayback()}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent dark:text-deep"
               aria-label={playing ? "Pause" : "Play"}
             >
               {playing ? (
@@ -1181,9 +1329,18 @@ function LibraryAudioStrip({
                 onChange={(e) => {
                   const el = audioRef.current;
                   const v = Number(e.target.value);
-                  if (el) el.currentTime = v;
+                  if (!el || !Number.isFinite(v)) return;
+                  el.currentTime = v;
                   setCurrent(v);
                   reportTime(v);
+                  if (!playing && voiceIntroTimerRef.current == null) return;
+                  clearVoiceIntro();
+                  if (shouldDelayVoice(v)) {
+                    el.pause();
+                    startOrResumePlayback();
+                  } else if (el.paused) {
+                    void el.play().catch(() => {});
+                  }
                 }}
               />
               <span className="w-10 shrink-0 text-right tabular-nums text-xs text-muted">
@@ -1219,7 +1376,7 @@ function LibraryAudioStrip({
           <button
             type="button"
             onClick={() => {
-              audioRef.current?.pause();
+              pausePlayback();
               onDismiss();
             }}
             className="rounded-xl border border-border px-3 py-2.5 text-sm text-muted hover:border-accent/40"
@@ -1274,6 +1431,9 @@ export default function LibraryView({
     title: string;
   } | null>(null);
   const [mixEditor, setMixEditor] = useState<LibraryMeditationItem | null>(null);
+  const mixEditorRef = useRef<LibraryMeditationItem | null>(null);
+  mixEditorRef.current = mixEditor;
+  const localMixByKeyRef = useRef(new Map<string, LocalMixOverlay>());
   const [mixError, setMixError] = useState<string | null>(null);
   const [mixAnchorEl, setMixAnchorEl] = useState<HTMLElement | null>(null);
   const mixCloseRef = useRef<(() => void) | null>(null);
@@ -1283,6 +1443,7 @@ export default function LibraryView({
   const [mixNoise, setMixNoise] = useState<BackgroundAudioItem[]>([]);
   const bedVolumeApiRef = useRef<LibraryBedVolumeApi | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>("newest");
+  const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [libraryTab, setLibraryTab] = useState<LibraryMainTab>("meditations");
@@ -1297,22 +1458,7 @@ export default function LibraryView({
     jobId: string;
     audioKey: string;
   } | null>(null);
-  const [accentRgb, setAccentRgb] = useState<{
-    r: number;
-    g: number;
-    b: number;
-  } | null>(null);
   const [showFishCostTooltip, setShowFishCostTooltip] = useState(false);
-
-  const indeterminateStyle = (
-    <style>{`
-      @keyframes mmIndeterminateBar {
-        0% { transform: translateX(-40%); }
-        50% { transform: translateX(120%); }
-        100% { transform: translateX(320%); }
-      }
-    `}</style>
-  );
 
   const itemElsRef = useRef<Map<string, HTMLLIElement>>(new Map());
   const focusHandledRef = useRef(false);
@@ -1346,24 +1492,6 @@ export default function LibraryView({
     };
   }, []);
 
-  useEffect(() => {
-    const readAccent = () => {
-      if (typeof window === "undefined") return;
-      const raw = getComputedStyle(document.documentElement)
-        .getPropertyValue("--accent")
-        .trim();
-      const rgb = hexToRgb(raw);
-      if (rgb) setAccentRgb(rgb);
-    };
-
-    readAccent();
-    if (typeof window === "undefined") return;
-
-    // If the user toggles dark mode, `--accent` swaps values.
-    const mql = window.matchMedia?.("(prefers-color-scheme: dark)");
-    if (!mql) return;
-    mql.addEventListener?.("change", readAccent);
-    return () => mql.removeEventListener?.("change", readAccent);
   }, []);
 
   const sortedItems = useMemo(() => {
@@ -1430,11 +1558,15 @@ export default function LibraryView({
   }, [libraryTab, pendingRows, sortedItems, sortedCommunityItems]);
 
   const visibleItems: LibraryRow[] = useMemo(() => {
+    const tokens = librarySearchTokens(searchQuery);
     if (libraryTab === "community") {
-      if (categoryFilter === "all") return sortedCommunityItems;
-      return sortedCommunityItems.filter((x) =>
-        itemMatchesLibraryCategory(x, categoryFilter),
-      );
+      const list =
+        categoryFilter === "all"
+          ? sortedCommunityItems
+          : sortedCommunityItems.filter((x) =>
+              itemMatchesLibraryCategory(x, categoryFilter),
+            );
+      return list.filter((x) => libraryRowMatchesSearch(x, tokens));
     }
     const base = sortedItems.filter(
       (x) => x.catalogued && x.archived !== true && x.isDraft !== true,
@@ -1446,8 +1578,9 @@ export default function LibraryView({
         : afterFav.filter(
             (x) => libraryMeditationCategoryLabel(x) === categoryFilter,
           );
-    // Always surface pending generations at the top of the meditations tab.
-    return [...pendingRows, ...afterCat];
+    return [...pendingRows, ...afterCat].filter((x) =>
+      libraryRowMatchesSearch(x, tokens),
+    );
   }, [
     sortedItems,
     sortedCommunityItems,
@@ -1455,13 +1588,14 @@ export default function LibraryView({
     categoryFilter,
     libraryTab,
     pendingRows,
+    searchQuery,
   ]);
 
   useEffect(() => {
     // When the user changes filters/sort/tabs, reset pagination so they don't land mid-list.
     setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sortBy, favouritesOnly, categoryFilter, libraryTab]);
+  }, [sortBy, favouritesOnly, categoryFilter, libraryTab, searchQuery]);
 
   useEffect(() => {
     setCategoryFilter("all");
@@ -1672,8 +1806,8 @@ export default function LibraryView({
         listLibraryMeditations(),
         listLibraryMeditations({ community: true }),
       ]);
-      setItems(list);
-      setCommunityRemote(community);
+      setItems(applyLocalMixOverlay(list, localMixByKeyRef.current));
+      setCommunityRemote(applyLocalMixOverlay(community, localMixByKeyRef.current));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load library");
     } finally {
@@ -2026,69 +2160,60 @@ export default function LibraryView({
   }
 
   async function persistMix(mix: LibraryMixValues) {
-    const item = mixEditor;
+    const item = mixEditorRef.current;
     if (!item?.sk) return;
     const sk = item.sk;
-    const natureKey = backgroundAudioStreamingKey(mix.natureKey.trim());
-    const musicKey = backgroundAudioStreamingKey(mix.musicKey.trim());
-    const drumsKey = backgroundAudioStreamingKey(mix.drumsKey.trim());
-    const noiseKey = backgroundAudioStreamingKey(mix.noiseKey.trim());
+    const overlay = localMixOverlayFromValues(mix);
+    localMixByKeyRef.current.set(sk, overlay);
+    localMixByKeyRef.current.set(item.s3Key, overlay);
+    if (libraryTab === "community") {
+      setCommunityRemote((prev) =>
+        prev.map((x) =>
+          x.sk === sk || x.s3Key === item.s3Key ? { ...x, ...overlay } : x,
+        ),
+      );
+    } else {
+      setItems((prev) =>
+        prev.map((x) => (x.sk === sk ? { ...x, ...overlay } : x)),
+      );
+    }
+    setMixEditor((cur) => (cur?.sk === sk ? { ...cur, ...overlay } : cur));
+    setNowPlaying((p) =>
+      p && p.s3Key === item.s3Key
+        ? liveMixTrack(item, {
+            natureKey: overlay.backgroundNatureKey ?? "",
+            musicKey: overlay.backgroundMusicKey ?? "",
+            drumsKey: overlay.backgroundDrumsKey ?? "",
+            noiseKey: overlay.backgroundNoiseKey ?? "",
+            natureGain: overlay.backgroundNatureGain,
+            musicGain: overlay.backgroundMusicGain,
+            drumsGain: overlay.backgroundDrumsGain,
+            noiseGain: overlay.backgroundNoiseGain,
+          })
+        : p,
+    );
+    setMixError(null);
     try {
       await patchMeditationBackgroundMix(
         sk,
         {
-          backgroundNatureKey: natureKey,
-          backgroundMusicKey: musicKey,
-          backgroundDrumsKey: drumsKey,
-          backgroundNoiseKey: noiseKey,
-          backgroundNatureGain: mix.natureGain,
-          backgroundMusicGain: mix.musicGain,
-          backgroundDrumsGain: mix.drumsGain,
-          backgroundNoiseGain: mix.noiseGain,
+          backgroundNatureKey: overlay.backgroundNatureKey ?? "",
+          backgroundMusicKey: overlay.backgroundMusicKey ?? "",
+          backgroundDrumsKey: overlay.backgroundDrumsKey ?? "",
+          backgroundNoiseKey: overlay.backgroundNoiseKey ?? "",
+          backgroundNatureGain: overlay.backgroundNatureGain,
+          backgroundMusicGain: overlay.backgroundMusicGain,
+          backgroundDrumsGain: overlay.backgroundDrumsGain,
+          backgroundNoiseGain: overlay.backgroundNoiseGain,
         },
         libraryTab === "community"
           ? { community: true, s3Key: item.s3Key }
           : undefined,
       );
-      const next: LibraryMeditationItem = {
-        ...item,
-        liveMix: true,
-        backgroundNatureKey: natureKey || null,
-        backgroundMusicKey: musicKey || null,
-        backgroundDrumsKey: drumsKey || null,
-        backgroundNoiseKey: noiseKey || null,
-        backgroundNatureGain: mix.natureGain,
-        backgroundMusicGain: mix.musicGain,
-        backgroundDrumsGain: mix.drumsGain,
-        backgroundNoiseGain: mix.noiseGain,
-      };
-      if (libraryTab === "community") {
-        setCommunityRemote((prev) =>
-          prev.map((x) =>
-            x.sk === sk || x.s3Key === item.s3Key ? { ...x, ...next } : x,
-          ),
-        );
-      } else {
-        setItems((prev) => prev.map((x) => (x.sk === sk ? { ...x, ...next } : x)));
-      }
-      setMixEditor((cur) => (cur?.sk === sk ? { ...cur, ...next } : cur));
-      setNowPlaying((p) =>
-        p && p.s3Key === item.s3Key
-          ? liveMixTrack(item, {
-              natureKey,
-              musicKey,
-              drumsKey,
-              noiseKey,
-              natureGain: mix.natureGain,
-              musicGain: mix.musicGain,
-              drumsGain: mix.drumsGain,
-              noiseGain: mix.noiseGain,
-            })
-          : p,
-      );
-      setMixError(null);
     } catch (e) {
-      setMixError(e instanceof Error ? e.message : "Could not save mix");
+      const msg = e instanceof Error ? e.message : "Could not save mix";
+      setMixError(msg);
+      setError(msg);
       throw e;
     }
   }
@@ -2138,7 +2263,7 @@ export default function LibraryView({
           }}
           className={`relative min-w-0 overflow-hidden rounded-2xl border p-4 shadow-sm ${
             isFailed
-              ? "border-red-500/35 bg-red-500/5"
+              ? "border-danger/35 bg-danger/5"
               : "border-accent/35 bg-accent-soft/20"
           }`}
         >
@@ -2169,7 +2294,7 @@ export default function LibraryView({
               </h2>
               <p className="mt-1 text-sm text-muted">{m.description ?? "—"}</p>
               {isFailed ? (
-                <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                <p className="mt-2 text-sm text-danger">
                   {m.error ?? "Generation failed."}
                 </p>
               ) : null}
@@ -2182,7 +2307,7 @@ export default function LibraryView({
               <div
                 className={`flex h-11 w-11 items-center justify-center rounded-full ${
                   isFailed
-                    ? "bg-red-500/10 text-red-600 dark:text-red-400"
+                    ? "bg-danger/10 text-danger"
                     : "bg-accent/15 text-accent"
                 }`}
                 aria-label={isFailed ? "Generation failed" : "Generating"}
@@ -2211,7 +2336,7 @@ export default function LibraryView({
       const continueBtn = (
         <Link
           href={href}
-          className="inline-flex shrink-0 items-center justify-center rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 dark:text-deep"
+          className="inline-flex shrink-0 items-center justify-center rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 dark:text-deep"
         >
           Continue
         </Link>
@@ -2386,7 +2511,7 @@ export default function LibraryView({
             }
             className="relative h-5 w-9 shrink-0 rounded-full border border-border bg-muted/40 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed"
           >
-            <Switch.Thumb className="block h-4 w-4 translate-x-[2px] rounded-full bg-white shadow-sm transition-transform will-change-transform data-[state=checked]:translate-x-[16px]" />
+            <Switch.Thumb className="block h-4 w-4 translate-x-[2px] rounded-full bg-surface shadow-sm transition-transform will-change-transform data-[state=checked]:translate-x-[16px]" />
           </Switch.Root>
         </div>
       ) : null;
@@ -2438,7 +2563,7 @@ export default function LibraryView({
             <button
               type="button"
               onClick={() => setPlaybackToggleNonce((v) => v + 1)}
-              className="self-center flex h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-white dark:text-deep cursor-pointer"
+              className="self-center flex h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent dark:text-deep cursor-pointer"
               aria-label="Pause"
             >
               <svg
@@ -2462,8 +2587,8 @@ export default function LibraryView({
             }
             className={
               alwaysShowRowChrome
-                ? "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-white dark:text-deep cursor-pointer opacity-100 pointer-events-auto transition-opacity"
-                : "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-white dark:text-deep cursor-pointer opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
+                ? "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent dark:text-deep cursor-pointer opacity-100 pointer-events-auto transition-opacity"
+                : "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent dark:text-deep cursor-pointer opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
             }
             aria-label="Play"
           >
@@ -2514,15 +2639,7 @@ export default function LibraryView({
           {isPlaying ? (
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent"
-              style={
-                accentRgb
-                  ? {
-                      animation: "borderAccentColorPulse 1.2s ease-in-out 0s 2",
-                      borderColor: `rgba(${accentRgb.r},${accentRgb.g},${accentRgb.b},0.35)`,
-                    }
-                  : undefined
-              }
+              className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent border-accent-pulse"
             />
           ) : null}
           <div className="flex items-start justify-between gap-3">
@@ -2580,15 +2697,7 @@ export default function LibraryView({
         {isPlaying ? (
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent"
-            style={
-              accentRgb
-                ? {
-                    animation: "borderAccentColorPulse 1.2s ease-in-out 0s 2",
-                    borderColor: `rgba(${accentRgb.r},${accentRgb.g},${accentRgb.b},0.35)`,
-                  }
-                : undefined
-            }
+            className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent border-accent-pulse"
           />
         ) : null}
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -2719,7 +2828,7 @@ export default function LibraryView({
                 aria-pressed={viewMode === "list"}
                 className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
                   viewMode === "list"
-                    ? "bg-accent text-white dark:text-deep"
+                    ? "bg-accent text-on-accent dark:text-deep"
                     : "text-muted hover:text-foreground"
                 }`}
               >
@@ -2731,7 +2840,7 @@ export default function LibraryView({
                 aria-pressed={viewMode === "grid"}
                 className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
                   viewMode === "grid"
-                    ? "bg-accent text-white dark:text-deep"
+                    ? "bg-accent text-on-accent dark:text-deep"
                     : "text-muted hover:text-foreground"
                 }`}
               >
@@ -2742,16 +2851,6 @@ export default function LibraryView({
 
   return (
     <>
-      {indeterminateStyle}
-      {accentRgb ? (
-        <style>
-          {`@keyframes borderAccentColorPulse {
-            0% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.35); }
-            50% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 1); }
-            100% { border-color: rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 1); }
-          }`}
-        </style>
-      ) : null}
     <div
       className={`mx-auto w-full max-w-6xl min-w-0 px-4 py-10 sm:px-6 [scrollbar-gutter:stable] ${
         nowPlaying ? "pb-32 sm:pb-28" : ""
@@ -2759,12 +2858,28 @@ export default function LibraryView({
     >
       <header className="w-full min-w-0">
         <div className="grid w-full min-w-0 gap-4 sm:grid-cols-[1fr_auto] sm:items-start">
-          <div className="min-w-0 w-full">
-            <h1 className="font-display text-3xl font-medium tracking-tight">
+          <div className="flex min-w-0 w-full items-center gap-3 sm:col-span-2">
+            <h1 className="shrink-0 font-display text-3xl font-medium tracking-tight">
               Library
             </h1>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search title, description, type"
+              aria-label="Search library"
+              className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted focus:border-accent/50"
+            />
+            <Link
+              href="/meditate/create"
+              className="shrink-0 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-on-accent dark:text-deep"
+            >
+              Create new
+            </Link>
+          </div>
+          <div className="min-w-0 w-full">
             <div
-              className="mt-4 inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
+              className="inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
               role="tablist"
               aria-label="Library section"
             >
@@ -2775,7 +2890,7 @@ export default function LibraryView({
                 onClick={() => setLibraryTab("meditations")}
                 className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                   libraryTab === "meditations"
-                    ? "bg-accent text-white dark:text-deep"
+                    ? "bg-accent text-on-accent dark:text-deep"
                     : "text-muted hover:text-foreground"
                 }`}
               >
@@ -2788,7 +2903,7 @@ export default function LibraryView({
                 onClick={() => setLibraryTab("community")}
                 className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                   libraryTab === "community"
-                    ? "bg-accent text-white dark:text-deep"
+                    ? "bg-accent text-on-accent dark:text-deep"
                     : "text-muted hover:text-foreground"
                 }`}
               >
@@ -2802,7 +2917,7 @@ export default function LibraryView({
             </p>
           </div>
           {libraryTab !== "community" ? (
-          <div className="mt-4 flex w-full items-center justify-between gap-3 sm:col-span-2 sm:row-start-2">
+          <div className="flex w-full items-center justify-between gap-3 sm:col-span-2">
             <div className="flex items-center gap-3">
               {libraryTab === "meditations" ? (
               <button
@@ -2811,7 +2926,7 @@ export default function LibraryView({
                 aria-pressed={favouritesOnly}
                 className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
                   favouritesOnly
-                    ? "border-accent/60 bg-accent text-white dark:text-deep"
+                    ? "border-accent/60 bg-accent text-on-accent dark:text-deep"
                     : "border-border bg-background text-foreground hover:border-accent/40"
                 }`}
               >
@@ -2875,7 +2990,7 @@ export default function LibraryView({
                             setCategoryFilter(it.value);
                             setCategoryDropdownOpen(false);
                           }}
-                          className={`w-full cursor-pointer px-3 py-2 text-left text-sm font-semibold text-black dark:text-foreground ${
+                          className={`w-full cursor-pointer px-3 py-2 text-left text-sm font-semibold text-foreground dark:text-foreground ${
                             selected ? "bg-accent/15 cursor-default" : "hover:bg-accent/15 bg-transparent"
                           }`}
                         >
@@ -2891,12 +3006,6 @@ export default function LibraryView({
             {layoutToggle}
           </div>
           ) : null}
-          <Link
-            href="/meditate/create"
-            className="shrink-0 self-start rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white dark:text-deep sm:mt-0 sm:col-start-2 sm:row-start-1"
-          >
-            Create new
-          </Link>
         </div>
       </header>
 
@@ -2914,7 +3023,7 @@ export default function LibraryView({
       ) : null}
 
       {error ? (
-        <p className="mt-6 w-full min-w-0 rounded-xl border border-border bg-card px-4 py-3 text-sm text-red-700 dark:text-red-300">
+        <p className="mt-6 w-full min-w-0 rounded-xl border border-border bg-card px-4 py-3 text-sm text-danger">
           {error}
         </p>
       ) : null}
@@ -2925,7 +3034,9 @@ export default function LibraryView({
         <p className="mt-10 text-sm text-muted">Loading…</p>
       ) : pagedVisibleItems.length === 0 ? (
         <p className={`${libraryTab === "community" ? "mt-4" : "mt-10"} w-full min-w-0 text-sm text-muted`}>
-          {libraryTab === "community" ? (
+          {searchQuery.trim() ? (
+            "No meditations match your search."
+          ) : libraryTab === "community" ? (
             categoryFilter === "all"
               ? "No community meditations yet. Popular sessions will show up here."
               : `No community meditations in ${categoryFilter} yet.`
@@ -2943,7 +3054,35 @@ export default function LibraryView({
               : `${libraryTab === "community" ? "mt-4" : "mt-10"} flex w-full min-w-0 max-w-full flex-col gap-3`
           }
         >
-          {pagedVisibleItems.map((m) => renderItem(m))}
+          {pagedVisibleItems.map((m, i) => {
+            const rowKey = isPendingRow(m) ? m.pendingKey : m.sk || m.s3Key;
+            const showDateMarkers = sortBy === "newest" || sortBy === "oldest";
+            const marker = showDateMarkers
+              ? libraryListDateMarker(m.createdAt)
+              : null;
+            const prev = i > 0 ? pagedVisibleItems[i - 1] : null;
+            const prevMarker =
+              prev && showDateMarkers
+                ? libraryListDateMarker(prev.createdAt)
+                : null;
+            const insertMarker = Boolean(marker && marker.id !== prevMarker?.id);
+            return (
+              <Fragment key={rowKey}>
+                {insertMarker && marker ? (
+                  <li
+                    className={`col-span-full list-none ${
+                      i === 0 ? "" : "pt-2"
+                    }`}
+                  >
+                    <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
+                      {marker.label}
+                    </h2>
+                  </li>
+                ) : null}
+                {renderItem(m)}
+              </Fragment>
+            );
+          })}
         </ul>
       )}
 
@@ -3067,7 +3206,7 @@ export default function LibraryView({
     ) : null}
 
     {archiveConfirm ? (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay/50 p-4">
         <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-5 text-sm text-foreground shadow-xl">
           <div className="text-base font-semibold">
             Archive meditation?
@@ -3095,7 +3234,7 @@ export default function LibraryView({
                 setArchiveConfirm(null);
                 if (item) void setArchived(item, true);
               }}
-              className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-90 dark:text-deep"
+              className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 dark:text-deep"
             >
               Archive
             </button>

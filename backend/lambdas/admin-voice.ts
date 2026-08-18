@@ -108,6 +108,7 @@ async function handlePatch(event: APIGatewayProxyEventV2) {
       name: String(s.name ?? ""),
       hidden: s.hidden === true,
       sort: typeof s.sort === "number" ? s.sort : undefined,
+      description: typeof s.description === "string" ? s.description : undefined,
     });
   }
 
@@ -152,6 +153,7 @@ async function handlePost(event: APIGatewayProxyEventV2) {
         name: existing.name,
         hidden: existing.hidden,
         sort: existing.sort,
+        description: existing.description,
       });
     }
     const domain = (process.env.MEDIA_CLOUDFRONT_DOMAIN || "").trim();

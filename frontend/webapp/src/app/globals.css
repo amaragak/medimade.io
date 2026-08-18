@@ -3,16 +3,6 @@
 :root {
   /* Keep in sync with site header height (h-14) */
   --site-header-h: 3.5rem;
-
-  --background: #f9f4ee;
-  --foreground: #2c2621;
-  --muted: #6f665e;
-  --card: #fffaf6;
-  --border: #ebe2d6;
-  --accent: #b86b48;
-  --accent-soft: #f0e0d6;
-  --gold: #c49a6c;
-  --deep: #1a1410;
 }
 
 @theme inline {
@@ -25,22 +15,15 @@
   --color-accent-soft: var(--accent-soft);
   --color-gold: var(--gold);
   --color-deep: var(--deep);
+  --color-surface: var(--surface);
+  --color-on-accent: var(--on-accent);
+  --color-overlay: var(--overlay);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-info: var(--info);
   --font-sans: var(--font-dm-sans);
   --font-display: var(--font-fraunces);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #171311;
-    --foreground: #f4ebe3;
-    --muted: #a89b90;
-    --card: #221c18;
-    --border: #3d342c;
-    --accent: #d4916e;
-    --accent-soft: #3a2e27;
-    --gold: #d4b896;
-    --deep: #0f0c0a;
-  }
 }
 
 body {
@@ -61,8 +44,8 @@ body {
 /* iMessage-style chat tails. The ::after mask matches the create chat card. */
 .chat-bubble {
   box-shadow:
-    0 1px 3px rgb(44 38 33 / 0.10),
-    0 3px 10px rgb(44 38 33 / 0.12);
+    0 1px 3px color-mix(in srgb, var(--foreground) 10%, transparent),
+    0 3px 10px color-mix(in srgb, var(--foreground) 12%, transparent);
 }
 
 .chat-bubble-tail-right,
@@ -84,13 +67,13 @@ body {
 .chat-bubble-tail-right::before {
   right: -8px;
   border-bottom-left-radius: 16px;
-  box-shadow: 2px 3px 6px rgb(44 38 33 / 0.14);
+  box-shadow: 2px 3px 6px color-mix(in srgb, var(--foreground) 14%, transparent);
 }
 
 .chat-bubble-tail-left::before {
   left: -8px;
   border-bottom-right-radius: 16px;
-  box-shadow: -2px 3px 6px rgb(44 38 33 / 0.14);
+  box-shadow: -2px 3px 6px color-mix(in srgb, var(--foreground) 14%, transparent);
 }
 
 .chat-bubble-tail-right::after,
@@ -137,24 +120,117 @@ body {
   animation-delay: 0.6s;
 }
 
+.mixer-fader-well {
+  flex: 1 1 auto;
+  min-height: 7rem;
+  width: 2.25rem;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.mixer-fader {
+  -webkit-appearance: none;
+  appearance: none;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 0.45rem;
+  height: 100%;
+  margin: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  background: var(--border);
+}
+
+.mixer-fader:disabled {
+  cursor: not-allowed;
+}
+
+.mixer-fader::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 14px;
+  border-radius: 5px;
+  background: var(--card);
+  border: 1px solid color-mix(in srgb, var(--foreground) 16%, var(--border));
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 22%, transparent);
+}
+
+.mixer-fader::-moz-range-thumb {
+  width: 22px;
+  height: 14px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 16%, var(--border));
+  border-radius: 5px;
+  background: var(--card);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 22%, transparent);
+}
+
+.mixer-fader::-moz-range-track {
+  width: 0.45rem;
+  background: transparent;
+}
+
+.mixer-voice-disc {
+  background-image: var(--accent-gradient);
+  box-shadow:
+    inset 0 2px 6px color-mix(in srgb, var(--surface) 28%, transparent),
+    inset 0 -5px 10px color-mix(in srgb, var(--deep) 22%, transparent),
+    0 2px 6px color-mix(in srgb, var(--foreground) 14%, transparent),
+    0 6px 16px color-mix(in srgb, var(--foreground) 12%, transparent);
+}
+
+.hero-orb {
+  background:
+    radial-gradient(circle at 30% 40%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 50%),
+    radial-gradient(circle at 70% 60%, color-mix(in srgb, var(--gold) 18%, transparent), transparent 45%);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .chat-typing-dot {
     animation: none;
   }
 }
 
+@keyframes borderAccentColorPulse {
+  0% {
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  50%,
+  100% {
+    border-color: var(--accent);
+  }
+}
+
+.border-accent-pulse {
+  animation: borderAccentColorPulse 1.2s ease-in-out 0s 2;
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+@keyframes mmIndeterminateBar {
+  0% {
+    transform: translateX(-40%);
+  }
+  50% {
+    transform: translateX(120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
 .mesh-hero {
   background:
-    radial-gradient(ellipse 80% 60% at 70% 20%, rgb(184 107 72 / 0.14), transparent 55%),
-    radial-gradient(ellipse 50% 50% at 20% 80%, rgb(196 154 108 / 0.18), transparent 50%),
+    radial-gradient(ellipse 80% 60% at 70% 20%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 55%),
+    radial-gradient(ellipse 50% 50% at 20% 80%, color-mix(in srgb, var(--gold) 18%, transparent), transparent 50%),
     var(--background);
 }
 
 @media (prefers-color-scheme: dark) {
   .mesh-hero {
     background:
-      radial-gradient(ellipse 80% 60% at 70% 20%, rgb(212 145 110 / 0.1), transparent 55%),
-      radial-gradient(ellipse 50% 50% at 20% 80%, rgb(212 184 150 / 0.08), transparent 50%),
+      radial-gradient(ellipse 80% 60% at 70% 20%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 55%),
+      radial-gradient(ellipse 50% 50% at 20% 80%, color-mix(in srgb, var(--gold) 8%, transparent), transparent 50%),
       var(--background);
   }
 }

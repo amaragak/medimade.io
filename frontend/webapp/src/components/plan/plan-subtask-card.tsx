@@ -466,7 +466,7 @@ export function PlanSubtaskCard({
       ) : null}
 
       {breakdownErr ? (
-        <p className="mt-2 text-sm text-red-600/90 dark:text-red-400/90">
+        <p className="mt-2 text-sm text-danger">
           {breakdownErr}
         </p>
       ) : null}

@@ -160,7 +160,7 @@ export function PlanDrvSection({
           {reflectLoading ? "Reflecting…" : copy.dreamButton}
         </button>
         {reflectErr ? (
-          <p className="mt-2 text-sm text-red-600/90 dark:text-red-400/90">
+          <p className="mt-2 text-sm text-danger">
             {reflectErr}
           </p>
         ) : null}
@@ -196,7 +196,7 @@ export function PlanDrvSection({
           {obstacleLoading ? "Exploring…" : copy.obstacleButton}
         </button>
         {obstacleErr ? (
-          <p className="mt-2 text-sm text-red-600/90 dark:text-red-400/90">
+          <p className="mt-2 text-sm text-danger">
             {obstacleErr}
           </p>
         ) : null}
@@ -232,7 +232,7 @@ export function PlanDrvSection({
           {visionLoading ? "Building…" : copy.visionButton}
         </button>
         {visionErr ? (
-          <p className="mt-2 text-sm text-red-600/90 dark:text-red-400/90">
+          <p className="mt-2 text-sm text-danger">
             {visionErr}
           </p>
         ) : null}

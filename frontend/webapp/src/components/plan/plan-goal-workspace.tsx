@@ -257,7 +257,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
                   type="button"
                   disabled={!dream.visionText.trim()}
                   onClick={() => generateMeditation()}
-                  className="mt-8 w-full cursor-pointer rounded-full bg-accent px-5 py-3.5 text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:text-deep"
+                  className="mt-8 w-full cursor-pointer rounded-full bg-accent px-5 py-3.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:text-deep"
                 >
                   Generate visualisation meditation
                 </button>

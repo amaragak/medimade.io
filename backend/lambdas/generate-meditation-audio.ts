@@ -39,7 +39,6 @@ import {
   SCRIPT_PAUSE_PROMPT_RULES,
   stripPauseMarkers as spokenPlainWithoutPauses,
   sumPauseMarkerSeconds,
-  TITLE_PAUSE_MARKER,
 } from "../lib/script-pause-bands";
 import { loadPauseBandSeconds } from "../lib/voice-admin";
 import fs from "fs";
@@ -217,10 +216,10 @@ async function mixSpeechWithBackgrounds(params: {
         : undefined;
 
     // Desired structure:
-    // - 1s background-only intro
-    // - speech starts after 1s
+    // - 1.5s background-only intro
+    // - speech starts after 1.5s
     // - 8s tail after speech ends, with background fading out over the tail
-    const introSeconds = 1;
+    const introSeconds = 1.5;
     const tailSeconds = 8;
     const totalDurSeconds =
       dur !== undefined ? dur + introSeconds + tailSeconds : undefined;
@@ -1345,9 +1344,8 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       reference_id: referenceId,
       ttsProvider,
     });
-    // Speak the meditation title first, then pause, then the script.
-    // Note: `scriptTextUsed` is stored/displayed without the title (script should not include it).
-    const ttsScript = `${libraryTitle}\n\n${TITLE_PAUSE_MARKER}\n\n${scriptTextUsed}`;
+    // Script already includes the spoken title when the writer put one in.
+    const ttsScript = scriptTextUsed;
     const pauseBands = await loadPauseBandSeconds().catch(() => undefined);
     pauseSecondsTotal = sumPauseMarkerSeconds(ttsScript, pauseBands) * PAUSE_RENDER_SCALE;
     const spokenPlain = spokenPlainWithoutPauses(ttsScript);

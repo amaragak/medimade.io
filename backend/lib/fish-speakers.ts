@@ -1,4 +1,4 @@
-export type FishSpeaker = { name: string; modelId: string };
+export type FishSpeaker = { name: string; modelId: string; description?: string };
 
 /**
  * Single source of truth for mapping Fish Audio voice model ids → speaker names.

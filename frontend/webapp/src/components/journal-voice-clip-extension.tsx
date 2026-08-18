@@ -133,7 +133,7 @@ function JournalClipAudioStrip({ src }: { src: string }) {
         <button
           type="button"
           onClick={togglePlayback}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 dark:text-deep"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition-opacity hover:opacity-90 dark:text-deep"
           aria-label={playing ? "Pause" : "Play"}
         >
           {playing ? (
@@ -324,7 +324,7 @@ function JournalVoiceClipView(props: NodeViewProps) {
       <div className="flex items-center justify-between gap-2 border-b border-accent/10 bg-gradient-to-r from-accent-soft/40 to-transparent px-2 py-1">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <span
-            className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-accent text-white shadow-sm dark:text-deep"
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-accent text-on-accent shadow-sm dark:text-deep"
             aria-hidden
           >
             <IconWaveform className="size-3.5" />
@@ -354,7 +354,7 @@ function JournalVoiceClipView(props: NodeViewProps) {
         ) : null}
         {err ? (
           <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <p className="text-[11px] font-medium text-red-600 dark:text-red-400">{err}</p>
+            <p className="text-[11px] font-medium text-danger">{err}</p>
             {transcribeApiBase ? (
               <button
                 type="button"
