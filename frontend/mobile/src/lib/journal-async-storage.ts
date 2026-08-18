@@ -9,6 +9,8 @@ export type JournalEntry = {
   updatedAt: string;
   title: string;
   contentHtml: string;
+  kind?: "freeform" | "gratitude";
+  gratitude?: [string, string, string];
 };
 
 export type JournalStoreV2 = {

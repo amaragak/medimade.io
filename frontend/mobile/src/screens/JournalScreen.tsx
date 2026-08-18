@@ -261,7 +261,7 @@ export default function JournalScreen() {
                 <Ionicons
                   name="mic"
                   size={22}
-                  color={voiceBusy ? colors.muted : colors.accent}
+                  color="#ffffff"
                 />
               </Pressable>
             ) : (
@@ -369,9 +369,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.accent,
-    backgroundColor: colors.card,
+    backgroundColor: colors.accent,
   },
   micBtnPressed: { opacity: 0.85 },
   micBtnDisabled: { opacity: 0.45 },

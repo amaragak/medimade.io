@@ -1,9 +1,17 @@
+export type JournalEntryKind = "freeform" | "gratitude";
+
+export type JournalGratitudeLines = [string, string, string];
+
 export type JournalEntry = {
   id: string;
   createdAt: string;
   updatedAt: string;
   title: string;
   contentHtml: string;
+  /** Omitted on existing freeform entries. */
+  kind?: JournalEntryKind;
+  /** Three daily lines when `kind` is `gratitude`. */
+  gratitude?: JournalGratitudeLines;
 };
 
 export type JournalStoreV2 = {
@@ -293,10 +301,15 @@ function isEntry(x: unknown): x is JournalEntry {
 }
 
 function normalizeEntry(e: JournalEntry): JournalEntry {
+  const kind = e.kind === "gratitude" ? "gratitude" : undefined;
+  const gratitude = kind
+    ? normalizeGratitudeLines(e.gratitude)
+    : undefined;
   return {
     ...e,
     title: typeof e.title === "string" ? e.title : deriveEntryTitle(e.contentHtml),
     contentHtml: e.contentHtml?.trim() ? e.contentHtml : "<p></p>",
+    ...(kind ? { kind, gratitude } : { kind: undefined, gratitude: undefined }),
   };
 }
 
@@ -339,7 +352,76 @@ export type JournalSidebarGroup = {
 const MS_DAY = 86_400_000;
 
 /** True if the entry has a non-empty title or body (after stripping HTML). */
+export function isGratitudeEntry(e: JournalEntry): boolean {
+  return e.kind === "gratitude";
+}
+
+export function emptyGratitudeLines(): JournalGratitudeLines {
+  return ["", "", ""];
+}
+
+export function localDateKey(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+export function localDateKeyFromIso(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return localDateKey();
+  return localDateKey(d);
+}
+
+function escapeHtmlText(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+export function gratitudeLinesToHtml(lines: JournalGratitudeLines): string {
+  const paras = lines
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => `<p>${escapeHtmlText(s)}</p>`);
+  return paras.length ? paras.join("") : "<p></p>";
+}
+
+export function normalizeGratitudeLines(raw: unknown): JournalGratitudeLines {
+  const a = Array.isArray(raw) ? raw : [];
+  return [
+    typeof a[0] === "string" ? a[0] : "",
+    typeof a[1] === "string" ? a[1] : "",
+    typeof a[2] === "string" ? a[2] : "",
+  ];
+}
+
+export function gratitudeTitleForDate(d: Date): string {
+  return `Gratitude · ${d.toLocaleDateString("en-US", { dateStyle: "medium" })}`;
+}
+
+export function newGratitudeJournalEntry(now = new Date()): JournalEntry {
+  const lines = emptyGratitudeLines();
+  return newEntry({
+    kind: "gratitude",
+    gratitude: lines,
+    title: gratitudeTitleForDate(now),
+    contentHtml: gratitudeLinesToHtml(lines),
+  });
+}
+
+export function findGratitudeEntryForLocalDate(
+  entries: JournalEntry[],
+  dateKey: string,
+): JournalEntry | undefined {
+  return entries.find(
+    (e) => isGratitudeEntry(e) && localDateKeyFromIso(e.createdAt) === dateKey,
+  );
+}
+
 export function journalEntryHasMeaningfulContent(e: JournalEntry): boolean {
+  if (isGratitudeEntry(e)) {
+    return (e.gratitude ?? []).some((s) => s.trim().length > 0)
+      || stripHtmlToText(e.contentHtml).trim().length > 0;
+  }
   if (e.title.trim().length > 0) return true;
   return stripHtmlToText(e.contentHtml).trim().length > 0;
 }
@@ -361,11 +443,12 @@ export function shouldPreferRemoteJournalStore(
   const remoteMax = maxJournalEntryUpdatedAt(remote.entries);
   const localMax = maxJournalEntryUpdatedAt(localEntries);
   if (remoteMax > localMax) return true;
-  if (localEntries.length === 1) {
-    const e = localEntries[0];
-    if (e.title.trim()) return false;
-    const plain = stripHtmlToText(e.contentHtml).trim();
-    if (plain.length === 0 && remote.entries.length > 0) return true;
+  const localMeaningful = localEntries.filter(journalEntryHasMeaningfulContent);
+  if (
+    localMeaningful.length === 0 &&
+    remote.entries.some(journalEntryHasMeaningfulContent)
+  ) {
+    return true;
   }
   return false;
 }

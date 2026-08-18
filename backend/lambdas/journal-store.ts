@@ -65,6 +65,8 @@ type JournalEntry = {
   updatedAt: string;
   title: string;
   contentHtml: string;
+  kind?: "freeform" | "gratitude";
+  gratitude?: [string, string, string];
 };
 
 type JournalStoreV2 = {
@@ -138,6 +140,39 @@ async function scanAllItems(table: string): Promise<Record<string, unknown>[]> {
   return items;
 }
 
+function gratitudeFromUnknown(raw: unknown): [string, string, string] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  return [
+    typeof raw[0] === "string" ? raw[0] : "",
+    typeof raw[1] === "string" ? raw[1] : "",
+    typeof raw[2] === "string" ? raw[2] : "",
+  ];
+}
+
+function journalEntryFromItem(
+  item: Record<string, unknown>,
+  id: string,
+): JournalEntry | null {
+  if (
+    typeof item.createdAt !== "string" ||
+    typeof item.updatedAt !== "string" ||
+    typeof item.title !== "string" ||
+    typeof item.contentHtml !== "string"
+  ) {
+    return null;
+  }
+  const kind = item.kind === "gratitude" ? ("gratitude" as const) : undefined;
+  const gratitude = gratitudeFromUnknown(item.gratitude);
+  return {
+    id,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    title: item.title,
+    contentHtml: item.contentHtml,
+    ...(kind ? { kind, gratitude: gratitude ?? ["", "", ""] } : {}),
+  };
+}
+
 function mergeAllJournalItems(items: Record<string, unknown>[]): JournalStoreV2 {
   type Row = { entry: JournalEntry; updated: number };
   const rows: Row[] = [];
@@ -145,23 +180,11 @@ function mergeAllJournalItems(items: Record<string, unknown>[]): JournalStoreV2 
     const sk = item.sk;
     if (typeof sk !== "string" || !sk.startsWith("ENTRY#")) continue;
     const id = typeof item.id === "string" ? item.id : sk.slice("ENTRY#".length);
-    if (
-      typeof item.createdAt !== "string" ||
-      typeof item.updatedAt !== "string" ||
-      typeof item.title !== "string" ||
-      typeof item.contentHtml !== "string"
-    ) {
-      continue;
-    }
+    const entry = journalEntryFromItem(item, id);
+    if (!entry) continue;
     rows.push({
-      updated: new Date(item.updatedAt).getTime() || 0,
-      entry: {
-        id,
-        createdAt: item.createdAt,
-        updatedAt: item.updatedAt,
-        title: item.title,
-        contentHtml: item.contentHtml,
-      },
+      updated: new Date(entry.updatedAt).getTime() || 0,
+      entry,
     });
   }
   rows.sort((a, b) => b.updated - a.updated);
@@ -209,27 +232,15 @@ function ddbItemsToStore(items: Record<string, unknown>[]): JournalStoreV2 | nul
     }
     if (typeof sk !== "string" || !sk.startsWith("ENTRY#")) continue;
     const id = typeof item.id === "string" ? item.id : sk.slice("ENTRY#".length);
-    if (
-      typeof item.createdAt !== "string" ||
-      typeof item.updatedAt !== "string" ||
-      typeof item.title !== "string" ||
-      typeof item.contentHtml !== "string"
-    ) {
-      continue;
-    }
+    const entry = journalEntryFromItem(item, id);
+    if (!entry) continue;
     const listPosition =
       typeof item.listPosition === "number" && Number.isFinite(item.listPosition)
         ? item.listPosition
         : 1e9;
     rows.push({
       pos: listPosition,
-      entry: {
-        id,
-        createdAt: item.createdAt,
-        updatedAt: item.updatedAt,
-        title: item.title,
-        contentHtml: item.contentHtml,
-      },
+      entry,
     });
   }
   rows.sort((a, b) => a.pos - b.pos);
@@ -319,18 +330,29 @@ async function persistStoreToDdb(
   }
 
   store.entries.forEach((e, listPosition) => {
+    const item: Record<string, unknown> = {
+      pk: ownerId,
+      sk: entrySk(e.id),
+      id: e.id,
+      createdAt: e.createdAt,
+      updatedAt: e.updatedAt,
+      title: e.title,
+      contentHtml: e.contentHtml,
+      listPosition,
+    };
+    if (e.kind === "gratitude") {
+      item.kind = "gratitude";
+      item.gratitude = Array.isArray(e.gratitude)
+        ? [
+            typeof e.gratitude[0] === "string" ? e.gratitude[0] : "",
+            typeof e.gratitude[1] === "string" ? e.gratitude[1] : "",
+            typeof e.gratitude[2] === "string" ? e.gratitude[2] : "",
+          ]
+        : ["", "", ""];
+    }
     ops.push({
       op: "put",
-      item: {
-        pk: ownerId,
-        sk: entrySk(e.id),
-        id: e.id,
-        createdAt: e.createdAt,
-        updatedAt: e.updatedAt,
-        title: e.title,
-        contentHtml: e.contentHtml,
-        listPosition,
-      },
+      item,
     });
   });
 

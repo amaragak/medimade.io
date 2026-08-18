@@ -1,14 +1,16 @@
 /**
- * Brand color source of truth.
+ * Theme source of truth.
  *
- * Change `PRIMARY` to retheme the app. Warm neutrals, terracotta tints,
- * gold, gradients, and category fills are derived from it. Semantic status
- * colors (danger / success / info) stay independent so errors stay red.
+ * `PRIMARY` is the brand accent. Only obviously-branded colors are derived
+ * from it (accent, accent-soft, mixer gradient). Paper, cards, ink, and
+ * borders are independent neutrals so switching PRIMARY to red (etc.) does
+ * not tint the whole page.
  */
 
-/** Switch this to change the brand. Current: terracotta. */
-// export const PRIMARY = "#b86b48";
-export const PRIMARY = "red";
+/** Switch this to change the brand accent. Current: terracotta. */
+export const PRIMARY = "#b86b48";
+// export const PRIMARY = "#6E88A3";
+// export const PRIMARY = "#C67D3E";
 
 const WHITE = "#ffffff";
 const BLACK = "#000000";
@@ -18,6 +20,34 @@ export const DANGER = "#dc2626";
 export const SUCCESS = "#059669";
 export const INFO = "#0284c7";
 
+/** Warm gold highlight — not derived from PRIMARY. */
+const GOLD_LIGHT = "#c49a6c";
+const GOLD_DARK = "#d4b896";
+
+/**
+ * Paper / ink / chrome. Stay put when PRIMARY changes.
+ * Light matches the original cream UI; dark is the original warm night set.
+ */
+const PAPER_LIGHT = {
+  background: "#f9f4ee",
+  foreground: "#2c2621",
+  muted: "#6f665e",
+  card: "#fffaf6",
+  border: "#ebe2d6",
+  deep: "#1a1410",
+  surface: WHITE,
+} as const;
+
+const PAPER_DARK = {
+  background: "#171311",
+  foreground: "#f4ebe3",
+  muted: "#a89b90",
+  card: "#221c18",
+  border: "#3d342c",
+  deep: "#0f0c0a",
+  surface: "#221c18",
+} as const;
+
 type Rgb = { r: number; g: number; b: number };
 type Hsl = { h: number; s: number; l: number };
 
@@ -25,8 +55,27 @@ function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
+const CSS_NAMED: Record<string, string> = {
+  red: "#ff0000",
+  orange: "#ffa500",
+  gold: "#ffd700",
+  green: "#008000",
+  teal: "#008080",
+  blue: "#0000ff",
+  purple: "#800080",
+  black: BLACK,
+  white: WHITE,
+};
+
+/** Accept `#hex` or a small set of CSS color names (for trying a new PRIMARY). */
+export function resolveColor(input: string): string {
+  const t = input.trim();
+  if (t.startsWith("#")) return t;
+  return CSS_NAMED[t.toLowerCase()] ?? t;
+}
+
 export function hexToRgb(hex: string): Rgb {
-  const t = hex.trim().replace(/^#/, "");
+  const t = resolveColor(hex).replace(/^#/, "");
   const full = t.length === 3 ? t.split("").map((c) => `${c}${c}`).join("") : t;
   const n = Number.parseInt(full, 16);
   if (!Number.isFinite(n)) return { r: 0, g: 0, b: 0 };
@@ -92,7 +141,6 @@ export function hslToHex(h: number, s: number, l: number): string {
   return rgbToHex((r + m) * 255, (g + m) * 255, (b + m) * 255);
 }
 
-/** Relative HSL offset from a hex (degrees, saturation delta, lightness delta). */
 export function rel(hex: string, dh: number, ds: number, dl: number): string {
   const { h, s, l } = hexToHsl(hex);
   return hslToHex(h + dh, s + ds, l + dl);
@@ -144,87 +192,81 @@ type Semantic = {
   gradientDeep: string;
 };
 
-/**
- * Offsets tuned so today's terracotta `PRIMARY` reproduces the current UI.
- * Changing `PRIMARY` keeps the same relationships (cream paper, gold shift, etc.).
- */
-function lightFromPrimary(p: string): Semantic {
-  const accent = p;
+/** Brand tints/shades from PRIMARY, mixed onto the given paper (not replacing it). */
+function brandFromPrimary(
+  rawPrimary: string,
+  paper: typeof PAPER_LIGHT | typeof PAPER_DARK,
+  dark: boolean,
+): Pick<
+  Semantic,
+  | "accent"
+  | "accentSoft"
+  | "onAccent"
+  | "gradientLight"
+  | "gradientMid"
+  | "gradientDeep"
+> {
+  const p = resolveColor(rawPrimary);
+  const accent = dark ? rel(p, 1.8, 0.08, 0.12) : p;
   return {
-    background: rel(p, 14, 0.037, 0.453),
-    foreground: rel(p, 8.5, -0.298, -0.351),
-    muted: rel(p, 9.5, -0.358, -0.1),
-    card: rel(p, 8, 0.55, 0.48),
-    border: rel(p, 15.5, -0.097, 0.378),
     accent,
-    accentSoft: mixHex(p, rel(p, 14, 0.037, 0.453), 0.857),
-    gold: rel(p, 12.6, -0.014, 0.094),
-    deep: rel(p, 5.25, -0.203, -0.42),
-    surface: WHITE,
+    // Light: wash of accent on cream. Dark: slight accent in the card, not a red panel.
+    accentSoft: dark
+      ? mixHex(paper.card, accent, 0.16)
+      : mixHex(accent, paper.background, 0.857),
     onAccent: onColor(accent),
-    overlay: BLACK,
-    danger: DANGER,
-    dangerSoft: mixHex(DANGER, WHITE, 0.92),
-    success: SUCCESS,
-    info: INFO,
     gradientLight: rel(p, 9.5, 0.156, 0.274),
     gradientMid: rel(p, 2.9, 0.106, 0.1),
     gradientDeep: rel(p, -3.4, 0.065, -0.184),
   };
 }
 
-function darkFromPrimary(p: string): Semantic {
-  const accent = rel(p, 1.8, 0.102, 0.129);
+function assemble(
+  paper: typeof PAPER_LIGHT | typeof PAPER_DARK,
+  gold: string,
+  dark: boolean,
+): Semantic {
+  const brand = brandFromPrimary(PRIMARY, paper, dark);
   return {
-    background: rel(p, 1.3, -0.29, -0.42),
-    foreground: rel(p, 11, 0.0, 0.42),
-    muted: rel(p, 10, -0.3, 0.16),
-    card: rel(p, 2, -0.22, -0.36),
-    border: rel(p, 4, -0.2, -0.22),
-    accent,
-    accentSoft: rel(p, 4, -0.18, -0.28),
-    gold: rel(p, 14, -0.05, 0.22),
-    deep: rel(p, 4, -0.2, -0.46),
-    surface: rel(p, 2, -0.22, -0.36),
-    onAccent: onColor(accent),
+    ...paper,
+    ...brand,
+    gold,
     overlay: BLACK,
-    danger: mixHex(DANGER, WHITE, 0.35),
-    dangerSoft: mixHex(DANGER, BLACK, 0.78),
-    success: mixHex(SUCCESS, WHITE, 0.2),
-    info: mixHex(INFO, WHITE, 0.2),
-    gradientLight: rel(p, 9.5, 0.156, 0.274),
-    gradientMid: rel(p, 2.9, 0.106, 0.1),
-    gradientDeep: rel(p, -3.4, 0.065, -0.184),
+    danger: dark ? mixHex(DANGER, WHITE, 0.35) : DANGER,
+    dangerSoft: dark ? mixHex(DANGER, BLACK, 0.78) : mixHex(DANGER, WHITE, 0.92),
+    success: dark ? mixHex(SUCCESS, WHITE, 0.2) : SUCCESS,
+    info: dark ? mixHex(INFO, WHITE, 0.2) : INFO,
   };
 }
 
-export const light = lightFromPrimary(PRIMARY);
-export const dark = darkFromPrimary(PRIMARY);
+export const light = assemble(PAPER_LIGHT, GOLD_LIGHT, false);
+export const dark = assemble(PAPER_DARK, GOLD_DARK, true);
 
 export function accentGradientCss(s: Semantic): string {
   return `linear-gradient(160deg, ${s.gradientLight} 0%, ${s.gradientMid} 38%, ${s.accent} 72%, ${s.gradientDeep} 100%)`;
 }
 
-/** Category card fills: brand hue plus stepped offsets so they retheme with PRIMARY. */
-export function categoryCardFills(
-  p: string = PRIMARY,
-): ReadonlyArray<readonly [string, string]> {
-  const { h, s } = hexToHsl(p);
-  return Array.from({ length: 13 }, (_, i) => {
-    const hue = h + i * 27;
-    const lightFill = hslToHex(hue, clamp01(s * 0.35 + 0.12), 0.86);
-    const darkFill = hslToHex(hue, clamp01(s * 0.22 + 0.08), 0.22);
-    return [lightFill, darkFill] as const;
-  });
-}
+/** Muted category card fills — independent of PRIMARY. [light, dark] */
+export const CATEGORY_CARD_FILLS: ReadonlyArray<readonly [string, string]> = [
+  ["#e4d6c8", "#3d342e"],
+  ["#d7e0d4", "#2f382f"],
+  ["#d4dde6", "#2e3640"],
+  ["#d5e4e2", "#2d3a38"],
+  ["#eadcc4", "#3d3628"],
+  ["#e6d4d8", "#3c3034"],
+  ["#e8e0c9", "#3c382a"],
+  ["#ddd6e4", "#353040"],
+  ["#cfd8e2", "#2c3440"],
+  ["#ead3c8", "#3e302c"],
+  ["#d4e2d6", "#2e3a30"],
+  ["#dce0d0", "#34382c"],
+  ["#d8d6d2", "#383430"],
+];
 
-export const CATEGORY_CARD_FILLS = categoryCardFills();
-
-export function chartSeriesColor(seed: string, p: string = PRIMARY): string {
+export function chartSeriesColor(seed: string): string {
   let n = 0;
   for (let i = 0; i < seed.length; i += 1) n = (n * 31 + seed.charCodeAt(i)) >>> 0;
-  const { h, s, l } = hexToHsl(p);
-  return hslToHex(h + (n % 360), clamp01(s * 0.7 + 0.25), clamp01(l * 0.15 + 0.48));
+  return hslToHex(n % 360, 0.55, 0.52);
 }
 
 function varsFor(s: Semantic): Record<string, string> {

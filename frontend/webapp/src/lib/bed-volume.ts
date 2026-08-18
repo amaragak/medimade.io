@@ -8,8 +8,3 @@ export function bedElementVolume(gain: number): number {
   const g = Math.min(100, Math.max(0, Number.isFinite(gain) ? gain : 0));
   return (g / 100) * BED_GAIN_PEAK_VOLUME;
 }
-
-export function bedElementVolume(gain: number): number {
-  const g = Math.min(100, Math.max(0, Number.isFinite(gain) ? gain : 0));
-  return (g / 100) * BED_GAIN_PEAK_VOLUME;
-}

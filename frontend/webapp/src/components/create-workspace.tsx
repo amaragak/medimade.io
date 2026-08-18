@@ -27,6 +27,10 @@ import {
   MeditationTypeCardGrid,
 } from "@/components/community-category-grid";
 import {
+  DictationMicButton,
+  appendSpokenText,
+} from "@/components/dictation-mic-button";
+import {
   type MedimadeChatTurn,
   type MeditationDraftStateV1,
   type MeditationTargetMinutes,
@@ -668,20 +672,30 @@ function StyleIntakeField({
         {optional ? (
           <span className="mt-1 block text-xs text-muted">Optional</span>
         ) : null}
-        <textarea
-          ref={setTextareaRef}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key !== "Enter" || e.shiftKey) return;
-            if (!onAdvance) return;
-            e.preventDefault();
-            if (!value.trim()) return;
-            onAdvance();
-          }}
-          rows={1}
-          className="mt-4 w-full resize-y rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-relaxed text-foreground outline-none ring-accent/30 focus:ring-2 sm:text-base"
-        />
+        <div className="mt-4 flex items-end gap-2">
+          <textarea
+            ref={setTextareaRef}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || e.shiftKey) return;
+              if (!onAdvance) return;
+              e.preventDefault();
+              if (!value.trim()) return;
+              onAdvance();
+            }}
+            rows={1}
+            className="min-w-0 flex-1 resize-y rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-relaxed text-foreground outline-none ring-accent/30 focus:ring-2 sm:text-base"
+          />
+          <DictationMicButton
+            variant="inset"
+            onTranscript={(spoken) => {
+              const current = textareaRef.current?.value ?? value;
+              onChange(appendSpokenText(current, spoken));
+              textareaRef.current?.focus();
+            }}
+          />
+        </div>
       </label>
     </div>
   );
@@ -4396,7 +4410,7 @@ export function CreateWorkspace({
               <div ref={messagesEndRef} />
             </div>
             {phase === "journalPick" || phase === "goalPick" ? null : (
-            <div className="mt-3 flex shrink-0 gap-2 border-t border-border pt-3">
+            <div className="mt-3 flex shrink-0 items-center gap-2 border-t border-border pt-3">
               <input
                 ref={chatInputRef}
                 value={input}
@@ -4414,6 +4428,13 @@ export function CreateWorkspace({
                         : "Reply to the guide…"
                 }
                 className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2.5 text-lg outline-none ring-accent/30 focus:ring-2"
+              />
+              <DictationMicButton
+                disabled={chatControlsDisabled || chatLoading || scriptLoading}
+                onTranscript={(spoken) => {
+                  setInput((prev) => appendSpokenText(prev, spoken));
+                  chatInputRef.current?.focus();
+                }}
               />
               <button
                 type="button"

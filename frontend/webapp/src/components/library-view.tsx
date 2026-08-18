@@ -147,6 +147,26 @@ function libraryListDateMarker(
   };
 }
 
+function IconSearch({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="11" cy="11" r="7" />
+      <path d="M20 20l-3.5-3.5" />
+    </svg>
+  );
+}
+
 function IconList({ className }: { className?: string }) {
   return (
     <svg
@@ -1490,8 +1510,6 @@ export default function LibraryView({
     return () => {
       cancelled = true;
     };
-  }, []);
-
   }, []);
 
   const sortedItems = useMemo(() => {
@@ -2849,6 +2867,22 @@ export default function LibraryView({
             </div>
   );
 
+  const searchInput = (
+            <div className="relative min-w-[10rem] flex-1">
+              <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted">
+                <IconSearch />
+              </span>
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search title, description, type"
+                aria-label="Search library"
+                className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted focus:border-accent/50"
+              />
+            </div>
+  );
+
   return (
     <>
     <div
@@ -2858,18 +2892,10 @@ export default function LibraryView({
     >
       <header className="w-full min-w-0">
         <div className="grid w-full min-w-0 gap-4 sm:grid-cols-[1fr_auto] sm:items-start">
-          <div className="flex min-w-0 w-full items-center gap-3 sm:col-span-2">
+          <div className="flex min-w-0 w-full items-center justify-between gap-3 sm:col-span-2">
             <h1 className="shrink-0 font-display text-3xl font-medium tracking-tight">
               Library
             </h1>
-            <input
-              type="search"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search title, description, type"
-              aria-label="Search library"
-              className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted focus:border-accent/50"
-            />
             <Link
               href="/meditate/create"
               className="shrink-0 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-on-accent dark:text-deep"
@@ -2917,8 +2943,8 @@ export default function LibraryView({
             </p>
           </div>
           {libraryTab !== "community" ? (
-          <div className="flex w-full items-center justify-between gap-3 sm:col-span-2">
-            <div className="flex items-center gap-3">
+          <div className="flex w-full flex-wrap items-center gap-3 sm:col-span-2">
+            <div className="flex shrink-0 items-center gap-3">
               {libraryTab === "meditations" ? (
               <button
                 type="button"
@@ -3003,7 +3029,8 @@ export default function LibraryView({
               </div>
               ) : null}
             </div>
-            {layoutToggle}
+            {searchInput}
+            <div className="shrink-0">{layoutToggle}</div>
           </div>
           ) : null}
         </div>
@@ -3015,9 +3042,10 @@ export default function LibraryView({
             selected={categoryFilter}
             onSelect={setCategoryFilter}
           />
-          <div className="mt-8 flex w-full items-center justify-between gap-3">
-            {sortDropdown}
-            {layoutToggle}
+          <div className="mt-8 flex w-full flex-wrap items-center gap-3">
+            <div className="shrink-0">{sortDropdown}</div>
+            {searchInput}
+            <div className="shrink-0">{layoutToggle}</div>
           </div>
         </>
       ) : null}

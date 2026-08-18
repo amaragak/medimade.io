@@ -345,7 +345,11 @@ export class MedimadeStack extends cdk.Stack {
     const httpApi = new apigwv2.HttpApi(this, "HttpApi", {
       apiName: "medimade-api",
       corsPreflight: {
-        allowHeaders: ["Content-Type", "Authorization"],
+        allowHeaders: [
+          "Content-Type",
+          "Authorization",
+          "X-Medimade-Authorization",
+        ],
         allowMethods: [
           apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.POST,

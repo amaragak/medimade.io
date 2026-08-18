@@ -221,18 +221,23 @@ export function JournalRichEditor({
           <div className="flex flex-wrap items-center gap-1 sm:justify-end">
             {transcribeApiBase ? (
               <>
-                <ToolbarBtn
-                  label={voiceRecording ? "Recording…" : "Record voice"}
-                  active={voiceRecording}
+                <button
+                  type="button"
+                  title={voiceRecording ? "Recording…" : "Record voice"}
+                  aria-label={voiceRecording ? "Recording…" : "Record voice"}
+                  aria-pressed={voiceRecording}
                   disabled={voiceBusy}
                   onClick={async () => {
                     if (voiceBusy) return;
                     if (voiceRecording) return;
                     await startVoiceRecording();
                   }}
+                  className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-accent text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 ${
+                    voiceRecording ? "animate-pulse" : ""
+                  }`}
                 >
                   <IconMic />
-                </ToolbarBtn>
+                </button>
                 <ToolbarBtn
                   label="Stop and place clip"
                   disabled={!voiceRecording || voiceBusy}

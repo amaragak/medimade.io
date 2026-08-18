@@ -8,7 +8,7 @@ import {
 } from "@aws-sdk/client-secrets-manager";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
-import { requireUserJson } from "../lib/medimade-auth-http";
+import { optionalUserJson } from "../lib/medimade-auth-http";
 
 const OPENAI_TRANSCRIPTIONS_URL =
   "https://api.openai.com/v1/audio/transcriptions";
@@ -67,7 +67,8 @@ export async function handler(
       headers: {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type,Authorization",
+        "Access-Control-Allow-Headers":
+          "Content-Type,Authorization,X-Medimade-Authorization",
         "Access-Control-Max-Age": "86400",
       },
       body: "",
@@ -78,9 +79,22 @@ export async function handler(
     return json(405, { error: "Method not allowed" });
   }
 
-  const auth = await requireUserJson(event);
-  if ("statusCode" in auth) return auth;
-  const userId = (auth as { sub: string }).sub;
+  let body: { audioBase64?: string; mimeType?: string; sessionToken?: string };
+  try {
+    body = JSON.parse(event.body || "{}") as {
+      audioBase64?: string;
+      mimeType?: string;
+      sessionToken?: string;
+    };
+  } catch {
+    return json(400, { error: "Invalid JSON body" });
+  }
+
+  const auth = await optionalUserJson(
+    event,
+    typeof body.sessionToken === "string" ? body.sessionToken : null,
+  );
+  const userId = auth?.sub?.trim() || "guest";
 
   const bucket = process.env.MEDIA_BUCKET_NAME?.trim();
   if (!bucket) {
@@ -93,13 +107,6 @@ export async function handler(
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Secret lookup failed";
     return json(500, { error: msg });
-  }
-
-  let body: { audioBase64?: string; mimeType?: string };
-  try {
-    body = JSON.parse(event.body || "{}") as { audioBase64?: string; mimeType?: string };
-  } catch {
-    return json(400, { error: "Invalid JSON body" });
   }
 
   const b64 =

@@ -257,12 +257,15 @@ export async function transcribeJournalAudio(params: {
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
-  const res = await fetch(`${base}/journal/transcribe`, {
+  const token = sessionTokenForBody();
+  const qs = token ? `?sessionToken=${encodeURIComponent(token)}` : "";
+  const res = await fetch(`${base}/journal/transcribe${qs}`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
       audioBase64: params.audioBase64,
       mimeType: params.mimeType,
+      ...(token ? { sessionToken: token } : {}),
     }),
   });
   let data: Record<string, unknown> = {};
