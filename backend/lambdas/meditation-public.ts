@@ -76,9 +76,10 @@ export async function handler(
       partitionKeys,
       sk,
       update: {
-        UpdateExpression: "SET isPublic = :p",
+        UpdateExpression: "SET #p = :p",
+        ExpressionAttributeNames: { "#p": "isPublic" },
         ExpressionAttributeValues: { ":p": raw },
-        ConditionExpression: "attribute_exists(s3Key)",
+        ConditionExpression: "attribute_exists(pk)",
       },
     });
     if (!ok) {

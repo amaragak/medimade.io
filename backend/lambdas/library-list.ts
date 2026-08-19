@@ -131,7 +131,8 @@ async function scanPublicMeditationItems(
       new ScanCommand({
         TableName: tableName,
         FilterExpression:
-          "isPublic = :t AND (attribute_not_exists(archived) OR archived = :f) AND (attribute_not_exists(isDraft) OR isDraft = :f)",
+          "#p = :t AND (attribute_not_exists(archived) OR archived = :f) AND (attribute_not_exists(isDraft) OR isDraft = :f)",
+        ExpressionAttributeNames: { "#p": "isPublic" },
         ExpressionAttributeValues: { ":t": true, ":f": false },
         ExclusiveStartKey: lek,
       }),

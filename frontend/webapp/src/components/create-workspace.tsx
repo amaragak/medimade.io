@@ -3831,7 +3831,7 @@ export function CreateWorkspace({
                     ? "Pause all previews"
                     : "Play all selected tracks"
                 }
-                className="inline-flex shrink-0 cursor-pointer items-center rounded-full border border-border bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="accent-fill-gradient inline-flex shrink-0 cursor-pointer items-center rounded-full px-3 py-1.5 text-xs font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {anyTrackPlaying || playAllActive ? "Pause all" : "Play all"}
               </button>
@@ -4117,10 +4117,10 @@ export function CreateWorkspace({
           <div className="min-h-8 flex-1" aria-hidden />
           </div>
           <div className="shrink-0 border-t border-border/60 bg-background pt-4">
-            <div className="flex justify-end">
+            <div className="flex min-h-[2.75rem] justify-end">
+            {pendingModeChoice ? (
             <button
               type="button"
-              disabled={!pendingModeChoice}
               onClick={() => {
                 if (pendingModeChoice === "style") {
                   beginStylePath();
@@ -4139,24 +4139,29 @@ export function CreateWorkspace({
                   pushCreate({ path: "goal" });
                 }
               }}
-              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
+              className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
               aria-label={
                 pendingModeChoice === "style"
-                  ? "Continue and pick a meditation type"
+                  ? "Next: choose a meditation type"
                   : pendingModeChoice === "journalReflect"
-                  ? "Continue and pick journal entries in chat"
-                  : pendingModeChoice === "goal"
-                    ? "Continue and pick a goal in chat"
-                  : "Continue to script and chat"
+                    ? "Next: choose a journal entry"
+                    : pendingModeChoice === "goal"
+                      ? "Next: choose a goal"
+                      : "Next: chat"
               }
             >
               <span>
                 {pendingModeChoice === "style"
-                  ? "Choose meditation type"
-                  : "Script"}
+                  ? "Type"
+                  : pendingModeChoice === "journalReflect"
+                    ? "Journal"
+                    : pendingModeChoice === "goal"
+                      ? "Goal"
+                      : "Chat"}
               </span>
               <IconChevronRight className="text-accent-link" />
             </button>
+            ) : null}
             </div>
           </div>
         </div>
@@ -4852,7 +4857,7 @@ export function CreateWorkspace({
                 type="button"
                 onClick={() => void generateMeditationAudioAndShow()}
                 disabled={audioLoading}
-                className={`shrink-0 cursor-pointer whitespace-nowrap rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-md transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5 ${
+                className={`accent-fill-gradient shrink-0 cursor-pointer whitespace-nowrap rounded-full px-4 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5 ${
                   audioLoading ? "animate-pulse" : ""
                 }`}
               >
