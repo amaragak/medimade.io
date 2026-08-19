@@ -1087,6 +1087,64 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    const journalImportPdf = new lambda_nodejs.NodejsFunction(
+      this,
+      "JournalImportPdfFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/journal-import-pdf.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(90),
+        memorySize: 512,
+        environment: {
+          CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        },
+      },
+    );
+    claudeApiKeySecret.grantRead(journalImportPdf);
+    authJwtSecret.grantRead(journalImportPdf);
+
+    httpApi.addRoutes({
+      path: "/journal/import/pdf",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "JournalImportPdfIntegration",
+        journalImportPdf,
+      ),
+    });
+
+    const journalImportOcr = new lambda_nodejs.NodejsFunction(
+      this,
+      "JournalImportOcrFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/journal-import-ocr.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(30),
+        memorySize: 256,
+        environment: {
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        },
+      },
+    );
+    authJwtSecret.grantRead(journalImportOcr);
+    journalImportOcr.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["textract:DetectDocumentText"],
+        resources: ["*"],
+      }),
+    );
+
+    httpApi.addRoutes({
+      path: "/journal/import/ocr",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "JournalImportOcrIntegration",
+        journalImportOcr,
+      ),
+    });
+
     // --- Python: voice FX (Pedalboard) — layer is pre-built with Docker, committed under layers/pedalboard/
     const pedalboardLayerRoot = path.join(__dirname, "../layers/pedalboard");
     const pedalboardPackageInit = path.join(

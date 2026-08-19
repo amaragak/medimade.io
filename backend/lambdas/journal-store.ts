@@ -67,12 +67,22 @@ type JournalEntry = {
   contentHtml: string;
   kind?: "freeform" | "gratitude";
   gratitude?: [string, string, string];
+  mood?: string;
+  tags?: string[];
+  importSource?: string;
+  importBatchId?: string;
+  sourceMetadata?: Record<string, unknown>;
+  mediaRefs?: string[];
+  folderId?: string;
 };
+
+type JournalFolder = { id: string; name: string };
 
 type JournalStoreV2 = {
   version: 2;
   activeEntryId: string | null;
   entries: JournalEntry[];
+  folders?: JournalFolder[];
 };
 
 function isStoreV2(x: unknown): x is JournalStoreV2 {
@@ -149,6 +159,16 @@ function gratitudeFromUnknown(raw: unknown): [string, string, string] | undefine
   ];
 }
 
+function tagsFromUnknown(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const tags = raw
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => t.trim().slice(0, 32))
+    .filter(Boolean)
+    .slice(0, 16);
+  return tags.length ? tags : undefined;
+}
+
 function journalEntryFromItem(
   item: Record<string, unknown>,
   id: string,
@@ -163,6 +183,25 @@ function journalEntryFromItem(
   }
   const kind = item.kind === "gratitude" ? ("gratitude" as const) : undefined;
   const gratitude = gratitudeFromUnknown(item.gratitude);
+  const mood = typeof item.mood === "string" ? item.mood : undefined;
+  const tags = tagsFromUnknown(item.tags);
+  const importSource =
+    typeof item.importSource === "string" ? item.importSource : undefined;
+  const importBatchId =
+    typeof item.importBatchId === "string" ? item.importBatchId : undefined;
+  const sourceMetadata =
+    item.sourceMetadata &&
+    typeof item.sourceMetadata === "object" &&
+    !Array.isArray(item.sourceMetadata)
+      ? (item.sourceMetadata as Record<string, unknown>)
+      : undefined;
+  const mediaRefs = Array.isArray(item.mediaRefs)
+    ? item.mediaRefs.filter((x): x is string => typeof x === "string").slice(0, 64)
+    : undefined;
+  const folderId =
+    typeof item.folderId === "string" && item.folderId.trim()
+      ? item.folderId.trim().slice(0, 80)
+      : undefined;
   return {
     id,
     createdAt: item.createdAt,
@@ -170,6 +209,13 @@ function journalEntryFromItem(
     title: item.title,
     contentHtml: item.contentHtml,
     ...(kind ? { kind, gratitude: gratitude ?? ["", "", ""] } : {}),
+    ...(mood ? { mood } : {}),
+    ...(tags ? { tags } : {}),
+    ...(importSource ? { importSource } : {}),
+    ...(importBatchId ? { importBatchId } : {}),
+    ...(sourceMetadata ? { sourceMetadata } : {}),
+    ...(mediaRefs?.length ? { mediaRefs } : {}),
+    ...(folderId ? { folderId } : {}),
   };
 }
 
@@ -217,9 +263,27 @@ async function queryAllItems(
   return items;
 }
 
+function foldersFromUnknown(raw: unknown): JournalFolder[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: JournalFolder[] = [];
+  const seen = new Set<string>();
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    if (typeof o.id !== "string" || !o.id.trim()) continue;
+    const name = typeof o.name === "string" ? o.name.trim().slice(0, 40) : "";
+    if (!name || seen.has(o.id)) continue;
+    seen.add(o.id);
+    out.push({ id: o.id.trim().slice(0, 80), name });
+    if (out.length >= 40) break;
+  }
+  return out.length ? out : undefined;
+}
+
 function ddbItemsToStore(items: Record<string, unknown>[]): JournalStoreV2 | null {
   if (!items.length) return null;
   let activeEntryId: string | null = null;
+  let folders: JournalFolder[] | undefined;
   type Row = { entry: JournalEntry; pos: number };
   const rows: Row[] = [];
   for (const item of items) {
@@ -228,6 +292,7 @@ function ddbItemsToStore(items: Record<string, unknown>[]): JournalStoreV2 | nul
       const ae = item.activeEntryId;
       activeEntryId =
         ae === null || typeof ae === "string" ? (ae as string | null) : null;
+      folders = foldersFromUnknown(item.folders);
       continue;
     }
     if (typeof sk !== "string" || !sk.startsWith("ENTRY#")) continue;
@@ -248,6 +313,7 @@ function ddbItemsToStore(items: Record<string, unknown>[]): JournalStoreV2 | nul
     version: 2,
     activeEntryId,
     entries: rows.map((r) => r.entry),
+    ...(folders ? { folders } : {}),
   };
 }
 
@@ -350,6 +416,44 @@ async function persistStoreToDdb(
           ]
         : ["", "", ""];
     }
+    if (typeof e.mood === "string" && e.mood.trim()) {
+      item.mood = e.mood.trim().slice(0, 32);
+    }
+    if (Array.isArray(e.tags)) {
+      const tags = e.tags
+        .filter((t): t is string => typeof t === "string")
+        .map((t) => t.trim().slice(0, 32))
+        .filter(Boolean)
+        .slice(0, 16);
+      if (tags.length) item.tags = tags;
+    }
+    if (typeof e.importSource === "string" && e.importSource.trim()) {
+      item.importSource = e.importSource.trim().slice(0, 32);
+    }
+    if (typeof e.importBatchId === "string" && e.importBatchId.trim()) {
+      item.importBatchId = e.importBatchId.trim().slice(0, 80);
+    }
+  if (
+      e.sourceMetadata &&
+      typeof e.sourceMetadata === "object" &&
+      !Array.isArray(e.sourceMetadata)
+    ) {
+      const raw = JSON.stringify(e.sourceMetadata);
+      if (Buffer.byteLength(raw, "utf-8") <= 16 * 1024) {
+        item.sourceMetadata = e.sourceMetadata;
+      }
+    }
+    if (Array.isArray(e.mediaRefs)) {
+      const refs = e.mediaRefs
+        .filter((t): t is string => typeof t === "string")
+        .map((t) => t.slice(0, 512))
+        .filter(Boolean)
+        .slice(0, 64);
+      if (refs.length) item.mediaRefs = refs;
+    }
+    if (typeof e.folderId === "string" && e.folderId.trim()) {
+      item.folderId = e.folderId.trim().slice(0, 80);
+    }
     ops.push({
       op: "put",
       item,
@@ -362,6 +466,9 @@ async function persistStoreToDdb(
       pk: ownerId,
       sk: SK_META,
       activeEntryId: store.activeEntryId,
+      ...(foldersFromUnknown(store.folders)
+        ? { folders: foldersFromUnknown(store.folders) }
+        : {}),
     },
   });
 

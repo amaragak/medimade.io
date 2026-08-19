@@ -101,7 +101,7 @@ export function JournalWeeklyReflectionCard() {
     <section className="mb-8 rounded-2xl border border-accent/25 bg-accent-soft/10 p-5 shadow-sm sm:p-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-accent">
+          <p className="text-xs font-semibold uppercase tracking-wide text-accent-link">
             Weekly reflection
           </p>
           <h2 className="mt-1 font-display text-2xl font-medium tracking-tight text-foreground">
@@ -117,7 +117,7 @@ export function JournalWeeklyReflectionCard() {
             type="button"
             onClick={() => void generate(Boolean(reflection))}
             disabled={!apiEnabled || generating}
-            className="cursor-pointer rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:text-deep"
+            className="cursor-pointer rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {generating
               ? "Writing…"
@@ -146,7 +146,7 @@ export function JournalWeeklyReflectionCard() {
       ) : reflection?.letterMarkdown?.trim() ? (
         <div className="relative mt-5 rounded-2xl border border-accent/20 bg-background/70 px-5 py-5 pl-8 shadow-inner">
           <span
-            className="absolute left-3 top-5 select-none text-accent/70"
+            className="absolute left-3 top-5 select-none text-accent-link/70"
             aria-hidden
           >
             ✦

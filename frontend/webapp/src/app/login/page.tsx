@@ -71,7 +71,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={busy}
-            className="w-full rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50 dark:text-deep"
+            className="w-full rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Sending…" : "Email me a link"}
           </button>
@@ -79,7 +79,7 @@ export default function LoginPage() {
       )}
 
       <p className="mt-8 text-center text-sm text-muted">
-        <Link href="/" className="text-accent underline-offset-2 hover:underline">
+        <Link href="/" className="text-accent-link underline-offset-2 hover:underline">
           Back to home
         </Link>
       </p>

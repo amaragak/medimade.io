@@ -450,6 +450,114 @@ export async function runJournalInsightsRemote(opts?: {
   return insights as JournalInsights;
 }
 
+export type PdfImportDatedEntry = {
+  title: string;
+  body: string;
+  date: string | null;
+};
+
+export async function datePdfJournalImport(units: unknown[]): Promise<{
+  dates_found: boolean;
+  entries: PdfImportDatedEntry[];
+  error?: string;
+}> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await fetch(`${base}/journal/import/pdf`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      units,
+      ...(sessionTokenForBody() ? { sessionToken: sessionTokenForBody() } : {}),
+    }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const raw = Array.isArray(data.entries) ? data.entries : [];
+  const entries: PdfImportDatedEntry[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    if (typeof o.body !== "string" || !o.body.trim()) continue;
+    entries.push({
+      title: typeof o.title === "string" ? o.title : "",
+      body: o.body,
+      date: typeof o.date === "string" ? o.date : null,
+    });
+  }
+  return {
+    dates_found: data.dates_found === true,
+    entries,
+    error: typeof data.error === "string" ? data.error : undefined,
+  };
+}
+
+export type JournalOcrWord = {
+  text: string;
+  confidence: number | null;
+};
+
+export async function ocrJournalPhoto(imageBase64: string): Promise<{
+  text: string;
+  words: JournalOcrWord[];
+  engine: "textract";
+}> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await fetch(`${base}/journal/import/ocr`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      imageBase64,
+      ...(sessionTokenForBody() ? { sessionToken: sessionTokenForBody() } : {}),
+    }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const raw = Array.isArray(data.words) ? data.words : [];
+  const words: JournalOcrWord[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    if (typeof o.text !== "string" || !o.text.trim()) continue;
+    words.push({
+      text: o.text.trim(),
+      confidence: typeof o.confidence === "number" ? o.confidence : null,
+    });
+  }
+  return {
+    engine: "textract",
+    text: typeof data.text === "string" ? data.text : "",
+    words,
+  };
+}
+
 export type JournalWeeklyReflection = {
   ownerId: string;
   weekKey: string;

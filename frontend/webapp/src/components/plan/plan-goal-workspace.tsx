@@ -159,7 +159,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
         </p>
         <Link
           href="/ideate"
-          className="mt-6 inline-block text-sm font-semibold text-accent underline-offset-2 hover:underline"
+          className="mt-6 inline-block text-sm font-semibold text-accent-link underline-offset-2 hover:underline"
         >
           Back to Ideate
         </Link>
@@ -176,7 +176,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
         <div className="border-b border-border/70 pb-6">
           <Link
             href="/ideate"
-            className="text-xs font-semibold uppercase tracking-wide text-accent hover:underline"
+            className="text-xs font-semibold uppercase tracking-wide text-accent-link hover:underline"
           >
             ← Ideate
           </Link>
@@ -213,7 +213,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
                   onClick={() => setTab(item.id)}
                   className={`-mb-px cursor-pointer border-b-2 pb-2.5 text-sm transition-colors ${
                     active
-                      ? "border-accent font-semibold text-foreground"
+                      ? "border-selected font-semibold text-foreground"
                       : "border-transparent text-muted hover:border-border hover:text-foreground"
                   }`}
                 >
@@ -257,7 +257,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
                   type="button"
                   disabled={!dream.visionText.trim()}
                   onClick={() => generateMeditation()}
-                  className="mt-8 w-full cursor-pointer rounded-full bg-accent px-5 py-3.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:text-deep"
+                  className="mt-8 w-full cursor-pointer rounded-full bg-accent px-5 py-3.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Generate visualisation meditation
                 </button>

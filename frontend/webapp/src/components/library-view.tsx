@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Switch from "@radix-ui/react-switch";
+import { SearchInput } from "@/components/search-input";
 import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
 import { SoundFolderSelect } from "@/components/sound-folder-select";
 import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
@@ -145,26 +146,6 @@ function libraryListDateMarker(
       year: "numeric",
     }),
   };
-}
-
-function IconSearch({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      width="16"
-      height="16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <circle cx="11" cy="11" r="7" />
-      <path d="M20 20l-3.5-3.5" />
-    </svg>
-  );
 }
 
 function IconList({ className }: { className?: string }) {
@@ -1285,7 +1266,7 @@ function LibraryAudioStrip({
             <button
               type="button"
                 onClick={() => togglePlayback()}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent dark:text-deep"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent"
               aria-label={playing ? "Pause" : "Play"}
             >
               {playing ? (
@@ -2326,7 +2307,7 @@ export default function LibraryView({
                 className={`flex h-11 w-11 items-center justify-center rounded-full ${
                   isFailed
                     ? "bg-danger/10 text-danger"
-                    : "bg-accent/15 text-accent"
+                    : "bg-selected/10 text-selected"
                 }`}
                 aria-label={isFailed ? "Generation failed" : "Generating"}
                 title={isFailed ? "Generation failed" : "Generating"}
@@ -2354,7 +2335,7 @@ export default function LibraryView({
       const continueBtn = (
         <Link
           href={href}
-          className="inline-flex shrink-0 items-center justify-center rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 dark:text-deep"
+          className="inline-flex shrink-0 items-center justify-center rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90"
         >
           Continue
         </Link>
@@ -2392,7 +2373,7 @@ export default function LibraryView({
         >
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1">
-              <span className="inline-block rounded-full border border-border bg-accent-soft/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+              <span className="inline-block rounded-full border border-border bg-accent-soft/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
                 Draft
               </span>
               <h2 className="font-display mt-2 text-lg font-medium leading-snug">
@@ -2433,8 +2414,8 @@ export default function LibraryView({
             }
             className={`rounded px-0.5 text-base leading-none sm:text-lg ${
               m.rating != null && star <= m.rating
-                ? "text-gold"
-                : "text-gold opacity-40"
+                ? "text-accent"
+                : "text-star-idle"
             } ${!m.sk ? "cursor-not-allowed opacity-40" : ""}`}
             title={
               m.sk
@@ -2460,7 +2441,7 @@ export default function LibraryView({
             ? "opacity-100 pointer-events-auto"
             : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
         } ${
-          "text-accent"
+          m.favourite ? "text-selected" : "text-muted"
         } ${
           favouriteDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
         }`}
@@ -2484,7 +2465,7 @@ export default function LibraryView({
         }}
         aria-expanded={mixEditor?.sk === m.sk}
         aria-label="Edit background mix"
-        className={`self-center items-center justify-center p-1 text-accent transition-opacity ${
+        className={`self-center items-center justify-center p-1 text-muted transition-opacity ${
           alwaysShowRowChrome || mixEditor?.sk === m.sk
             ? "opacity-100 pointer-events-auto"
             : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
@@ -2515,7 +2496,7 @@ export default function LibraryView({
         >
           <span
             className={`text-[11px] font-medium tracking-wide ${
-              m.isPublic === true ? "text-accent" : "text-muted"
+              m.isPublic === true ? "text-accent-link" : "text-muted"
             }`}
           >
             Public
@@ -2564,7 +2545,7 @@ export default function LibraryView({
               : alwaysShowRowChrome
                 ? "inline-flex"
                 : "hidden group-hover:inline-flex"
-          } items-center font-bold text-accent hover:text-accent/80 cursor-pointer`}
+          } items-center font-bold text-accent-link hover:text-accent-link/80 cursor-pointer`}
           style={{ lineHeight: "1.35" }}
         >
           {open ? "hide script" : "show script"}
@@ -2581,7 +2562,7 @@ export default function LibraryView({
             <button
               type="button"
               onClick={() => setPlaybackToggleNonce((v) => v + 1)}
-              className="self-center flex h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent dark:text-deep cursor-pointer"
+              className="self-center flex h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent cursor-pointer"
               aria-label="Pause"
             >
               <svg
@@ -2605,8 +2586,8 @@ export default function LibraryView({
             }
             className={
               alwaysShowRowChrome
-                ? "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent dark:text-deep cursor-pointer opacity-100 pointer-events-auto transition-opacity"
-                : "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent dark:text-deep cursor-pointer opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
+                ? "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent cursor-pointer opacity-100 pointer-events-auto transition-opacity"
+                : "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent cursor-pointer opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
             }
             aria-label="Play"
           >
@@ -2661,7 +2642,7 @@ export default function LibraryView({
             />
           ) : null}
           <div className="flex items-start justify-between gap-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-accent">
+            <p className="text-xs font-medium uppercase tracking-wide text-accent-link">
               {styleLine}
             </p>
           </div>
@@ -2730,7 +2711,7 @@ export default function LibraryView({
                     {lengthLine}
                   </span>
                 </div>
-                <span className="rounded-full bg-accent-soft/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+                <span className="rounded-full bg-accent-soft/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
                   {styleLine}
                 </span>
               </div>
@@ -2822,7 +2803,7 @@ export default function LibraryView({
                             setSortDropdownOpen(false);
                           }}
                           className={`w-full cursor-pointer px-3 py-2 text-left text-sm font-semibold text-foreground/80 dark:text-foreground/80 ${
-                            selected ? "bg-accent/15 cursor-default" : "hover:bg-accent/15 bg-transparent"
+                            selected ? "bg-selected/10 cursor-default" : "hover:bg-selected/10 bg-transparent"
                           }`}
                         >
                           {it.label}
@@ -2846,7 +2827,7 @@ export default function LibraryView({
                 aria-pressed={viewMode === "list"}
                 className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
                   viewMode === "list"
-                    ? "bg-accent text-on-accent dark:text-deep"
+                    ? "bg-selected text-on-selected"
                     : "text-muted hover:text-foreground"
                 }`}
               >
@@ -2858,7 +2839,7 @@ export default function LibraryView({
                 aria-pressed={viewMode === "grid"}
                 className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
                   viewMode === "grid"
-                    ? "bg-accent text-on-accent dark:text-deep"
+                    ? "bg-selected text-on-selected"
                     : "text-muted hover:text-foreground"
                 }`}
               >
@@ -2868,19 +2849,14 @@ export default function LibraryView({
   );
 
   const searchInput = (
-            <div className="relative min-w-[10rem] flex-1">
-              <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted">
-                <IconSearch />
-              </span>
-              <input
-                type="search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search title, description, type"
-                aria-label="Search library"
-                className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted focus:border-accent/50"
-              />
-            </div>
+            <SearchInput
+              className="min-w-[10rem] flex-1"
+              inputClassName="py-2 placeholder:text-muted"
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search title, description, type"
+              aria-label="Search library"
+            />
   );
 
   return (
@@ -2898,7 +2874,7 @@ export default function LibraryView({
             </h1>
             <Link
               href="/meditate/create"
-              className="shrink-0 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-on-accent dark:text-deep"
+              className="shrink-0 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-on-accent"
             >
               Create new
             </Link>
@@ -2916,7 +2892,7 @@ export default function LibraryView({
                 onClick={() => setLibraryTab("meditations")}
                 className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                   libraryTab === "meditations"
-                    ? "bg-accent text-on-accent dark:text-deep"
+                    ? "bg-selected text-on-selected"
                     : "text-muted hover:text-foreground"
                 }`}
               >
@@ -2929,7 +2905,7 @@ export default function LibraryView({
                 onClick={() => setLibraryTab("community")}
                 className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                   libraryTab === "community"
-                    ? "bg-accent text-on-accent dark:text-deep"
+                    ? "bg-selected text-on-selected"
                     : "text-muted hover:text-foreground"
                 }`}
               >
@@ -2952,7 +2928,7 @@ export default function LibraryView({
                 aria-pressed={favouritesOnly}
                 className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
                   favouritesOnly
-                    ? "border-accent/60 bg-accent text-on-accent dark:text-deep"
+                    ? "border-selected/60 bg-selected text-on-selected"
                     : "border-border bg-background text-foreground hover:border-accent/40"
                 }`}
               >
@@ -3017,7 +2993,7 @@ export default function LibraryView({
                             setCategoryDropdownOpen(false);
                           }}
                           className={`w-full cursor-pointer px-3 py-2 text-left text-sm font-semibold text-foreground dark:text-foreground ${
-                            selected ? "bg-accent/15 cursor-default" : "hover:bg-accent/15 bg-transparent"
+                            selected ? "bg-selected/10 cursor-default" : "hover:bg-selected/10 bg-transparent"
                           }`}
                         >
                           {it.label}
@@ -3262,7 +3238,7 @@ export default function LibraryView({
                 setArchiveConfirm(null);
                 if (item) void setArchived(item, true);
               }}
-              className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 dark:text-deep"
+              className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
             >
               Archive
             </button>

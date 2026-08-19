@@ -98,12 +98,12 @@ function CompleteProfileInner() {
           type="button"
           onClick={() => void onSubmitName()}
           disabled={phase === "saving" || !nameInput.trim()}
-          className="w-full rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40 dark:text-deep"
+          className="w-full rounded-xl bg-accent px-4 py-3 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
         >
           {phase === "saving" ? "Saving…" : "Continue"}
         </button>
         <p className="text-center text-sm text-muted">
-          <Link href="/" className="text-accent underline-offset-2 hover:underline">
+          <Link href="/" className="text-accent-link underline-offset-2 hover:underline">
             Back to home
           </Link>
         </p>

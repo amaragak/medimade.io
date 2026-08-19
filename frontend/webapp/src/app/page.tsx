@@ -24,13 +24,13 @@ export default function HomePage() {
     <div className="mesh-hero">
       <section className="mx-auto grid max-w-6xl gap-12 px-4 py-16 sm:grid-cols-2 sm:items-center sm:px-6 lg:py-24">
         <div>
-          <p className="mb-3 text-sm font-medium uppercase tracking-widest text-accent">
+          <p className="mb-3 text-sm font-medium uppercase tracking-widest text-accent-link">
             consciously.live
           </p>
           <h1 className="text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
             <span className="font-display">Consciously</span>
             <span className="mx-1.5 text-foreground">·</span>
-            <span className="font-hand text-[1.08em] font-medium leading-snug text-accent tracking-normal">
+            <span className="font-hand text-[1.08em] font-medium leading-snug text-accent-link tracking-normal">
               Live consciously
             </span>
           </h1>
@@ -46,7 +46,7 @@ export default function HomePage() {
           <div className="mt-8 flex flex-wrap gap-3">
             <Link
               href="/meditate/create"
-              className="inline-flex items-center justify-center rounded-full bg-accent px-6 py-3 text-sm font-semibold text-on-accent shadow-md transition-opacity hover:opacity-90 dark:text-deep"
+              className="inline-flex items-center justify-center rounded-full bg-accent px-6 py-3 text-sm font-semibold text-on-accent shadow-md transition-opacity hover:opacity-90"
             >
               Start creating
             </Link>
@@ -127,7 +127,7 @@ function HeroVisual() {
         className="absolute inset-4 rounded-2xl opacity-40 hero-orb"
       />
       <div className="relative flex max-w-xs flex-col items-center text-center">
-        <HeadphonesGlyph className="h-24 w-24 text-accent" />
+        <HeadphonesGlyph className="h-24 w-24 text-accent-link" />
         <p className="mt-6 font-display text-lg italic text-muted">
           “A few minutes of guided audio, then a line in the journal—both shaped
           by what you actually need today.”

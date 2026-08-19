@@ -95,7 +95,7 @@ export function PlanHomeClient() {
   return (
     <div className="mesh-hero min-h-[calc(100vh-3.5rem)] pb-28">
       <section className="mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
-        <p className="text-sm font-medium uppercase tracking-widest text-accent">
+        <p className="text-sm font-medium uppercase tracking-widest text-accent-link">
           IDEATE
         </p>
         <h1 className="mt-3 font-display text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
@@ -133,7 +133,7 @@ export function PlanHomeClient() {
         </div>
 
         {sorted.length === 0 ? (
-          <p className="mt-14 max-w-md font-hand text-xl font-medium leading-snug text-accent sm:text-2xl">
+          <p className="mt-14 max-w-md font-hand text-xl font-medium leading-snug text-accent-link sm:text-2xl">
             No dreams yet — what are you quietly hoping for?
           </p>
         ) : (
@@ -148,7 +148,7 @@ export function PlanHomeClient() {
                     <h2 className="font-display text-lg font-medium leading-snug text-foreground">
                       {d.title.trim() || "Untitled"}
                     </h2>
-                    <span className="shrink-0 rounded-full border border-accent/25 bg-accent-soft/20 px-2.5 py-0.5 text-xs font-medium text-accent">
+                    <span className="shrink-0 rounded-full border border-accent/25 bg-accent-soft/20 px-2.5 py-0.5 text-xs font-medium text-accent-link">
                       {DREAM_STATE_LABEL[d.state]}
                     </span>
                   </div>
@@ -175,7 +175,7 @@ export function PlanHomeClient() {
       <button
         type="button"
         onClick={() => setModalOpen(true)}
-        className="fixed bottom-6 right-6 z-40 cursor-pointer rounded-full bg-accent px-5 py-3 text-sm font-semibold text-on-accent shadow-lg transition-opacity hover:opacity-90 dark:text-deep"
+        className="fixed bottom-6 right-6 z-40 cursor-pointer rounded-full bg-accent px-5 py-3 text-sm font-semibold text-on-accent shadow-lg transition-opacity hover:opacity-90"
         aria-haspopup="dialog"
       >
         Add a project
@@ -234,7 +234,7 @@ export function PlanHomeClient() {
                 type="button"
                 disabled={!newTitle.trim()}
                 onClick={() => addDream()}
-                className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:text-deep"
+                className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Save
               </button>

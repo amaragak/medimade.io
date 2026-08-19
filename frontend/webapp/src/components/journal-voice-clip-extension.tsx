@@ -133,7 +133,7 @@ function JournalClipAudioStrip({ src }: { src: string }) {
         <button
           type="button"
           onClick={togglePlayback}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition-opacity hover:opacity-90 dark:text-deep"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition-opacity hover:opacity-90"
           aria-label={playing ? "Pause" : "Play"}
         >
           {playing ? (
@@ -324,7 +324,7 @@ function JournalVoiceClipView(props: NodeViewProps) {
       <div className="flex items-center justify-between gap-2 border-b border-accent/10 bg-gradient-to-r from-accent-soft/40 to-transparent px-2 py-1">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <span
-            className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-accent text-on-accent shadow-sm dark:text-deep"
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-accent text-on-accent shadow-sm"
             aria-hidden
           >
             <IconWaveform className="size-3.5" />
@@ -359,7 +359,7 @@ function JournalVoiceClipView(props: NodeViewProps) {
               <button
                 type="button"
                 onClick={onRetryTranscription}
-                className="text-[11px] font-semibold text-accent underline-offset-2 hover:underline"
+                className="text-[11px] font-semibold text-accent-link underline-offset-2 hover:underline"
               >
                 Retry
               </button>
@@ -372,7 +372,7 @@ function JournalVoiceClipView(props: NodeViewProps) {
         <div className="border-t border-accent/12 bg-accent-soft/20 px-2 py-1 dark:bg-accent-soft/10">
           <div className="border-l-2 border-accent/45 pl-2">
             <div className="mb-0.5 flex items-center gap-1">
-              <IconTranscriptBadge className="size-3 shrink-0 text-accent" />
+              <IconTranscriptBadge className="size-3 shrink-0 text-accent-link" />
               <span className="font-display text-[10px] font-medium uppercase tracking-wide text-muted">
                 Transcription
               </span>

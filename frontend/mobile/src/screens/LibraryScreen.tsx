@@ -556,7 +556,7 @@ export default function LibraryScreen() {
                 <Ionicons
                   name={m.favourite ? "heart" : "heart-outline"}
                   size={18}
-                  color={m.favourite ? "#fff" : colors.muted}
+                  color={m.favourite ? colors.onAccent : colors.muted}
                 />
               </Pressable>
             </View>
@@ -574,7 +574,7 @@ export default function LibraryScreen() {
               style={styles.listPlayBtn}
               onPress={() => void playItem(m)}
             >
-              <Ionicons name="play-circle" size={18} color="#fff" />
+              <Ionicons name="play-circle" size={18} color={colors.onAccent} />
               <Text style={styles.listPlayText}>Play</Text>
             </Pressable>
             <Pressable
@@ -664,7 +664,7 @@ export default function LibraryScreen() {
               <Ionicons
                 name={m.favourite ? "heart" : "heart-outline"}
                 size={18}
-                color={m.favourite ? "#fff" : colors.muted}
+                color={m.favourite ? colors.onAccent : colors.muted}
               />
             </Pressable>
           </View>
@@ -773,7 +773,7 @@ export default function LibraryScreen() {
               <Ionicons
                 name={favouritesOnly ? "heart" : "heart-outline"}
                 size={22}
-                color={favouritesOnly ? "#fff" : colors.muted}
+                color={favouritesOnly ? colors.onSelected : colors.muted}
               />
               <Text
                 style={[
@@ -808,7 +808,7 @@ export default function LibraryScreen() {
               <Ionicons
                 name="list"
                 size={22}
-                color={viewMode === "list" ? "#fff" : colors.muted}
+                color={viewMode === "list" ? colors.onSelected : colors.muted}
               />
             </Pressable>
             <Pressable
@@ -821,7 +821,7 @@ export default function LibraryScreen() {
               <Ionicons
                 name="grid-outline"
                 size={22}
-                color={viewMode === "grid" ? "#fff" : colors.muted}
+                color={viewMode === "grid" ? colors.onSelected : colors.muted}
               />
             </Pressable>
           </View>
@@ -877,7 +877,7 @@ export default function LibraryScreen() {
               <Ionicons
                 name={playerPlaying ? "pause" : "play"}
                 size={22}
-                color="#fff"
+                color={colors.onAccent}
               />
             </Pressable>
             <Pressable
@@ -970,8 +970,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   tabBtnOn: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accentSoft,
+    borderColor: colors.selected,
+    backgroundColor: colors.selected,
   },
   tabBtnText: {
     fontFamily: fonts.sansSemiBold,
@@ -979,7 +979,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.muted,
   },
-  tabBtnTextOn: { color: colors.foreground },
+  tabBtnTextOn: { color: colors.onSelected },
   viewToggleRow: {
     marginTop: 8,
     flexDirection: "row",
@@ -1014,8 +1014,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   favFilterBtnOn: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
+    backgroundColor: colors.selected,
+    borderColor: colors.selected,
   },
   favFilterText: {
     fontFamily: fonts.sansSemiBold,
@@ -1023,7 +1023,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.muted,
   },
-  favFilterTextOn: { color: "#fff" },
+  favFilterTextOn: { color: colors.onSelected },
   sortBtn: {
     borderRadius: 12,
     borderWidth: 1,
@@ -1044,7 +1044,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   toggleBtnActive: {
-    backgroundColor: colors.accent,
+    backgroundColor: colors.selected,
   },
   errorBanner: {
     marginHorizontal: 16,
@@ -1173,7 +1173,7 @@ const styles = StyleSheet.create({
   star: { fontSize: 22, lineHeight: 26 },
   starSm: { fontSize: 18, lineHeight: 22 },
   starOn: { color: colors.accent },
-  starOff: { color: colors.border },
+  starOff: { color: colors.starIdle },
   listActions: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1192,7 +1192,7 @@ const styles = StyleSheet.create({
   },
   listPlayText: {
     fontFamily: fonts.sansSemiBold,
-    color: "#fff",
+    color: colors.onAccent,
     fontWeight: "600",
     fontSize: 13,
   },
@@ -1283,7 +1283,7 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: {
     fontFamily: fonts.sansSemiBold,
-    color: "#fff",
+    color: colors.onAccent,
     fontWeight: "600",
   },
   secondaryBtn: {

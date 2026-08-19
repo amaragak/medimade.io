@@ -11,13 +11,19 @@
   "dependencies": {
     "@radix-ui/react-switch": "^1.2.6",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@tabler/icons-react": "^3.46.0",
     "@tiptap/extension-placeholder": "^3.22.3",
     "@tiptap/pm": "^3.22.3",
     "@tiptap/react": "^3.22.3",
     "@tiptap/starter-kit": "^3.22.3",
+    "exifr": "^7.1.3",
+    "heic-to": "^1.5.2",
+    "lucide-react": "^1.33.0",
     "next": "16.2.1",
+    "pdfjs-dist": "^5.6.205",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

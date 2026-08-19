@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SearchInput } from "@/components/search-input";
 import { SoundTrimWaveform } from "@/components/sound-trim-waveform";
 import {
   type AdminSoundCategory,
@@ -55,10 +56,10 @@ function importStatusLabel(status: ImportRowStatus): string {
 
 function importStatusClass(status: ImportRowStatus): string {
   if (status === "uploading") return "text-info";
-  if (status === "preparing") return "text-gold";
+  if (status === "preparing") return "text-accent-link";
   if (status === "done") return "text-success";
   if (status === "failed") return "text-danger";
-  if (status === "aborted") return "text-gold";
+  if (status === "aborted") return "text-accent-link";
   return "text-muted";
 }
 
@@ -708,7 +709,7 @@ export function AdminSoundsPanel() {
             type="button"
             disabled={importing}
             onClick={() => fileRef.current?.click()}
-            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60 dark:text-deep"
+            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60"
           >
             {importing ? "Uploading… keep this tab open" : "Import folder"}
           </button>
@@ -745,7 +746,7 @@ export function AdminSoundsPanel() {
               <span className="text-danger">
                 {importRows.filter((r) => r.status === "failed").length} failed
               </span>
-              <span className="text-gold">
+              <span className="text-accent-link">
                 {importRows.filter((r) => r.status === "aborted").length} stopped
               </span>
               <span>{importRows.filter((r) => r.status === "queued").length} queued</span>
@@ -771,11 +772,12 @@ export function AdminSoundsPanel() {
       </section>
 
       <div className="mt-6 flex flex-wrap items-center gap-2">
-        <input
-          className="min-w-[12rem] flex-1 rounded-xl border border-border bg-card px-3 py-2 text-sm"
-          placeholder="Search name, pack path"
+        <SearchInput
+          className="min-w-[12rem] flex-1"
+          inputClassName="bg-card py-2"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={setQ}
+          placeholder="Search name, pack path"
         />
         <select
           className="rounded-xl border border-border bg-card px-3 py-2 text-sm"
@@ -994,7 +996,7 @@ export function AdminSoundsPanel() {
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-accent px-3 py-2 text-sm font-medium text-on-accent dark:text-deep"
+                className="rounded-xl bg-accent px-3 py-2 text-sm font-medium text-on-accent"
               >
                 Save & categorise
               </button>
@@ -1294,7 +1296,7 @@ function SoundRow({
                       ? "bg-danger text-on-accent dark:bg-danger dark:text-on-accent"
                       : "text-danger hover:bg-danger-soft dark:text-danger dark:hover:bg-danger-soft"
                     : selected
-                      ? "bg-muted text-on-accent dark:bg-muted dark:text-deep"
+                      ? "bg-muted text-on-accent dark:bg-muted"
                       : "text-muted hover:bg-background";
               return (
                 <button
@@ -1322,7 +1324,7 @@ function SoundRow({
               aria-label={playing ? "Pause" : "Play from trim start"}
               disabled={!item.ready}
               onClick={togglePlay}
-              className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-accent text-on-accent disabled:opacity-40 dark:text-deep"
+              className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-accent text-on-accent disabled:opacity-40"
             >
               {playing ? <IconPause /> : <IconPlay />}
             </button>

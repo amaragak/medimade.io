@@ -7,7 +7,7 @@ export const metadata = {
 export default function ProPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
-      <p className="text-sm font-medium uppercase tracking-widest text-gold">
+      <p className="text-sm font-medium uppercase tracking-widest text-accent-link">
         medimade Pro
       </p>
       <h1 className="mt-2 font-display text-3xl font-medium tracking-tight sm:text-4xl">
@@ -30,7 +30,7 @@ export default function ProPage() {
             key={item}
             className="flex gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm"
           >
-            <span className="text-gold">✓</span>
+            <span className="text-accent-link">✓</span>
             {item}
           </li>
         ))}
@@ -39,7 +39,7 @@ export default function ProPage() {
       <div className="mt-10 flex flex-wrap gap-3">
         <button
           type="button"
-          className="rounded-full bg-gold px-8 py-3 text-sm font-semibold text-deep"
+          className="rounded-full bg-accent px-8 py-3 text-sm font-semibold text-on-accent"
         >
           Upgrade (mock)
         </button>

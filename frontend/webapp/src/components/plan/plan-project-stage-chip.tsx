@@ -44,7 +44,7 @@ export function PlanProjectStageChip({ state, onChange }: Props) {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="cursor-pointer rounded-full border border-accent/25 bg-accent-soft/15 px-2.5 py-1 text-xs font-medium text-accent transition-colors hover:border-accent/40 hover:bg-accent-soft/25"
+        className="cursor-pointer rounded-full border border-accent/25 bg-accent-soft/15 px-2.5 py-1 text-xs font-medium text-accent-link transition-colors hover:border-accent/40 hover:bg-accent-soft/25"
       >
         {DREAM_STATE_LABEL[state]}
       </button>

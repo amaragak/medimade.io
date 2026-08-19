@@ -52,11 +52,11 @@ export function SiteHeader() {
       ? pathname === "/"
       : pathname === href || pathname.startsWith(`${href}/`);
   return (
-    <header className="sticky top-0 z-50 border-b border-border/80 bg-background/85 backdrop-blur-md">
+    <header className="sticky top-0 z-50 border-b border-white/10 bg-nav shadow-[0_4px_18px_rgb(30_37_48_/_0.22)]">
       <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
         <Link
           href="/"
-          className="font-display text-2xl font-medium tracking-tight text-foreground lowercase"
+          className="font-display text-2xl font-medium tracking-tight text-nav-foreground lowercase"
         >
           consciously
         </Link>
@@ -76,10 +76,10 @@ export function SiteHeader() {
               href="/meditate"
               aria-haspopup="true"
               aria-expanded={meditateMenuOpen}
-              className={`inline-flex rounded-lg px-3 py-2 text-sm transition-colors hover:bg-card hover:text-foreground ${
+              className={`inline-flex rounded-lg px-3 py-2 text-sm transition-colors hover:bg-nav-active hover:text-nav-foreground ${
                 isMeditateSection(pathname)
-                  ? "bg-card font-semibold text-foreground"
-                  : "text-muted"
+                  ? "bg-nav-active font-semibold text-nav-foreground"
+                  : "text-nav-muted"
               }`}
             >
               Meditate
@@ -115,10 +115,10 @@ export function SiteHeader() {
               key={item.href}
               href={item.href}
               aria-current={isActive(item.href) ? "page" : undefined}
-              className={`rounded-lg px-3 py-2 text-sm transition-colors hover:bg-card hover:text-foreground ${
+              className={`rounded-lg px-3 py-2 text-sm transition-colors hover:bg-nav-active hover:text-nav-foreground ${
                 isActive(item.href)
-                  ? "bg-card font-semibold text-foreground"
-                  : "text-muted"
+                  ? "bg-nav-active font-semibold text-nav-foreground"
+                  : "text-nav-muted"
               }`}
             >
               {item.label}
@@ -127,7 +127,7 @@ export function SiteHeader() {
           {signedIn ? (
             <div className="ml-2 flex items-center gap-2">
               <span
-                className="hidden max-w-[10rem] truncate text-xs text-muted md:inline"
+                className="hidden max-w-[10rem] truncate text-xs text-nav-muted md:inline"
                 title={sessionLabel ?? ""}
               >
                 {sessionLabel ?? "Signed in"}
@@ -135,7 +135,7 @@ export function SiteHeader() {
               <button
                 type="button"
                 onClick={() => clearMedimadeSession()}
-                className="rounded-lg border border-border px-3 py-2 text-sm text-muted transition-colors hover:bg-card hover:text-foreground"
+                className="rounded-lg border border-white/20 px-3 py-2 text-sm text-nav-muted transition-colors hover:bg-nav-active hover:text-nav-foreground"
               >
                 Sign out
               </button>
@@ -143,14 +143,14 @@ export function SiteHeader() {
           ) : (
             <Link
               href="/login"
-              className="ml-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-card"
+              className="ml-2 rounded-lg border border-white/20 px-3 py-2 text-sm font-medium text-nav-foreground transition-colors hover:bg-nav-active"
             >
               Sign in
             </Link>
           )}
           <Link
             href="/pro"
-            className="ml-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-on-accent shadow-sm transition-opacity hover:opacity-90 dark:text-deep"
+            className="ml-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-on-accent shadow-sm transition-opacity hover:opacity-90"
           >
             Pro
           </Link>
@@ -158,7 +158,7 @@ export function SiteHeader() {
         <details ref={mobileMenuRef} className="relative sm:hidden">
           <summary
             aria-label="Menu"
-            className="cursor-pointer list-none rounded-lg border border-border p-2 text-sm"
+            className="cursor-pointer list-none rounded-lg border border-white/20 p-2 text-sm text-nav-foreground"
           >
             <svg
               viewBox="0 0 24 24"
@@ -236,7 +236,7 @@ export function SiteHeader() {
                 onClick={() => {
                   if (mobileMenuRef.current) mobileMenuRef.current.open = false;
                 }}
-                className="block px-4 py-2 text-sm font-medium text-accent"
+                className="block px-4 py-2 text-sm font-medium text-accent-link"
               >
                 Sign in
               </Link>
@@ -246,7 +246,7 @@ export function SiteHeader() {
               onClick={() => {
                 if (mobileMenuRef.current) mobileMenuRef.current.open = false;
               }}
-              className="block px-4 py-2 text-sm font-medium text-accent"
+              className="block px-4 py-2 text-sm font-medium text-accent-link"
             >
               Pro
             </Link>

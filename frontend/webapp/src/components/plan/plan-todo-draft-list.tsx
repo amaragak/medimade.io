@@ -94,7 +94,7 @@ export function PlanTodoDraftList({
                   type="button"
                   disabled={specifyingId === row.id}
                   onClick={() => void onSpecifyRow(row)}
-                  className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-accent hover:bg-accent-soft/30 disabled:opacity-50"
+                  className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-accent-link hover:bg-accent-soft/30 disabled:opacity-50"
                 >
                   {specifyingId === row.id ? "Getting specific…" : "Get specific"}
                 </button>

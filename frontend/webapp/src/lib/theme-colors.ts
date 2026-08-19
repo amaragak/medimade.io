@@ -1,16 +1,18 @@
 /**
  * Theme source of truth.
  *
- * `PRIMARY` is the brand accent. Only obviously-branded colors are derived
- * from it (accent, accent-soft, mixer gradient). Paper, cards, ink, and
- * borders are independent neutrals so switching PRIMARY to red (etc.) does
- * not tint the whole page.
+ * `PRIMARY` is the brand fill (gold-tan). Neutrals (paper, navy ink, borders)
+ * are independent so the page stays cream and the header can be navy.
  */
 
-/** Switch this to change the brand accent. Current: terracotta. */
-export const PRIMARY = "#b86b48";
-// export const PRIMARY = "#6E88A3";
-// export const PRIMARY = "#C67D3E";
+/** Brand fill — gold-tan. Text on this fill must use `onAccent` (#3D2E10). */
+export const PRIMARY = "#D9A24F";
+
+/** Links and accent text on cream (deeper amber — gold-tan on cream fails contrast). */
+export const ACCENT_LINK = "#B8703A";
+
+/** Dark warm brown on gold-tan fills. */
+export const ON_ACCENT = "#3D2E10";
 
 const WHITE = "#ffffff";
 const BLACK = "#000000";
@@ -20,32 +22,42 @@ export const DANGER = "#dc2626";
 export const SUCCESS = "#059669";
 export const INFO = "#0284c7";
 
-/** Warm gold highlight — not derived from PRIMARY. */
-const GOLD_LIGHT = "#c49a6c";
-const GOLD_DARK = "#d4b896";
+const NAV = "#33465C";
+// const NAV = "#6E88A3";
+const NAV_FOREGROUND = WHITE;
+const NAV_MUTED = "rgb(255 255 255 / 0.68)";
+const NAV_ACTIVE = "rgb(255 255 255 / 0.14)";
+/** Unrated star glyphs. */
+export const STAR_IDLE = "#B5AF9F";
+
+const GOLD_LIGHT = "#D9A24F";
+const GOLD_DARK = "#E8C07A";
 
 /**
- * Paper / ink / chrome. Stay put when PRIMARY changes.
- * Light matches the original cream UI; dark is the original warm night set.
+ * Paper / ink / chrome. Independent of PRIMARY.
  */
 const PAPER_LIGHT = {
-  background: "#f9f4ee",
-  foreground: "#2c2621",
-  muted: "#6f665e",
-  card: "#fffaf6",
-  border: "#ebe2d6",
-  deep: "#1a1410",
+  background: "#FAF8F3",
+  foreground: "#1E2530",
+  muted: "#7A7566",
+  faint: "#A39C8C",
+  card: "#FFFFFF",
+  border: "#E5E0D2",
+  borderSubtle: "#EEE9DB",
+  deep: "#1E2530",
   surface: WHITE,
 } as const;
 
 const PAPER_DARK = {
-  background: "#171311",
-  foreground: "#f4ebe3",
-  muted: "#a89b90",
-  card: "#221c18",
-  border: "#3d342c",
-  deep: "#0f0c0a",
-  surface: "#221c18",
+  background: "#1E2530",
+  foreground: "#FAF8F3",
+  muted: "#A39C8C",
+  faint: "#8A8478",
+  card: "#2A3544",
+  border: "#3D4A5C",
+  borderSubtle: "#33465C",
+  deep: "#0F141A",
+  surface: "#2A3544",
 } as const;
 
 type Rgb = { r: number; g: number; b: number };
@@ -174,15 +186,26 @@ type Semantic = {
   background: string;
   foreground: string;
   muted: string;
+  faint: string;
   card: string;
   border: string;
+  borderSubtle: string;
   accent: string;
   accentSoft: string;
+  accentLink: string;
   gold: string;
   deep: string;
   surface: string;
   onAccent: string;
   overlay: string;
+  nav: string;
+  navForeground: string;
+  navMuted: string;
+  navActive: string;
+  /** Selected / active segment fills (navy). */
+  selected: string;
+  onSelected: string;
+  starIdle: string;
   danger: string;
   dangerSoft: string;
   success: string;
@@ -210,11 +233,10 @@ function brandFromPrimary(
   const accent = dark ? rel(p, 1.8, 0.08, 0.12) : p;
   return {
     accent,
-    // Light: wash of accent on cream. Dark: slight accent in the card, not a red panel.
     accentSoft: dark
       ? mixHex(paper.card, accent, 0.16)
       : mixHex(accent, paper.background, 0.857),
-    onAccent: onColor(accent),
+    onAccent: ON_ACCENT,
     gradientLight: rel(p, 9.5, 0.156, 0.274),
     gradientMid: rel(p, 2.9, 0.106, 0.1),
     gradientDeep: rel(p, -3.4, 0.065, -0.184),
@@ -232,6 +254,14 @@ function assemble(
     ...brand,
     gold,
     overlay: BLACK,
+    accentLink: dark ? mixHex(ACCENT_LINK, WHITE, 0.28) : ACCENT_LINK,
+    nav: NAV,
+    navForeground: NAV_FOREGROUND,
+    navMuted: NAV_MUTED,
+    navActive: NAV_ACTIVE,
+    selected: NAV,
+    onSelected: WHITE,
+    starIdle: STAR_IDLE,
     danger: dark ? mixHex(DANGER, WHITE, 0.35) : DANGER,
     dangerSoft: dark ? mixHex(DANGER, BLACK, 0.78) : mixHex(DANGER, WHITE, 0.92),
     success: dark ? mixHex(SUCCESS, WHITE, 0.2) : SUCCESS,
@@ -274,15 +304,25 @@ function varsFor(s: Semantic): Record<string, string> {
     "--background": s.background,
     "--foreground": s.foreground,
     "--muted": s.muted,
+    "--faint": s.faint,
     "--card": s.card,
     "--border": s.border,
+    "--border-subtle": s.borderSubtle,
     "--accent": s.accent,
     "--accent-soft": s.accentSoft,
+    "--accent-link": s.accentLink,
     "--gold": s.gold,
     "--deep": s.deep,
     "--surface": s.surface,
     "--on-accent": s.onAccent,
     "--overlay": s.overlay,
+    "--nav": s.nav,
+    "--nav-foreground": s.navForeground,
+    "--nav-muted": s.navMuted,
+    "--nav-active": s.navActive,
+    "--selected": s.selected,
+    "--on-selected": s.onSelected,
+    "--star-idle": s.starIdle,
     "--danger": s.danger,
     "--danger-soft": s.dangerSoft,
     "--success": s.success,

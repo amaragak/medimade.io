@@ -29,13 +29,13 @@ export default function FocusMarketingPage() {
   return (
     <div className="mesh-hero">
       <section className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-24">
-        <p className="text-sm font-medium uppercase tracking-widest text-accent">
+        <p className="text-sm font-medium uppercase tracking-widest text-accent-link">
           Chrome extension
         </p>
         <h1 className="mt-3 font-display text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
           breath+work
         </h1>
-        <p className="mt-2 max-w-2xl font-hand text-2xl font-medium leading-snug text-accent sm:text-[1.65rem]">
+        <p className="mt-2 max-w-2xl font-hand text-2xl font-medium leading-snug text-accent-link sm:text-[1.65rem]">
           Block noise. Run the timer. Stay with one thing.
         </p>
         <p className="mt-6 max-w-2xl text-lg text-muted">

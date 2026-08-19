@@ -11,12 +11,26 @@ export type JournalEntry = {
   contentHtml: string;
   kind?: "freeform" | "gratitude";
   gratitude?: [string, string, string];
+  mood?: string;
+  tags?: string[];
+  localOnly?: boolean;
+  importSource?: string;
+  importBatchId?: string;
+  sourceMetadata?: Record<string, unknown>;
+  mediaRefs?: string[];
+  folderId?: string;
+};
+
+export type JournalFolder = {
+  id: string;
+  name: string;
 };
 
 export type JournalStoreV2 = {
   version: 2;
   activeEntryId: string | null;
   entries: JournalEntry[];
+  folders?: JournalFolder[];
 };
 
 export function stripHtmlToText(html: string): string {
@@ -45,6 +59,15 @@ function normalizeEntry(e: JournalEntry): JournalEntry {
     ...e,
     title: typeof e.title === "string" ? e.title : "",
     contentHtml: e.contentHtml?.trim() ? e.contentHtml : "<p></p>",
+    tags: Array.isArray(e.tags)
+      ? e.tags.filter((t): t is string => typeof t === "string")
+      : undefined,
+    mood: typeof e.mood === "string" ? e.mood : undefined,
+    localOnly: e.localOnly === true ? true : undefined,
+    folderId:
+      typeof e.folderId === "string" && e.folderId.trim()
+        ? e.folderId.trim()
+        : undefined,
   };
 }
 

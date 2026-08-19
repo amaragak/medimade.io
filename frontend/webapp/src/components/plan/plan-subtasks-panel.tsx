@@ -113,7 +113,7 @@ export function PlanSubtasksPanel({
           })}
         </p>
       ) : allDone && subtasks.length > 0 ? (
-        <p className="mt-4 inline-block rounded-full border border-accent/20 bg-accent-soft/15 px-3 py-1 text-xs font-medium text-accent">
+        <p className="mt-4 inline-block rounded-full border border-accent/20 bg-accent-soft/15 px-3 py-1 text-xs font-medium text-accent-link">
           All subtasks done
         </p>
       ) : null}

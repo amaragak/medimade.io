@@ -8,7 +8,7 @@ import { SoundFolderSelect } from "@/components/sound-folder-select";
 
 function MixerVoiceIcon() {
   return (
-    <div className="mixer-voice-disc flex h-24 w-24 items-center justify-center rounded-full text-on-accent dark:text-deep">
+    <div className="mixer-voice-disc flex h-24 w-24 items-center justify-center rounded-full text-on-accent">
       <svg
         viewBox="0 0 24 24"
         className="h-14 w-14"
@@ -85,7 +85,7 @@ function MixerStrip({
         onClick={onTogglePreview}
         disabled={playDisabled}
         aria-label={playAriaLabel}
-        className="mx-auto flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-on-accent transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
+        className="mx-auto flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <MixerPlayPauseIcon playing={playing} />
       </button>

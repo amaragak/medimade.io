@@ -1,37 +1,63 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { JournalInsightsView } from "@/components/journal-insights-view";
 import { scheduleJournalInsightsRefreshAfterLeavingEditor } from "@/components/journal-insights-autorefresh";
 import { JournalRichEditor } from "@/components/journal-rich-editor";
 import { JournalGratitudeEditor } from "@/components/journal-gratitude-editor";
+import { JournalEntryMeta } from "@/components/journal-entry-meta";
+import {
+  IconSettingsCog,
+  JournalSettingsDialog,
+} from "@/components/journal-settings-dialog";
+import { JournalImportDialog } from "@/components/journal-import-dialog";
+import {
+  mergeImportedEntries,
+  previewRowsToEntries,
+  type JournalImportPreviewRow,
+} from "@/lib/journal-import";
+import { SearchInput } from "@/components/search-input";
+import { Calendar, Folder, Import } from "lucide-react";
+import { JournalLockGate } from "@/components/journal-lock-gate";
 import {
   fetchJournalStoreRemote,
   getMedimadeApiBase,
   getMedimadeSessionJwt,
   putJournalStoreRemote,
+  runJournalInsightsRemote,
 } from "@/lib/medimade-api";
 import {
   emptyGratitudeLines,
+  entriesForCloudPut,
   findGratitudeEntryForLocalDate,
   formatJournalEntryDate,
   gratitudeLinesToHtml,
   groupJournalEntriesForSidebar,
   isGratitudeEntry,
+  journalWritingStreakDays,
   loadJournalStore,
   localDateKey,
+  localDateKeyFromIso,
+  mergeRemoteJournalKeepingLocalOnly,
   newGratitudeJournalEntry,
   newJournalEntry,
+  newJournalFolder,
   saveJournalStore,
   shouldPreferRemoteJournalStore,
   stripHtmlToText,
   type JournalEntry,
+  type JournalFolder,
   type JournalGratitudeLines,
   type JournalStoreV2,
 } from "@/lib/journal-storage";
+import {
+  isJournalLocalOnlyMode,
+  setJournalLocalOnlyMode,
+} from "@/lib/journal-prefs";
 
 type JournalMainTab = "journal" | "gratitude";
+
+const FOLDER_ALL = "";
 
 function entryPreview(entry: JournalEntry): string {
   if (isGratitudeEntry(entry)) {
@@ -63,20 +89,72 @@ function activeIdForJournalTab(
   return entries.find((e) => !isGratitudeEntry(e))?.id ?? preferred;
 }
 
+function JumpToDayPopover({
+  jumpDate,
+  onPick,
+  onClear,
+}: {
+  jumpDate: string;
+  onPick: (value: string) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div
+      className="absolute left-0 z-30 mt-1 w-52 rounded-xl border border-border bg-card p-2 shadow-lg"
+      role="dialog"
+      aria-label="Jump to a day"
+    >
+      <p className="text-sm font-medium text-foreground">Jump to a day</p>
+      <p className="mt-0.5 text-xs text-muted">
+        Pick a date to see the entry from that day.
+      </p>
+      <input
+        type="date"
+        value={jumpDate}
+        onChange={(ev) => onPick(ev.target.value)}
+        className="mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-accent/50"
+      />
+      {jumpDate ? (
+        <button
+          type="button"
+          className="mt-1.5 cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline"
+          onClick={onClear}
+        >
+          Clear date
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function JournalView() {
   const [signedIn, setSignedIn] = useState(() => Boolean(getMedimadeSessionJwt()));
   const [hydrated, setHydrated] = useState(false);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
+  const [folders, setFolders] = useState<JournalFolder[]>([]);
+  const [selectedFolderId, setSelectedFolderId] = useState(FOLDER_ALL);
+  const [namingFolder, setNamingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [sidebarMenu, setSidebarMenu] = useState<null | "folder" | "date">(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [journalTab, setJournalTab] = useState<JournalMainTab>("journal");
   const [gratitudeDraft, setGratitudeDraft] = useState<JournalGratitudeLines>(
     emptyGratitudeLines(),
   );
+  const [searchQuery, setSearchQuery] = useState("");
+  const [jumpDate, setJumpDate] = useState("");
+  const [keepLocalOnly, setKeepLocalOnly] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importBatchId, setImportBatchId] = useState<string | null>(null);
   const prevInsightsOpenRef = useRef(false);
   /** After first journal GET attempt (or skip if no API URL); avoids PUT before pull completes. */
   const [remoteJournalChecked, setRemoteJournalChecked] = useState(false);
   const entriesRef = useRef<JournalEntry[]>([]);
+  const foldersRef = useRef<JournalFolder[]>([]);
+  const folderMenuRef = useRef<HTMLDivElement | null>(null);
+  const dateMenuRef = useRef<HTMLDivElement | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const latestHtmlRef = useRef("<p></p>");
   const latestTitleRef = useRef("");
@@ -85,6 +163,7 @@ export function JournalView() {
   const skipCloudPushRef = useRef(false);
 
   entriesRef.current = entries;
+  foldersRef.current = folders;
   activeIdRef.current = activeEntryId;
 
   useEffect(() => {
@@ -100,13 +179,46 @@ export function JournalView() {
     prevInsightsOpenRef.current = insightsOpen;
   }, [insightsOpen]);
 
-  const persist = useCallback((nextEntries: JournalEntry[], nextActive: string | null) => {
-    saveJournalStore({
-      version: 2,
-      activeEntryId: nextActive,
-      entries: nextEntries,
-    });
-  }, []);
+  useEffect(() => {
+    if (!sidebarMenu) return;
+    function onDoc(e: MouseEvent) {
+      const t = e.target as Node;
+      if (folderMenuRef.current?.contains(t) || dateMenuRef.current?.contains(t)) {
+        return;
+      }
+      setSidebarMenu(null);
+      setNamingFolder(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setSidebarMenu(null);
+        setNamingFolder(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [sidebarMenu]);
+
+  const persist = useCallback(
+    (
+      nextEntries: JournalEntry[],
+      nextActive: string | null,
+      nextFolders?: JournalFolder[],
+    ) => {
+      const foldersNext = nextFolders ?? foldersRef.current;
+      saveJournalStore({
+        version: 2,
+        activeEntryId: nextActive,
+        entries: nextEntries,
+        ...(foldersNext.length ? { folders: foldersNext } : {}),
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     const store = loadJournalStore();
@@ -115,12 +227,15 @@ export function JournalView() {
       store.activeEntryId,
     );
     setEntries(store.entries);
+    setFolders(store.folders ?? []);
+    foldersRef.current = store.folders ?? [];
     setActiveEntryId(nextActive);
     const active = store.entries.find((e) => e.id === nextActive);
     latestHtmlRef.current = active?.contentHtml ?? "<p></p>";
     latestTitleRef.current = active?.title ?? "";
     latestGratitudeRef.current = active?.gratitude ?? emptyGratitudeLines();
     setGratitudeDraft(latestGratitudeRef.current);
+    setKeepLocalOnly(isJournalLocalOnlyMode());
     setHydrated(true);
   }, [signedIn]);
 
@@ -129,7 +244,7 @@ export function JournalView() {
     if (!hydrated) return;
     let cancelled = false;
     const base = getMedimadeApiBase();
-    if (!base) {
+    if (!base || isJournalLocalOnlyMode()) {
       setRemoteJournalChecked(true);
       return;
     }
@@ -140,21 +255,27 @@ export function JournalView() {
         const localEntries = entriesRef.current;
         if (!shouldPreferRemoteJournalStore(remote, localEntries)) return;
         skipCloudPushRef.current = true;
+        const merged = mergeRemoteJournalKeepingLocalOnly(
+          remote,
+          localEntries,
+        );
         const preferred =
-          remote.activeEntryId &&
-          remote.entries.some((e) => e.id === remote.activeEntryId)
-            ? remote.activeEntryId
-            : remote.entries[0]?.id ?? null;
-        const nextActive = activeIdForJournalTab(remote.entries, preferred);
-        entriesRef.current = remote.entries;
-        setEntries(remote.entries);
+          merged.activeEntryId &&
+          merged.entries.some((e) => e.id === merged.activeEntryId)
+            ? merged.activeEntryId
+            : merged.entries[0]?.id ?? null;
+        const nextActive = activeIdForJournalTab(merged.entries, preferred);
+        entriesRef.current = merged.entries;
+        setEntries(merged.entries);
+        setFolders(merged.folders ?? []);
+        foldersRef.current = merged.folders ?? [];
         setActiveEntryId(nextActive);
-        const nextEntry = remote.entries.find((e) => e.id === nextActive);
+        const nextEntry = merged.entries.find((e) => e.id === nextActive);
         latestHtmlRef.current = nextEntry?.contentHtml ?? "<p></p>";
         latestTitleRef.current = nextEntry?.title ?? "";
         latestGratitudeRef.current = nextEntry?.gratitude ?? emptyGratitudeLines();
         setGratitudeDraft(latestGratitudeRef.current);
-        persist(remote.entries, nextActive);
+        persist(merged.entries, nextActive, merged.folders ?? []);
       } catch {
         /* offline or not deployed yet */
       } finally {
@@ -164,7 +285,7 @@ export function JournalView() {
     return () => {
       cancelled = true;
     };
-  }, [hydrated, persist]);
+  }, [hydrated, persist, keepLocalOnly]);
 
   const cloudPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -176,16 +297,21 @@ export function JournalView() {
       skipCloudPushRef.current = false;
       return;
     }
+    if (isJournalLocalOnlyMode()) return;
     const base = getMedimadeApiBase();
     if (!base) return;
     if (!getMedimadeSessionJwt()) return;
     if (cloudPushTimerRef.current) clearTimeout(cloudPushTimerRef.current);
     cloudPushTimerRef.current = setTimeout(() => {
       cloudPushTimerRef.current = null;
+      const cloudEntries = entriesForCloudPut(entries);
       const store: JournalStoreV2 = {
         version: 2,
-        activeEntryId,
-        entries,
+        activeEntryId: cloudEntries.some((e) => e.id === activeEntryId)
+          ? activeEntryId
+          : (cloudEntries[0]?.id ?? null),
+        entries: cloudEntries,
+        ...(folders.length ? { folders } : {}),
       };
       void putJournalStoreRemote(store).catch(() => {
         /* offline or quota */
@@ -197,7 +323,7 @@ export function JournalView() {
         cloudPushTimerRef.current = null;
       }
     };
-  }, [signedIn, hydrated, remoteJournalChecked, entries, activeEntryId]);
+  }, [signedIn, hydrated, remoteJournalChecked, entries, activeEntryId, keepLocalOnly, folders]);
 
   const flushSaveSync = useCallback(() => {
     if (saveTimerRef.current) {
@@ -281,6 +407,7 @@ export function JournalView() {
         version: 2,
         activeEntryId: id,
         entries: next,
+        ...(foldersRef.current.length ? { folders: foldersRef.current } : {}),
       });
     };
   }, []);
@@ -298,10 +425,92 @@ export function JournalView() {
     [entries, journalTab],
   );
 
+  const filteredTabEntries = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return tabEntries.filter((e) => {
+      if (jumpDate && localDateKeyFromIso(e.createdAt) !== jumpDate) {
+        return false;
+      }
+      if (importBatchId && e.importBatchId !== importBatchId) {
+        return false;
+      }
+      if (
+        journalTab === "journal" &&
+        selectedFolderId &&
+        e.folderId !== selectedFolderId
+      ) {
+        return false;
+      }
+      if (!q) return true;
+      const hay = [
+        e.title,
+        stripHtmlToText(e.contentHtml),
+        ...(e.tags ?? []),
+        e.mood ?? "",
+        ...(e.gratitude ?? []),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [tabEntries, searchQuery, jumpDate, importBatchId, journalTab, selectedFolderId]);
+
   const sidebarGroups = useMemo(
-    () => groupJournalEntriesForSidebar(tabEntries),
-    [tabEntries],
+    () => groupJournalEntriesForSidebar(filteredTabEntries),
+    [filteredTabEntries],
   );
+
+  const streakDays = useMemo(
+    () => journalWritingStreakDays(entries),
+    [entries],
+  );
+
+  const folderFilterLabel =
+    folders.find((f) => f.id === selectedFolderId)?.name ?? "All entries";
+
+  const patchActive = useCallback(
+    (partial: Partial<JournalEntry>) => {
+      const id = activeIdRef.current;
+      if (!id) return;
+      setEntries((prev) => {
+        const next = prev.map((e) =>
+          e.id === id
+            ? { ...e, ...partial, updatedAt: new Date().toISOString() }
+            : e,
+        );
+        entriesRef.current = next;
+        persist(next, id);
+        return next;
+      });
+    },
+    [persist],
+  );
+
+  const deleteActive = useCallback(() => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    if (!window.confirm("Delete this entry from this device?")) return;
+    const remaining = entriesRef.current.filter((e) => e.id !== id);
+    let nextEntries = remaining;
+    let nextId = remaining.find((e) =>
+      journalTab === "gratitude" ? isGratitudeEntry(e) : !isGratitudeEntry(e),
+    )?.id ?? remaining[0]?.id ?? null;
+    if (!nextId) {
+      const stub =
+        journalTab === "gratitude" ? newGratitudeJournalEntry() : newJournalEntry();
+      nextEntries = [stub, ...remaining];
+      nextId = stub.id;
+    }
+    entriesRef.current = nextEntries;
+    setEntries(nextEntries);
+    setActiveEntryId(nextId);
+    const next = nextEntries.find((e) => e.id === nextId);
+    latestHtmlRef.current = next?.contentHtml ?? "<p></p>";
+    latestTitleRef.current = next?.title ?? "";
+    latestGratitudeRef.current = next?.gratitude ?? emptyGratitudeLines();
+    setGratitudeDraft(latestGratitudeRef.current);
+    persist(nextEntries, nextId);
+  }, [journalTab, persist]);
 
   const selectEntry = useCallback(
     (nextId: string) => {
@@ -316,9 +525,37 @@ export function JournalView() {
     [flushSaveSync],
   );
 
+  const applyJumpDate = useCallback(
+    (value: string) => {
+      setJumpDate(value);
+      if (value) setSidebarMenu(null);
+      if (!value) return;
+      const match = tabEntries.find((e) => {
+        if (localDateKeyFromIso(e.createdAt) !== value) return false;
+        if (
+          journalTab === "journal" &&
+          selectedFolderId &&
+          e.folderId !== selectedFolderId
+        ) {
+          return false;
+        }
+        return true;
+      });
+      if (match) selectEntry(match.id);
+    },
+    [journalTab, selectEntry, selectedFolderId, tabEntries],
+  );
+
+  const clearJumpDate = useCallback(() => {
+    setJumpDate("");
+    setSidebarMenu(null);
+  }, []);
+
   const createEntry = useCallback(() => {
     flushSaveSync();
-    const e = newJournalEntry();
+    const e = newJournalEntry(
+      selectedFolderId ? { folderId: selectedFolderId } : undefined,
+    );
     setEntries((prev) => {
       const next = [e, ...prev];
       entriesRef.current = next;
@@ -330,7 +567,66 @@ export function JournalView() {
     latestTitleRef.current = e.title;
     latestGratitudeRef.current = emptyGratitudeLines();
     setGratitudeDraft(latestGratitudeRef.current);
-  }, [flushSaveSync, persist]);
+  }, [flushSaveSync, persist, selectedFolderId]);
+
+  const commitImport = useCallback(
+    (rows: JournalImportPreviewRow[], batchId: string) => {
+      flushSaveSync();
+      const imported = previewRowsToEntries(rows, batchId).map((e) =>
+        selectedFolderId ? { ...e, folderId: selectedFolderId } : e,
+      );
+      if (!imported.length) return;
+      const next = mergeImportedEntries(entriesRef.current, imported);
+      entriesRef.current = next;
+      setEntries(next);
+      const first = imported[0];
+      setActiveEntryId(first.id);
+      latestHtmlRef.current = first.contentHtml;
+      latestTitleRef.current = first.title;
+      latestGratitudeRef.current = emptyGratitudeLines();
+      setGratitudeDraft(emptyGratitudeLines());
+      persist(next, first.id);
+      setImportBatchId(batchId);
+      setImportOpen(false);
+      setJournalTab("journal");
+      setInsightsOpen(false);
+      if (getMedimadeSessionJwt()) {
+        void runJournalInsightsRemote().catch(() => {
+          /* insights can catch up later */
+        });
+      }
+    },
+    [flushSaveSync, persist, selectedFolderId],
+  );
+
+  const addNamedFolder = useCallback(() => {
+    const folder = newJournalFolder(newFolderName);
+    if (!folder) return;
+    const nextFolders = [...foldersRef.current, folder];
+    foldersRef.current = nextFolders;
+    setFolders(nextFolders);
+    setSelectedFolderId(folder.id);
+    setNamingFolder(false);
+    setNewFolderName("");
+    persist(entriesRef.current, activeIdRef.current, nextFolders);
+    setSidebarMenu(null);
+  }, [newFolderName, persist]);
+
+  const onFolderSelect = useCallback(
+    (value: string) => {
+      setNamingFolder(false);
+      setSelectedFolderId(value);
+      setSidebarMenu(null);
+      if (!value) return;
+      const inFolder = entriesRef.current.filter(
+        (e) => !isGratitudeEntry(e) && e.folderId === value,
+      );
+      const current = activeIdRef.current;
+      if (current && inFolder.some((e) => e.id === current)) return;
+      if (inFolder[0]) selectEntry(inFolder[0].id);
+    },
+    [selectEntry],
+  );
 
   const openTodayGratitude = useCallback(() => {
     flushSaveSync();
@@ -416,6 +712,7 @@ export function JournalView() {
     journalTab === "gratitude" && !insightsOpen && hydrated && Boolean(activeEntry);
 
   return (
+    <JournalLockGate>
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6">
       <div className="mb-6 shrink-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
@@ -429,15 +726,24 @@ export function JournalView() {
               aria-pressed={insightsOpen}
               className={`cursor-pointer rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
                 insightsOpen
-                  ? "border-accent/50 bg-accent-soft text-foreground"
+                  ? "border-selected/40 bg-selected text-on-selected"
                   : "border-border bg-background text-foreground hover:border-accent/40"
               }`}
             >
               {insightsOpen ? "Journal" : "Insights"}
             </button>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+              aria-haspopup="dialog"
+              aria-label="Journal settings"
+              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-xl border border-border bg-background text-foreground transition-colors hover:border-accent/40"
+            >
+              <IconSettingsCog />
+            </button>
           </div>
         </div>
-        <div className="mt-4 min-w-0 w-full">
+        <div className="mt-4 flex min-w-0 w-full flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div
             className="inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
             role="tablist"
@@ -450,7 +756,7 @@ export function JournalView() {
               onClick={() => switchJournalTab("journal")}
               className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                 journalTab === "journal"
-                  ? "bg-accent text-on-accent dark:text-deep"
+                  ? "bg-selected text-on-selected"
                   : "text-muted hover:text-foreground"
               }`}
             >
@@ -463,60 +769,222 @@ export function JournalView() {
               onClick={() => switchJournalTab("gratitude")}
               className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                 journalTab === "gratitude"
-                  ? "bg-accent text-on-accent dark:text-deep"
+                  ? "bg-selected text-on-selected"
                   : "text-muted hover:text-foreground"
               }`}
             >
               Gratitudes
             </button>
           </div>
+          <SearchInput
+            className="w-full shrink-0 sm:w-60"
+            inputClassName="py-2"
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="Search entries"
+          />
         </div>
-        <p className="mt-2 text-muted">
-          {journalTab === "gratitude" ? (
-            <>
-              One page a day, three things you’re grateful for. Past days stay in
-              the list.{" "}
-              {!signedIn ? (
-                <>Sign in to enable cloud sync. </>
-              ) : null}
-            </>
-          ) : (
-            <>
-              Rich notes and voice clips. With Medimade API configured, the journal
-              syncs to cloud storage for this browser; otherwise it stays on this
-              device only.{" "}
-              {!signedIn ? (
-                <>
-                  Sign in to enable cloud sync and personalised topic insights.
-                </>
-              ) : null}{" "}
-              To build a meditation from your entries, open{" "}
-              <Link
-                href="/meditate/create"
-                className="cursor-pointer font-medium text-accent underline-offset-2 hover:underline"
-              >
-                Create
-              </Link>{" "}
-              and choose “Reflect on a journal entry”. Open{" "}
-              <span className="font-medium text-foreground">Insights</span> for rolling
-              themes from your entries.
-            </>
-          )}
-        </p>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:gap-8">
-        <aside className="flex max-h-48 shrink-0 flex-col gap-3 overflow-hidden border-b border-border pb-4 lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-6">
-          {journalTab === "journal" ? (
+        {streakDays > 0 ? (
+          <p className="mt-2 text-sm text-foreground/80">
+            {streakDays === 1
+              ? "You wrote yesterday or today — come back when it feels right."
+              : `${streakDays} days in a row with a page. Gentle streak, not a score.`}
+          </p>
+        ) : null}
+        {importBatchId ? (
+          <p className="mt-2 text-sm text-muted">
+            Showing just-imported pages.{" "}
             <button
               type="button"
-              onClick={createEntry}
-              className="cursor-pointer rounded-xl border border-border bg-background px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:border-accent/40"
+              className="cursor-pointer font-medium text-accent-link underline-offset-2 hover:underline"
+              onClick={() => setImportBatchId(null)}
             >
-              + New entry
+              Show all
             </button>
+          </p>
+        ) : null}
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:gap-4">
+        <aside className="flex max-h-[22rem] shrink-0 flex-col gap-3 overflow-visible border-b border-border pb-4 lg:max-h-none lg:w-64 lg:border-b-0 lg:pb-0">
+          {journalTab === "journal" ? (
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={createEntry}
+                className="cursor-pointer rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90"
+              >
+                + New entry
+              </button>
+              <div className="flex items-center gap-1.5">
+                <div ref={folderMenuRef} className="relative shrink-0">
+                  <button
+                    type="button"
+                    aria-label="Filter by folder"
+                    aria-haspopup="menu"
+                    aria-expanded={sidebarMenu === "folder"}
+                    onClick={() => {
+                      setSidebarMenu((m) => (m === "folder" ? null : "folder"));
+                      setNamingFolder(false);
+                    }}
+                    className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border transition-colors ${
+                      selectedFolderId
+                        ? "border-accent/40 bg-accent-soft/40 text-foreground"
+                        : "border-border bg-background text-muted hover:border-accent/40 hover:text-foreground"
+                    }`}
+                  >
+                    <Folder aria-hidden className="size-4" strokeWidth={2} />
+                  </button>
+                  {sidebarMenu === "folder" ? (
+                    <div
+                      role="menu"
+                      className="absolute left-0 z-30 mt-1 w-52 rounded-xl border border-border bg-card py-1 shadow-lg"
+                    >
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => onFolderSelect(FOLDER_ALL)}
+                        className={`block w-full cursor-pointer px-3 py-2 text-left text-sm hover:bg-accent-soft/30 ${
+                          !selectedFolderId
+                            ? "font-semibold text-foreground"
+                            : "text-muted"
+                        }`}
+                      >
+                        All entries
+                      </button>
+                      {folders.map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => onFolderSelect(f.id)}
+                          className={`block w-full cursor-pointer px-3 py-2 text-left text-sm hover:bg-accent-soft/30 ${
+                            selectedFolderId === f.id
+                              ? "font-semibold text-foreground"
+                              : "text-muted"
+                          }`}
+                        >
+                          {f.name}
+                        </button>
+                      ))}
+                      <div className="border-t border-border px-2 py-1.5">
+                        {namingFolder ? (
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              value={newFolderName}
+                              onChange={(e) => setNewFolderName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  addNamedFolder();
+                                }
+                              }}
+                              placeholder="Folder name"
+                              autoFocus
+                              className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1 text-xs outline-none focus:border-accent/50"
+                            />
+                            <button
+                              type="button"
+                              onClick={addNamedFolder}
+                              disabled={!newFolderName.trim()}
+                              className="cursor-pointer rounded-lg bg-accent px-2 py-1 text-xs font-semibold text-on-accent disabled:opacity-50"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNamingFolder(true);
+                              setNewFolderName("");
+                            }}
+                            className="block w-full cursor-pointer rounded-lg px-2 py-1.5 text-left text-sm text-muted hover:bg-accent-soft/30 hover:text-foreground"
+                          >
+                            + New folder
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+                <div ref={dateMenuRef} className="relative shrink-0">
+                  <button
+                    type="button"
+                    title="Jump to a specific day."
+                    aria-label="Jump to a specific day."
+                    aria-haspopup="dialog"
+                    aria-expanded={sidebarMenu === "date"}
+                    onClick={() =>
+                      setSidebarMenu((m) => (m === "date" ? null : "date"))
+                    }
+                    className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border transition-colors ${
+                      jumpDate
+                        ? "border-accent/40 bg-accent-soft/40 text-foreground"
+                        : "border-border bg-background text-muted hover:border-accent/40 hover:text-foreground"
+                    }`}
+                  >
+                    <Calendar aria-hidden className="size-4" strokeWidth={2} />
+                  </button>
+                  {sidebarMenu === "date" ? (
+                    <JumpToDayPopover
+                      jumpDate={jumpDate}
+                      onPick={applyJumpDate}
+                      onClear={clearJumpDate}
+                    />
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <p className="min-w-0 truncate text-xs text-muted">
+                  {folderFilterLabel}
+                  {jumpDate
+                    ? ` · ${formatJournalEntryDate(`${jumpDate}T12:00:00`)}`
+                    : ""}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setImportOpen(true)}
+                  className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-xs font-medium text-accent-link underline-offset-2 hover:underline"
+                >
+                  <Import aria-hidden className="size-3.5" strokeWidth={2} />
+                  Import
+                </button>
+              </div>
+            </div>
           ) : (
-            <p className="text-sm font-semibold text-foreground">Past days</p>
+            <>
+              <p className="text-sm font-semibold text-foreground">Past days</p>
+              <div className="flex items-center gap-1.5">
+                <div ref={dateMenuRef} className="relative shrink-0">
+                  <button
+                    type="button"
+                    title="Jump to a specific day."
+                    aria-label="Jump to a specific day."
+                    aria-haspopup="dialog"
+                    aria-expanded={sidebarMenu === "date"}
+                    onClick={() =>
+                      setSidebarMenu((m) => (m === "date" ? null : "date"))
+                    }
+                    className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border transition-colors ${
+                      jumpDate
+                        ? "border-accent/40 bg-accent-soft/40 text-foreground"
+                        : "border-border bg-background text-muted hover:border-accent/40 hover:text-foreground"
+                    }`}
+                  >
+                    <Calendar aria-hidden className="size-4" strokeWidth={2} />
+                  </button>
+                  {sidebarMenu === "date" ? (
+                    <JumpToDayPopover
+                      jumpDate={jumpDate}
+                      onPick={applyJumpDate}
+                      onClear={clearJumpDate}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            </>
           )}
           <nav
             className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1 [scrollbar-gutter:stable]"
@@ -528,9 +996,15 @@ export function JournalView() {
               <p className="text-sm text-muted">Loading…</p>
             ) : sidebarGroups.length === 0 ? (
               <p className="text-sm text-muted">
-                {journalTab === "gratitude"
-                  ? "No gratitudes yet."
-                  : "No entries yet."}
+                {jumpDate && !searchQuery.trim()
+                  ? "No entry on this day."
+                  : searchQuery.trim() || jumpDate
+                    ? "No entries match."
+                    : journalTab === "gratitude"
+                    ? "No gratitudes yet."
+                    : selectedFolderId
+                      ? "This folder is empty."
+                      : "No entries yet."}
               </p>
             ) : (
               sidebarGroups.map((group) => (
@@ -542,7 +1016,7 @@ export function JournalView() {
                     {group.entries.map((e) => {
                       const isActive = e.id === activeEntryId;
                       const metaMuted = isActive
-                        ? "text-on-accent/80 dark:text-deep/75"
+                        ? "text-faint"
                         : "text-muted";
                       return (
                         <li key={e.id}>
@@ -551,24 +1025,18 @@ export function JournalView() {
                             onClick={() => selectEntry(e.id)}
                             className={`w-full cursor-pointer rounded-xl border px-3 py-2.5 text-left transition-colors ${
                               isActive
-                                ? "border-accent/60 bg-accent text-on-accent shadow-sm dark:text-deep"
+                                ? "border-border border-l-[3px] border-l-accent bg-card text-foreground shadow-sm"
                                 : "border-border bg-background text-foreground hover:border-accent/40"
                             }`}
                           >
                             <span className="line-clamp-2 text-sm font-semibold">
                               {sidebarEntryTitle(e.title)}
                             </span>
-                            <span
-                              className={`mt-0.5 line-clamp-2 text-xs ${
-                                isActive
-                                  ? "text-on-accent/85 dark:text-deep/80"
-                                  : "text-muted"
-                              }`}
-                            >
+                            <span className="mt-0.5 line-clamp-2 text-xs text-muted">
                               {entryPreview(e)}
                             </span>
                             <div
-                              className={`mt-2 border-t pt-2 text-[10px] leading-snug ${isActive ? "border-white/25 dark:border-deep/25" : "border-border"} ${metaMuted}`}
+                              className={`mt-2 border-t pt-2 text-[10px] leading-snug ${isActive ? "border-border-subtle" : "border-border"} ${metaMuted}`}
                             >
                               Created{" "}
                               <time dateTime={e.createdAt}>
@@ -591,17 +1059,37 @@ export function JournalView() {
             <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
               <JournalInsightsView />
             </div>
+          ) : jumpDate && filteredTabEntries.length === 0 ? (
+            <div className="flex min-h-[12rem] flex-1 items-center rounded-2xl border border-border bg-card p-6 shadow-sm">
+              <p className="text-sm text-muted">No entry on this day.</p>
+            </div>
           ) : showGratitudeEditor && activeEntry ? (
             <>
               <JournalGratitudeEditor
                 createdAt={activeEntry.createdAt}
                 lines={gratitudeDraft}
                 onChange={onGratitudeChange}
-              />
-              <p className="mt-3 text-sm text-muted">
-                Autosaves in this browser. Come back tomorrow for a fresh page;
-                today’s three stay here.
-              </p>
+              >
+                <JournalEntryMeta
+                  mood={activeEntry.mood}
+                  tags={activeEntry.tags}
+                  onMoodChange={(mood) => patchActive({ mood })}
+                  onTagsChange={(tags) => patchActive({ tags })}
+                />
+              </JournalGratitudeEditor>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <p className="text-sm text-muted">
+                  Autosaves in this browser. Come back tomorrow for a fresh page;
+                  today’s three stay here.
+                </p>
+                <button
+                  type="button"
+                  onClick={deleteActive}
+                  className="cursor-pointer text-xs font-medium text-muted underline-offset-2 hover:text-danger hover:underline"
+                >
+                  Delete day
+                </button>
+              </div>
             </>
           ) : hydrated &&
             activeEntryId &&
@@ -622,13 +1110,15 @@ export function JournalView() {
                   latestTitleRef.current = title;
                   scheduleSave();
                 }}
-              />
-              <p className="mt-3 text-sm text-muted">
-                Autosaves in this browser. Record places a clip where your cursor is
-                (on the next line if not at the start of a line). Text from the recording
-                is added automatically when the API URL and OpenAI secret are configured.
-                Toolbar: headings, lists, emphasis.
-              </p>
+                onDelete={deleteActive}
+              >
+                <JournalEntryMeta
+                  mood={activeEntry.mood}
+                  tags={activeEntry.tags}
+                  onMoodChange={(mood) => patchActive({ mood })}
+                  onTagsChange={(tags) => patchActive({ tags })}
+                />
+              </JournalRichEditor>
             </>
           ) : (
             <div className="min-h-[12rem] rounded-2xl border border-border bg-card shadow-sm" />
@@ -636,5 +1126,34 @@ export function JournalView() {
         </section>
       </div>
     </div>
+    <JournalSettingsDialog
+      open={settingsOpen}
+      onClose={() => setSettingsOpen(false)}
+      entries={entries}
+      store={{
+        version: 2,
+        activeEntryId,
+        entries,
+        ...(folders.length ? { folders } : {}),
+      }}
+      keepLocalOnly={keepLocalOnly}
+      onKeepLocalOnlyChange={(on) => {
+        setKeepLocalOnly(on);
+        setJournalLocalOnlyMode(on);
+      }}
+      entryLocalOnly={activeEntry?.localOnly}
+      onEntryLocalOnlyChange={
+        activeEntry
+          ? (on) => patchActive({ localOnly: on })
+          : undefined
+      }
+    />
+    <JournalImportDialog
+      open={importOpen}
+      existing={entries}
+      onClose={() => setImportOpen(false)}
+      onCommit={commitImport}
+    />
+    </JournalLockGate>
   );
 }

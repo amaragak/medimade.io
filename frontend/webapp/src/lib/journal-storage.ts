@@ -1,3 +1,5 @@
+import { isJournalMoodId } from "@/lib/journal-moods";
+
 export type JournalEntryKind = "freeform" | "gratitude";
 
 export type JournalGratitudeLines = [string, string, string];
@@ -12,12 +14,36 @@ export type JournalEntry = {
   kind?: JournalEntryKind;
   /** Three daily lines when `kind` is `gratitude`. */
   gratitude?: JournalGratitudeLines;
+  /** Write-time mood chip (`calm` | `good` | `mixed` | `low` | `heavy`). */
+  mood?: string;
+  tags?: string[];
+  /** Skip this entry on cloud PUT; kept on this device. */
+  localOnly?: boolean;
+  /** Set when this row came from the import pipeline. */
+  importSource?:
+    | "day_one"
+    | "markdown"
+    | "csv"
+    | "plaintext"
+    | "pdf_annotations"
+    | "handwritten_photo";
+  importBatchId?: string;
+  sourceMetadata?: Record<string, unknown>;
+  mediaRefs?: string[];
+  /** Notebook this page lives in. Omitted = unfiled. */
+  folderId?: string;
+};
+
+export type JournalFolder = {
+  id: string;
+  name: string;
 };
 
 export type JournalStoreV2 = {
   version: 2;
   activeEntryId: string | null;
   entries: JournalEntry[];
+  folders?: JournalFolder[];
 };
 
 const LEGACY_PLAIN_KEY = "mm_journal_entries_v1";
@@ -248,6 +274,9 @@ export function loadJournalStore(): JournalStoreV2 {
               ? data.activeEntryId
               : data.entries[0].id,
           entries: data.entries.map(normalizeEntry),
+          ...(normalizeFolders(data.folders)
+            ? { folders: normalizeFolders(data.folders) }
+            : {}),
         };
       }
     }
@@ -300,17 +329,125 @@ function isEntry(x: unknown): x is JournalEntry {
   );
 }
 
+function normalizeFolders(raw: unknown): JournalFolder[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: JournalFolder[] = [];
+  const seen = new Set<string>();
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    if (typeof o.id !== "string" || !o.id.trim()) continue;
+    const name = typeof o.name === "string" ? o.name.trim().slice(0, 40) : "";
+    if (!name || seen.has(o.id)) continue;
+    seen.add(o.id);
+    out.push({ id: o.id.trim().slice(0, 80), name });
+    if (out.length >= 40) break;
+  }
+  return out.length ? out : undefined;
+}
+
+function normalizeTags(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const tags = raw
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => t.trim().replace(/^#/, "").slice(0, 32))
+    .filter(Boolean)
+    .slice(0, 16);
+  return tags.length ? [...new Set(tags)] : undefined;
+}
+
 function normalizeEntry(e: JournalEntry): JournalEntry {
   const kind = e.kind === "gratitude" ? "gratitude" : undefined;
   const gratitude = kind
     ? normalizeGratitudeLines(e.gratitude)
     : undefined;
+  const mood = isJournalMoodId(e.mood) ? e.mood : undefined;
+  const tags = normalizeTags(e.tags);
+  const localOnly = e.localOnly === true ? true : undefined;
+  const mediaRefs = Array.isArray(e.mediaRefs)
+    ? e.mediaRefs.filter((x): x is string => typeof x === "string").slice(0, 64)
+    : undefined;
+  const folderId =
+    typeof e.folderId === "string" && e.folderId.trim()
+      ? e.folderId.trim().slice(0, 80)
+      : undefined;
+  const importSource =
+    e.importSource === "day_one" ||
+    e.importSource === "markdown" ||
+    e.importSource === "csv" ||
+    e.importSource === "plaintext" ||
+    e.importSource === "pdf_annotations" ||
+    e.importSource === "handwritten_photo"
+      ? e.importSource
+      : undefined;
+  const importBatchId =
+    typeof e.importBatchId === "string" && e.importBatchId.trim()
+      ? e.importBatchId.trim()
+      : undefined;
+  const sourceMetadata =
+    e.sourceMetadata && typeof e.sourceMetadata === "object" && !Array.isArray(e.sourceMetadata)
+      ? (e.sourceMetadata as Record<string, unknown>)
+      : undefined;
   return {
     ...e,
     title: typeof e.title === "string" ? e.title : deriveEntryTitle(e.contentHtml),
     contentHtml: e.contentHtml?.trim() ? e.contentHtml : "<p></p>",
     ...(kind ? { kind, gratitude } : { kind: undefined, gratitude: undefined }),
+    ...(mood ? { mood } : { mood: undefined }),
+    ...(tags ? { tags } : { tags: undefined }),
+    ...(localOnly ? { localOnly: true } : { localOnly: undefined }),
+    ...(importSource ? { importSource } : { importSource: undefined }),
+    ...(importBatchId ? { importBatchId } : { importBatchId: undefined }),
+    ...(sourceMetadata ? { sourceMetadata } : { sourceMetadata: undefined }),
+    ...(mediaRefs?.length ? { mediaRefs } : { mediaRefs: undefined }),
+    ...(folderId ? { folderId } : { folderId: undefined }),
   };
+}
+
+/** Keep device-only entries when a cloud copy would otherwise replace them. */
+export function mergeRemoteJournalKeepingLocalOnly(
+  remote: JournalStoreV2,
+  localEntries: JournalEntry[],
+): JournalStoreV2 {
+  const byId = new Map<string, JournalEntry>();
+  for (const e of remote.entries) byId.set(e.id, e);
+  for (const e of localEntries) {
+    if (e.localOnly) byId.set(e.id, e);
+  }
+  return {
+    ...remote,
+    entries: Array.from(byId.values()),
+  };
+}
+
+export function entriesForCloudPut(entries: JournalEntry[]): JournalEntry[] {
+  return entries.filter((e) => !e.localOnly);
+}
+
+/** Consecutive local calendar days with a meaningful entry, ending today or yesterday. */
+export function journalWritingStreakDays(
+  entries: JournalEntry[],
+  now = new Date(),
+): number {
+  const days = new Set(
+    entries
+      .filter(journalEntryHasMeaningfulContent)
+      .map((e) => localDateKeyFromIso(e.createdAt)),
+  );
+  if (!days.size) return 0;
+  const start = localDateKey(now);
+  const y = new Date(now);
+  y.setDate(y.getDate() - 1);
+  const yesterday = localDateKey(y);
+  let cursor = days.has(start) ? now : days.has(yesterday) ? y : null;
+  if (!cursor) return 0;
+  let n = 0;
+  const d = new Date(cursor);
+  while (days.has(localDateKey(d))) {
+    n += 1;
+    d.setDate(d.getDate() - 1);
+  }
+  return n;
 }
 
 export function saveJournalStore(store: JournalStoreV2) {
@@ -321,8 +458,19 @@ export function saveJournalStore(store: JournalStoreV2) {
   }
 }
 
-export function newJournalEntry(): JournalEntry {
-  return newEntry();
+export function newJournalEntry(overrides?: Partial<JournalEntry>): JournalEntry {
+  return newEntry(overrides);
+}
+
+export function newJournalFolder(name: string): JournalFolder | null {
+  const n = name.trim().slice(0, 40);
+  if (!n) return null;
+  const now = new Date().toISOString();
+  const id =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? `f_${crypto.randomUUID()}`
+      : `f_${now}_${Math.random().toString(36).slice(2, 9)}`;
+  return { id, name: n };
 }
 
 /** Calendar month key for grouping (YYYY-MM). */
@@ -423,6 +571,7 @@ export function journalEntryHasMeaningfulContent(e: JournalEntry): boolean {
       || stripHtmlToText(e.contentHtml).trim().length > 0;
   }
   if (e.title.trim().length > 0) return true;
+  if (/<img\b/i.test(e.contentHtml)) return true;
   return stripHtmlToText(e.contentHtml).trim().length > 0;
 }
 

@@ -316,7 +316,7 @@ export function PlanSubtaskCard({
             <h3 className="font-display text-lg font-medium leading-snug text-foreground">
               {isDone ? (
                 <span className="inline-flex items-center gap-2">
-                  <span aria-hidden className="text-accent">
+                  <span aria-hidden className="text-accent-link">
                     ✓
                   </span>
                   {subtask.title}
@@ -339,7 +339,7 @@ export function PlanSubtaskCard({
             <button
               type="button"
               onClick={() => undoSubtaskDone()}
-              className="mt-1 cursor-pointer text-xs font-medium text-accent underline-offset-2 hover:underline"
+              className="mt-1 cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline"
             >
               Mark not actually done
             </button>
@@ -398,7 +398,7 @@ export function PlanSubtaskCard({
                 setShowFullFlow(true);
                 patchSubtask({ usedFullFlow: true });
               }}
-              className="mt-2 block cursor-pointer text-xs font-medium text-accent underline-offset-2 hover:underline"
+              className="mt-2 block cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline"
             >
               Go deeper on this
             </button>

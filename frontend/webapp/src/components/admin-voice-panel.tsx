@@ -180,7 +180,7 @@ export function AdminVoicePanel() {
           type="button"
           disabled={!pauses || pauseBusy}
           onClick={() => void savePauses()}
-          className="mt-4 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60 dark:text-deep"
+          className="mt-4 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60"
         >
           {pauseBusy ? "Saving…" : "Save pause lengths"}
         </button>
@@ -200,7 +200,7 @@ export function AdminVoicePanel() {
             type="button"
             disabled={sampleBusy || speakers.length === 0}
             onClick={() => void generateAllSamples()}
-            className="shrink-0 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60 dark:text-deep"
+            className="shrink-0 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60"
           >
             {sampleBusy
               ? sampleProgress
@@ -226,7 +226,7 @@ export function AdminVoicePanel() {
             type="button"
             disabled={addBusy}
             onClick={() => void addSpeaker()}
-            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60 dark:text-deep"
+            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60"
           >
             {addBusy ? "Adding…" : "Add speaker"}
           </button>

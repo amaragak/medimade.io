@@ -298,7 +298,7 @@ function PreviewPlayButton(props: {
       <Ionicons
         name={props.playing ? "pause" : "play"}
         size={22}
-        color="#fff"
+        color={colors.onAccent}
         style={props.playing ? undefined : { marginLeft: 3 }}
       />
     </Pressable>
@@ -1234,7 +1234,7 @@ export default function CreateScreen() {
             {chatLoading ? (
               <Text style={styles.sendBtnGlyph}>…</Text>
             ) : (
-              <Ionicons name="paper-plane" size={18} color="#fff" />
+              <Ionicons name="paper-plane" size={18} color={colors.onAccent} />
             )}
           </Pressable>
         </View>
@@ -1464,7 +1464,7 @@ export default function CreateScreen() {
             onPress={() => void generateMeditationAudioAndShow()}
           >
             {audioLoading ? (
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color={colors.onAccent} size="small" />
             ) : (
               <Text style={styles.generatePillText}>Generate meditation</Text>
             )}
@@ -1619,7 +1619,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansSemiBold,
     fontSize: 12,
     fontWeight: "600",
-    color: "#fff",
+    color: colors.onAccent,
   },
   headerActions: {
     flexDirection: "row",
@@ -1770,7 +1770,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   sendBtnGlyph: {
-    color: "#fff",
+    color: colors.onAccent,
     fontWeight: "700",
     fontSize: 16,
   },
@@ -1959,7 +1959,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.sansSemiBold,
     fontSize: 14,
     fontWeight: "600",
-    color: "#fff",
+    color: colors.onAccent,
   },
   draftNote: {
     fontFamily: fonts.sans,

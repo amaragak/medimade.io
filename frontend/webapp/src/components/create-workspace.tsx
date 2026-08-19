@@ -924,7 +924,7 @@ function JournalHandoffEntryCards({
               <button
                 type="button"
                 onClick={() => setOpenId(open ? null : s.entryId)}
-                className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-accent transition-colors hover:bg-accent-soft/40"
+                className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-accent-link transition-colors hover:bg-accent-soft/40"
               >
                 {open ? "Collapse" : "Expand"}
               </button>
@@ -3605,7 +3605,7 @@ export function CreateWorkspace({
                       {crumb.href && !last ? (
                         <Link
                           href={crumb.href}
-                          className="cursor-pointer font-medium text-accent underline decoration-accent/50 underline-offset-[3px] hover:decoration-accent"
+                          className="cursor-pointer font-medium text-accent-link underline decoration-accent/50 underline-offset-[3px] hover:decoration-accent"
                         >
                           {crumb.label}
                         </Link>
@@ -3631,7 +3631,7 @@ export function CreateWorkspace({
               <button
                 type="button"
                 onClick={beginDevSkipToAudio}
-                className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent transition-colors hover:bg-accent-soft/70"
+                className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent-link transition-colors hover:bg-accent-soft/70"
                 aria-label="Dev: skip chat and go to audio setup with a random script on generate"
               >
                 Skip to audio
@@ -3657,7 +3657,7 @@ export function CreateWorkspace({
                     ? "Pause all previews"
                     : "Play all selected tracks"
                 }
-                className="inline-flex shrink-0 cursor-pointer items-center rounded-full border border-border bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex shrink-0 cursor-pointer items-center rounded-full border border-border bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {anyTrackPlaying || playAllActive ? "Pause all" : "Play all"}
               </button>
@@ -3718,7 +3718,7 @@ export function CreateWorkspace({
                     and what you need today.
                   </p>
                   <span
-                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent-link shadow-inner sm:h-32 sm:w-32"
                     aria-hidden
                   >
                     <IconMeditationStyle className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
@@ -3727,7 +3727,7 @@ export function CreateWorkspace({
               ) : (
                 <div className="flex items-start gap-4">
                   <span
-                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent-link shadow-inner"
                     aria-hidden
                   >
                     <IconMeditationStyle className="h-9 w-9" />
@@ -3765,7 +3765,7 @@ export function CreateWorkspace({
                     The guide uses open, journal-style questions.
                   </p>
                   <span
-                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent-link shadow-inner sm:h-32 sm:w-32"
                     aria-hidden
                   >
                     <IconChatBubbles className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
@@ -3774,7 +3774,7 @@ export function CreateWorkspace({
               ) : (
                 <div className="flex items-start gap-4">
                   <span
-                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent-link shadow-inner"
                     aria-hidden
                   >
                     <IconChatBubbles className="h-9 w-9" />
@@ -3819,14 +3819,14 @@ export function CreateWorkspace({
                       Start journaling to unlock this option.{" "}
                       <Link
                         href="/journal"
-                        className="font-semibold text-accent underline-offset-2 hover:underline"
+                        className="font-semibold text-accent-link underline-offset-2 hover:underline"
                       >
                         Open Journal
                       </Link>
                     </p>
                   ) : null}
                   <span
-                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent-link shadow-inner sm:h-32 sm:w-32"
                     aria-hidden
                   >
                     <IconJournalReflect className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
@@ -3835,7 +3835,7 @@ export function CreateWorkspace({
               ) : (
                 <div className="flex items-start gap-4">
                   <span
-                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent-link shadow-inner"
                     aria-hidden
                   >
                     <IconJournalReflect className="h-9 w-9" />
@@ -3854,7 +3854,7 @@ export function CreateWorkspace({
                         Start journaling to unlock this option.{" "}
                         <Link
                           href="/journal"
-                          className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
+                          className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                         >
                           Open Journal
                         </Link>
@@ -3892,7 +3892,7 @@ export function CreateWorkspace({
                       Add a project in{" "}
                       <Link
                         href="/ideate"
-                        className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
+                        className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                       >
                         Ideate
                       </Link>{" "}
@@ -3900,7 +3900,7 @@ export function CreateWorkspace({
                     </p>
                   ) : null}
                   <span
-                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent shadow-inner sm:h-32 sm:w-32"
+                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent-link shadow-inner sm:h-32 sm:w-32"
                     aria-hidden
                   >
                     <IconGoalTarget className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
@@ -3909,7 +3909,7 @@ export function CreateWorkspace({
               ) : (
                 <div className="flex items-start gap-4">
                   <span
-                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent shadow-inner"
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent-link shadow-inner"
                     aria-hidden
                   >
                     <IconGoalTarget className="h-9 w-9" />
@@ -3928,7 +3928,7 @@ export function CreateWorkspace({
                         Add a project in{" "}
                         <Link
                           href="/ideate"
-                          className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
+                          className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                         >
                           Ideate
                         </Link>{" "}
@@ -3981,7 +3981,7 @@ export function CreateWorkspace({
                   ? "Choose meditation type"
                   : "Script"}
               </span>
-              <IconChevronRight className="text-accent" />
+              <IconChevronRight className="text-accent-link" />
             </button>
             </div>
           </div>
@@ -4016,7 +4016,7 @@ export function CreateWorkspace({
                   className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                   aria-label="Back to how you generate the script"
                 >
-                  <IconChevronLeft className="shrink-0 text-accent" />
+                  <IconChevronLeft className="shrink-0 text-accent-link" />
                   <span>Back</span>
                 </button>
                 <button
@@ -4027,7 +4027,7 @@ export function CreateWorkspace({
                   aria-label="Continue to questions for this meditation type"
                 >
                   <span>Questions</span>
-                  <IconChevronRight className="text-accent" />
+                  <IconChevronRight className="text-accent-link" />
                 </button>
               </div>
             </div>
@@ -4097,7 +4097,7 @@ export function CreateWorkspace({
                   className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                   aria-label="Back to meditation type"
                 >
-                  <IconChevronLeft className="shrink-0 text-accent" />
+                  <IconChevronLeft className="shrink-0 text-accent-link" />
                   <span>Type</span>
                 </button>
                 <button
@@ -4108,7 +4108,7 @@ export function CreateWorkspace({
                   aria-label="Continue to audio and voice settings"
                 >
                   <span>Audio & voice</span>
-                  <IconChevronRight className="text-accent" />
+                  <IconChevronRight className="text-accent-link" />
                 </button>
               </div>
             </div>
@@ -4210,7 +4210,7 @@ export function CreateWorkspace({
                           <div className={bubble}>
                             {isScript ? (
                               <>
-                                <div className="mb-2 inline-flex items-center rounded-full border border-gold/40 bg-gold/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gold">
+                                <div className="mb-2 inline-flex items-center rounded-full border border-gold/40 bg-gold/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-accent-link">
                                   Meditation script · ~5 min
                                 </div>
                                 <ChatMarkdown
@@ -4245,7 +4245,7 @@ export function CreateWorkspace({
                           className="flex cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                         >
                           <span>Proceed to audio settings</span>
-                          <IconChevronRight className="text-accent" />
+                          <IconChevronRight className="text-accent-link" />
                         </button>
                       </div>
                     ) : null}
@@ -4348,7 +4348,7 @@ export function CreateWorkspace({
                       Add a project in{" "}
                       <Link
                         href="/ideate"
-                        className="cursor-pointer font-semibold text-accent underline-offset-2 hover:underline"
+                        className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                       >
                         Ideate
                       </Link>{" "}
@@ -4441,7 +4441,7 @@ export function CreateWorkspace({
                 onClick={() => void send()}
                 disabled={chatControlsDisabled || chatLoading || scriptLoading}
                 aria-label={chatLoading ? "Sending…" : "Send message"}
-                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent text-on-accent transition-opacity dark:text-deep disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent text-on-accent transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {chatLoading ? (
                   <span className="text-sm font-medium" aria-hidden>
@@ -4465,7 +4465,7 @@ export function CreateWorkspace({
               className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
               aria-label="Back to chat style selection"
             >
-              <IconChevronLeft className="shrink-0 text-accent" />
+              <IconChevronLeft className="shrink-0 text-accent-link" />
               <span>Chat style</span>
             </button>
             <button
@@ -4480,7 +4480,7 @@ export function CreateWorkspace({
               aria-label="Next: audio and voice settings"
             >
               <span>Audio & voice</span>
-              <IconChevronRight className="text-accent" />
+              <IconChevronRight className="text-accent-link" />
             </button>
           </div>
           </div>
@@ -4649,7 +4649,7 @@ export function CreateWorkspace({
                   : "Back to script and chat"
               }
             >
-              <IconChevronLeft className="shrink-0 text-accent" />
+              <IconChevronLeft className="shrink-0 text-accent-link" />
               {creationPath === "style" ? "Questions" : "Script"}
             </button>
             <div className="ml-auto flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
@@ -4665,7 +4665,7 @@ export function CreateWorkspace({
                 type="button"
                 onClick={() => void generateMeditationAudioAndShow()}
                 disabled={audioLoading}
-                className={`shrink-0 cursor-pointer whitespace-nowrap rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-md transition-opacity hover:opacity-90 dark:text-deep disabled:cursor-not-allowed disabled:opacity-60 sm:px-5 ${
+                className={`shrink-0 cursor-pointer whitespace-nowrap rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-md transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:px-5 ${
                   audioLoading ? "animate-pulse" : ""
                 }`}
               >

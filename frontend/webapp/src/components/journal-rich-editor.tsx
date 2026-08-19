@@ -5,12 +5,17 @@ import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Image as ImageIcon, List, ListOrdered, Redo2, Undo2 } from "lucide-react";
 import { formatJournalEntryDate } from "@/lib/journal-storage";
 import {
   JournalVoiceClip,
   blobToDataUrl,
   insertJournalVoiceClipAtCursor,
 } from "@/components/journal-voice-clip-extension";
+import {
+  JournalImage,
+  compressImageFileToJpegDataUrl,
+} from "@/components/journal-image-extension";
 import { JournalTranscribeApiContext } from "@/components/journal-transcribe-api-context";
 
 const editorClass =
@@ -19,7 +24,8 @@ const editorClass =
   "[&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:font-display [&_h2]:text-lg [&_h2]:font-medium [&_h2]:tracking-tight " +
   "[&_h3]:mt-3 [&_h3]:mb-1.5 [&_h3]:font-display [&_h3]:text-base [&_h3]:font-medium " +
   "[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 " +
-  "[&_li]:my-0.5 [&_strong]:font-semibold [&_em]:italic";
+  "[&_li]:my-0.5 [&_strong]:font-semibold [&_em]:italic " +
+  "[&_img]:my-3 [&_img]:max-h-[28rem] [&_img]:max-w-full [&_img]:rounded-lg";
 
 type Props = {
   entryId: string;
@@ -32,6 +38,9 @@ type Props = {
   placeholder?: string;
   onHtmlChange: (html: string) => void;
   onTitleChange: (title: string) => void;
+  onDelete?: () => void;
+  /** Footer inside the card, below a divider (e.g. mood). */
+  children?: ReactNode;
 };
 
 export function JournalRichEditor({
@@ -40,20 +49,25 @@ export function JournalRichEditor({
   initialTitle,
   createdAt,
   transcribeApiBase,
-  titlePlaceholder = "Journal Entry Title",
+  titlePlaceholder = "Title",
   placeholder = "Write freely…",
   onHtmlChange,
   onTitleChange,
+  onDelete,
+  children,
 }: Props) {
   const titleSeededForEntryRef = useRef<string | null>(null);
   const editorSeededForEntryRef = useRef<string | null>(null);
   const [entryTitle, setEntryTitle] = useState(initialTitle);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaChunksRef = useRef<BlobPart[]>([]);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   const stopMediaRecorderAndCollectBlob = useCallback(async (): Promise<Blob | null> => {
     const rec = mediaRecorderRef.current;
@@ -152,6 +166,7 @@ export function JournalRichEditor({
         emptyEditorClass: "is-editor-empty",
       }),
       JournalVoiceClip,
+      JournalImage,
     ],
     content: initialHtml,
     immediatelyRender: false,
@@ -193,6 +208,35 @@ export function JournalRichEditor({
     };
   }, [entryId, cancelVoiceRecording]);
 
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [entryId]);
+
+  useEffect(() => {
+    if (!voiceRecording) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") void cancelVoiceRecording();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [voiceRecording, cancelVoiceRecording]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDocClick(e: MouseEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
   if (!editor) {
     return (
       <div className="min-h-[min(52vh,24rem)] animate-pulse rounded-2xl border border-border bg-card shadow-sm" />
@@ -201,57 +245,96 @@ export function JournalRichEditor({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-      <div className="flex shrink-0 flex-col gap-3 border-b border-border px-4 py-3">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
-          <label className="min-w-0 flex-1 sm:max-w-[min(100%,20rem)] lg:max-w-md">
-            <span className="sr-only">{titlePlaceholder}</span>
-            <input
-              type="text"
-              value={entryTitle}
-              onChange={(ev) => {
-                const v = ev.target.value;
-                setEntryTitle(v);
-                onTitleChange(v);
-              }}
-              placeholder={titlePlaceholder}
-              autoComplete="off"
-              className="w-full min-w-0 border-0 bg-transparent px-0 py-0.5 text-base font-semibold tracking-tight text-foreground outline-none ring-0 placeholder:text-muted/70"
-            />
-          </label>
-          <div className="flex flex-wrap items-center gap-1 sm:justify-end">
+      <div className="flex shrink-0 flex-col border-b border-border">
+        <div className="flex items-start gap-2 px-4 pb-2 pt-3">
+          <div className="min-w-0 flex-1">
+            <time
+              className="mb-1 block text-xs text-muted"
+              dateTime={createdAt}
+            >
+              Created {formatJournalEntryDate(createdAt)}
+            </time>
+            <label className="block">
+              <span className="sr-only">Title</span>
+              <input
+                type="text"
+                value={entryTitle}
+                onChange={(ev) => {
+                  const v = ev.target.value;
+                  setEntryTitle(v);
+                  onTitleChange(v);
+                }}
+                placeholder={titlePlaceholder}
+                autoComplete="off"
+                className="w-full border-0 bg-transparent px-0 py-0.5 font-display text-2xl font-medium tracking-tight text-foreground outline-none ring-0 placeholder:text-muted/45"
+              />
+            </label>
+          </div>
+          {onDelete ? (
+            <div ref={menuRef} className="relative flex shrink-0 items-center gap-2 self-end">
+              <span className="h-6 w-px bg-border" aria-hidden />
+              <button
+                type="button"
+                aria-label="Entry actions"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((v) => !v)}
+                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted hover:bg-accent-soft/50 hover:text-foreground"
+              >
+                <IconMore />
+              </button>
+              {menuOpen ? (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full z-20 mt-1 min-w-[9rem] rounded-xl border border-border bg-card py-1 shadow-lg"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onDelete();
+                    }}
+                    className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-danger hover:bg-danger-soft/40"
+                  >
+                    Delete entry
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-1 border-t border-border px-3 py-2">
             {transcribeApiBase ? (
               <>
                 <button
                   type="button"
-                  title={voiceRecording ? "Recording…" : "Record voice"}
-                  aria-label={voiceRecording ? "Recording…" : "Record voice"}
+                  title={
+                    voiceRecording
+                      ? "Stop and place clip"
+                      : "Record voice"
+                  }
+                  aria-label={
+                    voiceRecording
+                      ? "Stop and place clip"
+                      : "Record voice"
+                  }
                   aria-pressed={voiceRecording}
                   disabled={voiceBusy}
-                  onClick={async () => {
+                  onClick={() => {
                     if (voiceBusy) return;
-                    if (voiceRecording) return;
-                    await startVoiceRecording();
+                    if (voiceRecording) {
+                      void finishRecordingIntoEditor();
+                      return;
+                    }
+                    void startVoiceRecording();
                   }}
-                  className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-accent text-white shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 ${
+                  className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-accent text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 ${
                     voiceRecording ? "animate-pulse" : ""
                   }`}
                 >
                   <IconMic />
                 </button>
-                <ToolbarBtn
-                  label="Stop and place clip"
-                  disabled={!voiceRecording || voiceBusy}
-                  onClick={() => void finishRecordingIntoEditor()}
-                >
-                  Stop
-                </ToolbarBtn>
-                <ToolbarBtn
-                  label="Cancel recording"
-                  disabled={!voiceRecording || voiceBusy}
-                  onClick={() => void cancelVoiceRecording()}
-                >
-                  Cancel
-                </ToolbarBtn>
                 <span className="mx-1 h-6 w-px bg-border" aria-hidden />
               </>
             ) : null}
@@ -270,77 +353,135 @@ export function JournalRichEditor({
               <span className="italic">I</span>
             </ToolbarBtn>
             <span className="mx-1 h-6 w-px bg-border" aria-hidden />
-            <ToolbarBtn
-              label="Heading"
-              active={editor.isActive("heading", { level: 2 })}
-              onClick={() =>
-                editor.chain().focus().toggleHeading({ level: 2 }).run()
+            <label className="sr-only" htmlFor="journal-text-style">
+              Text style
+            </label>
+            <select
+              id="journal-text-style"
+              aria-label="Text style"
+              value={
+                editor.isActive("heading", { level: 2 })
+                  ? "header"
+                  : editor.isActive("heading", { level: 3 })
+                    ? "subheader"
+                    : "body"
               }
+              onChange={(e) => {
+                const v = e.target.value;
+                const chain = editor.chain().focus();
+                if (v === "header") {
+                  chain.setHeading({ level: 2 }).run();
+                  return;
+                }
+                if (v === "subheader") {
+                  chain.setHeading({ level: 3 }).run();
+                  return;
+                }
+                chain.setParagraph().run();
+              }}
+              className="cursor-pointer rounded-lg border border-border bg-transparent py-1.5 pl-2 pr-6 text-xs font-semibold text-muted outline-none hover:bg-accent-soft/50 hover:text-foreground"
             >
-              H2
-            </ToolbarBtn>
-            <ToolbarBtn
-              label="Subheading"
-              active={editor.isActive("heading", { level: 3 })}
-              onClick={() =>
-                editor.chain().focus().toggleHeading({ level: 3 }).run()
-              }
-            >
-              H3
-            </ToolbarBtn>
+              <option value="body">Body</option>
+              <option value="header">Header</option>
+              <option value="subheader">Subheader</option>
+            </select>
             <span className="mx-1 h-6 w-px bg-border" aria-hidden />
             <ToolbarBtn
               label="Bullet list"
               active={editor.isActive("bulletList")}
               onClick={() => editor.chain().focus().toggleBulletList().run()}
             >
-              • List
+              <List aria-hidden className="size-4" strokeWidth={2} />
             </ToolbarBtn>
             <ToolbarBtn
               label="Numbered list"
               active={editor.isActive("orderedList")}
               onClick={() => editor.chain().focus().toggleOrderedList().run()}
             >
-              1. List
+              <ListOrdered aria-hidden className="size-4" strokeWidth={2} />
+            </ToolbarBtn>
+            <span className="mx-1 h-6 w-px bg-border" aria-hidden />
+            <ToolbarBtn
+              label="Photo"
+              onClick={() => photoInputRef.current?.click()}
+            >
+              <ImageIcon aria-hidden className="size-4" strokeWidth={2} />
             </ToolbarBtn>
             <span className="mx-1 h-6 w-px bg-border" aria-hidden />
             <ToolbarBtn
               label="Undo"
               onClick={() => editor.chain().focus().undo().run()}
             >
-              Undo
+              <Undo2 aria-hidden className="size-4" strokeWidth={2} />
             </ToolbarBtn>
             <ToolbarBtn
               label="Redo"
               onClick={() => editor.chain().focus().redo().run()}
             >
-              Redo
+              <Redo2 aria-hidden className="size-4" strokeWidth={2} />
             </ToolbarBtn>
+        </div>
+        {voiceRecording || voiceError ? (
+          <div className="border-t border-border px-4 py-2 text-xs">
+            {voiceRecording ? (
+              <span className="font-medium text-accent-link">
+                Recording… tap the mic again to place the clip.
+              </span>
+            ) : null}
+            {voiceError ? (
+              <span className="text-danger">{voiceError}</span>
+            ) : null}
           </div>
-        </div>
-        <div className="border-t border-border pt-2 text-xs text-muted">
-          Created{" "}
-          <time className="text-foreground/90" dateTime={createdAt}>
-            {formatJournalEntryDate(createdAt)}
-          </time>
-          {voiceRecording ? (
-            <span className="mt-1 block font-medium text-accent">
-              Recording… place the cursor where you want the clip, then Stop.
-            </span>
-          ) : null}
-          {voiceError ? (
-            <span className="mt-1 block text-danger">
-              {voiceError}
-            </span>
-          ) : null}
-        </div>
+        ) : null}
+        <input
+          ref={photoInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(ev) => {
+            const file = ev.target.files?.[0];
+            ev.target.value = "";
+            if (!file) return;
+            void compressImageFileToJpegDataUrl(file)
+              .then((src) => {
+                editor.chain().focus().setJournalImage({ src, alt: "" }).run();
+              })
+              .catch((e) => {
+                setVoiceError(
+                  e instanceof Error ? e.message : "Could not add that photo",
+                );
+              });
+          }}
+        />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <JournalTranscribeApiContext.Provider value={transcribeApiBase}>
           <EditorContent editor={editor} />
         </JournalTranscribeApiContext.Provider>
       </div>
+      {children ? (
+        <div className="shrink-0 border-t border-border px-4 py-3">
+          {children}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function IconMore({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="currentColor"
+      aria-hidden
+    >
+      <circle cx="12" cy="5" r="1.75" />
+      <circle cx="12" cy="12" r="1.75" />
+      <circle cx="12" cy="19" r="1.75" />
+    </svg>
   );
 }
 
@@ -387,11 +528,11 @@ function ToolbarBtn({
       aria-pressed={active ?? false}
       disabled={disabled}
       onClick={onClick}
-      className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+      className={`inline-flex items-center justify-center rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors ${
         disabled
           ? "cursor-not-allowed opacity-50"
           : active
-            ? "cursor-pointer bg-accent text-on-accent dark:text-deep"
+            ? "cursor-pointer bg-selected text-on-selected"
             : "cursor-pointer text-muted hover:bg-accent-soft/50 hover:text-foreground"
       }`}
     >

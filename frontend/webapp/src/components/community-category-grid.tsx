@@ -245,7 +245,7 @@ export function MeditationTypeCard({
   return (
     <span
       aria-label={name}
-      className={`inline-block rounded-full bg-accent-soft/60 font-semibold uppercase tracking-wide text-accent ${sizeClass} ${className}`}
+      className={`inline-block rounded-full bg-accent-soft/60 font-semibold uppercase tracking-wide text-accent-link ${sizeClass} ${className}`}
     >
       {name}
     </span>

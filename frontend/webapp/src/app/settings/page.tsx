@@ -32,7 +32,7 @@ export default function SettingsPage() {
           </button>
           <button
             type="button"
-            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent dark:text-deep"
+            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent"
           >
             Create key
           </button>
@@ -47,7 +47,7 @@ export default function SettingsPage() {
         </p>
         <button
           type="button"
-          className="mt-4 text-sm font-medium text-accent underline-offset-4 hover:underline"
+          className="mt-4 text-sm font-medium text-accent-link underline-offset-4 hover:underline"
         >
           View API reference (placeholder)
         </button>

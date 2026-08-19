@@ -53,6 +53,8 @@ export default function JournalScreen() {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [mood, setMood] = useState<string | undefined>(undefined);
 
   const activeEntry = useMemo(() => {
     if (!store?.activeEntryId) return null;
@@ -66,6 +68,7 @@ export default function JournalScreen() {
     if (a) {
       setTitle(a.title);
       setBodyPlain(htmlToPlain(a.contentHtml));
+      setMood(a.mood);
     }
     setHydrated(true);
   }, []);
@@ -96,12 +99,13 @@ export default function JournalScreen() {
               title,
               contentHtml: html,
               updatedAt: now,
+              mood,
             }
           : e,
       ),
     };
     await persist(next);
-  }, [store, title, bodyPlain, persist]);
+  }, [store, title, bodyPlain, mood, persist]);
 
   const selectEntry = useCallback(
     async (id: string) => {
@@ -112,6 +116,7 @@ export default function JournalScreen() {
       if (e) {
         setTitle(e.title);
         setBodyPlain(htmlToPlain(e.contentHtml));
+        setMood(e.mood);
       }
       await persist(next);
     },
@@ -129,8 +134,35 @@ export default function JournalScreen() {
     };
     setTitle("");
     setBodyPlain("");
+    setMood(undefined);
     await persist(next);
   }, [flushActive, persist]);
+
+  const applyMood = useCallback(
+    async (next: string | undefined) => {
+      setMood(next);
+      if (!store?.activeEntryId) return;
+      const id = store.activeEntryId;
+      const html = plainToHtml(bodyPlain);
+      const now = new Date().toISOString();
+      const nextStore: JournalStoreV2 = {
+        ...store,
+        entries: store.entries.map((e) =>
+          e.id === id
+            ? {
+                ...e,
+                title,
+                contentHtml: html,
+                updatedAt: now,
+                mood: next,
+              }
+            : e,
+        ),
+      };
+      await persist(nextStore);
+    },
+    [store, title, bodyPlain, persist],
+  );
 
   const startRecording = useCallback(async () => {
     setVoiceError(null);
@@ -211,13 +243,38 @@ export default function JournalScreen() {
           <Text style={styles.newBtnText}>+ New</Text>
         </Pressable>
       </View>
+      <View style={styles.searchWrap}>
+        <Ionicons
+          name="search"
+          size={16}
+          color={colors.muted}
+          style={styles.searchIcon}
+        />
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder="Search entries"
+          placeholderTextColor={colors.muted}
+          style={styles.search}
+        />
+      </View>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         style={styles.tabs}
         contentContainerStyle={styles.tabsInner}
       >
-        {store.entries.map((e: JournalEntry) => {
+        {store.entries
+          .filter((e) => {
+            const q = search.trim().toLowerCase();
+            if (!q) return true;
+            return (
+              e.title.toLowerCase().includes(q) ||
+              htmlToPlain(e.contentHtml).toLowerCase().includes(q) ||
+              (e.tags ?? []).some((t) => t.toLowerCase().includes(q))
+            );
+          })
+          .map((e: JournalEntry) => {
           const active = e.id === store.activeEntryId;
           return (
             <Pressable
@@ -245,6 +302,32 @@ export default function JournalScreen() {
           placeholderTextColor={colors.muted}
           style={styles.titleInput}
         />
+        <View style={styles.moodRow}>
+          {(["calm", "good", "mixed", "low", "heavy"] as const).map((id) => {
+            const on = mood === id;
+            const label =
+              id === "calm"
+                ? "Calm"
+                : id === "good"
+                  ? "Good"
+                  : id === "mixed"
+                    ? "Mixed"
+                    : id === "low"
+                      ? "Low"
+                      : "Heavy";
+            return (
+              <Pressable
+                key={id}
+                onPress={() => void applyMood(on ? undefined : id)}
+                style={[styles.moodChip, on && styles.moodChipOn]}
+              >
+                <Text style={[styles.moodText, on && styles.moodTextOn]}>
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
         <View style={styles.bodyRow}>
           <Text style={styles.label}>Entry</Text>
           <View style={styles.micWrap}>
@@ -261,7 +344,7 @@ export default function JournalScreen() {
                 <Ionicons
                   name="mic"
                   size={22}
-                  color="#ffffff"
+                  color={colors.onAccent}
                 />
               </Pressable>
             ) : (
@@ -274,7 +357,7 @@ export default function JournalScreen() {
                   pressed && styles.micBtnPressed,
                 ]}
               >
-                <Ionicons name="stop" size={22} color="#fffaf6" />
+                <Ionicons name="stop" size={22} color={colors.onAccent} />
               </Pressable>
             )}
           </View>
@@ -320,7 +403,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: colors.accent,
   },
-  newBtnText: { color: "#fffaf6", fontWeight: "700", fontSize: 14 },
+  newBtnText: { color: colors.onAccent, fontWeight: "700", fontSize: 14 },
   tabs: { maxHeight: 44, marginBottom: 8 },
   tabsInner: { paddingHorizontal: 12, gap: 8, flexDirection: "row" },
   tab: {
@@ -354,8 +437,47 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.foreground,
     backgroundColor: colors.card,
+    marginBottom: 12,
+  },
+  searchWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingLeft: 12,
+    backgroundColor: colors.card,
+  },
+  searchIcon: { marginRight: 8 },
+  search: {
+    flex: 1,
+    paddingRight: 12,
+    paddingVertical: 8,
+    fontSize: 15,
+    color: colors.foreground,
+  },
+  moodRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
     marginBottom: 16,
   },
+  moodChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: colors.card,
+  },
+  moodChipOn: {
+    borderColor: colors.selected,
+    backgroundColor: colors.selected,
+  },
+  moodText: { color: colors.muted, fontSize: 12, fontWeight: "700" },
+  moodTextOn: { color: colors.onSelected },
   bodyRow: {
     flexDirection: "row",
     alignItems: "center",
