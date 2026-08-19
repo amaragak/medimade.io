@@ -878,6 +878,39 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    const adminFactoryMixes = new lambda_nodejs.NodejsFunction(
+      this,
+      "AdminFactoryMixesFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/admin-factory-mixes.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(15),
+        memorySize: 256,
+        environment: {
+          SOUND_CATALOG_TABLE_NAME: soundCatalogTable.tableName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+          ADMIN_EMAILS: adminEmails,
+        },
+      },
+    );
+    soundCatalogTable.grantReadWriteData(adminFactoryMixes);
+    authJwtSecret.grantRead(adminFactoryMixes);
+
+    httpApi.addRoutes({
+      path: "/admin/factory-mixes",
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.PATCH,
+        apigwv2.HttpMethod.POST,
+        apigwv2.HttpMethod.OPTIONS,
+      ],
+      integration: new integrations.HttpLambdaIntegration(
+        "AdminFactoryMixesIntegration",
+        adminFactoryMixes,
+      ),
+    });
+
     const adminVoice = new lambda_nodejs.NodejsFunction(this, "AdminVoiceFunction", {
       entry: path.join(__dirname, "../lambdas/admin-voice.ts"),
       handler: "handler",

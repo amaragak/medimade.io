@@ -5,6 +5,9 @@ import * as Switch from "@radix-ui/react-switch";
 import type { BackgroundAudioItem } from "@/lib/medimade-api";
 import type { SoundCategoryId } from "@/lib/sound-taxonomy";
 import { SoundFolderSelect } from "@/components/sound-folder-select";
+import { FactoryIcon } from "@/components/factory-icons";
+import type { MixerFactoryPreset } from "@/lib/mixer-factory-presets";
+import type { MixerPreset } from "@/lib/mixer-preset-storage";
 
 function MixerVoiceIcon() {
   return (
@@ -260,6 +263,7 @@ export function MixerVoiceChannel({
   playing,
   onTogglePreview,
   playDisabled,
+  showDisc = false,
 }: {
   voices: Array<{ modelId: string; name: string; description?: string }>;
   value: string;
@@ -271,6 +275,7 @@ export function MixerVoiceChannel({
   playing: boolean;
   onTogglePreview: () => void;
   playDisabled?: boolean;
+  showDisc?: boolean;
 }) {
   const description = voices
     .find((s) => s.modelId === value)
@@ -279,52 +284,286 @@ export function MixerVoiceChannel({
     <MixerStrip
       label="Voice"
       picker={
-        <div className="flex min-w-0 items-center gap-1.5">
-          <MixerSpeakerSelect
-            voices={voices}
-            value={value}
-            onChange={onChange}
-            disabled={disabled}
-          />
-          <div
-            className="flex shrink-0 flex-col items-center gap-0.5"
-            title={
-              fxOn
-                ? "Preview uses mixer FX (WAV on CDN)."
-                : "Preview uses loudness-normalized MP3 on CDN."
-            }
-          >
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-              FX
-            </span>
-            <Switch.Root
-              checked={fxOn}
-              onCheckedChange={(v) => onFxChange(Boolean(v))}
-              disabled={fxDisabled}
-              aria-label={
-                fxOn ? "Turn speaker FX off" : "Turn speaker FX on"
+        <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <MixerSpeakerSelect
+              voices={voices}
+              value={value}
+              onChange={onChange}
+              disabled={disabled}
+            />
+            <div
+              className="flex shrink-0 flex-col items-center gap-0.5"
+              title={
+                fxOn
+                  ? "Preview uses mixer FX (WAV on CDN)."
+                  : "Preview uses loudness-normalized MP3 on CDN."
               }
-              className="relative h-4 w-8 cursor-pointer rounded-full border border-border bg-muted/30 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Switch.Thumb className="block h-3 w-3 translate-x-[2px] rounded-full bg-surface shadow transition-transform will-change-transform data-[state=checked]:translate-x-[18px]" />
-            </Switch.Root>
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+                FX
+              </span>
+              <Switch.Root
+                checked={fxOn}
+                onCheckedChange={(v) => onFxChange(Boolean(v))}
+                disabled={fxDisabled}
+                aria-label={
+                  fxOn ? "Turn speaker FX off" : "Turn speaker FX on"
+                }
+                className="relative h-4 w-8 cursor-pointer rounded-full border border-border bg-muted/30 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Switch.Thumb className="block h-3 w-3 translate-x-[2px] rounded-full bg-surface shadow transition-transform will-change-transform data-[state=checked]:translate-x-[18px]" />
+              </Switch.Root>
+            </div>
           </div>
-        </div>
-      }
-      meter={
-        <div className="relative flex min-h-[7rem] w-full flex-1 items-center justify-center">
-          {description ? (
-            <p className="absolute inset-x-0 top-0 z-10 text-sm leading-snug text-muted">
+          {!showDisc && description ? (
+            <p className="px-0.5 text-center text-sm leading-snug text-muted">
               {description}
             </p>
           ) : null}
-          <MixerVoiceIcon />
         </div>
+      }
+      meter={
+        showDisc ? (
+          <div className="relative flex min-h-[7rem] w-full flex-1 items-center justify-center">
+            {description ? (
+              <p className="absolute inset-x-0 top-0 z-10 text-sm leading-snug text-muted">
+                {description}
+              </p>
+            ) : null}
+            <MixerVoiceIcon />
+          </div>
+        ) : (
+          <div className="min-h-0 w-full flex-1" />
+        )
       }
       playing={playing}
       onTogglePreview={onTogglePreview}
       playDisabled={playDisabled}
       playAriaLabel={playing ? "Pause speaker sample" : "Play speaker sample"}
     />
+  );
+}
+
+function mixOptionKey(kind: "factory" | "user", id: string) {
+  return `${kind}:${id}`;
+}
+
+export function MixerPresetChannel({
+  factoryPresets,
+  userPresets,
+  selectedKey,
+  onSelect,
+  onSaveNew,
+  disabled,
+  loading,
+  showSave = false,
+  modified = false,
+  defaultSaveName = "Untitled mix",
+}: {
+  factoryPresets: MixerFactoryPreset[];
+  userPresets: MixerPreset[];
+  selectedKey: string;
+  onSelect: (key: string) => void;
+  onSaveNew: (name: string) => void;
+  disabled?: boolean;
+  loading?: boolean;
+  showSave?: boolean;
+  modified?: boolean;
+  defaultSaveName?: string;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const selectedFactory = factoryPresets.find(
+    (p) => mixOptionKey("factory", p.id) === selectedKey,
+  );
+  const selectedUser = userPresets.find(
+    (p) => mixOptionKey("user", p.id) === selectedKey,
+  );
+  const label = selectedFactory?.name || selectedUser?.name || "None";
+  const triggerLabel =
+    modified && label !== "None" ? `${label} (edited)` : label;
+
+  useEffect(() => {
+    if (showSave) {
+      setSaveName((cur) => (cur.trim() ? cur : defaultSaveName));
+      return;
+    }
+    setSaveName("");
+  }, [showSave, defaultSaveName]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: PointerEvent) {
+      const t = e.target as Node | null;
+      if (!t || rootRef.current?.contains(t)) return;
+      setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [open]);
+
+  function pick(key: string) {
+    onSelect(key);
+    setOpen(false);
+  }
+
+  return (
+    <div className="flex w-full min-h-0 flex-col items-stretch gap-2.5 rounded-2xl border border-border bg-background px-2 py-3">
+      <span className="shrink-0 text-center text-sm font-semibold uppercase tracking-wide text-muted">
+        Preset
+      </span>
+      <div ref={rootRef} className="relative min-w-0 shrink-0">
+        <button
+          type="button"
+          disabled={disabled || loading}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-label="Sound mix preset"
+          title={triggerLabel}
+          onClick={() => {
+            if (disabled || loading) return;
+            setOpen((v) => !v);
+          }}
+          className="flex w-full min-w-0 items-center gap-2 rounded-xl border border-border bg-surface px-2 py-2 text-left text-base disabled:opacity-50"
+        >
+          {selectedFactory ? (
+            <span
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+              style={{
+                backgroundColor: selectedFactory.icon_bg,
+                color: selectedFactory.icon_color,
+              }}
+              aria-hidden
+            >
+              <FactoryIcon id={selectedFactory.icon} size={18} />
+            </span>
+          ) : null}
+          <span className="min-w-0 flex-1 truncate">
+            {loading ? "Loading…" : triggerLabel}
+          </span>
+          <svg
+            viewBox="0 0 24 24"
+            className={`h-4 w-4 shrink-0 text-muted transition-transform ${
+              open ? "rotate-180" : ""
+            }`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.25"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </button>
+        {open ? (
+          <div
+            className="absolute left-1/2 top-full z-[90] mt-1 max-h-64 min-w-[13rem] -translate-x-1/2 overflow-auto rounded-xl border border-border bg-card py-1 shadow-xl"
+            role="listbox"
+          >
+            <button
+              type="button"
+              className={`block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-background ${
+                !selectedKey ? "font-medium text-foreground" : "text-muted"
+              }`}
+              onClick={() => pick("")}
+            >
+              None
+            </button>
+            <p className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              Factory
+            </p>
+            {factoryPresets.length === 0 ? (
+              <p className="px-3 py-1.5 text-sm text-muted">None yet</p>
+            ) : (
+              factoryPresets.map((p) => {
+                const key = mixOptionKey("factory", p.id);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-background ${
+                      key === selectedKey
+                        ? "font-medium text-foreground"
+                        : "text-muted"
+                    }`}
+                    onClick={() => pick(key)}
+                  >
+                    <span
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+                      style={{
+                        backgroundColor: p.icon_bg,
+                        color: p.icon_color,
+                      }}
+                      aria-hidden
+                    >
+                      <FactoryIcon id={p.icon} size={14} />
+                    </span>
+                    <span className="min-w-0 truncate">{p.name}</span>
+                  </button>
+                );
+              })
+            )}
+            <p className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              Your mixes
+            </p>
+            {userPresets.length === 0 ? (
+              <p className="px-3 py-1.5 text-sm text-muted">None saved</p>
+            ) : (
+              userPresets.map((p) => {
+                const key = mixOptionKey("user", p.id);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-background ${
+                      key === selectedKey
+                        ? "font-medium text-foreground"
+                        : "text-muted"
+                    }`}
+                    onClick={() => pick(key)}
+                  >
+                    {p.name}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        ) : null}
+      </div>
+      <div className="min-h-0 flex-1">
+        {showSave ? (
+          <div className="flex h-full min-h-0 flex-col justify-end gap-1.5">
+            <label className="sr-only" htmlFor="mixer-save-preset-name">
+              New mix name
+            </label>
+            <input
+              id="mixer-save-preset-name"
+              type="text"
+              value={saveName}
+              onChange={(e) => setSaveName(e.target.value)}
+              disabled={disabled}
+              placeholder="Save as…"
+              className="w-full min-w-0 rounded-lg border border-border bg-surface px-2 py-1.5 text-sm text-foreground outline-none placeholder:text-muted disabled:opacity-50"
+            />
+            <button
+              type="button"
+              disabled={disabled || !saveName.trim()}
+              onClick={() => {
+                const name = saveName.trim();
+                if (!name) return;
+                onSaveNew(name);
+                setSaveName("");
+              }}
+              className="w-full cursor-pointer rounded-lg border border-border bg-background px-2 py-1.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Save as new
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { LogoMark } from "@/components/logo-mark";
 import {
   clearMedimadeSession,
   getMedimadeSessionDisplayName,
@@ -13,6 +14,7 @@ import {
 const meditateSub = [
   { href: "/meditate/create", label: "Create" },
   { href: "/meditate/library", label: "Library" },
+  { href: "/meditate/sounds", label: "Sounds" },
 ] as const;
 
 const navRest = [
@@ -52,13 +54,40 @@ export function SiteHeader() {
       ? pathname === "/"
       : pathname === href || pathname.startsWith(`${href}/`);
   return (
-    <header className="sticky top-0 z-50 border-b border-white/10 bg-nav shadow-[0_4px_18px_rgb(30_37_48_/_0.22)]">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
+    <header className="relative sticky top-0 z-[100] border-b border-white/10 bg-nav shadow-[0_4px_18px_rgb(30_37_48_/_0.22)]">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 overflow-hidden"
+      >
+        <div className="relative mx-auto h-full max-w-6xl px-4 sm:px-6">
+          <span
+            className="absolute left-[17px] top-[calc(50%+1px)] h-36 w-72 -translate-x-1/2 -translate-y-1/2 blur-lg"
+            style={{
+              background:
+                "radial-gradient(circle, rgb(118 148 176 / 0.42) 0%, rgb(88 118 146 / 0.2) 42%, rgb(51 70 92 / 0) 78%)",
+            }}
+          />
+        </div>
+        <span
+          className="absolute right-0 top-1/2 h-40 w-[22rem] translate-x-[42%] -translate-y-1/2 blur-xl"
+          style={{
+            background:
+              "radial-gradient(circle, rgb(28 42 58 / 0.92) 0%, rgb(36 52 70 / 0.48) 32%, rgb(51 70 92 / 0) 68%)",
+          }}
+        />
+      </div>
+      <div className="relative mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
         <Link
           href="/"
-          className="font-display text-2xl font-medium tracking-tight text-nav-foreground lowercase"
+          className="relative inline-flex items-center text-nav-foreground"
         >
-          consciously
+          <LogoMark
+            size={34}
+            className="relative z-[1] top-px mr-[13px] shrink-0"
+          />
+          <span className="relative z-[1] -top-px font-display text-2xl font-medium tracking-tight lowercase">
+            consciously
+          </span>
         </Link>
         <nav className="hidden items-center gap-1 sm:flex">
           <div
@@ -86,7 +115,7 @@ export function SiteHeader() {
             </Link>
             {meditateMenuOpen ? (
               <div
-                className="absolute left-0 top-full z-50 min-w-[11rem] pt-1"
+                className="absolute left-0 top-full z-[110] min-w-[11rem] pt-1"
                 role="menu"
                 aria-label="Meditate"
               >
@@ -150,7 +179,7 @@ export function SiteHeader() {
           )}
           <Link
             href="/pro"
-            className="ml-2 rounded-full bg-accent px-4 py-2 text-sm font-medium text-on-accent shadow-sm transition-opacity hover:opacity-90"
+            className="ml-2 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent shadow-sm transition-opacity hover:opacity-90"
           >
             Pro
           </Link>

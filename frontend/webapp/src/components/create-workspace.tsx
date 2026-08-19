@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
-import { MixerChannel, MixerVoiceChannel } from "@/components/mixer-channel";
+import { MixerChannel, MixerPresetChannel, MixerVoiceChannel } from "@/components/mixer-channel";
 import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
 import {
   CREATE_MEDITATE_ROOT,
@@ -23,9 +23,8 @@ import {
   writeCreateSession,
   type CreateSessionV1,
 } from "@/lib/create-session-storage";
-import {
-  MeditationTypeCardGrid,
-} from "@/components/community-category-grid";
+import { JournalReflectPicker } from "@/components/journal-reflect-picker";
+import { MeditationTypeCardGrid } from "@/components/community-category-grid";
 import {
   DictationMicButton,
   appendSpokenText,
@@ -58,6 +57,19 @@ import {
   ORPHEUS_VOICES,
 } from "@/lib/orpheus-voices";
 import {
+  factoryPresetToMix,
+  type MixerFactoryPreset,
+} from "@/lib/mixer-factory-presets";
+import {
+  loadMixerPresetStore,
+  mixerPresetToMix,
+  mixEquals,
+  newMixerPreset,
+  saveMixerPresetStore,
+  type MixerPreset,
+  type MixerPresetMix,
+} from "@/lib/mixer-preset-storage";
+import {
   FIXED_SPEECH_PREVIEW_SPEED,
   speakerPreviewLoudFxSampleKey,
   speakerPreviewLoudSampleKey,
@@ -69,15 +81,15 @@ import {
   clearJournalMeditationHandoffJson,
   deriveEntryTitle,
   formatJournalEntryDate,
-  journalEntryHasMeaningfulContent,
+  isGratitudeEntry,
   journalEntryPlainForHandoff,
   loadJournalStore,
   parseJournalMeditationPayload,
   peekJournalMeditationHandoffJson,
   saveJournalStore,
   shouldPreferRemoteJournalStore,
-  stripHtmlToText,
   type JournalEntry,
+  type JournalFolder,
 } from "@/lib/journal-storage";
 import {
   PLAN_CREATE_FIRST_MESSAGE,
@@ -815,16 +827,6 @@ function coachChatBubbles(text: string): string[] {
     .filter(Boolean);
 }
 
-function reflectableJournalEntriesForPicker(entries: JournalEntry[]): JournalEntry[] {
-  return entries
-    .filter(journalEntryHasMeaningfulContent)
-    .sort(
-      (a, b) =>
-        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-    )
-    .slice(0, 25);
-}
-
 function chatMessageTranscriptLine(m: ChatMessage): string {
   if (m.role === "user" && m.journalSegments?.length) {
     return buildJournalHandoffApiContent(m.journalSegments);
@@ -1111,6 +1113,22 @@ function getStyleFollowupQuestion(style: string): string {
   return "How are you feeling today—and what do you want this meditation to support?";
 }
 
+/** Live mixer snapshot on Create audio — factory mixes stay read-only; this is compare-only. */
+type CreateMixSnapshot = MixerPresetMix & {
+  speakerModelId: string;
+  speakerFxPreviewOn: boolean;
+  meditationTargetMinutes: MeditationTargetMinutes;
+};
+
+function createMixSnapshotEquals(a: CreateMixSnapshot, b: CreateMixSnapshot): boolean {
+  return (
+    mixEquals(a, b) &&
+    a.speakerModelId === b.speakerModelId &&
+    a.speakerFxPreviewOn === b.speakerFxPreviewOn &&
+    a.meditationTargetMinutes === b.meditationTargetMinutes
+  );
+}
+
 export function CreateWorkspace({
   initialDraftSk = null,
   seedJournalContext = false,
@@ -1188,6 +1206,14 @@ export function CreateWorkspace({
   const [backgroundMusicGain, setBackgroundMusicGain] = useState(50);
   const [backgroundNoiseGain, setBackgroundNoiseGain] = useState(10);
   const [backgroundDrumsGain, setBackgroundDrumsGain] = useState(40);
+  const [factoryMixes, setFactoryMixes] = useState<MixerFactoryPreset[]>([]);
+  const [userMixPresets, setUserMixPresets] = useState<MixerPreset[]>([]);
+  const [selectedMixKey, setSelectedMixKey] = useState("");
+  const [factoryMixesLoading, setFactoryMixesLoading] = useState(true);
+  const [mixBaseline, setMixBaseline] = useState<CreateMixSnapshot | null>(
+    null,
+  );
+  const mixBaselineReadyRef = useRef(false);
   const [playAllActive, setPlayAllActive] = useState(false);
   const [playing, setPlaying] = useState<Record<SoloTrack, boolean>>({
     speaker: false,
@@ -1283,10 +1309,14 @@ export function CreateWorkspace({
   const [journalPickerEntries, setJournalPickerEntries] = useState<JournalEntry[]>(
     [],
   );
+  const [journalPickerFolders, setJournalPickerFolders] = useState<JournalFolder[]>(
+    [],
+  );
   const [journalPickerListReady, setJournalPickerListReady] = useState(false);
   const [journalReflectSelectedIds, setJournalReflectSelectedIds] = useState(
     () => new Set<string>(),
   );
+  const [journalReflectGuidance, setJournalReflectGuidance] = useState("");
   const [planGoals, setPlanGoals] = useState<PlanGoal[]>([]);
   const [planGoalsReady, setPlanGoalsReady] = useState(false);
   const [goalSelectedId, setGoalSelectedId] = useState<string | null>(null);
@@ -1374,7 +1404,10 @@ export function CreateWorkspace({
     setJournalMode(s.journalMode);
     setPhase(s.phase === "style" ? "stylePick" : s.phase);
     setPendingModeChoice(s.pendingModeChoice);
-    setJournalReflectSelectedIds(new Set(s.journalReflectSelectedIds));
+    setJournalReflectSelectedIds(
+      new Set(s.journalReflectSelectedIds.slice(0, 1)),
+    );
+    setJournalReflectGuidance(s.journalReflectGuidance ?? "");
     setGoalSelectedId(s.goalSelectedId);
     if (s.draftSk) setDraftSk(s.draftSk);
     setIntroTypingDone(true);
@@ -1420,6 +1453,124 @@ export function CreateWorkspace({
     backgroundMusicKey,
   );
   const drumsPreviewKey = drumsLockedForMelodic ? "" : backgroundDrumsKey;
+
+  const currentBedMix: MixerPresetMix = {
+    musicKey: backgroundMusicKey,
+    natureKey: backgroundNatureKey,
+    drumsKey: backgroundDrumsKey,
+    noiseKey: backgroundNoiseKey,
+    musicGain: backgroundMusicGain,
+    natureGain: backgroundNatureGain,
+    drumsGain: backgroundDrumsGain,
+    noiseGain: backgroundNoiseGain,
+  };
+  const currentMixSnapshot: CreateMixSnapshot = {
+    ...currentBedMix,
+    speakerModelId,
+    speakerFxPreviewOn,
+    meditationTargetMinutes,
+  };
+  const mixDirty =
+    mixBaseline != null &&
+    !createMixSnapshotEquals(currentMixSnapshot, mixBaseline);
+  const selectedFactoryMix = factoryMixes.find(
+    (p) => `factory:${p.id}` === selectedMixKey,
+  );
+  const selectedUserMix = userMixPresets.find(
+    (p) => `user:${p.id}` === selectedMixKey,
+  );
+  const loadedMixName =
+    selectedFactoryMix?.name || selectedUserMix?.name || "";
+  const mixSaveDefaultName = loadedMixName
+    ? `${loadedMixName} (edited)`
+    : "Untitled mix";
+
+  function rememberMixBaseline(mix: CreateMixSnapshot) {
+    mixBaselineReadyRef.current = true;
+    setMixBaseline(mix);
+  }
+
+  function applyBedMix(mix: MixerPresetMix) {
+    setBackgroundMusicKey(mix.musicKey);
+    setBackgroundNatureKey(mix.natureKey);
+    setBackgroundDrumsKey(mix.drumsKey);
+    setBackgroundNoiseKey(mix.noiseKey);
+    setBackgroundMusicGain(mix.musicGain);
+    setBackgroundNatureGain(mix.natureGain);
+    setBackgroundDrumsGain(mix.drumsGain);
+    setBackgroundNoiseGain(mix.noiseGain);
+    rememberMixBaseline({
+      ...mix,
+      speakerModelId,
+      speakerFxPreviewOn,
+      meditationTargetMinutes,
+    });
+    const drumsLocked = isMelodicMusicKey(backgroundMusic, mix.musicKey);
+    setPlaying((p) => ({
+      ...p,
+      music: Boolean(mix.musicKey.trim()),
+      nature: Boolean(mix.natureKey.trim()),
+      drums: Boolean(mix.drumsKey.trim()) && !drumsLocked,
+      noise: Boolean(mix.noiseKey.trim()),
+    }));
+  }
+
+  function onSelectMixPreset(key: string) {
+    setSelectedMixKey(key);
+    if (!key) {
+      rememberMixBaseline(currentMixSnapshot);
+      return;
+    }
+    const sep = key.indexOf(":");
+    const kind = key.slice(0, sep);
+    const id = key.slice(sep + 1);
+    if (kind === "factory") {
+      const p = factoryMixes.find((x) => x.id === id);
+      if (p) applyBedMix(factoryPresetToMix(p));
+      return;
+    }
+    if (kind === "user") {
+      const p = userMixPresets.find((x) => x.id === id);
+      if (p) applyBedMix(mixerPresetToMix(p));
+    }
+  }
+
+  function saveNewMixPreset(name: string) {
+    // Always insert a user mix. Factory presets are never written.
+    const p: MixerPreset = {
+      ...newMixerPreset(name),
+      musicKey: backgroundMusicKey,
+      natureKey: backgroundNatureKey,
+      drumsKey: backgroundDrumsKey,
+      noiseKey: backgroundNoiseKey,
+      musicGain: backgroundMusicGain,
+      natureGain: backgroundNatureGain,
+      drumsGain: backgroundDrumsGain,
+      noiseGain: backgroundNoiseGain,
+    };
+    const store = loadMixerPresetStore();
+    const next = {
+      version: 1 as const,
+      activeId: p.id,
+      presets: [p, ...store.presets.filter((x) => x.id !== p.id)],
+    };
+    saveMixerPresetStore(next);
+    setUserMixPresets(next.presets);
+    setSelectedMixKey(`user:${p.id}`);
+    rememberMixBaseline({
+      ...mixerPresetToMix(p),
+      speakerModelId,
+      speakerFxPreviewOn,
+      meditationTargetMinutes,
+    });
+  }
+
+  useEffect(() => {
+    if (!sessionHydrated || mixBaselineReadyRef.current) return;
+    rememberMixBaseline(currentMixSnapshot);
+    // Capture once after session restore so default beds aren't treated as unsaved.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionHydrated]);
 
   useEffect(() => {
     if (!drumsLockedForMelodic) return;
@@ -1624,8 +1775,9 @@ export function CreateWorkspace({
   useEffect(() => {
     if (typeof window === "undefined") return;
     let cancelled = false;
-    const local = loadJournalStore().entries;
-    setJournalPickerEntries(local);
+    const local = loadJournalStore();
+    setJournalPickerEntries(local.entries);
+    setJournalPickerFolders(local.folders ?? []);
 
     const base = getMedimadeApiBase();
     if (!base) {
@@ -1639,6 +1791,7 @@ export function CreateWorkspace({
         setJournalPickerEntries((prev) => {
           if (shouldPreferRemoteJournalStore(remote, prev)) {
             saveJournalStore(remote);
+            setJournalPickerFolders(remote.folders ?? []);
             return remote.entries;
           }
           return prev;
@@ -1655,7 +1808,7 @@ export function CreateWorkspace({
   }, []);
 
   const hasReflectableJournal = useMemo(
-    () => journalPickerEntries.some(journalEntryHasMeaningfulContent),
+    () => journalPickerEntries.some((e) => !isGratitudeEntry(e)),
     [journalPickerEntries],
   );
   const hasPlanGoals = useMemo(() => planGoals.length > 0, [planGoals.length]);
@@ -2303,14 +2456,10 @@ export function CreateWorkspace({
     setIntroTypingDone(false);
     setIntroTypingSession((s) => s + 1);
     if (creationPath === "journalReflect") {
-      const recent = reflectableJournalEntriesForPicker(journalPickerEntries);
-      const next = new Set<string>();
-      for (let i = 0; i < Math.min(3, recent.length); i += 1) {
-        next.add(recent[i].id);
-      }
-      setJournalReflectSelectedIds(next);
+      setJournalReflectSelectedIds(new Set());
+      setJournalReflectGuidance("");
       setPhase("journalPick");
-      setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+      setMessages([]);
     } else if (creationPath === "goal") {
       setGoalSelectedId(null);
       setPhase("goalPick");
@@ -2412,12 +2561,8 @@ export function CreateWorkspace({
   }
 
   function beginJournalReflectPath() {
-    const recent = reflectableJournalEntriesForPicker(journalPickerEntries);
-    const next = new Set<string>();
-    for (let i = 0; i < Math.min(3, recent.length); i += 1) {
-      next.add(recent[i].id);
-    }
-    setJournalReflectSelectedIds(next);
+    setJournalReflectSelectedIds(new Set());
+    setJournalReflectGuidance("");
     initedCreatePathsRef.current.add("journalReflect");
     setCoachAudioReady(false);
     setCreationPath("journalReflect");
@@ -2428,9 +2573,8 @@ export function CreateWorkspace({
     setClaudeThread([]);
     setMeditationStyle(null);
     setInput("");
-    setIntroTypingDone(false);
-    setIntroTypingSession((s) => s + 1);
-    setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+    setIntroTypingDone(true);
+    setMessages([]);
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
@@ -2540,28 +2684,33 @@ export function CreateWorkspace({
     }
   }
 
-  function toggleJournalReflectEntry(id: string) {
+  function selectJournalReflectEntry(id: string) {
     setJournalReflectSelectedIds((prev) => {
-      const n = new Set(prev);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
+      if (prev.size === 1 && prev.has(id)) return new Set();
+      return new Set([id]);
     });
   }
 
   async function confirmJournalReflectSelection() {
-    const pickerList = reflectableJournalEntriesForPicker(journalPickerEntries);
-    const ordered = pickerList.filter((e) => journalReflectSelectedIds.has(e.id));
-    if (!ordered.length || chatLoading) return;
+    const id = [...journalReflectSelectedIds][0];
+    if (!id || chatLoading) return;
+    const entry = journalPickerEntries.find((e) => e.id === id);
+    if (!entry) return;
 
-    const journalCards: JournalHandoffSegment[] = ordered.map((e) => ({
-      entryId: e.id,
-      title: e.title.trim() || deriveEntryTitle(e.contentHtml),
-      bodyPlain: journalEntryPlainForHandoff(e.contentHtml),
-      createdAt: e.createdAt,
-    }));
+    const journalCards: JournalHandoffSegment[] = [
+      {
+        entryId: entry.id,
+        title: entry.title.trim() || deriveEntryTitle(entry.contentHtml),
+        bodyPlain: journalEntryPlainForHandoff(entry.contentHtml),
+        createdAt: entry.createdAt,
+      },
+    ];
 
-    const apiUserContent = buildJournalHandoffApiContent(journalCards);
+    const guidance = journalReflectGuidance.trim();
+    const apiUserContent = buildJournalHandoffApiContent(
+      journalCards,
+      guidance || undefined,
+    );
     const history: MedimadeChatTurn[] = [
       { role: "assistant", content: OPENING_JOURNAL },
       { role: "user", content: apiUserContent },
@@ -2590,6 +2739,7 @@ export function CreateWorkspace({
           messages: history,
           journalMode: true,
           meditationTargetMinutes,
+          ...(guidance ? { journalGuidance: guidance } : {}),
         },
       );
       setClaudeThread([...history, { role: "assistant", content: text }]);
@@ -2765,6 +2915,7 @@ export function CreateWorkspace({
         meditationTargetMinutes,
         pendingModeChoice,
         journalReflectSelectedIds: Array.from(journalReflectSelectedIds),
+        journalReflectGuidance,
         goalSelectedId,
         draftSk,
         coachAudioReady,
@@ -2805,6 +2956,7 @@ export function CreateWorkspace({
     meditationTargetMinutes,
     pendingModeChoice,
     journalReflectSelectedIds,
+    journalReflectGuidance,
     goalSelectedId,
     draftSk,
     coachAudioReady,
@@ -3124,6 +3276,10 @@ export function CreateWorkspace({
   }
 
   useEffect(() => {
+    setUserMixPresets(loadMixerPresetStore().presets);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     const envMediaBase = getMedimadeMediaBaseUrl();
     (async () => {
@@ -3134,6 +3290,7 @@ export function CreateWorkspace({
         setBackgroundMusic(data.music);
         setBackgroundDrums(data.drums);
         setBackgroundNoise(data.noise);
+        setFactoryMixes(data.factoryMixes ?? []);
         const fromApi = data.baseUrl?.trim();
         setMediaBaseUrl(fromApi || envMediaBase || null);
       } catch {
@@ -3142,7 +3299,10 @@ export function CreateWorkspace({
         setBackgroundMusic([]);
         setBackgroundDrums([]);
         setBackgroundNoise([]);
+        setFactoryMixes([]);
         setMediaBaseUrl(envMediaBase || null);
+      } finally {
+        if (!cancelled) setFactoryMixesLoading(false);
       }
     })();
     return () => {
@@ -3472,6 +3632,10 @@ export function CreateWorkspace({
     creationPath === "style" &&
     phase === "styleQuestions" &&
     workspaceSectionStep !== 2;
+  const showJournalPick =
+    creationPath === "journalReflect" &&
+    phase === "journalPick" &&
+    workspaceSectionStep !== 2;
   const styleQuestionsReady =
     styleQuestionAnswers[0].trim().length > 0 &&
     styleQuestionAnswers[1].trim().length > 0 &&
@@ -3480,6 +3644,7 @@ export function CreateWorkspace({
     !showPathChooser &&
     !showStyleTypePick &&
     !showStyleQuestions &&
+    !showJournalPick &&
     workspaceSectionStep === 1;
   const showAudioPlayAll = workspaceSectionStep === 2;
   const lastVisibleChat = [...messages]
@@ -3537,6 +3702,15 @@ export function CreateWorkspace({
               { label: meditationStyle?.trim() || "Questions" },
             ],
           }
+        : showJournalPick
+          ? {
+              title: "Which entry should this reflect on?",
+              blurb: "Pick one entry to build the meditation around.",
+              crumbs: [
+                { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
+                { label: "Reflect on a journal entry" },
+              ],
+            }
         : workspaceSectionStep === 2 && creationPath === "style"
           ? {
               title: "Customise how your meditation will sound",
@@ -4114,7 +4288,50 @@ export function CreateWorkspace({
             </div>
           </div>
         ) : null}
-        {workspaceSectionStep === 1 && !showStyleTypePick && !showStyleQuestions ? (
+        {showJournalPick ? (
+          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <JournalReflectPicker
+              entries={journalPickerEntries}
+              folders={journalPickerFolders}
+              listReady={journalPickerListReady}
+              selectedId={[...journalReflectSelectedIds][0] ?? null}
+              onSelect={selectJournalReflectEntry}
+              guidance={journalReflectGuidance}
+              onGuidanceChange={setJournalReflectGuidance}
+            />
+            </div>
+            <div className="shrink-0 border-t border-border/60 bg-background pt-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={goBackToChatStyle}
+                  disabled={chatControlsDisabled}
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
+                  aria-label="Back to chat style selection"
+                >
+                  <IconChevronLeft className="shrink-0 text-accent-link" />
+                  <span>Chat style</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    chatLoading ||
+                    chatControlsDisabled ||
+                    journalReflectSelectedIds.size === 0
+                  }
+                  onClick={() => void confirmJournalReflectSelection()}
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
+                  aria-label="Next: audio and voice settings"
+                >
+                  <span>Audio & voice</span>
+                  <IconChevronRight className="text-accent-link" />
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {workspaceSectionStep === 1 && !showStyleTypePick && !showStyleQuestions && !showJournalPick ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <section className="flex w-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
@@ -4283,59 +4500,6 @@ export function CreateWorkspace({
                 </div>
                 </Tooltip.Provider>
               )}
-              {phase === "journalPick" && introTypingDone ? (
-                <div className="mt-3 space-y-3 rounded-xl border border-border bg-background px-3 py-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                    Your journal
-                  </p>
-                  <ul className="max-h-[min(16rem,42vh)] space-y-1.5 overflow-y-auto pr-1">
-                    {reflectableJournalEntriesForPicker(journalPickerEntries).map(
-                      (e) => {
-                        const title =
-                          e.title.trim() || deriveEntryTitle(e.contentHtml);
-                        const preview = stripHtmlToText(e.contentHtml).trim();
-                        const previewLine =
-                          preview.length > 96
-                            ? `${preview.slice(0, 93)}…`
-                            : preview;
-                        return (
-                          <li key={e.id}>
-                            <label className="flex cursor-pointer gap-3 rounded-lg border border-transparent px-2 py-2 hover:border-border hover:bg-accent-soft/25">
-                              <input
-                                type="checkbox"
-                                className="mt-1 h-4 w-4 shrink-0 cursor-pointer rounded border-border accent-foreground"
-                                checked={journalReflectSelectedIds.has(e.id)}
-                                onChange={() => toggleJournalReflectEntry(e.id)}
-                              />
-                              <span className="min-w-0">
-                                <span className="block text-sm font-medium text-foreground">
-                                  {title}
-                                </span>
-                                <span className="mt-0.5 block text-xs text-muted">
-                                  {formatJournalEntryDate(e.updatedAt)}
-                                  {previewLine ? ` · ${previewLine}` : ""}
-                                </span>
-                              </span>
-                            </label>
-                          </li>
-                        );
-                      },
-                    )}
-                  </ul>
-                  <div className="flex justify-end border-t border-border/60 pt-3">
-                    <button
-                      type="button"
-                      disabled={
-                        chatLoading || journalReflectSelectedIds.size === 0
-                      }
-                      onClick={() => void confirmJournalReflectSelection()}
-                      className="cursor-pointer rounded-full border border-border bg-surface px-4 py-2 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:cursor-not-allowed disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
-                    >
-                      Continue with selected
-                    </button>
-                  </div>
-                </div>
-              ) : null}
               {phase === "goalPick" ? (
                 <div className="mt-3 space-y-3 rounded-xl border border-border bg-background px-3 py-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted">
@@ -4491,22 +4655,45 @@ export function CreateWorkspace({
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto sm:gap-3">
           <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
             <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto p-4">
-                  <MixerVoiceChannel
-                    voices={fishSpeakers}
-                    value={speakerModelId}
-                    onChange={setSpeakerModelId}
-                    disabled={soundControlsDisabled}
-                    fxOn={speakerFxPreviewOn}
-                    onFxChange={setSpeakerFxPreviewOn}
-                    fxDisabled={
-                      soundControlsDisabled || !mediaBaseUrl || !speakerModelId
-                    }
-                    playing={playing.speaker}
-                    onTogglePreview={() => void toggleRowPreview("speaker")}
-                    playDisabled={
-                      soundControlsDisabled || !mediaBaseUrl || !speakerModelId
-                    }
-                  />
+                  <div className="flex h-full min-w-[5.75rem] w-full flex-1 flex-col gap-2">
+                    <div className="shrink-0">
+                      <MixerPresetChannel
+                        factoryPresets={factoryMixes}
+                        userPresets={userMixPresets}
+                        selectedKey={selectedMixKey}
+                        onSelect={onSelectMixPreset}
+                        onSaveNew={saveNewMixPreset}
+                        disabled={soundControlsDisabled}
+                        loading={factoryMixesLoading}
+                        showSave={mixDirty}
+                        modified={mixDirty}
+                        defaultSaveName={mixSaveDefaultName}
+                      />
+                    </div>
+                    <div className="min-h-[10rem] flex-1">
+                      <MixerVoiceChannel
+                        voices={fishSpeakers}
+                        value={speakerModelId}
+                        onChange={setSpeakerModelId}
+                        disabled={soundControlsDisabled}
+                        fxOn={speakerFxPreviewOn}
+                        onFxChange={setSpeakerFxPreviewOn}
+                        fxDisabled={
+                          soundControlsDisabled ||
+                          !mediaBaseUrl ||
+                          !speakerModelId
+                        }
+                        playing={playing.speaker}
+                        onTogglePreview={() => void toggleRowPreview("speaker")}
+                        playDisabled={
+                          soundControlsDisabled ||
+                          !mediaBaseUrl ||
+                          !speakerModelId
+                        }
+                        showDisc={false}
+                      />
+                    </div>
+                  </div>
                   <MixerChannel
                     label="Music"
                     category="music"

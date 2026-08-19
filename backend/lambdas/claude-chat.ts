@@ -138,6 +138,7 @@ async function streamHandler(
     speechSpeed?: number;
     /** Web journal flow uses placeholder style; do not lock technique to that label. */
     journalMode?: boolean;
+    journalGuidance?: string;
   };
   try {
     body = JSON.parse(event.body || "{}");
@@ -242,6 +243,8 @@ async function streamHandler(
     }
 
     const journalMode = body.journalMode === true;
+    const journalGuidance =
+      typeof body.journalGuidance === "string" ? body.journalGuidance.trim() : "";
 
     const raw = body.messages;
     if (!Array.isArray(raw) || raw.length === 0) {
@@ -281,6 +284,9 @@ async function streamHandler(
       journalMode,
       targetMinutes: meditationTargetMinutes,
     });
+    if (journalGuidance) {
+      system += `\n\nThe creator asked you to interpret the journal entry with this guidance (this is not a meditation-style override):\n${journalGuidance}`;
+    }
 
     maxTokens = 256;
   }

@@ -57,6 +57,20 @@ import {
 
 type JournalMainTab = "journal" | "gratitude";
 
+function JournalSettingsIconButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-haspopup="dialog"
+      aria-label="Journal settings"
+      className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-border bg-background text-muted transition-colors hover:border-accent/40 hover:text-foreground"
+    >
+      <IconSettingsCog />
+    </button>
+  );
+}
+
 const FOLDER_ALL = "";
 
 function entryPreview(entry: JournalEntry): string {
@@ -715,35 +729,10 @@ export function JournalView() {
     <JournalLockGate>
     <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6">
       <div className="mb-6 shrink-0">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <h1 className="font-display text-3xl font-medium tracking-tight">
             Journal
           </h1>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setInsightsOpen((v) => !v)}
-              aria-pressed={insightsOpen}
-              className={`cursor-pointer rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors ${
-                insightsOpen
-                  ? "border-selected/40 bg-selected text-on-selected"
-                  : "border-border bg-background text-foreground hover:border-accent/40"
-              }`}
-            >
-              {insightsOpen ? "Journal" : "Insights"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              aria-haspopup="dialog"
-              aria-label="Journal settings"
-              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-xl border border-border bg-background text-foreground transition-colors hover:border-accent/40"
-            >
-              <IconSettingsCog />
-            </button>
-          </div>
-        </div>
-        <div className="mt-4 flex min-w-0 w-full flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <div
             className="inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
             role="tablist"
@@ -752,10 +741,10 @@ export function JournalView() {
             <button
               type="button"
               role="tab"
-              aria-selected={journalTab === "journal"}
+              aria-selected={journalTab === "journal" && !insightsOpen}
               onClick={() => switchJournalTab("journal")}
               className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                journalTab === "journal"
+                journalTab === "journal" && !insightsOpen
                   ? "bg-selected text-on-selected"
                   : "text-muted hover:text-foreground"
               }`}
@@ -765,24 +754,33 @@ export function JournalView() {
             <button
               type="button"
               role="tab"
-              aria-selected={journalTab === "gratitude"}
+              aria-selected={journalTab === "gratitude" && !insightsOpen}
               onClick={() => switchJournalTab("gratitude")}
               className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                journalTab === "gratitude"
+                journalTab === "gratitude" && !insightsOpen
                   ? "bg-selected text-on-selected"
                   : "text-muted hover:text-foreground"
               }`}
             >
               Gratitudes
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={insightsOpen}
+              onClick={() => {
+                flushSaveSync();
+                setInsightsOpen(true);
+              }}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                insightsOpen
+                  ? "bg-selected text-on-selected"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              Insights
+            </button>
           </div>
-          <SearchInput
-            className="w-full shrink-0 sm:w-60"
-            inputClassName="py-2"
-            value={searchQuery}
-            onChange={setSearchQuery}
-            placeholder="Search entries"
-          />
         </div>
         {streakDays > 0 ? (
           <p className="mt-2 text-sm text-foreground/80">
@@ -816,6 +814,13 @@ export function JournalView() {
               >
                 + New entry
               </button>
+              <SearchInput
+                className="w-full"
+                inputClassName="py-2"
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search entries"
+              />
               <div className="flex items-center gap-1.5">
                 <div ref={folderMenuRef} className="relative shrink-0">
                   <button
@@ -935,6 +940,7 @@ export function JournalView() {
                     />
                   ) : null}
                 </div>
+                <JournalSettingsIconButton onClick={() => setSettingsOpen(true)} />
               </div>
               <div className="flex items-center justify-between gap-2">
                 <p className="min-w-0 truncate text-xs text-muted">
@@ -955,6 +961,13 @@ export function JournalView() {
             </div>
           ) : (
             <>
+              <SearchInput
+                className="w-full"
+                inputClassName="py-2"
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search entries"
+              />
               <p className="text-sm font-semibold text-foreground">Past days</p>
               <div className="flex items-center gap-1.5">
                 <div ref={dateMenuRef} className="relative shrink-0">
@@ -983,6 +996,7 @@ export function JournalView() {
                     />
                   ) : null}
                 </div>
+                <JournalSettingsIconButton onClick={() => setSettingsOpen(true)} />
               </div>
             </>
           )}

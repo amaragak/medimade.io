@@ -1,5 +1,7 @@
 import type { JournalStoreV2 } from "./journal-storage";
 import { getMedimadeSessionJwt, setMedimadeSession } from "./auth-session";
+import type { MixerFactoryPreset } from "./mixer-factory-presets";
+import { normalizeFactoryPreset } from "./mixer-factory-presets";
 
 export {
   clearMedimadeSession,
@@ -749,15 +751,19 @@ export async function streamMedimadeChat(
     /** When true, style is a journal placeholder — do not lock coach/script to a preset technique. */
     journalMode?: boolean;
     meditationTargetMinutes?: MeditationTargetMinutes;
+    /** How to interpret a reflected journal entry; omit when empty. */
+    journalGuidance?: string;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
+  const guidance = params.journalGuidance?.trim();
   return streamChatRequest(
     {
       mode: "chat",
       meditationStyle: params.meditationStyle,
       messages: params.messages,
       ...(params.journalMode === true ? { journalMode: true } : {}),
+      ...(guidance ? { journalGuidance: guidance } : {}),
       ...(params.meditationTargetMinutes === 2 ||
       params.meditationTargetMinutes === 5 ||
       params.meditationTargetMinutes === 10
@@ -845,6 +851,7 @@ export type BackgroundAudioByCategory = {
   music: BackgroundAudioItem[];
   drums: BackgroundAudioItem[];
   noise: BackgroundAudioItem[];
+  factoryMixes?: MixerFactoryPreset[];
 };
 
 export type FishSpeaker = {
@@ -1649,10 +1656,68 @@ export async function generateAdminVoiceSample(
   return data;
 }
 
+export async function listAdminFactoryMixes(): Promise<MixerFactoryPreset[]> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/factory-mixes`, {
+    headers: medimadeApiAuthHeaders(),
+  });
+  const data = (await res.json()) as {
+    mixes?: unknown[];
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  return (data.mixes ?? [])
+    .map(normalizeFactoryPreset)
+    .filter((x): x is MixerFactoryPreset => Boolean(x));
+}
+
+export async function saveAdminFactoryMix(
+  mix: MixerFactoryPreset,
+): Promise<MixerFactoryPreset> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/factory-mixes`, {
+    method: "PATCH",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify(mix),
+  });
+  const data = (await res.json()) as {
+    mix?: unknown;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  const saved = normalizeFactoryPreset(data.mix);
+  if (!saved) throw new Error("Invalid factory mix response");
+  return saved;
+}
+
+export async function deleteAdminFactoryMix(id: string): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/factory-mixes`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ action: "delete", id }),
+  });
+  const data = (await res.json()) as { error?: string; detail?: string };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+}
+
 export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/media/background-audio`);
+  const res = await fetch(`${base}/media/background-audio`, {
+    cache: "no-store",
+  });
   const data = (await res.json()) as {
     baseUrl?: string;
     nature?: BackgroundAudioItem[];
@@ -1661,6 +1726,7 @@ export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> 
     drums?: BackgroundAudioItem[];
     noise?: BackgroundAudioItem[];
     items?: BackgroundAudioItem[];
+    factoryMixes?: unknown[];
     error?: string;
     detail?: string;
   };
@@ -1674,6 +1740,11 @@ export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> 
     music: data.music ?? [],
     drums: data.drums ?? [],
     noise: data.noise ?? [],
+    factoryMixes: Array.isArray(data.factoryMixes)
+      ? data.factoryMixes
+          .map(normalizeFactoryPreset)
+          .filter((x): x is MixerFactoryPreset => Boolean(x))
+      : undefined,
   };
 }
 

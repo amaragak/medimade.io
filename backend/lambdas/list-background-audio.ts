@@ -12,6 +12,7 @@ import {
   type ListedBgItem,
 } from "../lib/background-audio-keys";
 import { listAllSoundRows, soundIsInCustomerPicker } from "../lib/sound-catalog";
+import { listFactoryMixes } from "../lib/factory-mixes";
 import {
   coerceSoundSubcategory,
   inferSoundSubcategory,
@@ -80,6 +81,12 @@ export async function handler(
     const catalogRows = catalogConfigured
       ? await listAllSoundRows().catch((e) => {
           console.warn("sound catalog overlay skipped", e);
+          return [];
+        })
+      : [];
+    const factoryMixes = catalogConfigured
+      ? await listFactoryMixes().catch((e) => {
+          console.warn("factory mixes overlay skipped", e);
           return [];
         })
       : [];
@@ -192,6 +199,7 @@ export async function handler(
       music: buckets.music,
       drums: buckets.drums,
       noise: buckets.noise,
+      factoryMixes,
       /** @deprecated flat list; prefer nature/music/drums/noise */
       items: [...buckets.ambience, ...buckets.music, ...buckets.drums, ...buckets.noise],
     });

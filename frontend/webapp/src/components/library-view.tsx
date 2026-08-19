@@ -2867,19 +2867,11 @@ export default function LibraryView({
       }`}
     >
       <header className="w-full min-w-0">
-        <div className="grid w-full min-w-0 gap-4 sm:grid-cols-[1fr_auto] sm:items-start">
-          <div className="flex min-w-0 w-full items-center justify-between gap-3 sm:col-span-2">
-            <h1 className="shrink-0 font-display text-3xl font-medium tracking-tight">
-              Library
-            </h1>
-            <Link
-              href="/meditate/create"
-              className="shrink-0 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-on-accent"
-            >
-              Create new
-            </Link>
-          </div>
-          <div className="min-w-0 w-full">
+        <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-3">
+          <h1 className="shrink-0 font-display text-3xl font-medium tracking-tight">
+            Library
+          </h1>
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
             <div
               className="inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
               role="tablist"
@@ -2912,14 +2904,16 @@ export default function LibraryView({
                 Community Library
               </button>
             </div>
-            <p className="mt-2 w-full min-w-0 text-muted">
-              {libraryTab === "community"
-                ? "Popular meditations from the community. Play any session; more will appear here over time."
-                : "Your generated meditations, saved with details from each session. Rate them, and open the script whenever you need the text."}
-            </p>
+            <Link
+              href="/meditate/create"
+              className="shrink-0 cursor-pointer rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90"
+            >
+              + Create new
+            </Link>
           </div>
-          {libraryTab !== "community" ? (
-          <div className="flex w-full flex-wrap items-center gap-3 sm:col-span-2">
+        </div>
+        {libraryTab !== "community" ? (
+          <div className="mt-4 flex w-full flex-wrap items-center gap-3">
             <div className="flex shrink-0 items-center gap-3">
               {libraryTab === "meditations" ? (
               <button
@@ -3008,8 +3002,7 @@ export default function LibraryView({
             {searchInput}
             <div className="shrink-0">{layoutToggle}</div>
           </div>
-          ) : null}
-        </div>
+        ) : null}
       </header>
 
       {libraryTab === "community" ? (

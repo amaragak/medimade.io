@@ -202,7 +202,9 @@ export const JOURNAL_CREATE_FIRST_MESSAGE =
  */
 export function buildJournalHandoffApiContent(
   segments: JournalMeditationPayloadV1["segments"],
+  guidance?: string,
 ): string {
+  const guidanceNote = guidance?.trim() ?? "";
   const blocks = segments.map((s, i) => {
     const journalTitle = s.title.trim() || "Untitled entry";
     const journalContents = s.bodyPlain.trim() || "(empty entry)";
@@ -220,6 +222,15 @@ export function buildJournalHandoffApiContent(
     "The following blocks are the user’s saved journal entries. Use every title and the full contents when reflecting and shaping the meditation.",
     "",
     blocks.join("\n\n"),
+    ...(guidanceNote
+      ? [
+          "",
+          "--- Guide note for this entry ---",
+          "The creator added this note about how to use the entry (not a change to meditation style):",
+          guidanceNote,
+          "--- End guide note ---",
+        ]
+      : []),
   ].join("\n");
 }
 

@@ -8,3 +8,12 @@ export function bedElementVolume(gain: number): number {
   const g = Math.min(100, Math.max(0, Number.isFinite(gain) ? gain : 0));
   return (g / 100) * BED_GAIN_PEAK_VOLUME;
 }
+
+/** Apply after src/load — browsers reset HTMLMediaElement.volume to 1 on load(). */
+export function applyBedElementVolume(
+  el: HTMLMediaElement | null,
+  gain: number,
+): void {
+  if (!el) return;
+  el.volume = bedElementVolume(gain);
+}

@@ -59,7 +59,8 @@ export type CreateSessionV1 = {
   lastUsedScript: string | null;
   meditationTargetMinutes: MeditationTargetMinutes;
   pendingModeChoice: null | "style" | "freeflow" | "journalReflect" | "goal";
-    journalReflectSelectedIds: string[];
+  journalReflectSelectedIds: string[];
+  journalReflectGuidance: string;
   goalSelectedId: string | null;
   draftSk: string | null;
   coachAudioReady: boolean;
@@ -228,6 +229,8 @@ export function parseCreateSession(raw: unknown): CreateSessionV1 | null {
     meditationTargetMinutes: o.meditationTargetMinutes,
     pendingModeChoice: pending,
     journalReflectSelectedIds: o.journalReflectSelectedIds as string[],
+    journalReflectGuidance:
+      typeof o.journalReflectGuidance === "string" ? o.journalReflectGuidance : "",
     goalSelectedId: typeof o.goalSelectedId === "string" ? o.goalSelectedId : null,
     draftSk: typeof o.draftSk === "string" ? o.draftSk : null,
     coachAudioReady: o.coachAudioReady === true,
