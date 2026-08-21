@@ -9,6 +9,13 @@ import { FactoryIcon } from "@/components/factory-icons";
 import type { MixerFactoryPreset } from "@/lib/mixer-factory-presets";
 import type { MixerPreset } from "@/lib/mixer-preset-storage";
 
+export type MixerLayout = "column" | "row";
+
+const ROW_LABEL =
+  "w-[3.75rem] shrink-0 text-xs font-semibold uppercase tracking-wide text-muted";
+const ROW_SEP =
+  "relative border-b border-border/70 py-3 last:border-b-0 has-[[aria-expanded=true]]:z-20";
+
 function MixerVoiceIcon() {
   return (
     <div className="mixer-voice-disc flex h-24 w-24 items-center justify-center rounded-full text-on-accent">
@@ -33,12 +40,18 @@ function MixerVoiceIcon() {
   );
 }
 
-function MixerPlayPauseIcon({ playing }: { playing: boolean }) {
+function MixerPlayPauseIcon({
+  playing,
+  size = 22,
+}: {
+  playing: boolean;
+  size?: number;
+}) {
   return playing ? (
     <svg
       viewBox="0 0 24 24"
-      width="22"
-      height="22"
+      width={size}
+      height={size}
       fill="currentColor"
       aria-hidden
     >
@@ -47,8 +60,8 @@ function MixerPlayPauseIcon({ playing }: { playing: boolean }) {
   ) : (
     <svg
       viewBox="0 0 24 24"
-      width="22"
-      height="22"
+      width={size}
+      height={size}
       fill="currentColor"
       aria-hidden
     >
@@ -96,6 +109,30 @@ function MixerStrip({
   );
 }
 
+function MixerRowPlayButton({
+  playing,
+  onTogglePreview,
+  playDisabled,
+  playAriaLabel,
+}: {
+  playing: boolean;
+  onTogglePreview: () => void;
+  playDisabled?: boolean;
+  playAriaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onTogglePreview}
+      disabled={playDisabled}
+      aria-label={playAriaLabel}
+      className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <MixerPlayPauseIcon playing={playing} size={14} />
+    </button>
+  );
+}
+
 export function MixerChannel({
   label,
   category,
@@ -110,6 +147,7 @@ export function MixerChannel({
   onTogglePreview,
   playDisabled,
   playAriaLabel,
+  layout = "column",
 }: {
   label: string;
   category: SoundCategoryId;
@@ -124,20 +162,72 @@ export function MixerChannel({
   onTogglePreview: () => void;
   playDisabled?: boolean;
   playAriaLabel: string;
+  layout?: MixerLayout;
 }) {
+  const active = Boolean(value);
+  const picker = (
+    <SoundFolderSelect
+      category={category}
+      items={items}
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      compact
+    />
+  );
+
+  if (layout === "row") {
+    return (
+      <div className={ROW_SEP}>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`${ROW_LABEL} ${!active ? "opacity-40" : ""}`}>
+            {label}
+          </span>
+          <div
+            className={`min-w-0 flex-1 ${
+              !active ? "[&_button[aria-haspopup=listbox]]:opacity-40" : ""
+            }`}
+          >
+            {picker}
+          </div>
+        </div>
+        {active ? (
+          <div className="mt-2 flex min-w-0 items-center gap-2">
+            <span className="w-[3.75rem] shrink-0" aria-hidden />
+            <div className="mixer-fader-h-well min-w-0 flex-1">
+              <input
+                aria-label={`${label} level`}
+                type="range"
+                min={0}
+                max={100}
+                value={gain}
+                onChange={(e) => onGainChange(Number(e.target.value))}
+                disabled={faderDisabled}
+                className="mixer-fader-h disabled:opacity-40"
+                style={{
+                  background: `linear-gradient(to right, var(--accent) ${gain}%, var(--border) ${gain}%)`,
+                }}
+              />
+            </div>
+            <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-muted">
+              {gain}%
+            </span>
+            <MixerRowPlayButton
+              playing={playing}
+              onTogglePreview={onTogglePreview}
+              playDisabled={playDisabled}
+              playAriaLabel={playAriaLabel}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <MixerStrip
       label={label}
-      picker={
-        <SoundFolderSelect
-          category={category}
-          items={items}
-          value={value}
-          onChange={onChange}
-          disabled={disabled}
-          compact
-        />
-      }
+      picker={picker}
       meter={
         <>
           <span className="h-4 shrink-0 text-[11px] tabular-nums text-muted">
@@ -264,6 +354,7 @@ export function MixerVoiceChannel({
   onTogglePreview,
   playDisabled,
   showDisc = false,
+  layout = "column",
 }: {
   voices: Array<{ modelId: string; name: string; description?: string }>;
   value: string;
@@ -276,10 +367,66 @@ export function MixerVoiceChannel({
   onTogglePreview: () => void;
   playDisabled?: boolean;
   showDisc?: boolean;
+  layout?: MixerLayout;
 }) {
   const description = voices
     .find((s) => s.modelId === value)
     ?.description?.trim();
+
+  const fxControl = (
+    <div
+      className="flex shrink-0 flex-col items-center gap-0.5"
+      title={
+        fxOn
+          ? "Preview uses mixer FX (WAV on CDN)."
+          : "Preview uses loudness-normalized MP3 on CDN."
+      }
+    >
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+        FX
+      </span>
+      <Switch.Root
+        checked={fxOn}
+        onCheckedChange={(v) => onFxChange(Boolean(v))}
+        disabled={fxDisabled}
+        aria-label={fxOn ? "Turn speaker FX off" : "Turn speaker FX on"}
+        className="relative h-4 w-8 cursor-pointer rounded-full border border-border bg-muted/30 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <Switch.Thumb className="block h-3 w-3 translate-x-[2px] rounded-full bg-surface shadow transition-transform will-change-transform data-[state=checked]:translate-x-[18px]" />
+      </Switch.Root>
+    </div>
+  );
+
+  if (layout === "row") {
+    return (
+      <div className={ROW_SEP}>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={ROW_LABEL}>Voice</span>
+          <MixerSpeakerSelect
+            voices={voices}
+            value={value}
+            onChange={onChange}
+            disabled={disabled}
+          />
+          {fxControl}
+          <MixerRowPlayButton
+            playing={playing}
+            onTogglePreview={onTogglePreview}
+            playDisabled={playDisabled}
+            playAriaLabel={
+              playing ? "Pause speaker sample" : "Play speaker sample"
+            }
+          />
+        </div>
+        {description ? (
+          <p className="mt-1.5 pl-[4.25rem] text-sm leading-snug text-muted">
+            {description}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <MixerStrip
       label="Voice"
@@ -292,29 +439,7 @@ export function MixerVoiceChannel({
               onChange={onChange}
               disabled={disabled}
             />
-            <div
-              className="flex shrink-0 flex-col items-center gap-0.5"
-              title={
-                fxOn
-                  ? "Preview uses mixer FX (WAV on CDN)."
-                  : "Preview uses loudness-normalized MP3 on CDN."
-              }
-            >
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-                FX
-              </span>
-              <Switch.Root
-                checked={fxOn}
-                onCheckedChange={(v) => onFxChange(Boolean(v))}
-                disabled={fxDisabled}
-                aria-label={
-                  fxOn ? "Turn speaker FX off" : "Turn speaker FX on"
-                }
-                className="relative h-4 w-8 cursor-pointer rounded-full border border-border bg-muted/30 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Switch.Thumb className="block h-3 w-3 translate-x-[2px] rounded-full bg-surface shadow transition-transform will-change-transform data-[state=checked]:translate-x-[18px]" />
-              </Switch.Root>
-            </div>
+            {fxControl}
           </div>
           {!showDisc && description ? (
             <p className="px-0.5 text-center text-sm leading-snug text-muted">
@@ -360,6 +485,7 @@ export function MixerPresetChannel({
   showSave = false,
   modified = false,
   defaultSaveName = "Untitled mix",
+  layout = "column",
 }: {
   factoryPresets: MixerFactoryPreset[];
   userPresets: MixerPreset[];
@@ -371,6 +497,7 @@ export function MixerPresetChannel({
   showSave?: boolean;
   modified?: boolean;
   defaultSaveName?: string;
+  layout?: MixerLayout;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -409,161 +536,189 @@ export function MixerPresetChannel({
     setOpen(false);
   }
 
+  const dropdown = (
+    <div ref={rootRef} className="relative min-w-0 flex-1">
+      <button
+        type="button"
+        disabled={disabled || loading}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Sound mix preset"
+        title={triggerLabel}
+        onClick={() => {
+          if (disabled || loading) return;
+          setOpen((v) => !v);
+        }}
+        className={`flex w-full min-w-0 items-center gap-2 rounded-xl border border-border bg-surface text-left disabled:opacity-50 ${
+          layout === "row" ? "px-2 py-1.5 text-sm" : "px-2 py-2 text-base"
+        }`}
+      >
+        {selectedFactory ? (
+          <span
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
+            style={{
+              backgroundColor: selectedFactory.icon_bg,
+              color: selectedFactory.icon_color,
+            }}
+            aria-hidden
+          >
+            <FactoryIcon id={selectedFactory.icon} size={18} />
+          </span>
+        ) : null}
+        <span className="min-w-0 flex-1 truncate">
+          {loading ? "Loading…" : triggerLabel}
+        </span>
+        <svg
+          viewBox="0 0 24 24"
+          className={`h-4 w-4 shrink-0 text-muted transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.25"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          className={`absolute top-full z-[90] mt-1 max-h-64 min-w-[13rem] overflow-auto rounded-xl border border-border bg-card py-1 shadow-xl ${
+            layout === "row"
+              ? "left-0 right-0"
+              : "left-1/2 -translate-x-1/2"
+          }`}
+          role="listbox"
+        >
+          <button
+            type="button"
+            className={`block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-background ${
+              !selectedKey ? "font-medium text-foreground" : "text-muted"
+            }`}
+            onClick={() => pick("")}
+          >
+            None
+          </button>
+          <p className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+            Factory
+          </p>
+          {factoryPresets.length === 0 ? (
+            <p className="px-3 py-1.5 text-sm text-muted">None yet</p>
+          ) : (
+            factoryPresets.map((p) => {
+              const key = mixOptionKey("factory", p.id);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-background ${
+                    key === selectedKey
+                      ? "font-medium text-foreground"
+                      : "text-muted"
+                  }`}
+                  onClick={() => pick(key)}
+                >
+                  <span
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+                    style={{
+                      backgroundColor: p.icon_bg,
+                      color: p.icon_color,
+                    }}
+                    aria-hidden
+                  >
+                    <FactoryIcon id={p.icon} size={14} />
+                  </span>
+                  <span className="min-w-0 truncate">{p.name}</span>
+                </button>
+              );
+            })
+          )}
+          <p className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
+            Your mixes
+          </p>
+          {userPresets.length === 0 ? (
+            <p className="px-3 py-1.5 text-sm text-muted">None saved</p>
+          ) : (
+            userPresets.map((p) => {
+              const key = mixOptionKey("user", p.id);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={`block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-background ${
+                    key === selectedKey
+                      ? "font-medium text-foreground"
+                      : "text-muted"
+                  }`}
+                  onClick={() => pick(key)}
+                >
+                  {p.name}
+                </button>
+              );
+            })
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const saveBlock = showSave ? (
+    <div
+      className={`flex gap-1.5 ${
+        layout === "row"
+          ? "mt-2 flex-row items-center pl-[4.25rem]"
+          : "h-full min-h-0 flex-col justify-end"
+      }`}
+    >
+      <label className="sr-only" htmlFor="mixer-save-preset-name">
+        New mix name
+      </label>
+      <input
+        id="mixer-save-preset-name"
+        type="text"
+        value={saveName}
+        onChange={(e) => setSaveName(e.target.value)}
+        disabled={disabled}
+        placeholder="Save as…"
+        className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-1.5 text-sm text-foreground outline-none placeholder:text-muted disabled:opacity-50"
+      />
+      <button
+        type="button"
+        disabled={disabled || !saveName.trim()}
+        onClick={() => {
+          const name = saveName.trim();
+          if (!name) return;
+          onSaveNew(name);
+          setSaveName("");
+        }}
+        className="shrink-0 cursor-pointer rounded-lg border border-border bg-background px-2 py-1.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        Save as new
+      </button>
+    </div>
+  ) : null;
+
+  if (layout === "row") {
+    return (
+      <div className={ROW_SEP}>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={ROW_LABEL}>Preset</span>
+          {dropdown}
+        </div>
+        {saveBlock}
+      </div>
+    );
+  }
+
   return (
     <div className="flex w-full min-h-0 flex-col items-stretch gap-2.5 rounded-2xl border border-border bg-background px-2 py-3">
       <span className="shrink-0 text-center text-sm font-semibold uppercase tracking-wide text-muted">
         Preset
       </span>
-      <div ref={rootRef} className="relative min-w-0 shrink-0">
-        <button
-          type="button"
-          disabled={disabled || loading}
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          aria-label="Sound mix preset"
-          title={triggerLabel}
-          onClick={() => {
-            if (disabled || loading) return;
-            setOpen((v) => !v);
-          }}
-          className="flex w-full min-w-0 items-center gap-2 rounded-xl border border-border bg-surface px-2 py-2 text-left text-base disabled:opacity-50"
-        >
-          {selectedFactory ? (
-            <span
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-              style={{
-                backgroundColor: selectedFactory.icon_bg,
-                color: selectedFactory.icon_color,
-              }}
-              aria-hidden
-            >
-              <FactoryIcon id={selectedFactory.icon} size={18} />
-            </span>
-          ) : null}
-          <span className="min-w-0 flex-1 truncate">
-            {loading ? "Loading…" : triggerLabel}
-          </span>
-          <svg
-            viewBox="0 0 24 24"
-            className={`h-4 w-4 shrink-0 text-muted transition-transform ${
-              open ? "rotate-180" : ""
-            }`}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.25"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <path d="M6 9l6 6 6-6" />
-          </svg>
-        </button>
-        {open ? (
-          <div
-            className="absolute left-1/2 top-full z-[90] mt-1 max-h-64 min-w-[13rem] -translate-x-1/2 overflow-auto rounded-xl border border-border bg-card py-1 shadow-xl"
-            role="listbox"
-          >
-            <button
-              type="button"
-              className={`block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-background ${
-                !selectedKey ? "font-medium text-foreground" : "text-muted"
-              }`}
-              onClick={() => pick("")}
-            >
-              None
-            </button>
-            <p className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
-              Factory
-            </p>
-            {factoryPresets.length === 0 ? (
-              <p className="px-3 py-1.5 text-sm text-muted">None yet</p>
-            ) : (
-              factoryPresets.map((p) => {
-                const key = mixOptionKey("factory", p.id);
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-background ${
-                      key === selectedKey
-                        ? "font-medium text-foreground"
-                        : "text-muted"
-                    }`}
-                    onClick={() => pick(key)}
-                  >
-                    <span
-                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
-                      style={{
-                        backgroundColor: p.icon_bg,
-                        color: p.icon_color,
-                      }}
-                      aria-hidden
-                    >
-                      <FactoryIcon id={p.icon} size={14} />
-                    </span>
-                    <span className="min-w-0 truncate">{p.name}</span>
-                  </button>
-                );
-              })
-            )}
-            <p className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-wide text-muted">
-              Your mixes
-            </p>
-            {userPresets.length === 0 ? (
-              <p className="px-3 py-1.5 text-sm text-muted">None saved</p>
-            ) : (
-              userPresets.map((p) => {
-                const key = mixOptionKey("user", p.id);
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-background ${
-                      key === selectedKey
-                        ? "font-medium text-foreground"
-                        : "text-muted"
-                    }`}
-                    onClick={() => pick(key)}
-                  >
-                    {p.name}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        ) : null}
-      </div>
-      <div className="min-h-0 flex-1">
-        {showSave ? (
-          <div className="flex h-full min-h-0 flex-col justify-end gap-1.5">
-            <label className="sr-only" htmlFor="mixer-save-preset-name">
-              New mix name
-            </label>
-            <input
-              id="mixer-save-preset-name"
-              type="text"
-              value={saveName}
-              onChange={(e) => setSaveName(e.target.value)}
-              disabled={disabled}
-              placeholder="Save as…"
-              className="w-full min-w-0 rounded-lg border border-border bg-surface px-2 py-1.5 text-sm text-foreground outline-none placeholder:text-muted disabled:opacity-50"
-            />
-            <button
-              type="button"
-              disabled={disabled || !saveName.trim()}
-              onClick={() => {
-                const name = saveName.trim();
-                if (!name) return;
-                onSaveNew(name);
-                setSaveName("");
-              }}
-              className="w-full cursor-pointer rounded-lg border border-border bg-background px-2 py-1.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Save as new
-            </button>
-          </div>
-        ) : null}
-      </div>
+      {dropdown}
+      <div className="min-h-0 flex-1">{saveBlock}</div>
     </div>
   );
 }

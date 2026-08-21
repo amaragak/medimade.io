@@ -537,7 +537,7 @@ const STYLE_INTAKE_QUESTIONS: Record<(typeof meditationStyles)[number], [string,
     "What would you like to feel in your body by the end?",
   ],
   Visualization: [
-    "What do you want to picture — a place, object, or presence that matters to you?",
+    "What do you want to visualise — a place, object, or presence that matters to you? Describe.",
     "What’s the first vivid detail you notice (sight, sound, touch, or a sense of presence)?",
     "How do you want to feel as you stay with this image?",
   ],
@@ -629,6 +629,8 @@ function StyleIntakeField({
   onAdvance,
   autoFocus,
   scrollOnEnter,
+  enterKeyHint = "next",
+  focusNonce = 0,
 }: {
   label: string;
   optional?: boolean;
@@ -637,6 +639,9 @@ function StyleIntakeField({
   onAdvance?: () => void;
   autoFocus?: boolean;
   scrollOnEnter?: boolean;
+  enterKeyHint?: "next" | "done";
+  /** Bumps on each advance so an already-mounted field can take focus again. */
+  focusNonce?: number;
 }) {
   const [entered, setEntered] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -645,6 +650,16 @@ function StyleIntakeField({
   const setTextareaRef = useCallback((el: HTMLTextAreaElement | null) => {
     textareaRef.current = el;
     if (el && shouldFocusRef.current) el.focus();
+    if (el) {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, []);
+  const syncTextareaHeight = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
   }, []);
   useEffect(() => {
     const reduce =
@@ -660,7 +675,17 @@ function StyleIntakeField({
   useLayoutEffect(() => {
     if (!autoFocus) return;
     textareaRef.current?.focus();
-  }, [autoFocus, entered]);
+  }, [autoFocus, entered, focusNonce]);
+  useLayoutEffect(() => {
+    syncTextareaHeight();
+  }, [value, entered, syncTextareaHeight]);
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => syncTextareaHeight());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [syncTextareaHeight, entered]);
   useEffect(() => {
     if (!autoFocus || !entered) return;
     if (scrollOnEnter) {
@@ -669,8 +694,20 @@ function StyleIntakeField({
         block: "nearest",
       });
     }
-    textareaRef.current?.focus();
-  }, [entered, scrollOnEnter, autoFocus]);
+    // After button click, wait a tick so the newly revealed field is in the DOM.
+    const t = window.setTimeout(() => {
+      textareaRef.current?.focus();
+      syncTextareaHeight();
+    }, 30);
+    return () => window.clearTimeout(t);
+  }, [entered, scrollOnEnter, autoFocus, focusNonce, syncTextareaHeight]);
+
+  const canAdvance = Boolean(onAdvance) && Boolean(value.trim());
+  const tryAdvance = () => {
+    if (!onAdvance || !value.trim()) return;
+    onAdvance();
+  };
+
   return (
     <div
       className={`rounded-2xl border border-border bg-surface p-4 shadow-sm transition-[opacity,transform] duration-500 ease-out sm:p-5 dark:border-border dark:bg-surface ${
@@ -693,11 +730,11 @@ function StyleIntakeField({
               if (e.key !== "Enter" || e.shiftKey) return;
               if (!onAdvance) return;
               e.preventDefault();
-              if (!value.trim()) return;
-              onAdvance();
+              tryAdvance();
             }}
             rows={1}
-            className="min-w-0 flex-1 resize-y rounded-2xl border border-border bg-background px-3.5 py-2.5 text-sm leading-relaxed text-foreground outline-none ring-accent/30 focus:ring-2 sm:text-[15px]"
+            enterKeyHint={enterKeyHint}
+            className="min-h-[2.625rem] min-w-0 flex-1 resize-none overflow-hidden rounded-2xl border border-border bg-background px-3.5 py-2.5 text-sm leading-relaxed text-foreground outline-none ring-accent/30 focus:ring-2 sm:text-[15px]"
           />
           <DictationMicButton
             variant="inset"
@@ -705,8 +742,33 @@ function StyleIntakeField({
               const current = textareaRef.current?.value ?? value;
               onChange(appendSpokenText(current, spoken));
               textareaRef.current?.focus();
+              requestAnimationFrame(() => syncTextareaHeight());
             }}
           />
+          {onAdvance ? (
+            <button
+              type="button"
+              onClick={tryAdvance}
+              disabled={!canAdvance}
+              aria-label="Confirm answer, next question"
+              title="Next question"
+              className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-[3px] border-[#F2D08A] bg-surface text-[#F2D08A] transition-opacity hover:bg-[#F2D08A]/20 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-surface"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M9 18l6-6-6-6" />
+              </svg>
+            </button>
+          ) : null}
         </div>
       </label>
     </div>
@@ -1302,6 +1364,14 @@ export function CreateWorkspace({
     [string, string, string, string]
   >(() => emptyStyleQuestionAnswers());
   const [styleQuestionsRevealed, setStyleQuestionsRevealed] = useState(1);
+  const [styleIntakeFocusIndex, setStyleIntakeFocusIndex] = useState(0);
+  const [styleIntakeFocusNonce, setStyleIntakeFocusNonce] = useState(0);
+
+  function resetStyleIntakeFocus(revealed = 1) {
+    setStyleQuestionsRevealed(revealed);
+    setStyleIntakeFocusIndex(Math.max(0, revealed - 1));
+    setStyleIntakeFocusNonce((n) => n + 1);
+  }
   const chooserCardsRef = useRef<HTMLDivElement | null>(null);
   /** Default to 2×2 until measured — avoids a one-frame “skinny 4-up” layout. */
   const [chooserLayout, setChooserLayout] = useState<"row4" | "grid2">("grid2");
@@ -1371,9 +1441,14 @@ export function CreateWorkspace({
     const answers = parseStyleQuestionAnswers(s.styleQuestionAnswers)
       ?? emptyStyleQuestionAnswers();
     setStyleQuestionAnswers(answers);
-    setStyleQuestionsRevealed(
-      Math.max(s.styleQuestionsRevealed, revealedCountFromStyleAnswers(answers)),
-    );
+    {
+      const revealed = Math.max(
+        s.styleQuestionsRevealed,
+        revealedCountFromStyleAnswers(answers),
+      );
+      setStyleQuestionsRevealed(revealed);
+      setStyleIntakeFocusIndex(Math.max(0, Math.min(3, revealed - 1)));
+    }
     setMeditationStyle(s.meditationStyle);
     setPendingStyleType(s.pendingStyleType);
     setMessages(
@@ -1676,7 +1751,11 @@ export function CreateWorkspace({
         const restoredAnswers = parseStyleQuestionAnswers(s.styleQuestionAnswers);
         const answers = restoredAnswers ?? emptyStyleQuestionAnswers();
         setStyleQuestionAnswers(answers);
-        setStyleQuestionsRevealed(revealedCountFromStyleAnswers(answers));
+        {
+          const revealed = revealedCountFromStyleAnswers(answers);
+          setStyleQuestionsRevealed(revealed);
+          setStyleIntakeFocusIndex(Math.max(0, Math.min(3, revealed - 1)));
+        }
         setMeditationStyle(s.meditationStyle);
         setMessages(s.messages);
         setClaudeThread(s.claudeThread);
@@ -2467,7 +2546,7 @@ export function CreateWorkspace({
     } else if (creationPath === "style") {
       setPendingStyleType(null);
       setStyleQuestionAnswers(emptyStyleQuestionAnswers());
-      setStyleQuestionsRevealed(1);
+      resetStyleIntakeFocus(1);
       setPhase("stylePick");
       setMessages([]);
     } else {
@@ -2494,7 +2573,7 @@ export function CreateWorkspace({
     setMeditationStyle(null);
     setPendingStyleType(null);
     setStyleQuestionAnswers(emptyStyleQuestionAnswers());
-    setStyleQuestionsRevealed(1);
+    resetStyleIntakeFocus(1);
     setInput("");
     setIntroTypingDone(false);
     setMessages([]);
@@ -2508,11 +2587,10 @@ export function CreateWorkspace({
     if (!label) return;
     if (meditationStyle !== label) {
       setStyleQuestionAnswers(emptyStyleQuestionAnswers());
-      setStyleQuestionsRevealed(1);
+      resetStyleIntakeFocus(1);
     } else {
-      setStyleQuestionsRevealed(
-        revealedCountFromStyleAnswers(styleQuestionAnswers),
-      );
+      const revealed = revealedCountFromStyleAnswers(styleQuestionAnswers);
+      resetStyleIntakeFocus(revealed);
     }
     setMeditationStyle(label);
     setMessages([]);
@@ -3757,49 +3835,81 @@ export function CreateWorkspace({
                 ],
               };
 
+  const createCrumbs = createPageChrome.crumbs;
+  const createLastCrumb =
+    createCrumbs.length > 0 ? createCrumbs[createCrumbs.length - 1] : null;
+  const createBackCrumb = [...createCrumbs]
+    .slice(0, -1)
+    .reverse()
+    .find((c) => Boolean(c.href));
+  const createMobileHeading = createLastCrumb?.label ?? createPageChrome.title;
+
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 pt-3 pb-6 sm:px-6 sm:py-6">
       {/* Keep preview elements mounted on every step so src is assigned before the Audio panel. */}
       <audio ref={previewNatureRef} className="hidden" playsInline />
       <audio ref={previewMusicRef} className="hidden" playsInline />
       <audio ref={previewDrumsRef} className="hidden" playsInline />
       <audio ref={previewNoiseRef} className="hidden" playsInline />
       <audio ref={speakerSampleRef} className="hidden" playsInline />
-      <div className="mb-6 shrink-0">
-          {createPageChrome.crumbs.length > 0 ? (
-            <nav aria-label="Breadcrumb" className="mb-2">
-              <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
-                {createPageChrome.crumbs.map((crumb, i) => {
-                  const last = i === createPageChrome.crumbs.length - 1;
-                  return (
-                    <li key={`${crumb.label}-${i}`} className="flex min-w-0 items-center gap-1.5">
-                      {i > 0 ? (
-                        <IconChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />
-                      ) : null}
-                      {crumb.href && !last ? (
-                        <Link
-                          href={crumb.href}
-                          className="cursor-pointer font-medium text-accent-link underline decoration-accent/50 underline-offset-[3px] hover:decoration-accent"
-                        >
-                          {crumb.label}
-                        </Link>
-                      ) : (
-                        <span
-                          className={last ? "font-medium text-foreground" : "text-muted"}
-                          aria-current={last ? "page" : undefined}
-                        >
-                          {crumb.label}
-                        </span>
-                      )}
-                    </li>
-                  );
-                })}
-              </ol>
-            </nav>
+      <div className="mb-4 shrink-0 sm:mb-6">
+          {createCrumbs.length > 0 ? (
+            <>
+              {/* Full trail — tablet/desktop (sm = 640px+) */}
+              <nav aria-label="Breadcrumb" className="mb-2 hidden sm:block">
+                <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
+                  {createCrumbs.map((crumb, i) => {
+                    const last = i === createCrumbs.length - 1;
+                    return (
+                      <li
+                        key={`${crumb.label}-${i}`}
+                        className="flex min-w-0 items-center gap-1.5"
+                      >
+                        {i > 0 ? (
+                          <IconChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />
+                        ) : null}
+                        {crumb.href && !last ? (
+                          <Link
+                            href={crumb.href}
+                            className="cursor-pointer font-medium text-accent-link transition-opacity hover:opacity-80"
+                          >
+                            {crumb.label}
+                          </Link>
+                        ) : (
+                          <span
+                            className={
+                              last
+                                ? "font-medium text-foreground"
+                                : "text-muted"
+                            }
+                            aria-current={last ? "page" : undefined}
+                          >
+                            {crumb.label}
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ol>
+              </nav>
+              {/* Single previous-step back-link — below sm */}
+              {createBackCrumb?.href ? (
+                <nav aria-label="Back" className="mb-0 sm:hidden">
+                  <Link
+                    href={createBackCrumb.href}
+                    className="inline-flex max-w-full cursor-pointer items-center gap-1 text-[15px] font-medium text-accent-link transition-opacity hover:opacity-80"
+                  >
+                    <IconChevronLeft className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{createBackCrumb.label}</span>
+                  </Link>
+                </nav>
+              ) : null}
+            </>
           ) : null}
           <div className="flex items-center justify-between gap-4">
             <h1 className="min-w-0 font-display text-3xl font-medium tracking-tight">
-              {createPageChrome.title}
+              <span className="sm:hidden">{createMobileHeading}</span>
+              <span className="hidden sm:inline">{createPageChrome.title}</span>
             </h1>
             {isLocalDevHost() && showPathChooser ? (
               <button
@@ -3837,7 +3947,8 @@ export function CreateWorkspace({
               </button>
             ) : null}
           </div>
-          <p className="mt-2 text-muted">{createPageChrome.blurb}</p>
+
+          <p className="mt-2 hidden text-muted sm:block">{createPageChrome.blurb}</p>
       </div>
 
       {draftLoadError ? (
@@ -4214,8 +4325,8 @@ export function CreateWorkspace({
         ) : null}
         {showStyleQuestions ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-            <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">
-              <div className="space-y-7 pb-4">
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto sm:gap-6">
+              <div className="space-y-4 pb-4 sm:space-y-7">
                 {intakeQuestionsForStyle(meditationStyle ?? "")
                   .slice(0, Math.min(3, styleQuestionsRevealed))
                   .map((q, i) => (
@@ -4223,10 +4334,19 @@ export function CreateWorkspace({
                       key={`${meditationStyle ?? "style"}-${i}`}
                       label={q}
                       value={styleQuestionAnswers[i]}
-                      autoFocus={i === styleQuestionsRevealed - 1}
-                      scrollOnEnter={i > 0}
+                      autoFocus={styleIntakeFocusIndex === i}
+                      focusNonce={
+                        styleIntakeFocusIndex === i ? styleIntakeFocusNonce : 0
+                      }
+                      scrollOnEnter={i > 0 || styleIntakeFocusNonce > 0}
+                      enterKeyHint={i >= 2 ? "done" : "next"}
                       onAdvance={() => {
-                        setStyleQuestionsRevealed((r) => Math.max(r, i + 2));
+                        const nextIndex = i + 1;
+                        setStyleQuestionsRevealed((r) =>
+                          Math.max(r, i + 2),
+                        );
+                        setStyleIntakeFocusIndex(nextIndex);
+                        setStyleIntakeFocusNonce((n) => n + 1);
                       }}
                       onChange={(v) => {
                         setStyleQuestionAnswers((prev) => {
@@ -4248,8 +4368,12 @@ export function CreateWorkspace({
                     label={STYLE_ANYTHING_ELSE_PROMPT}
                     optional
                     value={styleQuestionAnswers[3]}
-                    autoFocus
+                    autoFocus={styleIntakeFocusIndex === 3}
+                    focusNonce={
+                      styleIntakeFocusIndex === 3 ? styleIntakeFocusNonce : 0
+                    }
                     scrollOnEnter
+                    enterKeyHint="done"
                     onChange={(v) => {
                       setStyleQuestionAnswers((prev) => {
                         const next = [...prev] as [
@@ -4657,8 +4781,152 @@ export function CreateWorkspace({
         ) : null}
         {workspaceSectionStep === 2 ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto sm:gap-3">
-          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 sm:gap-3">
+          {/* Stacked mixer — below lg: Voice + bed cards share one scroll */}
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto lg:hidden">
+            <section className="shrink-0 rounded-2xl border border-border bg-card px-4 shadow-sm">
+              <MixerVoiceChannel
+                layout="row"
+                voices={fishSpeakers}
+                value={speakerModelId}
+                onChange={setSpeakerModelId}
+                disabled={soundControlsDisabled}
+                fxOn={speakerFxPreviewOn}
+                onFxChange={setSpeakerFxPreviewOn}
+                fxDisabled={
+                  soundControlsDisabled || !mediaBaseUrl || !speakerModelId
+                }
+                playing={playing.speaker}
+                onTogglePreview={() => void toggleRowPreview("speaker")}
+                playDisabled={
+                  soundControlsDisabled || !mediaBaseUrl || !speakerModelId
+                }
+                showDisc={false}
+              />
+            </section>
+            <section className="shrink-0 rounded-2xl border border-border bg-card shadow-sm">
+              <div className="px-4 py-1">
+                <MixerPresetChannel
+                  layout="row"
+                  factoryPresets={factoryMixes}
+                  userPresets={userMixPresets}
+                  selectedKey={selectedMixKey}
+                  onSelect={onSelectMixPreset}
+                  onSaveNew={saveNewMixPreset}
+                  disabled={soundControlsDisabled}
+                  loading={factoryMixesLoading}
+                  showSave={mixDirty}
+                  modified={mixDirty}
+                  defaultSaveName={mixSaveDefaultName}
+                />
+                <MixerChannel
+                  layout="row"
+                  label="Music"
+                  category="music"
+                  items={backgroundMusic}
+                  value={backgroundMusicKey}
+                  onChange={setBackgroundMusicKey}
+                  gain={backgroundMusicGain}
+                  onGainChange={setBackgroundMusicGain}
+                  disabled={soundControlsDisabled}
+                  faderDisabled={soundControlsDisabled || !backgroundMusicKey}
+                  playing={playing.music}
+                  onTogglePreview={() => void toggleRowPreview("music")}
+                  playDisabled={soundControlsDisabled || !backgroundMusicKey}
+                  playAriaLabel={playing.music ? "Pause music" : "Play music"}
+                />
+                <MixerChannel
+                  layout="row"
+                  label="Ambience"
+                  category="ambience"
+                  items={backgroundNature}
+                  value={backgroundNatureKey}
+                  onChange={setBackgroundNatureKey}
+                  gain={backgroundNatureGain}
+                  onGainChange={setBackgroundNatureGain}
+                  disabled={soundControlsDisabled}
+                  faderDisabled={soundControlsDisabled || !backgroundNatureKey}
+                  playing={playing.nature}
+                  onTogglePreview={() => void toggleRowPreview("nature")}
+                  playDisabled={soundControlsDisabled || !backgroundNatureKey}
+                  playAriaLabel={
+                    playing.nature ? "Pause ambience" : "Play ambience"
+                  }
+                />
+                <DrumsLockedWrap
+                  locked={drumsLockedForMelodic}
+                  className="block"
+                >
+                  <MixerChannel
+                    layout="row"
+                    label="Drums"
+                    category="drums"
+                    items={backgroundDrums}
+                    value={backgroundDrumsKey}
+                    onChange={setBackgroundDrumsKey}
+                    gain={backgroundDrumsGain}
+                    onGainChange={setBackgroundDrumsGain}
+                    disabled={soundControlsDisabled || drumsLockedForMelodic}
+                    faderDisabled={
+                      soundControlsDisabled ||
+                      drumsLockedForMelodic ||
+                      !backgroundDrumsKey
+                    }
+                    playing={playing.drums}
+                    onTogglePreview={() => void toggleRowPreview("drums")}
+                    playDisabled={
+                      soundControlsDisabled ||
+                      drumsLockedForMelodic ||
+                      !backgroundDrumsKey
+                    }
+                    playAriaLabel={
+                      playing.drums ? "Pause drums" : "Play drums"
+                    }
+                  />
+                </DrumsLockedWrap>
+                <MixerChannel
+                  layout="row"
+                  label="Noise"
+                  category="noise"
+                  items={backgroundNoise}
+                  value={backgroundNoiseKey}
+                  onChange={setBackgroundNoiseKey}
+                  gain={backgroundNoiseGain}
+                  onGainChange={setBackgroundNoiseGain}
+                  disabled={soundControlsDisabled}
+                  faderDisabled={soundControlsDisabled || !backgroundNoiseKey}
+                  playing={playing.noise}
+                  onTogglePreview={() => void toggleRowPreview("noise")}
+                  playDisabled={soundControlsDisabled || !backgroundNoiseKey}
+                  playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
+                />
+              </div>
+              <div className="flex shrink-0 items-center gap-2 border-t border-border px-4 py-2.5">
+                <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
+                  Length
+                </span>
+                <select
+                  className="h-9 min-w-0 w-full max-w-[11rem] shrink-0 rounded-lg border border-border bg-background px-2.5 text-sm sm:w-auto"
+                  value={meditationTargetMinutes}
+                  onChange={(e) =>
+                    setMeditationTargetMinutes(
+                      parseMeditationTargetMinutes(Number(e.target.value)),
+                    )
+                  }
+                  disabled={audioLoading}
+                  aria-label="Target meditation length"
+                  title="Coach + script target. Regenerate script if you already have one."
+                >
+                  <option value={2}>2 min</option>
+                  <option value={5}>5 min</option>
+                  <option value={10}>10 min</option>
+                </select>
+              </div>
+            </section>
+          </div>
+
+          {/* Column mixer — lg+ */}
+          <section className="hidden min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm lg:flex">
             <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto p-4">
                   <div className="flex h-full min-w-[5.75rem] w-full flex-1 flex-col gap-2">
                     <div className="shrink-0">
@@ -4845,6 +5113,7 @@ export function CreateWorkspace({
               {creationPath === "style" ? "Questions" : "Script"}
             </button>
             <div className="ml-auto flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
+              {/* Temporarily hidden
               <button
                 type="button"
                 onClick={() => void saveCurrentDraft()}
@@ -4853,6 +5122,7 @@ export function CreateWorkspace({
               >
                 {draftSaving ? "Saving…" : "Save draft"}
               </button>
+              */}
               <button
                 type="button"
                 onClick={() => void generateMeditationAudioAndShow()}
