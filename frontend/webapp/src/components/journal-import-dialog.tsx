@@ -412,7 +412,7 @@ export function JournalImportDialog({ open, existing, onClose, onCommit }: Props
                   <button
                     type="button"
                     disabled={busy}
-                    className="cursor-pointer rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-on-accent disabled:opacity-50"
+                    className="cursor-pointer rounded-xl accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent disabled:opacity-50"
                     onClick={() => fileRef.current?.click()}
                   >
                     Choose files
@@ -722,7 +722,7 @@ export function JournalImportDialog({ open, existing, onClose, onCommit }: Props
               type="button"
               disabled={busy}
               onClick={applyCsv}
-              className="cursor-pointer rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-on-accent disabled:opacity-50"
+              className="cursor-pointer rounded-xl accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent disabled:opacity-50"
             >
               Preview entries
             </button>
@@ -732,7 +732,7 @@ export function JournalImportDialog({ open, existing, onClose, onCommit }: Props
               type="button"
               disabled={!bulkDate}
               onClick={applyPdfBulkDate}
-              className="cursor-pointer rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-on-accent disabled:opacity-50"
+              className="cursor-pointer rounded-xl accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent disabled:opacity-50"
             >
               Use this date for all
             </button>
@@ -742,7 +742,7 @@ export function JournalImportDialog({ open, existing, onClose, onCommit }: Props
               type="button"
               disabled={busy || blocked || summary.count === 0}
               onClick={tryCommit}
-              className="cursor-pointer rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-on-accent disabled:opacity-50"
+              className="cursor-pointer rounded-xl accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent disabled:opacity-50"
             >
               Save {summary.count} {summary.count === 1 ? "entry" : "entries"}
             </button>

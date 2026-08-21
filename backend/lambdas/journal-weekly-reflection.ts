@@ -633,6 +633,55 @@ async function loadWeeklyReflection(
   };
 }
 
+type WeeklyLetterSummary = {
+  weekKey: string;
+  weekStart: string;
+  weekEnd: string;
+  generatedAt: string;
+};
+
+async function listWeeklyReflections(
+  table: string,
+  ownerId: string,
+): Promise<WeeklyLetterSummary[]> {
+  const out: WeeklyLetterSummary[] = [];
+  let startKey: Record<string, unknown> | undefined;
+  do {
+    const r = await ddb.send(
+      new QueryCommand({
+        TableName: table,
+        KeyConditionExpression: "pk = :p AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: {
+          ":p": ownerId,
+          ":prefix": "WEEKLY#",
+        },
+        ScanIndexForward: false,
+        ...(startKey ? { ExclusiveStartKey: startKey } : {}),
+      }),
+    );
+    for (const raw of r.Items ?? []) {
+      const item = raw as Record<string, unknown>;
+      const letterMarkdown =
+        typeof item.letterMarkdown === "string" ? item.letterMarkdown : "";
+      if (!letterMarkdown.trim()) continue;
+      const weekKey =
+        typeof item.weekKey === "string"
+          ? item.weekKey
+          : typeof item.sk === "string" && item.sk.startsWith("WEEKLY#")
+            ? item.sk.slice("WEEKLY#".length)
+            : "";
+      const weekStart = safeIso(item.weekStart);
+      const weekEnd = safeIso(item.weekEnd);
+      const generatedAt = safeIso(item.generatedAt);
+      if (!weekKey || !weekStart || !weekEnd || !generatedAt) continue;
+      out.push({ weekKey, weekStart, weekEnd, generatedAt });
+    }
+    startKey = r.LastEvaluatedKey as Record<string, unknown> | undefined;
+  } while (startKey);
+  out.sort((a, b) => (a.weekKey < b.weekKey ? 1 : a.weekKey > b.weekKey ? -1 : 0));
+  return out;
+}
+
 async function saveWeeklyReflection(params: {
   table: string;
   reflection: WeeklyReflection;
@@ -736,6 +785,15 @@ export async function handler(
 
   if (method === "GET") {
     try {
+      const listParam = event.queryStringParameters?.list?.trim();
+      if (listParam === "1" || listParam === "true") {
+        const letters = await listWeeklyReflections(insightsTable, ownerId);
+        const current = weekBoundsFromDate(new Date());
+        return json(200, {
+          letters,
+          currentWeekKey: current.weekKey,
+        });
+      }
       const cached = await loadWeeklyReflection(
         insightsTable,
         ownerId,

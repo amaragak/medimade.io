@@ -177,7 +177,7 @@ export function JournalHandwrittenGroupStep({
           type="button"
           disabled={busy || photos.length === 0}
           onClick={onRead}
-          className="cursor-pointer rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-on-accent disabled:opacity-50"
+          className="cursor-pointer rounded-xl accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent disabled:opacity-50"
         >
           Read handwriting
         </button>

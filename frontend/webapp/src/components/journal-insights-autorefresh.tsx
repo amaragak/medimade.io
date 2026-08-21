@@ -8,6 +8,7 @@ import {
   getMedimadeSessionJwt,
   runJournalInsightsRemote,
 } from "@/lib/medimade-api";
+import { setCachedJournalInsights } from "@/lib/journal-remote-cache";
 import { loadJournalStore } from "@/lib/journal-storage";
 
 function maxUpdatedAtIso(): string | null {
@@ -26,7 +27,11 @@ function maxUpdatedAtIso(): string | null {
 }
 
 function isJournalEditorPath(p: string): boolean {
-  return p === "/journal";
+  return (
+    p === "/journal" ||
+    p === "/journal/gratitudes" ||
+    p.startsWith("/journal/gratitudes/")
+  );
 }
 
 const inFlightRef = { current: false };
@@ -34,7 +39,7 @@ const lastTriggeredForUpdatedAtRef = { current: null as string | null };
 
 /**
  * Run after the user leaves the journal editor context (navigate away from
- * `/journal`, or close the inline Insights panel on the journal page).
+ * `/journal` or `/journal/gratitudes`, including to Insights).
  */
 export function scheduleJournalInsightsRefreshAfterLeavingEditor(): void {
   const base = getMedimadeApiBase();
@@ -50,13 +55,15 @@ export function scheduleJournalInsightsRefreshAfterLeavingEditor(): void {
   void (async () => {
     try {
       const existing = await fetchJournalInsightsRemote();
+      setCachedJournalInsights(existing);
       const lastProcessed = existing?.meta.lastProcessedMaxUpdatedAt ?? null;
       const localMs = new Date(localMax).getTime();
       const processedMs = lastProcessed ? new Date(lastProcessed).getTime() : 0;
       if (!Number.isFinite(localMs)) return;
       if (localMs <= processedMs) return;
       lastTriggeredForUpdatedAtRef.current = localMax;
-      await runJournalInsightsRemote();
+      const got = await runJournalInsightsRemote();
+      setCachedJournalInsights(got);
     } catch {
       /* ignore: navigation-triggered background refresh */
     } finally {

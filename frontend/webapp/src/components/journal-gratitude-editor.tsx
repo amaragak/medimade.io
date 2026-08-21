@@ -47,7 +47,7 @@ export function JournalGratitudeEditor({ createdAt, lines, onChange, children }:
         {FIELDS.map(({ Icon, ariaLabel }, i) => (
           <div key={ariaLabel} className="flex items-start gap-3">
             <span
-              className="mt-2.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent"
+              className="mt-2.5 flex size-8 shrink-0 items-center justify-center rounded-full accent-fill-gradient text-on-accent"
               aria-hidden
             >
               <Icon size={16} stroke={1.75} />

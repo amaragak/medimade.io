@@ -39,7 +39,7 @@ export default function ProPage() {
       <div className="mt-10 flex flex-wrap gap-3">
         <button
           type="button"
-          className="rounded-full bg-accent px-8 py-3 text-sm font-semibold text-on-accent"
+          className="rounded-full accent-fill-gradient px-8 py-3 text-sm font-semibold text-on-accent"
         >
           Upgrade (mock)
         </button>

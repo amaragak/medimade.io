@@ -133,7 +133,7 @@ function JournalClipAudioStrip({ src }: { src: string }) {
         <button
           type="button"
           onClick={togglePlayback}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition-opacity hover:opacity-90"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90"
           aria-label={playing ? "Pause" : "Play"}
         >
           {playing ? (
@@ -324,7 +324,7 @@ function JournalVoiceClipView(props: NodeViewProps) {
       <div className="flex items-center justify-between gap-2 border-b border-accent/10 bg-gradient-to-r from-accent-soft/40 to-transparent px-2 py-1">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <span
-            className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-accent text-on-accent shadow-sm"
+            className="flex size-7 shrink-0 items-center justify-center rounded-lg accent-fill-gradient text-on-accent"
             aria-hidden
           >
             <IconWaveform className="size-3.5" />

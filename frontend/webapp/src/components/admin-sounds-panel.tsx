@@ -709,7 +709,7 @@ export function AdminSoundsPanel() {
             type="button"
             disabled={importing}
             onClick={() => fileRef.current?.click()}
-            className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60"
+            className="rounded-xl accent-fill-gradient px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60"
           >
             {importing ? "Uploading… keep this tab open" : "Import folder"}
           </button>
@@ -996,7 +996,7 @@ export function AdminSoundsPanel() {
               </button>
               <button
                 type="submit"
-                className="rounded-xl bg-accent px-3 py-2 text-sm font-medium text-on-accent"
+                className="rounded-xl accent-fill-gradient px-3 py-2 text-sm font-medium text-on-accent"
               >
                 Save & categorise
               </button>
@@ -1324,7 +1324,7 @@ function SoundRow({
               aria-label={playing ? "Pause" : "Play from trim start"}
               disabled={!item.ready}
               onClick={togglePlay}
-              className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-accent text-on-accent disabled:opacity-40"
+              className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent disabled:opacity-40"
             >
               {playing ? <IconPause /> : <IconPlay />}
             </button>

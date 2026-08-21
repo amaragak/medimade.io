@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import {
   LIBRARY_MEDITATION_CATEGORIES,
   type LibraryMeditationCategory,
@@ -208,14 +209,16 @@ export function MeditationTypeCardGrid({
             aria-selected={active}
             title={title}
             onClick={() => onSelect(card.value)}
-            style={{
-              colorScheme: "light dark",
-              backgroundColor: `light-dark(${light}, ${dark})`,
-            }}
-            className={`flex aspect-square min-w-0 cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border px-2 py-3 text-center shadow-sm transition-[box-shadow,filter] ${
+            style={
+              {
+                "--type-card-bg": light,
+                "--type-card-bg-dark": dark,
+              } as CSSProperties
+            }
+            className={`flex aspect-square min-w-0 cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border px-2 py-3 text-center shadow-sm transition-[box-shadow,filter] bg-[var(--type-card-bg)] text-[#1E2530] dark:bg-[var(--type-card-bg-dark)] dark:text-[#FAF8F3] ${
               active
-                ? "border-accent text-foreground ring-2 ring-accent ring-offset-2 ring-offset-background"
-                : "border-transparent text-foreground/85 hover:brightness-[0.97] dark:hover:brightness-110"
+                ? "border-accent ring-2 ring-accent ring-offset-2 ring-offset-background"
+                : "border-transparent hover:brightness-[0.97] dark:hover:brightness-110"
             }`}
           >
             <CommunityCategoryIcon name={card.icon} />

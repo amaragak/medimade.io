@@ -14,6 +14,27 @@ export const ACCENT_LINK = "#B8703A";
 /** Dark warm brown on gold-tan fills. */
 export const ON_ACCENT = "#3D2E10";
 
+/**
+ * Gold-tan button fill. Same speaker-disc stops, slightly quieter.
+ * Edit this CSS string (and BLEND) — it becomes `--accent-gradient-button`.
+ * Placeholders: {light} {mid} {accent} {deep}. BLEND 0 = disc contrast, 1 = flat.
+ */
+export const ACCENT_BUTTON_GRADIENT =
+  "linear-gradient(160deg, {light} 0%, {mid} 38%, {accent} 72%, {deep} 100%)";
+export const ACCENT_BUTTON_GRADIENT_BLEND = 0.08;
+
+/**
+ * Header wordmark fill. Radial origin sits on the sun (left of the text).
+ * White near the sun → light gold-tan by the end of “consciously”.
+ * Ellipse is sized to the glyph box so the shift reads across the word.
+ * Placeholders: {white} {soft} {end}. Becomes `--brand-wordmark-gradient`.
+ * SOFT/END = accent mixed into white (0 = white, 1 = solid gold-tan).
+ */
+export const BRAND_WORDMARK_GRADIENT =
+  "radial-gradient(ellipse 155% 200% at -1.75rem 50%, {white} 0%, {white} 28%, {soft} 55%, {end} 100%)";
+export const BRAND_WORDMARK_SOFT = 0.16;
+export const BRAND_WORDMARK_END = 0.28;
+
 const WHITE = "#ffffff";
 const BLACK = "#000000";
 
@@ -276,21 +297,40 @@ export function accentGradientCss(s: Semantic): string {
   return `linear-gradient(160deg, ${s.gradientLight} 0%, ${s.gradientMid} 38%, ${s.accent} 72%, ${s.gradientDeep} 100%)`;
 }
 
-/** Muted category card fills — independent of PRIMARY. [light, dark] */
+/** Fills `ACCENT_BUTTON_GRADIENT` from the active theme. */
+export function accentGradientButtonCss(s: Semantic): string {
+  const t = ACCENT_BUTTON_GRADIENT_BLEND;
+  return ACCENT_BUTTON_GRADIENT.replaceAll(
+    "{light}",
+    mixHex(s.gradientLight, s.accent, t),
+  )
+    .replaceAll("{mid}", mixHex(s.gradientMid, s.accent, t))
+    .replaceAll("{accent}", s.accent)
+    .replaceAll("{deep}", mixHex(s.gradientDeep, s.accent, t));
+}
+
+/** Fills `BRAND_WORDMARK_GRADIENT` from the active theme (resolved hex stops). */
+export function brandWordmarkGradientCss(s: Semantic): string {
+  return BRAND_WORDMARK_GRADIENT.replaceAll("{white}", WHITE)
+    .replaceAll("{soft}", mixHex(WHITE, s.accent, BRAND_WORDMARK_SOFT))
+    .replaceAll("{end}", mixHex(WHITE, s.accent, BRAND_WORDMARK_END));
+}
+
+/** Muted category / meditation-type card fills — [light mode, dark mode]. */
 export const CATEGORY_CARD_FILLS: ReadonlyArray<readonly [string, string]> = [
-  ["#e4d6c8", "#3d342e"],
-  ["#d7e0d4", "#2f382f"],
-  ["#d4dde6", "#2e3640"],
-  ["#d5e4e2", "#2d3a38"],
-  ["#eadcc4", "#3d3628"],
-  ["#e6d4d8", "#3c3034"],
-  ["#e8e0c9", "#3c382a"],
-  ["#ddd6e4", "#353040"],
-  ["#cfd8e2", "#2c3440"],
-  ["#ead3c8", "#3e302c"],
-  ["#d4e2d6", "#2e3a30"],
-  ["#dce0d0", "#34382c"],
-  ["#d8d6d2", "#383430"],
+  ["#e4d6c8", "#2a2420"],
+  ["#d7e0d4", "#1f2820"],
+  ["#d4dde6", "#1e2630"],
+  ["#d5e4e2", "#1d2826"],
+  ["#eadcc4", "#2a251c"],
+  ["#e6d4d8", "#2a2226"],
+  ["#e8e0c9", "#28241c"],
+  ["#ddd6e4", "#242030"],
+  ["#cfd8e2", "#1c2430"],
+  ["#ead3c8", "#2c221e"],
+  ["#d4e2d6", "#1e2820"],
+  ["#dce0d0", "#24281e"],
+  ["#d8d6d2", "#262420"],
 ];
 
 export function chartSeriesColor(seed: string): string {
@@ -328,6 +368,8 @@ function varsFor(s: Semantic): Record<string, string> {
     "--success": s.success,
     "--info": s.info,
     "--accent-gradient": accentGradientCss(s),
+    "--accent-gradient-button": accentGradientButtonCss(s),
+    "--brand-wordmark-gradient": brandWordmarkGradientCss(s),
     "--accent-rgb": rgbChannels(s.accent),
     "--foreground-rgb": rgbChannels(s.foreground),
     "--deep-rgb": rgbChannels(s.deep),
@@ -345,5 +387,6 @@ function cssBlock(selector: string, vars: Record<string, string>, indent = ""): 
 /** Injected in root layout. The only place brand hexes become CSS variables. */
 export const themeRootCss = [
   cssBlock(":root", varsFor(light)),
-  `@media (prefers-color-scheme: dark) {\n${cssBlock(":root", varsFor(dark), "  ")}\n}`,
+  /** Class-driven dark theme (header toggle). Light is the default — not system preference. */
+  cssBlock(":root.dark", varsFor(dark)),
 ].join("\n\n");

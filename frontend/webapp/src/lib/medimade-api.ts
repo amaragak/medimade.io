@@ -575,7 +575,16 @@ export type JournalWeeklyReflection = {
   };
 };
 
-export async function fetchJournalWeeklyReflectionRemote(): Promise<{
+export type JournalWeeklyLetterSummary = {
+  weekKey: string;
+  weekStart: string;
+  weekEnd: string;
+  generatedAt: string;
+};
+
+export async function fetchJournalWeeklyReflectionRemote(opts?: {
+  week?: string;
+}): Promise<{
   reflection: JournalWeeklyReflection | null;
   weekKey: string;
   weekStart: string;
@@ -584,7 +593,11 @@ export async function fetchJournalWeeklyReflectionRemote(): Promise<{
 }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/journal/weekly-reflection`, {
+  const qs =
+    opts?.week?.trim()
+      ? `?week=${encodeURIComponent(opts.week.trim())}`
+      : "";
+  const res = await fetch(`${base}/journal/weekly-reflection${qs}`, {
     headers: medimadeApiAuthHeaders(),
   });
   let data: Record<string, unknown> = {};
@@ -613,8 +626,51 @@ export async function fetchJournalWeeklyReflectionRemote(): Promise<{
   };
 }
 
+export async function listJournalWeeklyLettersRemote(): Promise<{
+  letters: JournalWeeklyLetterSummary[];
+  currentWeekKey: string;
+}> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/journal/weekly-reflection?list=1`, {
+    headers: medimadeApiAuthHeaders(),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const raw = Array.isArray(data.letters) ? data.letters : [];
+  const letters: JournalWeeklyLetterSummary[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const weekKey = typeof row.weekKey === "string" ? row.weekKey : "";
+    const weekStart = typeof row.weekStart === "string" ? row.weekStart : "";
+    const weekEnd = typeof row.weekEnd === "string" ? row.weekEnd : "";
+    const generatedAt =
+      typeof row.generatedAt === "string" ? row.generatedAt : "";
+    if (!weekKey || !weekStart || !weekEnd || !generatedAt) continue;
+    letters.push({ weekKey, weekStart, weekEnd, generatedAt });
+  }
+  return {
+    letters,
+    currentWeekKey:
+      typeof data.currentWeekKey === "string" ? data.currentWeekKey : "",
+  };
+}
+
 export async function runJournalWeeklyReflectionRemote(opts?: {
   regenerate?: boolean;
+  week?: string;
 }): Promise<{
   reflection: JournalWeeklyReflection | null;
   weekKey: string;
@@ -629,6 +685,7 @@ export async function runJournalWeeklyReflectionRemote(opts?: {
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
       ...(opts?.regenerate ? { regenerate: true } : {}),
+      ...(opts?.week?.trim() ? { week: opts.week.trim() } : {}),
     }),
   });
   let data: Record<string, unknown> = {};

@@ -110,7 +110,7 @@ export function DictationMicButton({
               ? "Stop and transcribe"
               : "Dictate"
         }
-        className={`${size} flex cursor-pointer items-center justify-center rounded-full bg-accent text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 ${
+        className={`${size} flex cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 ${
           recording ? "animate-pulse" : ""
         }`}
       >

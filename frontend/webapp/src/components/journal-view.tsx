@@ -1,8 +1,15 @@
 "use client";
 
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { JournalInsightsView } from "@/components/journal-insights-view";
 import { scheduleJournalInsightsRefreshAfterLeavingEditor } from "@/components/journal-insights-autorefresh";
+import {
+  clearJournalRemoteSessionCache,
+  markJournalStorePulledThisSession,
+  wasJournalStorePulledThisSession,
+} from "@/lib/journal-remote-cache";
 import { JournalRichEditor } from "@/components/journal-rich-editor";
 import { JournalGratitudeEditor } from "@/components/journal-gratitude-editor";
 import { JournalEntryMeta } from "@/components/journal-entry-meta";
@@ -56,6 +63,29 @@ import {
 } from "@/lib/journal-prefs";
 
 type JournalMainTab = "journal" | "gratitude";
+type JournalSection = JournalMainTab | "insights";
+
+const JOURNAL_SECTION_HREF = {
+  journal: "/journal",
+  gratitude: "/journal/gratitudes",
+  insights: "/journal/insights",
+} as const;
+
+function journalSectionFromPath(pathname: string): JournalSection {
+  if (
+    pathname === "/journal/insights" ||
+    pathname.startsWith("/journal/insights/")
+  ) {
+    return "insights";
+  }
+  if (
+    pathname === "/journal/gratitudes" ||
+    pathname.startsWith("/journal/gratitudes/")
+  ) {
+    return "gratitude";
+  }
+  return "journal";
+}
 
 function JournalSettingsIconButton({ onClick }: { onClick: () => void }) {
   return (
@@ -151,8 +181,20 @@ export function JournalView() {
   const [newFolderName, setNewFolderName] = useState("");
   const [sidebarMenu, setSidebarMenu] = useState<null | "folder" | "date">(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
-  const [insightsOpen, setInsightsOpen] = useState(false);
-  const [journalTab, setJournalTab] = useState<JournalMainTab>("journal");
+  const pathname = usePathname() || "/journal";
+  const router = useRouter();
+  const section = journalSectionFromPath(pathname);
+  const insightsOpen = section === "insights";
+  const [insightsMounted, setInsightsMounted] = useState(insightsOpen);
+  const [listTab, setListTab] = useState<JournalMainTab>(() =>
+    section === "gratitude" ? "gratitude" : "journal",
+  );
+  const journalTab: JournalMainTab =
+    section === "gratitude"
+      ? "gratitude"
+      : section === "journal"
+        ? "journal"
+        : listTab;
   const [gratitudeDraft, setGratitudeDraft] = useState<JournalGratitudeLines>(
     emptyGratitudeLines(),
   );
@@ -162,7 +204,7 @@ export function JournalView() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importBatchId, setImportBatchId] = useState<string | null>(null);
-  const prevInsightsOpenRef = useRef(false);
+  const prevSectionRef = useRef<JournalSection | null>(null);
   /** After first journal GET attempt (or skip if no API URL); avoids PUT before pull completes. */
   const [remoteJournalChecked, setRemoteJournalChecked] = useState(false);
   const entriesRef = useRef<JournalEntry[]>([]);
@@ -181,17 +223,29 @@ export function JournalView() {
   activeIdRef.current = activeEntryId;
 
   useEffect(() => {
-    const on = () => setSignedIn(Boolean(getMedimadeSessionJwt()));
+    if (section === "journal" || section === "gratitude") {
+      setListTab(section);
+    }
+    if (section === "insights") {
+      setInsightsMounted(true);
+    }
+  }, [section]);
+
+  useEffect(() => {
+    const on = () => {
+      clearJournalRemoteSessionCache();
+      setSignedIn(Boolean(getMedimadeSessionJwt()));
+    };
     window.addEventListener("medimade-session-changed", on);
     return () => window.removeEventListener("medimade-session-changed", on);
   }, []);
 
   useEffect(() => {
-    if (prevInsightsOpenRef.current && !insightsOpen) {
+    if (prevSectionRef.current === "insights" && section !== "insights") {
       scheduleJournalInsightsRefreshAfterLeavingEditor();
     }
-    prevInsightsOpenRef.current = insightsOpen;
-  }, [insightsOpen]);
+    prevSectionRef.current = section;
+  }, [section]);
 
   useEffect(() => {
     if (!sidebarMenu) return;
@@ -262,6 +316,10 @@ export function JournalView() {
       setRemoteJournalChecked(true);
       return;
     }
+    if (wasJournalStorePulledThisSession()) {
+      setRemoteJournalChecked(true);
+      return;
+    }
     void (async () => {
       try {
         const remote = await fetchJournalStoreRemote();
@@ -293,7 +351,10 @@ export function JournalView() {
       } catch {
         /* offline or not deployed yet */
       } finally {
-        if (!cancelled) setRemoteJournalChecked(true);
+        if (!cancelled) {
+          markJournalStorePulledThisSession();
+          setRemoteJournalChecked(true);
+        }
       }
     })();
     return () => {
@@ -602,15 +663,16 @@ export function JournalView() {
       persist(next, first.id);
       setImportBatchId(batchId);
       setImportOpen(false);
-      setJournalTab("journal");
-      setInsightsOpen(false);
+      if (section !== "journal") {
+        router.push(JOURNAL_SECTION_HREF.journal);
+      }
       if (getMedimadeSessionJwt()) {
         void runJournalInsightsRemote().catch(() => {
           /* insights can catch up later */
         });
       }
     },
-    [flushSaveSync, persist, selectedFolderId],
+    [flushSaveSync, persist, selectedFolderId, router, section],
   );
 
   const addNamedFolder = useCallback(() => {
@@ -671,29 +733,36 @@ export function JournalView() {
     setGratitudeDraft(latestGratitudeRef.current);
   }, [flushSaveSync, persist]);
 
-  const switchJournalTab = useCallback(
-    (tab: JournalMainTab) => {
-      if (tab === journalTab) return;
-      flushSaveSync();
-      setInsightsOpen(false);
-      setJournalTab(tab);
-      if (tab === "gratitude") {
-        openTodayGratitude();
-        return;
-      }
-      const free = entriesRef.current.find((e) => !isGratitudeEntry(e));
-      if (free) {
-        setActiveEntryId(free.id);
-        latestHtmlRef.current = free.contentHtml;
-        latestTitleRef.current = free.title;
-        latestGratitudeRef.current = emptyGratitudeLines();
-        setGratitudeDraft(latestGratitudeRef.current);
-        return;
-      }
-      createEntry();
-    },
-    [createEntry, flushSaveSync, journalTab, openTodayGratitude],
-  );
+  const activateJournalList = useCallback(() => {
+    const free = entriesRef.current.find((e) => !isGratitudeEntry(e));
+    if (free) {
+      setActiveEntryId(free.id);
+      latestHtmlRef.current = free.contentHtml;
+      latestTitleRef.current = free.title;
+      latestGratitudeRef.current = emptyGratitudeLines();
+      setGratitudeDraft(latestGratitudeRef.current);
+      return;
+    }
+    createEntry();
+  }, [createEntry]);
+
+  const prevListSectionRef = useRef<JournalMainTab | null>(null);
+  useEffect(() => {
+    if (!hydrated) return;
+    if (section !== "journal" && section !== "gratitude") return;
+    const prev = prevListSectionRef.current;
+    prevListSectionRef.current = section;
+    if (prev === null) {
+      if (section === "gratitude") openTodayGratitude();
+      return;
+    }
+    if (prev === section) return;
+    if (section === "gratitude") {
+      openTodayGratitude();
+      return;
+    }
+    activateJournalList();
+  }, [hydrated, section, openTodayGratitude, activateJournalList]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -738,48 +807,45 @@ export function JournalView() {
             role="tablist"
             aria-label="Journal section"
           >
-            <button
-              type="button"
+            <Link
+              href={JOURNAL_SECTION_HREF.journal}
               role="tab"
-              aria-selected={journalTab === "journal" && !insightsOpen}
-              onClick={() => switchJournalTab("journal")}
+              aria-selected={section === "journal"}
+              onClick={() => flushSaveSync()}
               className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                journalTab === "journal" && !insightsOpen
+                section === "journal"
                   ? "bg-selected text-on-selected"
                   : "text-muted hover:text-foreground"
               }`}
             >
               Journal
-            </button>
-            <button
-              type="button"
+            </Link>
+            <Link
+              href={JOURNAL_SECTION_HREF.gratitude}
               role="tab"
-              aria-selected={journalTab === "gratitude" && !insightsOpen}
-              onClick={() => switchJournalTab("gratitude")}
+              aria-selected={section === "gratitude"}
+              onClick={() => flushSaveSync()}
               className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                journalTab === "gratitude" && !insightsOpen
+                section === "gratitude"
                   ? "bg-selected text-on-selected"
                   : "text-muted hover:text-foreground"
               }`}
             >
               Gratitudes
-            </button>
-            <button
-              type="button"
+            </Link>
+            <Link
+              href={JOURNAL_SECTION_HREF.insights}
               role="tab"
-              aria-selected={insightsOpen}
-              onClick={() => {
-                flushSaveSync();
-                setInsightsOpen(true);
-              }}
+              aria-selected={section === "insights"}
+              onClick={() => flushSaveSync()}
               className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                insightsOpen
+                section === "insights"
                   ? "bg-selected text-on-selected"
                   : "text-muted hover:text-foreground"
               }`}
             >
               Insights
-            </button>
+            </Link>
           </div>
         </div>
         {streakDays > 0 ? (
@@ -803,6 +869,19 @@ export function JournalView() {
         ) : null}
       </div>
 
+      {insightsMounted ? (
+        <div
+          className={
+            insightsOpen
+              ? "flex min-h-0 flex-1 flex-col"
+              : "hidden"
+          }
+          aria-hidden={!insightsOpen}
+        >
+          <JournalInsightsView />
+        </div>
+      ) : null}
+      {!insightsOpen ? (
       <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:gap-4">
         <aside className="flex max-h-[22rem] shrink-0 flex-col gap-3 overflow-visible border-b border-border pb-4 lg:max-h-none lg:w-64 lg:border-b-0 lg:pb-0">
           {journalTab === "journal" ? (
@@ -810,7 +889,7 @@ export function JournalView() {
               <button
                 type="button"
                 onClick={createEntry}
-                className="cursor-pointer rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90"
+                className="cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
               >
                 + New entry
               </button>
@@ -893,7 +972,7 @@ export function JournalView() {
                               type="button"
                               onClick={addNamedFolder}
                               disabled={!newFolderName.trim()}
-                              className="cursor-pointer rounded-lg bg-accent px-2 py-1 text-xs font-semibold text-on-accent disabled:opacity-50"
+                              className="cursor-pointer rounded-lg accent-fill-gradient px-2 py-1 text-xs font-semibold text-on-accent disabled:opacity-50"
                             >
                               Add
                             </button>
@@ -1069,11 +1148,7 @@ export function JournalView() {
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {insightsOpen ? (
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
-              <JournalInsightsView />
-            </div>
-          ) : jumpDate && filteredTabEntries.length === 0 ? (
+          {jumpDate && filteredTabEntries.length === 0 ? (
             <div className="flex min-h-[12rem] flex-1 items-center rounded-2xl border border-border bg-card p-6 shadow-sm">
               <p className="text-sm text-muted">No entry on this day.</p>
             </div>
@@ -1139,6 +1214,7 @@ export function JournalView() {
           )}
         </section>
       </div>
+      ) : null}
     </div>
     <JournalSettingsDialog
       open={settingsOpen}

@@ -175,7 +175,7 @@ export function PlanHomeClient() {
       <button
         type="button"
         onClick={() => setModalOpen(true)}
-        className="fixed bottom-6 right-6 z-40 cursor-pointer rounded-full bg-accent px-5 py-3 text-sm font-semibold text-on-accent shadow-lg transition-opacity hover:opacity-90"
+        className="fixed bottom-6 right-6 z-40 cursor-pointer rounded-full accent-fill-gradient px-5 py-3 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
         aria-haspopup="dialog"
       >
         Add a project
@@ -234,7 +234,7 @@ export function PlanHomeClient() {
                 type="button"
                 disabled={!newTitle.trim()}
                 onClick={() => addDream()}
-                className="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                className="rounded-full accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Save
               </button>

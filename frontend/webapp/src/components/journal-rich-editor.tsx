@@ -329,7 +329,7 @@ export function JournalRichEditor({
                     }
                     void startVoiceRecording();
                   }}
-                  className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-accent text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 ${
+                  className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 ${
                     voiceRecording ? "animate-pulse" : ""
                   }`}
                 >

@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import "./globals.css";
 import { ProfileNameGate } from "@/components/profile-name-gate";
 import { SiteHeader } from "@/components/site-header";
+import { colorSchemeBootScript } from "@/lib/color-scheme";
 import { themeRootCss } from "@/lib/theme-colors";
 // import { SiteFooter } from "@/components/site-footer";
 
@@ -38,14 +39,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${dmSans.variable} ${fraunces.variable} ${caveat.variable} h-full antialiased`}
-    >
+    <html lang="en" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: colorSchemeBootScript }} />
         <style dangerouslySetInnerHTML={{ __html: themeRootCss }} />
       </head>
-      <body className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
+      <body
+        className={`${dmSans.variable} ${fraunces.variable} ${caveat.variable} flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground antialiased`}
+      >
         <Suspense fallback={null}>
           <ProfileNameGate />
         </Suspense>

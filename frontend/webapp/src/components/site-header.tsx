@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Moon, Sun } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { LogoMark } from "@/components/logo-mark";
 import {
@@ -10,6 +11,13 @@ import {
   getMedimadeSessionEmail,
   getMedimadeSessionJwt,
 } from "@/lib/medimade-api";
+import {
+  COLOR_SCHEME_CHANGED_EVENT,
+  applyColorScheme,
+  getStoredColorScheme,
+  toggleColorScheme,
+  type ColorScheme,
+} from "@/lib/color-scheme";
 
 const meditateSub = [
   { href: "/meditate/create", label: "Create" },
@@ -27,6 +35,37 @@ const navRest = [
 
 function isMeditateSection(path: string): boolean {
   return path === "/meditate" || path.startsWith("/meditate/");
+}
+
+function ColorSchemeToggle({ className = "" }: { className?: string }) {
+  const [scheme, setScheme] = useState<ColorScheme>("light");
+
+  useEffect(() => {
+    // Re-apply after hydration — React's html className can drop the boot-script class.
+    applyColorScheme(getStoredColorScheme());
+    const sync = () => setScheme(getStoredColorScheme());
+    sync();
+    window.addEventListener(COLOR_SCHEME_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(COLOR_SCHEME_CHANGED_EVENT, sync);
+  }, []);
+
+  const isDark = scheme === "dark";
+
+  return (
+    <button
+      type="button"
+      onClick={() => setScheme(toggleColorScheme())}
+      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      title={isDark ? "Light mode" : "Dark mode"}
+      className={`inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-white/20 text-nav-muted transition-colors hover:bg-nav-active hover:text-nav-foreground ${className}`}
+    >
+      {isDark ? (
+        <Sun aria-hidden className="size-4" strokeWidth={2} />
+      ) : (
+        <Moon aria-hidden className="size-4" strokeWidth={2} />
+      )}
+    </button>
+  );
 }
 
 export function SiteHeader() {
@@ -85,7 +124,7 @@ export function SiteHeader() {
             size={34}
             className="relative z-[1] top-px mr-[13px] shrink-0"
           />
-          <span className="relative z-[1] -top-px font-display text-2xl font-medium tracking-tight lowercase">
+          <span className="brand-wordmark relative z-[1] -top-px font-display text-2xl font-medium tracking-tight lowercase">
             consciously
           </span>
         </Link>
@@ -153,8 +192,9 @@ export function SiteHeader() {
               {item.label}
             </Link>
           ))}
+          <ColorSchemeToggle className="ml-1" />
           {signedIn ? (
-            <div className="ml-2 flex items-center gap-2">
+            <div className="ml-1 flex items-center gap-2">
               <span
                 className="hidden max-w-[10rem] truncate text-xs text-nav-muted md:inline"
                 title={sessionLabel ?? ""}
@@ -172,7 +212,7 @@ export function SiteHeader() {
           ) : (
             <Link
               href="/login"
-              className="ml-2 rounded-lg border border-white/20 px-3 py-2 text-sm font-medium text-nav-foreground transition-colors hover:bg-nav-active"
+              className="ml-1 rounded-lg border border-white/20 px-3 py-2 text-sm font-medium text-nav-foreground transition-colors hover:bg-nav-active"
             >
               Sign in
             </Link>
@@ -184,103 +224,106 @@ export function SiteHeader() {
             Pro
           </Link>
         </nav>
-        <details ref={mobileMenuRef} className="relative sm:hidden">
-          <summary
-            aria-label="Menu"
-            className="cursor-pointer list-none rounded-lg border border-white/20 p-2 text-sm text-nav-foreground"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="20"
-              height="20"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              aria-hidden
+        <div className="flex items-center gap-2 sm:hidden">
+          <ColorSchemeToggle />
+          <details ref={mobileMenuRef} className="relative">
+            <summary
+              aria-label="Menu"
+              className="cursor-pointer list-none rounded-lg border border-white/20 p-2 text-sm text-nav-foreground"
             >
-              <path d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </summary>
-          <div className="absolute right-0 mt-2 w-52 rounded-xl border border-border bg-card py-2 shadow-lg">
-            <p className="px-4 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
-              Meditate
-            </p>
-            <Link
-              href="/meditate"
-              onClick={() => {
-                if (mobileMenuRef.current) mobileMenuRef.current.open = false;
-              }}
-              className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
-                pathname === "/meditate" ? "font-semibold text-foreground" : ""
-              }`}
-            >
-              Overview
-            </Link>
-            {meditateSub.map((item) => (
+              <svg
+                viewBox="0 0 24 24"
+                width="20"
+                height="20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                aria-hidden
+              >
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </summary>
+            <div className="absolute right-0 mt-2 w-52 rounded-xl border border-border bg-card py-2 shadow-lg">
+              <p className="px-4 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                Meditate
+              </p>
               <Link
-                key={item.href}
-                href={item.href}
+                href="/meditate"
                 onClick={() => {
                   if (mobileMenuRef.current) mobileMenuRef.current.open = false;
                 }}
-                aria-current={isActive(item.href) ? "page" : undefined}
                 className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
-                  isActive(item.href) ? "font-semibold text-foreground" : ""
+                  pathname === "/meditate" ? "font-semibold text-foreground" : ""
                 }`}
               >
-                {item.label}
+                Overview
               </Link>
-            ))}
-            <div className="my-2 border-t border-border" role="separator" />
-            {navRest.map((item) => (
+              {meditateSub.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => {
+                    if (mobileMenuRef.current) mobileMenuRef.current.open = false;
+                  }}
+                  aria-current={isActive(item.href) ? "page" : undefined}
+                  className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
+                    isActive(item.href) ? "font-semibold text-foreground" : ""
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              ))}
+              <div className="my-2 border-t border-border" role="separator" />
+              {navRest.map((item) => (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => {
+                    if (mobileMenuRef.current) mobileMenuRef.current.open = false;
+                  }}
+                  aria-current={isActive(item.href) ? "page" : undefined}
+                  className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
+                    isActive(item.href) ? "font-semibold text-foreground" : ""
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              ))}
+              {signedIn ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearMedimadeSession();
+                    if (mobileMenuRef.current) mobileMenuRef.current.open = false;
+                  }}
+                  className="block w-full px-4 py-2 text-left text-sm text-muted"
+                >
+                  Sign out
+                </button>
+              ) : (
+                <Link
+                  href="/login"
+                  onClick={() => {
+                    if (mobileMenuRef.current) mobileMenuRef.current.open = false;
+                  }}
+                  className="block px-4 py-2 text-sm font-medium text-accent-link"
+                >
+                  Sign in
+                </Link>
+              )}
               <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => {
-                  if (mobileMenuRef.current) mobileMenuRef.current.open = false;
-                }}
-                aria-current={isActive(item.href) ? "page" : undefined}
-                className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
-                  isActive(item.href) ? "font-semibold text-foreground" : ""
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
-            {signedIn ? (
-              <button
-                type="button"
-                onClick={() => {
-                  clearMedimadeSession();
-                  if (mobileMenuRef.current) mobileMenuRef.current.open = false;
-                }}
-                className="block w-full px-4 py-2 text-left text-sm text-muted"
-              >
-                Sign out
-              </button>
-            ) : (
-              <Link
-                href="/login"
+                href="/pro"
                 onClick={() => {
                   if (mobileMenuRef.current) mobileMenuRef.current.open = false;
                 }}
                 className="block px-4 py-2 text-sm font-medium text-accent-link"
               >
-                Sign in
+                Pro
               </Link>
-            )}
-            <Link
-              href="/pro"
-              onClick={() => {
-                if (mobileMenuRef.current) mobileMenuRef.current.open = false;
-              }}
-              className="block px-4 py-2 text-sm font-medium text-accent-link"
-            >
-              Pro
-            </Link>
-          </div>
-        </details>
+            </div>
+          </details>
+        </div>
       </div>
     </header>
   );

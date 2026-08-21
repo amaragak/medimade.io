@@ -71,7 +71,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={busy}
-            className="w-full rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="w-full rounded-xl accent-fill-gradient px-4 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Sending…" : "Email me a link"}
           </button>

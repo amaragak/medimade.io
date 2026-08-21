@@ -1266,7 +1266,7 @@ function LibraryAudioStrip({
             <button
               type="button"
                 onClick={() => togglePlayback()}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full accent-fill-gradient text-on-accent"
               aria-label={playing ? "Pause" : "Play"}
             >
               {playing ? (
@@ -2335,7 +2335,7 @@ export default function LibraryView({
       const continueBtn = (
         <Link
           href={href}
-          className="inline-flex shrink-0 items-center justify-center rounded-full bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90"
+          className="inline-flex shrink-0 items-center justify-center rounded-full accent-fill-gradient px-4 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
         >
           Continue
         </Link>
@@ -2562,7 +2562,7 @@ export default function LibraryView({
             <button
               type="button"
               onClick={() => setPlaybackToggleNonce((v) => v + 1)}
-              className="self-center flex h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent cursor-pointer"
+              className="self-center flex h-11 w-11 items-center justify-center rounded-full accent-fill-gradient text-on-accent cursor-pointer"
               aria-label="Pause"
             >
               <svg
@@ -2586,8 +2586,8 @@ export default function LibraryView({
             }
             className={
               alwaysShowRowChrome
-                ? "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent cursor-pointer opacity-100 pointer-events-auto transition-opacity"
-                : "flex self-center h-11 w-11 items-center justify-center rounded-full bg-accent/90 text-on-accent cursor-pointer opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
+                ? "flex self-center h-11 w-11 items-center justify-center rounded-full accent-fill-gradient text-on-accent cursor-pointer opacity-100 pointer-events-auto transition-opacity"
+                : "flex self-center h-11 w-11 items-center justify-center rounded-full accent-fill-gradient text-on-accent cursor-pointer opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
             }
             aria-label="Play"
           >
@@ -2906,7 +2906,7 @@ export default function LibraryView({
             </div>
             <Link
               href="/meditate/create"
-              className="shrink-0 cursor-pointer rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90"
+              className="shrink-0 cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
             >
               + Create new
             </Link>
@@ -3231,7 +3231,7 @@ export default function LibraryView({
                 setArchiveConfirm(null);
                 if (item) void setArchived(item, true);
               }}
-              className="cursor-pointer rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+              className="cursor-pointer rounded-lg accent-fill-gradient px-3 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
             >
               Archive
             </button>

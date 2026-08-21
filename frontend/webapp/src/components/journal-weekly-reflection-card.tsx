@@ -8,6 +8,11 @@ import {
   runJournalWeeklyReflectionRemote,
   type JournalWeeklyReflection,
 } from "@/lib/medimade-api";
+import {
+  getCachedWeeklyReflection,
+  invalidateCachedWeeklyReflection,
+  setCachedWeeklyReflection,
+} from "@/lib/journal-remote-cache";
 
 function formatWeekRange(weekStart: string, weekEnd: string): string {
   try {
@@ -36,23 +41,48 @@ function formatTs(iso: string | null | undefined): string {
   }
 }
 
-export function JournalWeeklyReflectionCard() {
-  const [reflection, setReflection] = useState<JournalWeeklyReflection | null>(null);
-  const [weekStart, setWeekStart] = useState("");
-  const [weekEnd, setWeekEnd] = useState("");
-  const [loading, setLoading] = useState(false);
+export function JournalWeeklyReflectionCard({
+  weekKey: weekKeyProp,
+  onLetterChanged,
+}: {
+  weekKey?: string | null;
+  onLetterChanged?: () => void;
+}) {
+  const weekKey = weekKeyProp?.trim() || undefined;
+  const cacheKey = weekKey || "__current__";
+  const cached = getCachedWeeklyReflection(cacheKey);
+  const [reflection, setReflection] = useState<JournalWeeklyReflection | null>(
+    () => cached?.reflection ?? null,
+  );
+  const [weekStart, setWeekStart] = useState(() => cached?.weekStart ?? "");
+  const [weekEnd, setWeekEnd] = useState(() => cached?.weekEnd ?? "");
+  const [loading, setLoading] = useState(() => !cached);
   const [generating, setGenerating] = useState(false);
-  const [emptyWeek, setEmptyWeek] = useState(false);
+  const [emptyWeek, setEmptyWeek] = useState(() => cached?.empty === true);
   const [error, setError] = useState<string | null>(null);
 
   const apiEnabled = Boolean(getMedimadeApiBase());
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { force?: boolean }) => {
     if (!apiEnabled) return;
+    if (!opts?.force) {
+      const hit = getCachedWeeklyReflection(cacheKey);
+      if (hit) {
+        setReflection(hit.reflection);
+        setWeekStart(hit.weekStart);
+        setWeekEnd(hit.weekEnd);
+        setEmptyWeek(hit.empty === true);
+        setLoading(false);
+        return;
+      }
+    }
     setLoading(true);
     setError(null);
     try {
-      const got = await fetchJournalWeeklyReflectionRemote();
+      const got = await fetchJournalWeeklyReflectionRemote(
+        weekKey ? { week: weekKey } : undefined,
+      );
+      setCachedWeeklyReflection(cacheKey, got);
       setReflection(got.reflection);
       setWeekStart(got.weekStart);
       setWeekEnd(got.weekEnd);
@@ -62,14 +92,14 @@ export function JournalWeeklyReflectionCard() {
     } finally {
       setLoading(false);
     }
-  }, [apiEnabled]);
+  }, [apiEnabled, cacheKey, weekKey]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   useEffect(() => {
-    const on = () => void load();
+    const on = () => void load({ force: true });
     window.addEventListener("medimade-session-changed", on);
     return () => window.removeEventListener("medimade-session-changed", on);
   }, [load]);
@@ -80,28 +110,34 @@ export function JournalWeeklyReflectionCard() {
       setGenerating(true);
       setError(null);
       try {
-        const got = await runJournalWeeklyReflectionRemote({ regenerate });
+        const got = await runJournalWeeklyReflectionRemote({
+          regenerate,
+          ...(weekKey ? { week: weekKey } : {}),
+        });
+        invalidateCachedWeeklyReflection(weekKey);
+        setCachedWeeklyReflection(cacheKey, got);
         setReflection(got.reflection);
         setWeekStart(got.weekStart);
         setWeekEnd(got.weekEnd);
         setEmptyWeek(got.empty === true && !got.reflection);
+        onLetterChanged?.();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to generate weekly reflection");
       } finally {
         setGenerating(false);
       }
     },
-    [apiEnabled],
+    [apiEnabled, cacheKey, onLetterChanged, weekKey],
   );
 
   const weekLabel =
     weekStart && weekEnd ? formatWeekRange(weekStart, weekEnd) : "This week";
 
   return (
-    <section className="mb-8 rounded-2xl border border-accent/25 bg-accent-soft/10 p-5 shadow-sm sm:p-6">
+    <section className="mb-7 border-b-[0.5px] border-border pb-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-accent-link">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-accent-link">
             Weekly reflection
           </p>
           <h2 className="mt-1 font-display text-2xl font-medium tracking-tight text-foreground">
@@ -112,45 +148,37 @@ export function JournalWeeklyReflectionCard() {
             entries and what came up while creating meditations.
           </p>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => void generate(Boolean(reflection))}
-            disabled={!apiEnabled || generating}
-            className="cursor-pointer rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {generating
-              ? "Writing…"
-              : reflection
-                ? "Rewrite letter"
-                : "Write my letter"}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => void generate(Boolean(reflection))}
+          disabled={!apiEnabled || generating}
+          className="shrink-0 cursor-pointer self-start rounded-xl accent-fill-gradient px-4 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {generating
+            ? "Writing…"
+            : reflection
+              ? "Rewrite letter"
+              : "Write my letter"}
+        </button>
       </div>
 
       {!apiEnabled ? (
-        <p className="mt-4 text-sm text-muted">
+        <p className="mt-4 text-sm italic text-muted">
           Set{" "}
-          <code className="rounded bg-background px-1 py-0.5">
+          <code className="rounded bg-background px-1 py-0.5 not-italic">
             NEXT_PUBLIC_MEDIMADE_API_URL
           </code>{" "}
           to enable weekly reflections.
         </p>
       ) : loading ? (
-        <p className="mt-4 text-sm text-muted">Loading…</p>
+        <p className="mt-4 text-sm italic text-muted">Loading…</p>
       ) : emptyWeek && !reflection ? (
-        <p className="mt-4 text-sm text-muted">
+        <p className="mt-4 text-sm italic text-muted">
           Nothing from this week yet — journal a little or create a meditation, then
           come back for your letter.
         </p>
       ) : reflection?.letterMarkdown?.trim() ? (
-        <div className="relative mt-5 rounded-2xl border border-accent/20 bg-background/70 px-5 py-5 pl-8 shadow-inner">
-          <span
-            className="absolute left-3 top-5 select-none text-accent-link/70"
-            aria-hidden
-          >
-            ✦
-          </span>
+        <div className="mt-5">
           <div className="font-hand text-[16px] italic leading-relaxed text-foreground/90 [&_p]:mb-4 [&_p:last-child]:mb-0">
             <ChatMarkdown text={reflection.letterMarkdown} />
           </div>
@@ -162,7 +190,7 @@ export function JournalWeeklyReflectionCard() {
           </p>
         </div>
       ) : (
-        <p className="mt-4 text-sm text-muted">
+        <p className="mt-4 text-sm italic text-muted">
           No letter yet for this week. Tap &ldquo;Write my letter&rdquo; when you&apos;re
           ready.
         </p>

@@ -818,7 +818,7 @@ export function MixerSoundsStudio({
         <button
           type="button"
           onClick={createNew}
-          className="cursor-pointer rounded-xl bg-accent px-3 py-2.5 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90"
+          className="cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
         >
           + New mix
         </button>
@@ -934,7 +934,7 @@ export function MixerSoundsStudio({
                 type="button"
                 onClick={() => void saveCurrent()}
                 disabled={!dirty || saving}
-                className="cursor-pointer rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-on-accent shadow-sm transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                className="cursor-pointer rounded-xl accent-fill-gradient px-3 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {saving ? "Saving…" : "Save"}
               </button>

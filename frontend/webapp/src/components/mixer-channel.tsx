@@ -88,7 +88,7 @@ function MixerStrip({
         onClick={onTogglePreview}
         disabled={playDisabled}
         aria-label={playAriaLabel}
-        className="mx-auto flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-full bg-accent text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        className="mx-auto flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <MixerPlayPauseIcon playing={playing} />
       </button>

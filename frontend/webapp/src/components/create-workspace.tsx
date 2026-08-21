@@ -673,18 +673,18 @@ function StyleIntakeField({
   }, [entered, scrollOnEnter, autoFocus]);
   return (
     <div
-      className={`rounded-2xl border border-border bg-surface p-5 shadow-sm transition-[opacity,transform] duration-500 ease-out sm:p-6 dark:border-border dark:bg-surface ${
+      className={`rounded-2xl border border-border bg-surface p-4 shadow-sm transition-[opacity,transform] duration-500 ease-out sm:p-5 dark:border-border dark:bg-surface ${
         entered ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
       }`}
     >
       <label className="block">
-        <span className="font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
+        <span className="font-display text-[1.0625rem] font-medium tracking-tight text-foreground sm:text-lg">
           {label}
         </span>
         {optional ? (
           <span className="mt-1 block text-xs text-muted">Optional</span>
         ) : null}
-        <div className="mt-4 flex items-end gap-2">
+        <div className="mt-3 flex items-end gap-2">
           <textarea
             ref={setTextareaRef}
             value={value}
@@ -697,7 +697,7 @@ function StyleIntakeField({
               onAdvance();
             }}
             rows={1}
-            className="min-w-0 flex-1 resize-y rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-relaxed text-foreground outline-none ring-accent/30 focus:ring-2 sm:text-base"
+            className="min-w-0 flex-1 resize-y rounded-2xl border border-border bg-background px-3.5 py-2.5 text-sm leading-relaxed text-foreground outline-none ring-accent/30 focus:ring-2 sm:text-[15px]"
           />
           <DictationMicButton
             variant="inset"
@@ -4215,7 +4215,7 @@ export function CreateWorkspace({
         {showStyleQuestions ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
             <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto">
-              <div className="space-y-10 pb-4">
+              <div className="space-y-7 pb-4">
                 {intakeQuestionsForStyle(meditationStyle ?? "")
                   .slice(0, Math.min(3, styleQuestionsRevealed))
                   .map((q, i) => (
@@ -4610,7 +4610,7 @@ export function CreateWorkspace({
                 onClick={() => void send()}
                 disabled={chatControlsDisabled || chatLoading || scriptLoading}
                 aria-label={chatLoading ? "Sending…" : "Send message"}
-                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-accent text-on-accent transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl accent-fill-gradient text-on-accent transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {chatLoading ? (
                   <span className="text-sm font-medium" aria-hidden>
