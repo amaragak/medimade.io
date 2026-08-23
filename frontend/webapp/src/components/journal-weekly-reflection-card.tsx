@@ -179,7 +179,7 @@ export function JournalWeeklyReflectionCard({
         </p>
       ) : reflection?.letterMarkdown?.trim() ? (
         <div className="mt-5">
-          <div className="font-hand text-[16px] italic leading-relaxed text-foreground/90 [&_p]:mb-4 [&_p:last-child]:mb-0">
+          <div className="mt-5 font-display text-[17px] font-normal italic leading-[1.75] text-foreground/90 [&_p]:mb-4 [&_p:first-child]:text-[19px] [&_p:last-child]:mb-0">
             <ChatMarkdown text={reflection.letterMarkdown} />
           </div>
           <p className="mt-4 text-xs text-muted">

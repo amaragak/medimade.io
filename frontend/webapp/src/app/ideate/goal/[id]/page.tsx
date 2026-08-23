@@ -11,7 +11,7 @@ function IdeateGoalPageInner() {
 
   if (!id) {
     return (
-      <div className="mesh-hero px-4 py-16 text-muted">
+      <div className="px-4 py-16 text-muted">
         Missing dream link.
       </div>
     );
@@ -24,7 +24,7 @@ export default function IdeateGoalPage() {
   return (
     <Suspense
       fallback={
-        <div className="mesh-hero px-4 py-16 text-sm text-muted">Loading…</div>
+        <div className="px-4 py-16 text-sm text-muted">Loading…</div>
       }
     >
       <IdeateGoalPageInner />

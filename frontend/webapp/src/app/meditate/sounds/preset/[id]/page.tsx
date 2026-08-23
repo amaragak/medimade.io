@@ -2,6 +2,6 @@ export const metadata = {
   title: "Sounds",
 };
 
-export default function MeditateSoundsPage() {
+export default function MeditateSoundsPresetPage() {
   return null;
 }

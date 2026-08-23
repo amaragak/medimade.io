@@ -93,7 +93,7 @@ export function PlanHomeClient() {
   const resistanceThreads = globalResistanceThreads(loadIdeateStore());
 
   return (
-    <div className="mesh-hero min-h-[calc(100vh-3.5rem)] pb-28">
+    <div className="min-h-[calc(100vh-3.5rem)] pb-28">
       <section className="mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
         <p className="text-sm font-medium uppercase tracking-widest text-accent-link">
           IDEATE

@@ -1,12 +1,11 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { ChevronDown, ChevronLeft, ChevronUp } from "lucide-react";
 import {
   fetchJournalInsightsRemote,
   getMedimadeApiBase,
-  getMedimadeSessionJwt,
   listJournalWeeklyLettersRemote,
   type JournalInsights,
   type JournalInsightsTopicId,
@@ -22,6 +21,8 @@ import {
 } from "@/lib/journal-remote-cache";
 import { JournalWeeklyReflectionCard } from "@/components/journal-weekly-reflection-card";
 import { ChatMarkdown } from "@/components/chat-markdown";
+
+const INSIGHTS_HREF = "/journal/insights";
 
 /**
  * Collapsed “more insights” sections. Ordered to match the Insights assembly
@@ -45,6 +46,16 @@ const MORE_INSIGHTS_TOPICS: Array<{ id: JournalInsightsTopicId; label: string }>
   { id: "growth", label: "Growth & learning" },
 ];
 
+function insightsWeekKeyFromPath(pathname: string): string | null {
+  const m = /^\/journal\/insights\/([^/]+)\/?$/.exec(pathname);
+  if (!m?.[1]) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
 function formatTs(iso: string | null | undefined): string {
   if (!iso) return "—";
   try {
@@ -57,6 +68,7 @@ function formatTs(iso: string | null | undefined): string {
 }
 
 function formatLetterRange(weekStart: string, weekEnd: string): string {
+  if (!weekStart || !weekEnd) return "This week";
   try {
     const s = new Date(weekStart);
     const e = new Date(weekEnd);
@@ -68,6 +80,7 @@ function formatLetterRange(weekStart: string, weekEnd: string): string {
 }
 
 function formatWrittenDate(iso: string): string {
+  if (!iso) return "—";
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return "—";
@@ -86,12 +99,26 @@ function InsightsPastLettersSidebar(props: {
   currentWeekKey: string;
   selectedWeekKey: string | null;
   loading: boolean;
+  mobileFullScreen?: boolean;
   onSelect: (weekKey: string) => void;
 }) {
-  const { letters, currentWeekKey, selectedWeekKey, loading, onSelect } = props;
+  const {
+    letters,
+    currentWeekKey,
+    selectedWeekKey,
+    loading,
+    mobileFullScreen,
+    onSelect,
+  } = props;
 
   return (
-    <aside className="flex max-h-[22rem] shrink-0 flex-col gap-3 overflow-visible border-b border-border pb-4 lg:max-h-none lg:w-64 lg:border-b-0 lg:pb-0">
+    <aside
+      className={`flex max-h-[22rem] shrink-0 flex-col gap-3 overflow-visible border-b border-border pb-4 lg:max-h-none lg:w-64 lg:border-b-0 lg:pb-0 ${
+        mobileFullScreen
+          ? "max-sm:max-h-none max-sm:min-h-0 max-sm:flex-1 max-sm:border-b-0 max-sm:pb-0"
+          : ""
+      }`}
+    >
       <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
         Past letters
       </h2>
@@ -127,7 +154,9 @@ function InsightsPastLettersSidebar(props: {
                     <span className="mt-0.5 block text-xs text-muted">
                       {isCurrent
                         ? "This week"
-                        : `Written ${formatWrittenDate(letter.generatedAt)}`}
+                        : letter.generatedAt
+                          ? `Written ${formatWrittenDate(letter.generatedAt)}`
+                          : "Not written yet"}
                     </span>
                   </button>
                 </li>
@@ -174,6 +203,11 @@ function InsightTopicSection(props: {
 }
 
 export function JournalInsightsView() {
+  const pathname = usePathname() || INSIGHTS_HREF;
+  const router = useRouter();
+  const routeWeekKey = insightsWeekKeyFromPath(pathname);
+  const mobileLetterOpen = Boolean(routeWeekKey);
+
   const cachedInsights = getCachedJournalInsights();
   const cachedLetters = getCachedWeeklyLetters();
   const [insights, setInsights] = useState<JournalInsights | null>(
@@ -186,19 +220,18 @@ export function JournalInsightsView() {
     () => cachedLetters?.currentWeekKey ?? "",
   );
   const [selectedWeekKey, setSelectedWeekKey] = useState<string | null>(() => {
+    if (routeWeekKey) return routeWeekKey;
     const cur = cachedLetters?.currentWeekKey;
     if (cur) return cur;
     return cachedLetters?.letters[0]?.weekKey ?? null;
   });
   const [lettersLoading, setLettersLoading] = useState(() => !cachedLetters);
-  const [signedIn, setSignedIn] = useState(() => Boolean(getMedimadeSessionJwt()));
   const [moreOpen, setMoreOpen] = useState(false);
 
   const apiEnabled = Boolean(getMedimadeApiBase());
 
   const load = useCallback(async (opts?: { force?: boolean }) => {
     if (!apiEnabled) return;
-    if (!getMedimadeSessionJwt()) return;
     if (!opts?.force) {
       const cached = getCachedJournalInsights();
       if (cached !== undefined) {
@@ -211,19 +244,23 @@ export function JournalInsightsView() {
       setCachedJournalInsights(got);
       setInsights(got);
     } catch {
-      /* offline or not signed in */
+      /* offline */
     }
   }, [apiEnabled]);
 
   const loadLetters = useCallback(async (opts?: { force?: boolean }) => {
-    if (!apiEnabled) return;
-    if (!getMedimadeSessionJwt()) return;
+    if (!apiEnabled) {
+      // Avoid a permanent "Loading…" when the API URL isn't configured.
+      setLettersLoading(false);
+      return;
+    }
     if (!opts?.force) {
       const cached = getCachedWeeklyLetters();
       if (cached) {
         setLetters(cached.letters);
         setCurrentWeekKey(cached.currentWeekKey);
         setSelectedWeekKey((prev) => {
+          if (routeWeekKey) return routeWeekKey;
           if (prev) {
             if (prev === cached.currentWeekKey) return prev;
             if (cached.letters.some((l) => l.weekKey === prev)) return prev;
@@ -241,6 +278,7 @@ export function JournalInsightsView() {
       setLetters(got.letters);
       setCurrentWeekKey(got.currentWeekKey);
       setSelectedWeekKey((prev) => {
+        if (routeWeekKey) return routeWeekKey;
         if (prev) {
           if (prev === got.currentWeekKey) return prev;
           if (got.letters.some((l) => l.weekKey === prev)) return prev;
@@ -248,11 +286,11 @@ export function JournalInsightsView() {
         return got.currentWeekKey || got.letters[0]?.weekKey || null;
       });
     } catch {
-      /* offline or not signed in */
+      /* offline */
     } finally {
       setLettersLoading(false);
     }
-  }, [apiEnabled]);
+  }, [apiEnabled, routeWeekKey]);
 
   useEffect(() => {
     void load();
@@ -262,13 +300,31 @@ export function JournalInsightsView() {
   useEffect(() => {
     const on = () => {
       clearJournalRemoteSessionCache();
-      setSignedIn(Boolean(getMedimadeSessionJwt()));
       void load({ force: true });
       void loadLetters({ force: true });
     };
     window.addEventListener("medimade-session-changed", on);
     return () => window.removeEventListener("medimade-session-changed", on);
   }, [load, loadLetters]);
+
+  useEffect(() => {
+    if (!routeWeekKey) return;
+    setSelectedWeekKey(routeWeekKey);
+  }, [routeWeekKey]);
+
+  const displayLetters = useMemo(() => {
+    if (!currentWeekKey) return letters;
+    if (letters.some((l) => l.weekKey === currentWeekKey)) return letters;
+    return [
+      {
+        weekKey: currentWeekKey,
+        weekStart: "",
+        weekEnd: "",
+        generatedAt: "",
+      },
+      ...letters,
+    ];
+  }, [letters, currentWeekKey]);
 
   const topicsById = useMemo(() => {
     const map = new Map<JournalInsightsTopicId, { summaryMarkdown: string; updatedAt: string }>();
@@ -278,33 +334,64 @@ export function JournalInsightsView() {
     return map;
   }, [insights]);
 
-  const activeWeekKey = selectedWeekKey || currentWeekKey || null;
+  const activeWeekKey =
+    routeWeekKey || selectedWeekKey || currentWeekKey || null;
+
+  /** Topic summaries are global — keep on desktop for any week; on mobile only with this week. */
+  const isCurrentWeekLetter =
+    Boolean(activeWeekKey) &&
+    Boolean(currentWeekKey) &&
+    activeWeekKey === currentWeekKey;
+
+  const selectWeek = useCallback(
+    (weekKey: string) => {
+      setSelectedWeekKey(weekKey);
+      if (insightsWeekKeyFromPath(pathname) === weekKey) return;
+      router.push(`${INSIGHTS_HREF}/${encodeURIComponent(weekKey)}`);
+    },
+    [pathname, router],
+  );
+
+  const openInsightsList = useCallback(() => {
+    router.push(INSIGHTS_HREF);
+  }, [router]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:gap-4">
-      <InsightsPastLettersSidebar
-        letters={letters}
-        currentWeekKey={currentWeekKey}
-        selectedWeekKey={activeWeekKey}
-        loading={lettersLoading}
-        onSelect={setSelectedWeekKey}
-      />
+    <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden lg:flex-row lg:gap-4">
+      <div
+        className={
+          mobileLetterOpen ? "hidden sm:contents" : "contents"
+        }
+      >
+        <InsightsPastLettersSidebar
+          letters={displayLetters}
+          currentWeekKey={currentWeekKey}
+          selectedWeekKey={activeWeekKey}
+          loading={lettersLoading}
+          mobileFullScreen={!mobileLetterOpen}
+          onSelect={selectWeek}
+        />
+      </div>
 
-      <div className="mx-auto flex min-h-0 w-full max-w-[820px] flex-1 flex-col overflow-y-auto px-0 py-0 sm:px-2">
-        {/* 1. Sign-in nudge */}
-        {apiEnabled && !signedIn ? (
-          <div className="mb-7 border-b-[0.5px] border-border pb-6 text-sm text-muted">
-            Sign in to load cloud insights for your journal.{" "}
-            <Link
-              href="/login"
-              className="cursor-pointer font-medium text-accent-link underline-offset-2 hover:underline"
+      <div
+        className={`mx-auto flex min-h-0 w-full max-w-[820px] flex-1 flex-col overflow-y-auto px-0 py-0 sm:px-2 ${
+          !mobileLetterOpen ? "max-sm:hidden" : ""
+        }`}
+      >
+        {mobileLetterOpen ? (
+          <div className="mb-3 flex shrink-0 items-center sm:hidden">
+            <button
+              type="button"
+              onClick={openInsightsList}
+              className="inline-flex cursor-pointer items-center gap-0.5 text-sm font-semibold text-accent-link"
+              aria-label="Back to Insights list"
             >
-              Sign in
-            </Link>
+              <ChevronLeft aria-hidden className="size-5" strokeWidth={2} />
+              Insights
+            </button>
           </div>
         ) : null}
 
-        {/* 2. Weekly Reflection */}
         <JournalWeeklyReflectionCard
           weekKey={activeWeekKey}
           onLetterChanged={() => {
@@ -313,39 +400,38 @@ export function JournalInsightsView() {
           }}
         />
 
-        {/* 3. Ideate cross-reference — reserved; only when that section exists with content */}
+        <div className={isCurrentWeekLetter ? undefined : "max-sm:hidden"}>
+          <button
+            type="button"
+            onClick={() => setMoreOpen((v) => !v)}
+            aria-expanded={moreOpen}
+            className="mb-6 flex cursor-pointer items-center gap-1 self-start text-sm text-muted transition-colors hover:text-foreground"
+          >
+            {moreOpen ? "Show less" : "Show more insights"}
+            {moreOpen ? (
+              <ChevronUp aria-hidden className="size-4" strokeWidth={2} />
+            ) : (
+              <ChevronDown aria-hidden className="size-4" strokeWidth={2} />
+            )}
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setMoreOpen((v) => !v)}
-          aria-expanded={moreOpen}
-          className="mb-6 flex cursor-pointer items-center gap-1 self-start text-sm text-muted transition-colors hover:text-foreground"
-        >
-          {moreOpen ? "Show less" : "Show more insights"}
           {moreOpen ? (
-            <ChevronUp aria-hidden className="size-4" strokeWidth={2} />
-          ) : (
-            <ChevronDown aria-hidden className="size-4" strokeWidth={2} />
-          )}
-        </button>
-
-        {/* 4–…. Remaining insights — omitted from the DOM while collapsed */}
-        {moreOpen ? (
-          <div>
-            {MORE_INSIGHTS_TOPICS.map((t, i) => {
-              const row = topicsById.get(t.id);
-              return (
-                <InsightTopicSection
-                  key={t.id}
-                  label={t.label}
-                  summaryMarkdown={row?.summaryMarkdown ?? ""}
-                  updatedAt={row?.updatedAt}
-                  last={i === MORE_INSIGHTS_TOPICS.length - 1}
-                />
-              );
-            })}
-          </div>
-        ) : null}
+            <div>
+              {MORE_INSIGHTS_TOPICS.map((t, i) => {
+                const row = topicsById.get(t.id);
+                return (
+                  <InsightTopicSection
+                    key={t.id}
+                    label={t.label}
+                    summaryMarkdown={row?.summaryMarkdown ?? ""}
+                    updatedAt={row?.updatedAt}
+                    last={i === MORE_INSIGHTS_TOPICS.length - 1}
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );

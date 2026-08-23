@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { IconAdjustmentsHorizontal, IconPlus } from "@tabler/icons-react";
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Switch from "@radix-ui/react-switch";
 import { SearchInput } from "@/components/search-input";
@@ -941,6 +942,7 @@ function LibraryAudioStrip({
   bedVolumeApiRef,
   onPlayingChange,
   onPlaybackTimeChange,
+  onHeightChange,
 }: {
   track: ActiveTrack | null;
   musicItems: BackgroundAudioItem[];
@@ -950,7 +952,9 @@ function LibraryAudioStrip({
   bedVolumeApiRef?: { current: LibraryBedVolumeApi | null };
   onPlayingChange?: (s3Key: string, playing: boolean) => void;
   onPlaybackTimeChange?: (s3Key: string, timeSeconds: number) => void;
+  onHeightChange?: (heightPx: number) => void;
 }) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const natureRef = useRef<HTMLAudioElement>(null);
   const musicRef = useRef<HTMLAudioElement>(null);
@@ -1197,6 +1201,20 @@ function LibraryAudioStrip({
     };
   }, [track, onPlayingChange, reportTime]);
 
+  useLayoutEffect(() => {
+    if (!track) {
+      onHeightChange?.(0);
+      return;
+    }
+    const el = rootRef.current;
+    if (!el || !onHeightChange) return;
+    const report = () => onHeightChange(el.getBoundingClientRect().height);
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [track, onHeightChange]);
+
   if (!track) return null;
 
   const max = Math.max(duration, 0.0001);
@@ -1225,6 +1243,7 @@ function LibraryAudioStrip({
 
   return (
     <div
+      ref={rootRef}
       className={`fixed inset-x-0 bottom-0 border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_8%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_35%,transparent)] sm:px-4 ${
         elevated ? "z-[70]" : "z-50"
       }`}
@@ -1297,9 +1316,35 @@ function LibraryAudioStrip({
             </button>
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-foreground">
-              {track.title}
-            </p>
+            <div className="flex items-start gap-2">
+              <p className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+                {track.title}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  pausePlayback();
+                  onDismiss();
+                }}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-accent-soft/40 hover:text-foreground sm:hidden"
+                aria-label="Close player"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M18 6L6 18" />
+                  <path d="M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
             <div className="mt-1.5 flex items-center gap-2">
               <span className="w-10 shrink-0 tabular-nums text-xs text-muted">
                 {formatAudioClock(current)}
@@ -1351,7 +1396,7 @@ function LibraryAudioStrip({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center justify-end gap-2 sm:justify-start">
+        <div className="hidden shrink-0 items-center justify-end gap-2 sm:flex">
           <a
             href={track.url}
             download={downloadBasename(track.title)}
@@ -1423,6 +1468,22 @@ export default function LibraryView({
   const [loading, setLoading] = useState(!Array.isArray(initialItems));
   const [error, setError] = useState<string | null>(null);
   const [expandedSk, setExpandedSk] = useState<string | null>(null);
+  /** Mobile-only: which library cards show full details (multiple allowed). */
+  const [mobileCardOpen, setMobileCardOpen] = useState<Record<string, boolean>>(
+    {},
+  );
+  const [playerStripHeightPx, setPlayerStripHeightPx] = useState(0);
+  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
+  const mobileSearchRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!mobileFilterOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMobileFilterOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [mobileFilterOpen]);
   const [ratingBusy, setRatingBusy] = useState<string | null>(null);
   const [favouritesOnly, setFavouritesOnly] = useState(false);
   const [favouriteBusySk, setFavouriteBusySk] = useState<string | null>(null);
@@ -1463,6 +1524,8 @@ export default function LibraryView({
 
   const itemElsRef = useRef<Map<string, HTMLLIElement>>(new Map());
   const focusHandledRef = useRef(false);
+  const shareIdHandledRef = useRef(false);
+  const [shareCopiedId, setShareCopiedId] = useState<string | null>(null);
 
   // Keep a stable ref for throttled `timeupdate` callbacks.
   playingS3KeyRef.current = playingS3Key;
@@ -1978,6 +2041,48 @@ export default function LibraryView({
       }
     }
   }, [loading, visibleItems, searchParams]);
+
+  // Deep link: /meditate/library?id=<id> → Community tab, scroll to item, autoplay.
+  useEffect(() => {
+    if (loading) return;
+    const id = searchParams.get("id")?.trim() || "";
+    if (!id) return;
+
+    if (libraryTab !== "community") {
+      setLibraryTab("community");
+      return;
+    }
+    if (categoryFilter !== "all") {
+      setCategoryFilter("all");
+      return;
+    }
+    if (searchQuery.trim()) {
+      setSearchQuery("");
+      return;
+    }
+    if (shareIdHandledRef.current) return;
+
+    const found = communityItems.find((x) => x.id === id);
+    if (!found) return;
+
+    shareIdHandledRef.current = true;
+    const scrollAndPlay = () => {
+      const el = itemElsRef.current.get(found.s3Key);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setNowPlaying(trackFromLibraryItem(found));
+    };
+    // Allow the community list to paint after filter/tab switches.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(scrollAndPlay);
+    });
+  }, [
+    loading,
+    searchParams,
+    libraryTab,
+    categoryFilter,
+    searchQuery,
+    communityItems,
+  ]);
 
   const nowKey = nowPlaying?.s3Key ?? null;
   useEffect(() => {
@@ -2532,6 +2637,40 @@ export default function LibraryView({
       </button>
     );
 
+    const shareId = m.id?.trim() || "";
+    const canShare =
+      Boolean(shareId) && (isCommunity || m.isPublic === true);
+    const shareBtn = canShare ? (
+      <button
+        type="button"
+        onClick={() => {
+          const url = `https://consciously.live/meditate/library?id=${encodeURIComponent(shareId)}`;
+          void (async () => {
+            try {
+              await navigator.clipboard.writeText(url);
+              setShareCopiedId(shareId);
+              window.setTimeout(() => {
+                setShareCopiedId((cur) => (cur === shareId ? null : cur));
+              }, 2000);
+            } catch {
+              window.prompt("Copy this link:", url);
+            }
+          })();
+        }}
+        aria-label="Copy share link"
+        className={`rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted transition-opacity transition-colors hover:border-accent/40 hover:text-foreground ${
+          isCommunity ? "" : rowChrome
+        } cursor-pointer`}
+        title={
+          shareCopiedId === shareId
+            ? "Link copied"
+            : "Copy link to this meditation"
+        }
+      >
+        {shareCopiedId === shareId ? "Copied!" : "Share"}
+      </button>
+    ) : null;
+
     const scriptToggleBtn =
       m.scriptText && m.sk != null ? (
         <button
@@ -2552,58 +2691,105 @@ export default function LibraryView({
         </button>
       ) : null;
 
+    const cardKey = m.s3Key;
+    const mobileOpen = Boolean(mobileCardOpen[cardKey]);
+    function toggleMobileCard() {
+      setMobileCardOpen((prev) => ({
+        ...prev,
+        [cardKey]: !prev[cardKey],
+      }));
+    }
+
+    const playControl = isPlaying ? (
+      <div className="flex items-center gap-2">
+        <span className="tabular-nums text-xs font-semibold text-muted sm:inline">
+          {formatAudioClock(playingTimeSeconds)}
+        </span>
+        <button
+          type="button"
+          onClick={() => setPlaybackToggleNonce((v) => v + 1)}
+          className="flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent sm:h-11 sm:w-11"
+          aria-label="Pause"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="22"
+            height="22"
+            fill="currentColor"
+            aria-hidden
+          >
+            <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
+          </svg>
+        </button>
+      </div>
+    ) : (
+      <button
+        type="button"
+        onClick={() =>
+          isSelected
+            ? setPlaybackToggleNonce((v) => v + 1)
+            : setNowPlaying(trackFromLibraryItem(m))
+        }
+        className={
+          alwaysShowRowChrome
+            ? "flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent opacity-100 pointer-events-auto transition-opacity sm:h-11 sm:w-11"
+            : "flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent opacity-100 pointer-events-auto transition-opacity sm:h-11 sm:w-11 sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto"
+        }
+        aria-label="Play"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="22"
+          height="22"
+          fill="currentColor"
+          aria-hidden
+        >
+          <path d="M8 5v14l11-7L8 5z" />
+        </svg>
+      </button>
+    );
+
     const actions = (
       <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
-        {isPlaying ? (
-          <div className="flex items-center gap-2">
-            <span className="tabular-nums text-xs font-semibold text-muted">
-              {formatAudioClock(playingTimeSeconds)}
-            </span>
-            <button
-              type="button"
-              onClick={() => setPlaybackToggleNonce((v) => v + 1)}
-              className="self-center flex h-11 w-11 items-center justify-center rounded-full accent-fill-gradient text-on-accent cursor-pointer"
-              aria-label="Pause"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                width="22"
-                height="22"
-                fill="currentColor"
-                aria-hidden
-              >
-                <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
-              </svg>
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() =>
-              isSelected
-                ? setPlaybackToggleNonce((v) => v + 1)
-                : setNowPlaying(trackFromLibraryItem(m))
-            }
-            className={
-              alwaysShowRowChrome
-                ? "flex self-center h-11 w-11 items-center justify-center rounded-full accent-fill-gradient text-on-accent cursor-pointer opacity-100 pointer-events-auto transition-opacity"
-                : "flex self-center h-11 w-11 items-center justify-center rounded-full accent-fill-gradient text-on-accent cursor-pointer opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto"
-            }
-            aria-label="Play"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="22"
-              height="22"
-              fill="currentColor"
-              aria-hidden
-            >
-              <path d="M8 5v14l11-7L8 5z" />
-            </svg>
-          </button>
-        )}
+        {playControl}
       </div>
     );
+
+    const mobileFavouriteBtn = isCommunity ? null : (
+      <button
+        type="button"
+        onClick={() => void setFavourite(m, !m.favourite)}
+        disabled={favouriteDisabled}
+        aria-label={m.favourite ? "Unfavourite meditation" : "Favourite meditation"}
+        className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full border border-border bg-background transition-colors ${
+          m.favourite ? "text-selected border-selected/40" : "text-muted"
+        } ${
+          favouriteDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+        }`}
+      >
+        <IconHeart filled={m.favourite} strokeWidth={2.5} />
+      </button>
+    );
+
+    const mobileMixerBtn = canEditMix ? (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (mixEditor?.sk === m.sk) {
+            mixCloseRef.current?.();
+            return;
+          }
+          setMixAnchorEl(e.currentTarget);
+          openMixEditor(m);
+        }}
+        aria-expanded={mixEditor?.sk === m.sk}
+        aria-label="Edit background mix"
+        className="flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-border bg-background text-muted"
+      >
+        <IconMixer />
+      </button>
+    ) : null;
 
     const scriptBlock =
       open && m.scriptText ? (
@@ -2619,6 +2805,79 @@ export default function LibraryView({
           ) : null}
         </div>
       ) : null;
+
+    const mobileCardBody = (
+      <div className="sm:hidden">
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="min-w-0 flex-1 font-display text-lg font-medium leading-snug">
+            {m.title}
+          </h2>
+          <span className="mt-1.5 shrink-0 tabular-nums text-xs font-semibold text-muted">
+            {lengthLine}
+          </span>
+        </div>
+        <span className="mt-2 inline-block rounded-full bg-accent-soft/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
+          {styleLine}
+        </span>
+        <p className="mt-2 line-clamp-2 text-sm text-muted">
+          {m.description ?? "—"}
+        </p>
+        <div className="mt-3 flex items-center gap-2">
+          {playControl}
+          {mobileOpen ? mobileMixerBtn : null}
+          {mobileFavouriteBtn}
+          {!mobileOpen ? (
+            <button
+              type="button"
+              onClick={toggleMobileCard}
+              className="ml-auto cursor-pointer text-sm font-semibold text-accent-link"
+              aria-expanded={false}
+            >
+              More ⌄
+            </button>
+          ) : (
+            <span className="ml-auto" aria-hidden />
+          )}
+        </div>
+        {mobileOpen ? (
+          <div className="mt-3 space-y-3">
+            {m.scriptText && m.sk != null ? (
+              <button
+                type="button"
+                onClick={() =>
+                  setExpandedSk((v) => (v === m.sk ? null : (m.sk ?? null)))
+                }
+                className="cursor-pointer font-bold text-accent-link hover:text-accent-link/80"
+                style={{ lineHeight: "1.35" }}
+              >
+                {open ? "Hide script" : "Show script"}
+              </button>
+            ) : null}
+            {scriptBlock}
+            {stars}
+            <p className="text-xs text-muted">
+              {formatWhen(m.createdAt)}
+              {m.speakerName ? ` · ${m.speakerName}` : ""}
+            </p>
+            {publicBtn || archiveBtn || shareBtn ? (
+              <div className="flex items-center gap-3 border-t border-border/70 pt-3 [&_*]:!opacity-100 [&_*]:!pointer-events-auto">
+                {publicBtn}
+                {shareBtn}
+                {archiveBtn}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={toggleMobileCard}
+              className="w-full cursor-pointer text-right text-sm font-semibold text-accent-link"
+              aria-expanded={true}
+            >
+              Show less ⌃
+            </button>
+          </div>
+        ) : null}
+      </div>
+    );
 
     if (viewMode === "grid") {
       return (
@@ -2641,6 +2900,8 @@ export default function LibraryView({
               className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent border-accent-pulse"
             />
           ) : null}
+          {mobileCardBody}
+          <div className="hidden min-w-0 flex-1 flex-col sm:flex">
           <div className="flex items-start justify-between gap-3">
             <p className="text-xs font-medium uppercase tracking-wide text-accent-link">
               {styleLine}
@@ -2663,9 +2924,10 @@ export default function LibraryView({
               {formatWhen(m.createdAt)}
               {m.speakerName ? ` · ${m.speakerName}` : ""}
             </span>
-            {publicBtn || archiveBtn ? (
+            {publicBtn || archiveBtn || shareBtn ? (
             <span className="shrink-0 flex items-center gap-3">
               {publicBtn}
+              {shareBtn}
               {archiveBtn}
             </span>
             ) : null}
@@ -2678,6 +2940,7 @@ export default function LibraryView({
               {mixerBtn}
               {favouriteBtn}
             </div>
+          </div>
           </div>
         </li>
       );
@@ -2699,6 +2962,8 @@ export default function LibraryView({
             className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent border-accent-pulse"
           />
         ) : null}
+        {mobileCardBody}
+        <div className="hidden sm:block">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex items-start justify-between gap-3">
@@ -2735,14 +3000,16 @@ export default function LibraryView({
             {formatWhen(m.createdAt)}
             {m.speakerName ? ` · ${m.speakerName}` : ""}
           </span>
-          {publicBtn || archiveBtn ? (
+          {publicBtn || archiveBtn || shareBtn ? (
             <span className="shrink-0 flex items-center gap-3">
               {publicBtn}
+              {shareBtn}
               {archiveBtn}
             </span>
           ) : null}
         </div>
         {scriptBlock ? <div className="mt-4 border-t border-border pt-4">{scriptBlock}</div> : null}
+        </div>
       </li>
     );
   }
@@ -2817,7 +3084,7 @@ export default function LibraryView({
 
   const layoutToggle = (
             <div
-              className="inline-flex rounded-xl border border-border bg-card p-1"
+              className="hidden rounded-xl border border-border bg-card p-1 sm:inline-flex"
               role="group"
               aria-label="Library layout"
             >
@@ -2859,19 +3126,75 @@ export default function LibraryView({
             />
   );
 
+  const mobileToolbarChrome =
+    "h-[38px] rounded-[9px] border border-foreground/12 bg-foreground/[0.06]";
+  const mobileFilterActive =
+    sortBy !== "newest" || categoryFilter !== "all";
+
+  const mobileSearchFilterRow = (
+    <div className="flex items-center gap-2 sm:hidden">
+      <SearchInput
+        className="min-w-0 flex-1"
+        inputRef={mobileSearchRef}
+        inputClassName={`${mobileToolbarChrome} py-0 pl-9 pr-3 text-sm leading-[38px] placeholder:text-muted`}
+        value={searchQuery}
+        onChange={setSearchQuery}
+        placeholder="Search"
+        aria-label="Search library"
+      />
+      <button
+        type="button"
+        onClick={() => setMobileFilterOpen(true)}
+        aria-label="Sort and filter"
+        aria-haspopup="dialog"
+        aria-expanded={mobileFilterOpen}
+        className={`relative flex w-[38px] shrink-0 cursor-pointer items-center justify-center text-foreground ${mobileToolbarChrome}`}
+      >
+        <IconAdjustmentsHorizontal size={20} stroke={1.75} aria-hidden />
+        {mobileFilterActive ? (
+          <span
+            className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full border-2 border-card bg-accent"
+            aria-hidden
+          />
+        ) : null}
+      </button>
+      {libraryTab === "meditations" ? (
+        <button
+          type="button"
+          onClick={() => setFavouritesOnly((v) => !v)}
+          aria-pressed={favouritesOnly}
+          aria-label={
+            favouritesOnly ? "Show all meditations" : "Show favourites only"
+          }
+          className={`flex w-[38px] shrink-0 cursor-pointer items-center justify-center ${mobileToolbarChrome} ${
+            favouritesOnly
+              ? "border-selected/50 bg-selected/15 text-selected"
+              : "text-foreground"
+          }`}
+        >
+          <IconHeart filled={favouritesOnly} />
+        </button>
+      ) : null}
+    </div>
+  );
+
   return (
     <>
     <div
-      className={`mx-auto w-full max-w-6xl min-w-0 px-4 py-10 sm:px-6 [scrollbar-gutter:stable] ${
-        nowPlaying ? "pb-32 sm:pb-28" : ""
-      }`}
+      className="mx-auto w-full max-w-6xl min-w-0 px-4 pt-3 pb-10 sm:px-6 sm:py-10 [scrollbar-gutter:stable]"
+      style={
+        nowPlaying && playerStripHeightPx > 0
+          ? { paddingBottom: `calc(${playerStripHeightPx}px + 1rem)` }
+          : undefined
+      }
     >
       <header className="w-full min-w-0">
         <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-3">
           <h1 className="shrink-0 font-display text-3xl font-medium tracking-tight">
             Library
           </h1>
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+          {/* Tablet+ : tabs + create text (unchanged) */}
+          <div className="hidden min-w-0 flex-wrap items-center justify-end gap-2 sm:flex">
             <div
               className="inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
               role="tablist"
@@ -2888,7 +3211,7 @@ export default function LibraryView({
                     : "text-muted hover:text-foreground"
                 }`}
               >
-                Meditations
+                My Meditations
               </button>
               <button
                 type="button"
@@ -2912,8 +3235,52 @@ export default function LibraryView({
             </Link>
           </div>
         </div>
+        {/* Mobile: compact tabs + icon create on one row */}
+        <div className="mt-3 flex items-center gap-2 sm:hidden">
+          <div
+            className="inline-flex min-w-0 flex-1 rounded-xl border border-border bg-background p-0.5"
+            role="tablist"
+            aria-label="Library section"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={libraryTab === "meditations"}
+              onClick={() => setLibraryTab("meditations")}
+              className={`min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-[13px] font-semibold transition-colors ${
+                libraryTab === "meditations"
+                  ? "bg-selected text-on-selected"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              My Meditations
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={libraryTab === "community"}
+              onClick={() => setLibraryTab("community")}
+              className={`min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-[13px] font-semibold transition-colors ${
+                libraryTab === "community"
+                  ? "bg-selected text-on-selected"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              Community
+            </button>
+          </div>
+          <Link
+            href="/meditate/create"
+            aria-label="Create new meditation"
+            className="flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-xl accent-fill-gradient text-on-accent transition-opacity hover:opacity-90"
+          >
+            <IconPlus size={22} stroke={2.25} aria-hidden />
+          </Link>
+        </div>
         {libraryTab !== "community" ? (
-          <div className="mt-4 flex w-full flex-wrap items-center gap-3">
+          <>
+            <div className="mt-3 sm:hidden">{mobileSearchFilterRow}</div>
+            <div className="mt-4 hidden w-full flex-wrap items-center gap-3 sm:flex">
             <div className="flex shrink-0 items-center gap-3">
               {libraryTab === "meditations" ? (
               <button
@@ -3002,6 +3369,7 @@ export default function LibraryView({
             {searchInput}
             <div className="shrink-0">{layoutToggle}</div>
           </div>
+          </>
         ) : null}
       </header>
 
@@ -3011,7 +3379,13 @@ export default function LibraryView({
             selected={categoryFilter}
             onSelect={setCategoryFilter}
           />
-          <div className="mt-8 flex w-full flex-wrap items-center gap-3">
+          <div
+            className="sm:hidden"
+            style={{ height: 11, minHeight: 11, width: "100%" }}
+            aria-hidden
+          />
+          {mobileSearchFilterRow}
+          <div className="mt-8 hidden w-full flex-wrap items-center gap-3 sm:flex">
             <div className="shrink-0">{sortDropdown}</div>
             {searchInput}
             <div className="shrink-0">{layoutToggle}</div>
@@ -3047,7 +3421,7 @@ export default function LibraryView({
         <ul
           className={
             viewMode === "grid"
-              ? `${libraryTab === "community" ? "mt-4" : "mt-10"} grid w-full min-w-0 max-w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3`
+              ? `${libraryTab === "community" ? "mt-4" : "mt-10"} flex w-full min-w-0 max-w-full flex-col gap-3 sm:grid sm:grid-cols-2 sm:gap-4 lg:grid-cols-3`
               : `${libraryTab === "community" ? "mt-4" : "mt-10"} flex w-full min-w-0 max-w-full flex-col gap-3`
           }
         >
@@ -3168,6 +3542,7 @@ export default function LibraryView({
       onDismiss={() => setNowPlaying(null)}
         playbackToggleNonce={playbackToggleNonce}
         bedVolumeApiRef={bedVolumeApiRef}
+        onHeightChange={setPlayerStripHeightPx}
         onPlayingChange={(s3Key, playing) =>
           setPlayingS3Key(playing ? s3Key : null)
         }
@@ -3177,6 +3552,94 @@ export default function LibraryView({
           setPlayingTimeSeconds(timeSeconds);
         }}
     />
+
+    {mobileFilterOpen ? (
+      <div
+        className="fixed inset-0 z-[60] flex items-end justify-center bg-overlay/45 p-4 backdrop-blur-[2px] sm:hidden"
+        role="presentation"
+        onClick={() => setMobileFilterOpen(false)}
+      >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="library-mobile-filter-title"
+          className="max-h-[min(85vh,32rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <h2
+              id="library-mobile-filter-title"
+              className="font-display text-lg font-medium text-foreground"
+            >
+              Sort & filter
+            </h2>
+            <button
+              type="button"
+              onClick={() => setMobileFilterOpen(false)}
+              className="cursor-pointer rounded-lg px-2 py-1 text-sm text-muted hover:bg-accent-soft/50 hover:text-foreground"
+            >
+              Done
+            </button>
+          </div>
+          <section className="mt-5">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Sort
+            </h3>
+            <div className="mt-2 flex flex-col gap-1" role="listbox" aria-label="Sort library">
+              {sortItems.map((it) => {
+                const selected = sortBy === it.value;
+                return (
+                  <button
+                    key={it.value}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    onClick={() => setSortBy(it.value)}
+                    className={`w-full cursor-pointer rounded-xl px-3 py-2.5 text-left text-sm font-semibold ${
+                      selected
+                        ? "bg-selected/15 text-foreground"
+                        : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                    }`}
+                  >
+                    {it.label}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+          <section className="mt-5">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Category
+            </h3>
+            <div
+              className="mt-2 flex flex-col gap-1"
+              role="listbox"
+              aria-label="Filter category"
+            >
+              {categoryItems.map((it) => {
+                const selected = categoryFilter === it.value;
+                return (
+                  <button
+                    key={it.value}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    onClick={() => setCategoryFilter(it.value)}
+                    className={`w-full cursor-pointer rounded-xl px-3 py-2.5 text-left text-sm font-semibold ${
+                      selected
+                        ? "bg-selected/15 text-foreground"
+                        : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                    }`}
+                  >
+                    {it.label}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      </div>
+    ) : null}
 
     {mixEditor ? (
       <LibraryMixEditorModal

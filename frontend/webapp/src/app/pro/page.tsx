@@ -6,7 +6,7 @@ export const metadata = {
 
 export default function ProPage() {
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
+    <div className="mx-auto max-w-3xl px-4 pt-3 pb-10 sm:px-6 sm:py-10">
       <p className="text-sm font-medium uppercase tracking-widest text-accent-link">
         medimade Pro
       </p>

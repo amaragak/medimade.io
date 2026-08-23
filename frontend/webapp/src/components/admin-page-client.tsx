@@ -19,8 +19,8 @@ export function AdminPageClient({ children }: { children: ReactNode }) {
     <div
       className={
         fillViewport
-          ? "mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-4 py-5 sm:px-6"
-          : "mx-auto w-full max-w-6xl px-4 py-8 sm:px-6"
+          ? "mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-4 pt-2 pb-5 sm:px-6 sm:py-5"
+          : "mx-auto w-full max-w-6xl px-4 pt-3 pb-8 sm:px-6 sm:py-8"
       }
     >
       <h1 className="font-display text-2xl font-medium tracking-tight">Admin</h1>

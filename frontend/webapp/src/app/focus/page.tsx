@@ -27,7 +27,7 @@ const features = [
 
 export default function FocusMarketingPage() {
   return (
-    <div className="mesh-hero">
+    <div>
       <section className="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-24">
         <p className="text-sm font-medium uppercase tracking-widest text-accent-link">
           Chrome extension

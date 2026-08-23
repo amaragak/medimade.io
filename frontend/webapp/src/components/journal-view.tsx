@@ -24,7 +24,7 @@ import {
   type JournalImportPreviewRow,
 } from "@/lib/journal-import";
 import { SearchInput } from "@/components/search-input";
-import { Calendar, Folder, Import } from "lucide-react";
+import { Calendar, ChevronLeft, Folder, Import } from "lucide-react";
 import { JournalLockGate } from "@/components/journal-lock-gate";
 import {
   fetchJournalStoreRemote,
@@ -87,6 +87,36 @@ function journalSectionFromPath(pathname: string): JournalSection {
   return "journal";
 }
 
+/** Entry id from `/journal/:entryId` (not gratitudes/insights). */
+function journalEntryIdFromPath(pathname: string): string | null {
+  if (
+    pathname === "/journal" ||
+    pathname === "/journal/" ||
+    pathname.startsWith("/journal/gratitudes") ||
+    pathname.startsWith("/journal/insights")
+  ) {
+    return null;
+  }
+  const m = /^\/journal\/([^/]+)\/?$/.exec(pathname);
+  if (!m?.[1]) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
+/** Entry id from `/journal/gratitudes/:entryId`. */
+function gratitudeEntryIdFromPath(pathname: string): string | null {
+  const m = /^\/journal\/gratitudes\/([^/]+)\/?$/.exec(pathname);
+  if (!m?.[1]) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
 function JournalSettingsIconButton({ onClick }: { onClick: () => void }) {
   return (
     <button
@@ -98,6 +128,23 @@ function JournalSettingsIconButton({ onClick }: { onClick: () => void }) {
     >
       <IconSettingsCog />
     </button>
+  );
+}
+
+function IconEntryMore({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="currentColor"
+      aria-hidden
+    >
+      <circle cx="12" cy="5" r="1.75" />
+      <circle cx="12" cy="12" r="1.75" />
+      <circle cx="12" cy="19" r="1.75" />
+    </svg>
   );
 }
 
@@ -179,11 +226,28 @@ export function JournalView() {
   const [selectedFolderId, setSelectedFolderId] = useState(FOLDER_ALL);
   const [namingFolder, setNamingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
-  const [sidebarMenu, setSidebarMenu] = useState<null | "folder" | "date">(null);
+  const [sidebarMenu, setSidebarMenu] = useState<
+    null | "folder" | "date" | "filters"
+  >(null);
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
+  const [mobileEntryMenuOpen, setMobileEntryMenuOpen] = useState(false);
   const pathname = usePathname() || "/journal";
   const router = useRouter();
   const section = journalSectionFromPath(pathname);
+  const routeEntryId = journalEntryIdFromPath(pathname);
+  const routeGratitudeId = gratitudeEntryIdFromPath(pathname);
+  /** Mobile journal: editor is its own full-screen route (`/journal/:id`). */
+  const mobileJournalEditor =
+    section === "journal" && Boolean(routeEntryId);
+  /** Mobile gratitudes: compose is `/journal/gratitudes/:id`. */
+  const mobileGratitudeCompose =
+    section === "gratitude" && Boolean(routeGratitudeId);
+  /** Mobile insights: letter detail is `/journal/insights/:weekKey`. */
+  const mobileInsightsLetter =
+    section === "insights" &&
+    Boolean(/^\/journal\/insights\/[^/]+\/?$/.test(pathname));
+  const mobileComposeChrome =
+    mobileJournalEditor || mobileGratitudeCompose || mobileInsightsLetter;
   const insightsOpen = section === "insights";
   const [insightsMounted, setInsightsMounted] = useState(insightsOpen);
   const [listTab, setListTab] = useState<JournalMainTab>(() =>
@@ -211,6 +275,8 @@ export function JournalView() {
   const foldersRef = useRef<JournalFolder[]>([]);
   const folderMenuRef = useRef<HTMLDivElement | null>(null);
   const dateMenuRef = useRef<HTMLDivElement | null>(null);
+  const filtersMenuRef = useRef<HTMLDivElement | null>(null);
+  const mobileEntryMenuRef = useRef<HTMLDivElement | null>(null);
   const activeIdRef = useRef<string | null>(null);
   const latestHtmlRef = useRef("<p></p>");
   const latestTitleRef = useRef("");
@@ -251,7 +317,11 @@ export function JournalView() {
     if (!sidebarMenu) return;
     function onDoc(e: MouseEvent) {
       const t = e.target as Node;
-      if (folderMenuRef.current?.contains(t) || dateMenuRef.current?.contains(t)) {
+      if (
+        folderMenuRef.current?.contains(t) ||
+        dateMenuRef.current?.contains(t) ||
+        filtersMenuRef.current?.contains(t)
+      ) {
         return;
       }
       setSidebarMenu(null);
@@ -270,6 +340,28 @@ export function JournalView() {
       document.removeEventListener("keydown", onKey);
     };
   }, [sidebarMenu]);
+
+  useEffect(() => {
+    if (!mobileEntryMenuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (!mobileEntryMenuRef.current?.contains(e.target as Node)) {
+        setMobileEntryMenuOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMobileEntryMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [mobileEntryMenuOpen]);
+
+  useEffect(() => {
+    setMobileEntryMenuOpen(false);
+  }, [routeEntryId, routeGratitudeId]);
 
   const persist = useCallback(
     (
@@ -585,9 +677,18 @@ export function JournalView() {
     latestGratitudeRef.current = next?.gratitude ?? emptyGratitudeLines();
     setGratitudeDraft(latestGratitudeRef.current);
     persist(nextEntries, nextId);
-  }, [journalTab, persist]);
+    setMobileEntryMenuOpen(false);
+    if (journalTab === "journal" && journalEntryIdFromPath(pathname)) {
+      router.push(JOURNAL_SECTION_HREF.journal);
+    } else if (
+      journalTab === "gratitude" &&
+      gratitudeEntryIdFromPath(pathname)
+    ) {
+      router.push(JOURNAL_SECTION_HREF.gratitude);
+    }
+  }, [journalTab, persist, pathname, router]);
 
-  const selectEntry = useCallback(
+  const applyEntrySelection = useCallback(
     (nextId: string) => {
       flushSaveSync();
       setActiveEntryId(nextId);
@@ -598,6 +699,91 @@ export function JournalView() {
       setGratitudeDraft(latestGratitudeRef.current);
     },
     [flushSaveSync],
+  );
+
+  const selectEntry = useCallback(
+    (nextId: string) => {
+      applyEntrySelection(nextId);
+      const entry = entriesRef.current.find((e) => e.id === nextId);
+      if (!entry) return;
+      if (journalTab === "journal") {
+        if (isGratitudeEntry(entry)) return;
+        if (journalEntryIdFromPath(pathname) === nextId) return;
+        router.push(`/journal/${encodeURIComponent(nextId)}`);
+        return;
+      }
+      if (journalTab === "gratitude") {
+        if (!isGratitudeEntry(entry)) return;
+        if (gratitudeEntryIdFromPath(pathname) === nextId) return;
+        router.push(
+          `/journal/gratitudes/${encodeURIComponent(nextId)}`,
+        );
+      }
+    },
+    [applyEntrySelection, journalTab, pathname, router],
+  );
+
+  /** Deep-link / browser back: sync active entry from `/journal/:id`. */
+  useEffect(() => {
+    if (!hydrated || section !== "journal") return;
+    if (!routeEntryId) return;
+    const found = entriesRef.current.find(
+      (e) => e.id === routeEntryId && !isGratitudeEntry(e),
+    );
+    if (!found) {
+      router.replace(JOURNAL_SECTION_HREF.journal);
+      return;
+    }
+    if (activeIdRef.current !== routeEntryId) {
+      applyEntrySelection(routeEntryId);
+    }
+  }, [hydrated, section, routeEntryId, entries, applyEntrySelection, router]);
+
+  /** Deep-link / browser back: sync from `/journal/gratitudes/:id`. */
+  useEffect(() => {
+    if (!hydrated || section !== "gratitude") return;
+    if (!routeGratitudeId) return;
+    const found = entriesRef.current.find(
+      (e) => e.id === routeGratitudeId && isGratitudeEntry(e),
+    );
+    if (!found) {
+      router.replace(JOURNAL_SECTION_HREF.gratitude);
+      return;
+    }
+    if (activeIdRef.current !== routeGratitudeId) {
+      applyEntrySelection(routeGratitudeId);
+    }
+  }, [
+    hydrated,
+    section,
+    routeGratitudeId,
+    entries,
+    applyEntrySelection,
+    router,
+  ]);
+
+  const openJournalList = useCallback(() => {
+    flushSaveSync();
+    setMobileEntryMenuOpen(false);
+    router.push(JOURNAL_SECTION_HREF.journal);
+  }, [flushSaveSync, router]);
+
+  const openGratitudesList = useCallback(() => {
+    flushSaveSync();
+    setMobileEntryMenuOpen(false);
+    router.push(JOURNAL_SECTION_HREF.gratitude);
+  }, [flushSaveSync, router]);
+
+  const moveActiveToFolder = useCallback(
+    (folderId: string) => {
+      setMobileEntryMenuOpen(false);
+      if (folderId) {
+        patchActive({ folderId });
+      } else {
+        patchActive({ folderId: undefined });
+      }
+    },
+    [patchActive],
   );
 
   const applyJumpDate = useCallback(
@@ -642,7 +828,8 @@ export function JournalView() {
     latestTitleRef.current = e.title;
     latestGratitudeRef.current = emptyGratitudeLines();
     setGratitudeDraft(latestGratitudeRef.current);
-  }, [flushSaveSync, persist, selectedFolderId]);
+    router.push(`/journal/${encodeURIComponent(e.id)}`);
+  }, [flushSaveSync, persist, selectedFolderId, router]);
 
   const commitImport = useCallback(
     (rows: JournalImportPreviewRow[], batchId: string) => {
@@ -663,16 +850,14 @@ export function JournalView() {
       persist(next, first.id);
       setImportBatchId(batchId);
       setImportOpen(false);
-      if (section !== "journal") {
-        router.push(JOURNAL_SECTION_HREF.journal);
-      }
+      router.push(`/journal/${encodeURIComponent(first.id)}`);
       if (getMedimadeSessionJwt()) {
         void runJournalInsightsRemote().catch(() => {
           /* insights can catch up later */
         });
       }
     },
-    [flushSaveSync, persist, selectedFolderId, router, section],
+    [flushSaveSync, persist, selectedFolderId, router],
   );
 
   const addNamedFolder = useCallback(() => {
@@ -699,9 +884,15 @@ export function JournalView() {
       );
       const current = activeIdRef.current;
       if (current && inFolder.some((e) => e.id === current)) return;
-      if (inFolder[0]) selectEntry(inFolder[0].id);
+      if (!inFolder[0]) return;
+      // On the mobile list route, keep the list visible; only sync selection.
+      if (section === "journal" && !journalEntryIdFromPath(pathname)) {
+        applyEntrySelection(inFolder[0].id);
+        return;
+      }
+      selectEntry(inFolder[0].id);
     },
-    [selectEntry],
+    [applyEntrySelection, pathname, section, selectEntry],
   );
 
   const openTodayGratitude = useCallback(() => {
@@ -717,7 +908,7 @@ export function JournalView() {
       latestTitleRef.current = existing.title;
       latestGratitudeRef.current = existing.gratitude ?? emptyGratitudeLines();
       setGratitudeDraft(latestGratitudeRef.current);
-      return;
+      return existing.id;
     }
     const e = newGratitudeJournalEntry();
     setEntries((prev) => {
@@ -731,7 +922,15 @@ export function JournalView() {
     latestTitleRef.current = e.title;
     latestGratitudeRef.current = e.gratitude ?? emptyGratitudeLines();
     setGratitudeDraft(latestGratitudeRef.current);
+    return e.id;
   }, [flushSaveSync, persist]);
+
+  const openTodayGratitudeCompose = useCallback(() => {
+    const id = openTodayGratitude();
+    if (!id) return;
+    if (gratitudeEntryIdFromPath(pathname) === id) return;
+    router.push(`/journal/gratitudes/${encodeURIComponent(id)}`);
+  }, [openTodayGratitude, pathname, router]);
 
   const activateJournalList = useCallback(() => {
     const free = entriesRef.current.find((e) => !isGratitudeEntry(e));
@@ -753,16 +952,18 @@ export function JournalView() {
     const prev = prevListSectionRef.current;
     prevListSectionRef.current = section;
     if (prev === null) {
-      if (section === "gratitude") openTodayGratitude();
+      if (section === "gratitude" && !gratitudeEntryIdFromPath(pathname)) {
+        openTodayGratitude();
+      }
       return;
     }
     if (prev === section) return;
     if (section === "gratitude") {
-      openTodayGratitude();
+      if (!gratitudeEntryIdFromPath(pathname)) openTodayGratitude();
       return;
     }
     activateJournalList();
-  }, [hydrated, section, openTodayGratitude, activateJournalList]);
+  }, [hydrated, section, pathname, openTodayGratitude, activateJournalList]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -796,8 +997,10 @@ export function JournalView() {
 
   return (
     <JournalLockGate>
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6">
-      <div className="mb-6 shrink-0">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-4 pt-2 pb-6 sm:px-6 sm:py-6">
+      <div
+        className={`mb-6 shrink-0 ${mobileComposeChrome ? "max-sm:hidden" : ""}`}
+      >
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
           <h1 className="font-display text-3xl font-medium tracking-tight">
             Journal
@@ -869,6 +1072,129 @@ export function JournalView() {
         ) : null}
       </div>
 
+      {mobileJournalEditor ? (
+        <div className="mb-3 flex shrink-0 items-center justify-between gap-2 sm:hidden">
+          <button
+            type="button"
+            onClick={openJournalList}
+            className="inline-flex cursor-pointer items-center gap-0.5 text-sm font-semibold text-accent-link"
+            aria-label="Back to Journal list"
+          >
+            <ChevronLeft aria-hidden className="size-5" strokeWidth={2} />
+            Journal
+          </button>
+          <div ref={mobileEntryMenuRef} className="relative">
+            <button
+              type="button"
+              aria-label="Entry actions"
+              aria-haspopup="menu"
+              aria-expanded={mobileEntryMenuOpen}
+              onClick={() => setMobileEntryMenuOpen((v) => !v)}
+              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-muted hover:bg-accent-soft/50 hover:text-foreground"
+            >
+              <IconEntryMore />
+            </button>
+            {mobileEntryMenuOpen ? (
+              <div
+                role="menu"
+                className="absolute right-0 top-full z-30 mt-1 min-w-[11rem] rounded-xl border border-border bg-card py-1 shadow-lg"
+              >
+                {folders.length > 0 ? (
+                  <>
+                    <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                      Move to folder
+                    </p>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => moveActiveToFolder("")}
+                      className={`block w-full cursor-pointer px-3 py-2 text-left text-sm hover:bg-accent-soft/30 ${
+                        !activeEntry?.folderId
+                          ? "font-semibold text-foreground"
+                          : "text-muted"
+                      }`}
+                    >
+                      No folder
+                    </button>
+                    {folders.map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        role="menuitem"
+                        onClick={() => moveActiveToFolder(f.id)}
+                        className={`block w-full cursor-pointer px-3 py-2 text-left text-sm hover:bg-accent-soft/30 ${
+                          activeEntry?.folderId === f.id
+                            ? "font-semibold text-foreground"
+                            : "text-muted"
+                        }`}
+                      >
+                        {f.name}
+                      </button>
+                    ))}
+                    <div className="my-1 border-t border-border" />
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMobileEntryMenuOpen(false);
+                    deleteActive();
+                  }}
+                  className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-danger hover:bg-danger-soft/40"
+                >
+                  Delete entry
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {mobileGratitudeCompose ? (
+        <div className="mb-3 flex shrink-0 items-center justify-between gap-2 sm:hidden">
+          <button
+            type="button"
+            onClick={openGratitudesList}
+            className="inline-flex cursor-pointer items-center gap-0.5 text-sm font-semibold text-accent-link"
+            aria-label="Back to Gratitudes list"
+          >
+            <ChevronLeft aria-hidden className="size-5" strokeWidth={2} />
+            Gratitudes
+          </button>
+          <div ref={mobileEntryMenuRef} className="relative">
+            <button
+              type="button"
+              aria-label="Day actions"
+              aria-haspopup="menu"
+              aria-expanded={mobileEntryMenuOpen}
+              onClick={() => setMobileEntryMenuOpen((v) => !v)}
+              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-muted hover:bg-accent-soft/50 hover:text-foreground"
+            >
+              <IconEntryMore />
+            </button>
+            {mobileEntryMenuOpen ? (
+              <div
+                role="menu"
+                className="absolute right-0 top-full z-30 mt-1 min-w-[9rem] rounded-xl border border-border bg-card py-1 shadow-lg"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMobileEntryMenuOpen(false);
+                    deleteActive();
+                  }}
+                  className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-danger hover:bg-danger-soft/40"
+                >
+                  Delete day
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {insightsMounted ? (
         <div
           className={
@@ -882,8 +1208,14 @@ export function JournalView() {
         </div>
       ) : null}
       {!insightsOpen ? (
-      <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:gap-4">
-        <aside className="flex max-h-[22rem] shrink-0 flex-col gap-3 overflow-visible border-b border-border pb-4 lg:max-h-none lg:w-64 lg:border-b-0 lg:pb-0">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden lg:flex-row lg:gap-4">
+        <aside
+          className={`flex shrink-0 flex-col gap-3 overflow-visible border-b border-border pb-4 lg:max-h-none lg:w-64 lg:border-b-0 lg:pb-0 ${
+            journalTab === "journal" || journalTab === "gratitude"
+              ? "max-h-[22rem] max-sm:max-h-none max-sm:min-h-0 max-sm:flex-1 max-sm:border-b-0 max-sm:pb-0 sm:max-h-[22rem] lg:max-h-none"
+              : "max-h-[22rem]"
+          } ${mobileComposeChrome ? "max-sm:hidden" : ""}`}
+        >
           {journalTab === "journal" ? (
             <div className="flex flex-col gap-2">
               <button
@@ -893,14 +1225,136 @@ export function JournalView() {
               >
                 + New entry
               </button>
-              <SearchInput
-                className="w-full"
-                inputClassName="py-2"
-                value={searchQuery}
-                onChange={setSearchQuery}
-                placeholder="Search entries"
-              />
               <div className="flex items-center gap-1.5">
+                <div className="min-w-0 flex-1">
+                  <SearchInput
+                    className="w-full"
+                    inputClassName="py-2"
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    placeholder="Search entries"
+                  />
+                </div>
+                {/* Mobile: folder + date in one control */}
+                <div ref={filtersMenuRef} className="relative shrink-0 sm:hidden">
+                  <button
+                    type="button"
+                    aria-label="Folder and date filters"
+                    aria-haspopup="menu"
+                    aria-expanded={sidebarMenu === "filters"}
+                    onClick={() => {
+                      setSidebarMenu((m) =>
+                        m === "filters" ? null : "filters",
+                      );
+                      setNamingFolder(false);
+                    }}
+                    className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border transition-colors ${
+                      selectedFolderId || jumpDate
+                        ? "border-accent/40 bg-accent-soft/40 text-foreground"
+                        : "border-border bg-background text-muted hover:border-accent/40 hover:text-foreground"
+                    }`}
+                  >
+                    <Folder aria-hidden className="size-4" strokeWidth={2} />
+                  </button>
+                  {sidebarMenu === "filters" ? (
+                    <div
+                      role="menu"
+                      className="absolute right-0 z-30 mt-1 w-56 rounded-xl border border-border bg-card py-1 shadow-lg"
+                    >
+                      <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+                        Folder
+                      </p>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => onFolderSelect(FOLDER_ALL)}
+                        className={`block w-full cursor-pointer px-3 py-2 text-left text-sm hover:bg-accent-soft/30 ${
+                          !selectedFolderId
+                            ? "font-semibold text-foreground"
+                            : "text-muted"
+                        }`}
+                      >
+                        All entries
+                      </button>
+                      {folders.map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          role="menuitem"
+                          onClick={() => onFolderSelect(f.id)}
+                          className={`block w-full cursor-pointer px-3 py-2 text-left text-sm hover:bg-accent-soft/30 ${
+                            selectedFolderId === f.id
+                              ? "font-semibold text-foreground"
+                              : "text-muted"
+                          }`}
+                        >
+                          {f.name}
+                        </button>
+                      ))}
+                      <div className="border-t border-border px-2 py-1.5">
+                        {namingFolder ? (
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              value={newFolderName}
+                              onChange={(e) => setNewFolderName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  addNamedFolder();
+                                }
+                              }}
+                              placeholder="Folder name"
+                              autoFocus
+                              className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1 text-xs outline-none focus:border-accent/50"
+                            />
+                            <button
+                              type="button"
+                              onClick={addNamedFolder}
+                              disabled={!newFolderName.trim()}
+                              className="cursor-pointer rounded-lg accent-fill-gradient px-2 py-1 text-xs font-semibold text-on-accent disabled:opacity-50"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNamingFolder(true);
+                              setNewFolderName("");
+                            }}
+                            className="block w-full cursor-pointer rounded-lg px-2 py-1.5 text-left text-sm text-muted hover:bg-accent-soft/30 hover:text-foreground"
+                          >
+                            + New folder
+                          </button>
+                        )}
+                      </div>
+                      <div className="border-t border-border px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+                          Jump to day
+                        </p>
+                        <input
+                          type="date"
+                          value={jumpDate}
+                          onChange={(ev) => applyJumpDate(ev.target.value)}
+                          className="mt-1.5 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-accent/50"
+                        />
+                        {jumpDate ? (
+                          <button
+                            type="button"
+                            className="mt-1.5 cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline"
+                            onClick={clearJumpDate}
+                          >
+                            Clear date
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+                {/* sm+: separate folder + date + settings */}
+                <div className="hidden items-center gap-1.5 sm:flex">
                 <div ref={folderMenuRef} className="relative shrink-0">
                   <button
                     type="button"
@@ -1020,6 +1474,7 @@ export function JournalView() {
                   ) : null}
                 </div>
                 <JournalSettingsIconButton onClick={() => setSettingsOpen(true)} />
+                </div>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <p className="min-w-0 truncate text-xs text-muted">
@@ -1028,27 +1483,100 @@ export function JournalView() {
                     ? ` · ${formatJournalEntryDate(`${jumpDate}T12:00:00`)}`
                     : ""}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setImportOpen(true)}
-                  className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-xs font-medium text-accent-link underline-offset-2 hover:underline"
-                >
-                  <Import aria-hidden className="size-3.5" strokeWidth={2} />
-                  Import
-                </button>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="sm:hidden">
+                    <JournalSettingsIconButton
+                      onClick={() => setSettingsOpen(true)}
+                    />
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setImportOpen(true)}
+                    className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-xs font-medium text-accent-link underline-offset-2 hover:underline"
+                  >
+                    <Import aria-hidden className="size-3.5" strokeWidth={2} />
+                    Import
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
             <>
-              <SearchInput
-                className="w-full"
-                inputClassName="py-2"
-                value={searchQuery}
-                onChange={setSearchQuery}
-                placeholder="Search entries"
-              />
-              <p className="text-sm font-semibold text-foreground">Past days</p>
+              <button
+                type="button"
+                onClick={openTodayGratitudeCompose}
+                className="cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+              >
+                + Add a gratitude for today
+              </button>
               <div className="flex items-center gap-1.5">
+                <div className="min-w-0 flex-1">
+                  <SearchInput
+                    className="w-full"
+                    inputClassName="py-2"
+                    value={searchQuery}
+                    onChange={setSearchQuery}
+                    placeholder="Search entries"
+                  />
+                </div>
+                {/* Mobile: date + settings consolidated row companion */}
+                <div ref={filtersMenuRef} className="relative shrink-0 sm:hidden">
+                  <button
+                    type="button"
+                    aria-label="Jump to a specific day"
+                    aria-haspopup="dialog"
+                    aria-expanded={sidebarMenu === "filters"}
+                    onClick={() =>
+                      setSidebarMenu((m) =>
+                        m === "filters" ? null : "filters",
+                      )
+                    }
+                    className={`flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border transition-colors ${
+                      jumpDate
+                        ? "border-accent/40 bg-accent-soft/40 text-foreground"
+                        : "border-border bg-background text-muted hover:border-accent/40 hover:text-foreground"
+                    }`}
+                  >
+                    <Calendar aria-hidden className="size-4" strokeWidth={2} />
+                  </button>
+                  {sidebarMenu === "filters" ? (
+                    <div
+                      className="absolute right-0 z-30 mt-1 w-52 rounded-xl border border-border bg-card p-2 shadow-lg"
+                      role="dialog"
+                      aria-label="Jump to a day"
+                    >
+                      <p className="text-sm font-medium text-foreground">
+                        Jump to a day
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted">
+                        Pick a date to see the entry from that day.
+                      </p>
+                      <input
+                        type="date"
+                        value={jumpDate}
+                        onChange={(ev) => applyJumpDate(ev.target.value)}
+                        className="mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-accent/50"
+                      />
+                      {jumpDate ? (
+                        <button
+                          type="button"
+                          className="mt-1.5 cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline"
+                          onClick={clearJumpDate}
+                        >
+                          Clear date
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+                <span className="sm:hidden">
+                  <JournalSettingsIconButton
+                    onClick={() => setSettingsOpen(true)}
+                  />
+                </span>
+              </div>
+              <p className="text-sm font-semibold text-foreground">Past days</p>
+              <div className="hidden items-center gap-1.5 sm:flex">
                 <div ref={dateMenuRef} className="relative shrink-0">
                   <button
                     type="button"
@@ -1147,13 +1675,20 @@ export function JournalView() {
           </nav>
         </aside>
 
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <section
+          className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
+            (journalTab === "journal" && !mobileJournalEditor) ||
+            (journalTab === "gratitude" && !mobileGratitudeCompose)
+              ? "max-sm:hidden"
+              : ""
+          }`}
+        >
           {jumpDate && filteredTabEntries.length === 0 ? (
             <div className="flex min-h-[12rem] flex-1 items-center rounded-2xl border border-border bg-card p-6 shadow-sm">
               <p className="text-sm text-muted">No entry on this day.</p>
             </div>
           ) : showGratitudeEditor && activeEntry ? (
-            <>
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
               <JournalGratitudeEditor
                 createdAt={activeEntry.createdAt}
                 lines={gratitudeDraft}
@@ -1166,7 +1701,11 @@ export function JournalView() {
                   onTagsChange={(tags) => patchActive({ tags })}
                 />
               </JournalGratitudeEditor>
-              <div className="mt-3 flex flex-wrap items-center gap-3">
+              <div
+                className={`shrink-0 flex-wrap items-center gap-3 ${
+                  mobileGratitudeCompose ? "hidden sm:flex" : "flex"
+                }`}
+              >
                 <p className="text-sm text-muted">
                   Autosaves in this browser. Come back tomorrow for a fresh page;
                   today’s three stay here.
@@ -1179,7 +1718,7 @@ export function JournalView() {
                   Delete day
                 </button>
               </div>
-            </>
+            </div>
           ) : hydrated &&
             activeEntryId &&
             activeEntry &&
@@ -1191,6 +1730,9 @@ export function JournalView() {
                 initialTitle={initialTitleForEditor}
                 createdAt={activeEntry.createdAt}
                 transcribeApiBase={getMedimadeApiBase()}
+                entryMenuClassName={
+                  mobileJournalEditor ? "max-sm:hidden" : undefined
+                }
                 onHtmlChange={(html) => {
                   latestHtmlRef.current = html;
                   scheduleSave();

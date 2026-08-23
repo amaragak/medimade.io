@@ -32,8 +32,8 @@ export function JournalGratitudeEditor({ createdAt, lines, onChange, children }:
   const dateLabel = formatJournalEntryDate(createdAt);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#EEDFC0] bg-[#FBF6EA] shadow-sm">
-      <div className="shrink-0 border-b border-[#EEDFC0] px-5 py-4 sm:px-6">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#EEDFC0] bg-[#FBF6EA] shadow-sm dark:border-[#5a4f3a] dark:bg-[#2a261f]">
+      <div className="relative z-10 shrink-0 border-b border-[#EEDFC0] bg-[#FBF6EA] px-5 py-4 dark:border-[#5a4f3a] dark:bg-[#2a261f] sm:px-6">
         <h2 className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
           {isToday ? "Today" : dateLabel}
         </h2>
@@ -43,7 +43,7 @@ export function JournalGratitudeEditor({ createdAt, lines, onChange, children }:
             : `Three things you were grateful for on ${dateLabel}.`}
         </p>
       </div>
-      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 sm:px-6 sm:py-6">
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6 sm:py-6">
         {FIELDS.map(({ Icon, ariaLabel }, i) => (
           <div key={ariaLabel} className="flex items-start gap-3">
             <span
@@ -59,16 +59,16 @@ export function JournalGratitudeEditor({ createdAt, lines, onChange, children }:
                 next[i] = e.target.value;
                 onChange(next);
               }}
-              rows={2}
+              rows={3}
               placeholder="I’m grateful for…"
               aria-label={ariaLabel}
-              className="min-w-0 flex-1 resize-y rounded-2xl border border-[#EEDFC0] bg-white px-4 py-3 text-sm leading-relaxed text-foreground outline-none ring-accent/30 placeholder:text-muted/70 focus:ring-2 sm:text-base"
+              className="min-h-[4.5rem] min-w-0 flex-1 resize-y rounded-2xl border border-[#EEDFC0] bg-white px-4 py-3 text-base leading-relaxed text-foreground outline-none ring-accent/30 placeholder:text-muted/70 focus:ring-2 dark:border-[#5a4f3a] dark:bg-[#1c1914]"
             />
           </div>
         ))}
       </div>
       {children ? (
-        <div className="shrink-0 border-t border-[#EEDFC0] px-5 py-3 sm:px-6">
+        <div className="relative z-10 shrink-0 border-t border-[#EEDFC0] bg-[#FBF6EA] px-5 py-3 dark:border-[#5a4f3a] dark:bg-[#2a261f] sm:px-6">
           {children}
         </div>
       ) : null}

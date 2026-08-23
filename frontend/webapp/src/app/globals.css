@@ -307,17 +307,32 @@ body {
 }
 
 .mesh-hero {
-  background:
-    radial-gradient(ellipse 80% 60% at 70% 20%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 55%),
-    radial-gradient(ellipse 50% 50% at 20% 80%, color-mix(in srgb, var(--gold) 18%, transparent), transparent 50%),
-    var(--background);
+  background-color: var(--background);
+  background-image:
+    radial-gradient(
+      ellipse 80% 60% at 70% 20%,
+      color-mix(in srgb, var(--accent) 18%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 50% 50% at 20% 80%,
+      color-mix(in srgb, var(--gold) 22%, transparent),
+      transparent 50%
+    );
 }
 
 .dark .mesh-hero {
-  background:
-    radial-gradient(ellipse 80% 60% at 70% 20%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 55%),
-    radial-gradient(ellipse 50% 50% at 20% 80%, color-mix(in srgb, var(--gold) 8%, transparent), transparent 50%),
-    var(--background);
+  background-image:
+    radial-gradient(
+      ellipse 80% 60% at 70% 20%,
+      color-mix(in srgb, var(--accent) 12%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 50% 50% at 20% 80%,
+      color-mix(in srgb, var(--gold) 10%, transparent),
+      transparent 50%
+    );
 }
 
 /* Journal voice clips — warm mesh + native audio tint (matches app palette) */

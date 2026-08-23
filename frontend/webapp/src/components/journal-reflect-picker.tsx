@@ -1,7 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  IconAdjustmentsHorizontal,
+  IconCalendar,
+  IconChevronDown,
+  IconChevronUp,
+} from "@tabler/icons-react";
 import { SearchInput } from "@/components/search-input";
 import { journalMoodLabel, isJournalMoodId, JOURNAL_MOOD_PILL } from "@/lib/journal-moods";
 import {
@@ -116,6 +121,9 @@ export function JournalReflectPicker({
   const [jumpDate, setJumpDate] = useState("");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
+  const [mobileDateOpen, setMobileDateOpen] = useState(false);
+  const dateMenuRef = useRef<HTMLDivElement | null>(null);
 
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -145,6 +153,26 @@ export function JournalReflectPicker({
     return next;
   }, [entries, folderId, jumpDate, searchQuery, sortOrder]);
 
+  const mobileFilterActive = Boolean(folderId) || sortOrder !== "newest";
+
+  useEffect(() => {
+    if (!mobileDateOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (!dateMenuRef.current?.contains(e.target as Node)) {
+        setMobileDateOpen(false);
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMobileDateOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [mobileDateOpen]);
+
   function toggleExpand(id: string) {
     setExpandedIds((prev) => {
       const n = new Set(prev);
@@ -154,9 +182,15 @@ export function JournalReflectPicker({
     });
   }
 
+  const mobileIconChrome =
+    "flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-[9px] border border-foreground/12 bg-foreground/[0.06] text-foreground";
+  const mobileSearchChrome =
+    "h-9 rounded-[9px] border border-foreground/12 bg-foreground/[0.06] py-0 pl-9 pr-3 text-sm leading-9 placeholder:text-muted";
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pb-2">
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Desktop/tablet: separate controls (unchanged) */}
+      <div className="hidden flex-wrap items-center gap-2 sm:flex">
         <label className="sr-only" htmlFor="journal-reflect-folder">
           Folder
         </label>
@@ -204,6 +238,90 @@ export function JournalReflectPicker({
           aria-label="Search your journal"
         />
       </div>
+
+      {/* Mobile: search + filter + calendar on one row */}
+      <div className="flex items-center gap-2 sm:hidden">
+        <SearchInput
+          className="min-w-0 flex-1"
+          inputClassName={mobileSearchChrome}
+          value={searchQuery}
+          onChange={setSearchQuery}
+          placeholder="Search your journal"
+          aria-label="Search your journal"
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setMobileDateOpen(false);
+            setMobileFilterOpen(true);
+          }}
+          aria-label="Folder and sort filters"
+          aria-haspopup="dialog"
+          aria-expanded={mobileFilterOpen}
+          className={`relative ${mobileIconChrome} ${
+            mobileFilterActive ? "border-accent/40 bg-accent-soft/40" : ""
+          }`}
+        >
+          <IconAdjustmentsHorizontal size={20} stroke={1.75} aria-hidden />
+          {mobileFilterActive ? (
+            <span
+              className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full border-2 border-card bg-accent"
+              aria-hidden
+            />
+          ) : null}
+        </button>
+        <div ref={dateMenuRef} className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              setMobileFilterOpen(false);
+              setMobileDateOpen((v) => !v);
+            }}
+            aria-label="Jump to a specific day"
+            aria-haspopup="dialog"
+            aria-expanded={mobileDateOpen}
+            className={`${mobileIconChrome} ${
+              jumpDate ? "border-accent/40 bg-accent-soft/40" : ""
+            }`}
+          >
+            <IconCalendar size={20} stroke={1.75} aria-hidden />
+          </button>
+          {mobileDateOpen ? (
+            <div
+              className="absolute right-0 z-30 mt-1 w-52 rounded-xl border border-border bg-card p-2 shadow-lg"
+              role="dialog"
+              aria-label="Jump to a day"
+            >
+              <p className="text-sm font-medium text-foreground">Jump to a day</p>
+              <p className="mt-0.5 text-xs text-muted">
+                Pick a date to see the entry from that day.
+              </p>
+              <input
+                type="date"
+                value={jumpDate}
+                onChange={(ev) => {
+                  setJumpDate(ev.target.value);
+                  if (ev.target.value) setMobileDateOpen(false);
+                }}
+                className="mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-accent/50"
+              />
+              {jumpDate ? (
+                <button
+                  type="button"
+                  className="mt-1.5 cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline"
+                  onClick={() => {
+                    setJumpDate("");
+                    setMobileDateOpen(false);
+                  }}
+                >
+                  Clear date
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
       <ul className="space-y-2">
         {!listReady ? (
           <li className="text-sm text-muted">Loading entries…</li>
@@ -237,10 +355,10 @@ export function JournalReflectPicker({
                       : "border border-border"
                   }`}
                 >
-                  <div className="flex items-center gap-3 px-3 py-2.5">
+                  <div className="flex items-center gap-1 px-2 py-2 sm:gap-3 sm:px-3 sm:py-2.5">
                     <button
                       type="button"
-                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
+                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 px-1 py-0.5 text-left"
                       onClick={() => toggleExpand(e.id)}
                       aria-expanded={expanded}
                     >
@@ -280,19 +398,13 @@ export function JournalReflectPicker({
                           )}
                         </span>
                       </span>
-                      {expanded ? (
-                        <IconChevronUp
-                          size={18}
-                          className="shrink-0 text-muted"
-                          aria-hidden
-                        />
-                      ) : (
-                        <IconChevronDown
-                          size={18}
-                          className="shrink-0 text-muted"
-                          aria-hidden
-                        />
-                      )}
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center text-muted sm:h-auto sm:w-auto">
+                        {expanded ? (
+                          <IconChevronUp size={18} aria-hidden />
+                        ) : (
+                          <IconChevronDown size={18} aria-hidden />
+                        )}
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -304,13 +416,17 @@ export function JournalReflectPicker({
                         ev.stopPropagation();
                         onSelect(e.id);
                       }}
-                      className={`flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-md ${
-                        selected
-                          ? "bg-[#33465C] text-white"
-                          : "border-[1.5px] border-border bg-transparent text-transparent"
-                      }`}
+                      className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center"
                     >
-                      <IconCheck />
+                      <span
+                        className={`flex h-6 w-6 items-center justify-center rounded-md ${
+                          selected
+                            ? "bg-[#33465C] text-white"
+                            : "border-[1.5px] border-border bg-transparent text-transparent"
+                        }`}
+                      >
+                        <IconCheck />
+                      </span>
                     </button>
                   </div>
                   {expanded ? (
@@ -353,6 +469,113 @@ export function JournalReflectPicker({
           className="mt-2 min-h-[70px] w-full resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none ring-accent/30 placeholder:text-muted/70 focus:ring-2"
         />
       </div>
+
+      {mobileFilterOpen ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-end justify-center bg-overlay/45 p-4 backdrop-blur-[2px] sm:hidden"
+          role="presentation"
+          onClick={() => setMobileFilterOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="journal-reflect-mobile-filter-title"
+            className="max-h-[min(85vh,32rem)] w-full max-w-md overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h2
+                id="journal-reflect-mobile-filter-title"
+                className="font-display text-lg font-medium text-foreground"
+              >
+                Sort & filter
+              </h2>
+              <button
+                type="button"
+                onClick={() => setMobileFilterOpen(false)}
+                className="cursor-pointer rounded-lg px-2 py-1 text-sm text-muted hover:bg-accent-soft/50 hover:text-foreground"
+              >
+                Done
+              </button>
+            </div>
+            <section className="mt-5">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                Folder
+              </h3>
+              <div
+                className="mt-2 flex flex-col gap-1"
+                role="listbox"
+                aria-label="Filter by folder"
+              >
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={!folderId}
+                  onClick={() => setFolderId("")}
+                  className={`w-full cursor-pointer rounded-xl px-3 py-2.5 text-left text-sm font-semibold ${
+                    !folderId
+                      ? "bg-selected/15 text-foreground"
+                      : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                  }`}
+                >
+                  All entries
+                </button>
+                {folders.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    role="option"
+                    aria-selected={folderId === f.id}
+                    onClick={() => setFolderId(f.id)}
+                    className={`w-full cursor-pointer rounded-xl px-3 py-2.5 text-left text-sm font-semibold ${
+                      folderId === f.id
+                        ? "bg-selected/15 text-foreground"
+                        : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                    }`}
+                  >
+                    {f.name}
+                  </button>
+                ))}
+              </div>
+            </section>
+            <section className="mt-5">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
+                Sort
+              </h3>
+              <div
+                className="mt-2 flex flex-col gap-1"
+                role="listbox"
+                aria-label="Sort entries"
+              >
+                {(
+                  [
+                    { value: "newest" as const, label: "Newest" },
+                    { value: "oldest" as const, label: "Oldest" },
+                  ] as const
+                ).map((it) => {
+                  const selected = sortOrder === it.value;
+                  return (
+                    <button
+                      key={it.value}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => setSortOrder(it.value)}
+                      className={`w-full cursor-pointer rounded-xl px-3 py-2.5 text-left text-sm font-semibold ${
+                        selected
+                          ? "bg-selected/15 text-foreground"
+                          : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                      }`}
+                    >
+                      {it.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

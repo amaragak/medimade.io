@@ -19,8 +19,8 @@ import {
 import { JournalTranscribeApiContext } from "@/components/journal-transcribe-api-context";
 
 const editorClass =
-  "min-h-[min(52vh,24rem)] w-full px-4 py-3 text-sm leading-relaxed text-foreground focus:outline-none " +
-  "[&_.ProseMirror]:min-h-[min(52vh,24rem)] [&_p]:my-2 [&_p.is-editor-empty:first-child::before]:text-muted/60 " +
+  "min-h-[8rem] w-full px-4 py-3 text-base leading-relaxed text-foreground focus:outline-none " +
+  "[&_.ProseMirror]:min-h-[8rem] [&_p]:my-2 [&_p.is-editor-empty:first-child::before]:text-muted/60 " +
   "[&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:font-display [&_h2]:text-lg [&_h2]:font-medium [&_h2]:tracking-tight " +
   "[&_h3]:mt-3 [&_h3]:mb-1.5 [&_h3]:font-display [&_h3]:text-base [&_h3]:font-medium " +
   "[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 " +
@@ -39,6 +39,8 @@ type Props = {
   onHtmlChange: (html: string) => void;
   onTitleChange: (title: string) => void;
   onDelete?: () => void;
+  /** Extra classes for the overflow menu (e.g. hide on mobile when chrome is external). */
+  entryMenuClassName?: string;
   /** Footer inside the card, below a divider (e.g. mood). */
   children?: ReactNode;
 };
@@ -54,12 +56,14 @@ export function JournalRichEditor({
   onHtmlChange,
   onTitleChange,
   onDelete,
+  entryMenuClassName,
   children,
 }: Props) {
   const titleSeededForEntryRef = useRef<string | null>(null);
   const editorSeededForEntryRef = useRef<string | null>(null);
   const [entryTitle, setEntryTitle] = useState(initialTitle);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [toolbarMoreOpen, setToolbarMoreOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [voiceRecording, setVoiceRecording] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
@@ -210,6 +214,7 @@ export function JournalRichEditor({
 
   useEffect(() => {
     setMenuOpen(false);
+    setToolbarMoreOpen(false);
   }, [entryId]);
 
   useEffect(() => {
@@ -239,7 +244,7 @@ export function JournalRichEditor({
 
   if (!editor) {
     return (
-      <div className="min-h-[min(52vh,24rem)] animate-pulse rounded-2xl border border-border bg-card shadow-sm" />
+      <div className="min-h-[12rem] flex-1 animate-pulse rounded-2xl border border-border bg-card shadow-sm" />
     );
   }
 
@@ -271,7 +276,10 @@ export function JournalRichEditor({
             </label>
           </div>
           {onDelete ? (
-            <div ref={menuRef} className="relative flex shrink-0 items-center gap-2 self-end">
+            <div
+              ref={menuRef}
+              className={`relative flex shrink-0 items-center gap-2 self-end ${entryMenuClassName ?? ""}`}
+            >
               <span className="h-6 w-px bg-border" aria-hidden />
               <button
                 type="button"
@@ -304,7 +312,8 @@ export function JournalRichEditor({
             </div>
           ) : null}
         </div>
-        <div className="flex flex-wrap items-center gap-1 border-t border-border px-3 py-2">
+        {/* sm+: full toolbar (unchanged wrapping behavior) */}
+        <div className="hidden flex-wrap items-center gap-1 border-t border-border px-3 py-2 sm:flex">
             {transcribeApiBase ? (
               <>
                 <button
@@ -421,6 +430,123 @@ export function JournalRichEditor({
               <Redo2 aria-hidden className="size-4" strokeWidth={2} />
             </ToolbarBtn>
         </div>
+        {/* Mobile: primary tools + expandable more row */}
+        <div className="border-t border-border sm:hidden">
+          <div className="flex flex-nowrap items-center gap-1 overflow-x-auto px-3 py-2">
+            {transcribeApiBase ? (
+              <>
+                <button
+                  type="button"
+                  title={
+                    voiceRecording
+                      ? "Stop and place clip"
+                      : "Record voice"
+                  }
+                  aria-label={
+                    voiceRecording
+                      ? "Stop and place clip"
+                      : "Record voice"
+                  }
+                  aria-pressed={voiceRecording}
+                  disabled={voiceBusy}
+                  onClick={() => {
+                    if (voiceBusy) return;
+                    if (voiceRecording) {
+                      void finishRecordingIntoEditor();
+                      return;
+                    }
+                    void startVoiceRecording();
+                  }}
+                  className={`flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 ${
+                    voiceRecording ? "animate-pulse" : ""
+                  }`}
+                >
+                  <IconMic />
+                </button>
+                <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden />
+              </>
+            ) : null}
+            <ToolbarBtn
+              label="Bold"
+              active={editor.isActive("bold")}
+              onClick={() => editor.chain().focus().toggleBold().run()}
+            >
+              <span className="font-bold">B</span>
+            </ToolbarBtn>
+            <ToolbarBtn
+              label="Italic"
+              active={editor.isActive("italic")}
+              onClick={() => editor.chain().focus().toggleItalic().run()}
+            >
+              <span className="italic">I</span>
+            </ToolbarBtn>
+            <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden />
+            <ToolbarBtn
+              label="More formatting"
+              active={toolbarMoreOpen}
+              onClick={() => setToolbarMoreOpen((v) => !v)}
+            >
+              <IconDotsHorizontal />
+            </ToolbarBtn>
+          </div>
+          {toolbarMoreOpen ? (
+            <div className="flex flex-nowrap items-center gap-1 overflow-x-auto border-t border-border px-3 py-2">
+              <ToolbarBtn
+                label="Heading 2"
+                active={editor.isActive("heading", { level: 2 })}
+                onClick={() =>
+                  editor.chain().focus().toggleHeading({ level: 2 }).run()
+                }
+              >
+                <span className="font-semibold">H2</span>
+              </ToolbarBtn>
+              <ToolbarBtn
+                label="Heading 3"
+                active={editor.isActive("heading", { level: 3 })}
+                onClick={() =>
+                  editor.chain().focus().toggleHeading({ level: 3 }).run()
+                }
+              >
+                <span className="font-semibold">H3</span>
+              </ToolbarBtn>
+              <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden />
+              <ToolbarBtn
+                label="Bullet list"
+                active={editor.isActive("bulletList")}
+                onClick={() => editor.chain().focus().toggleBulletList().run()}
+              >
+                <List aria-hidden className="size-4" strokeWidth={2} />
+              </ToolbarBtn>
+              <ToolbarBtn
+                label="Numbered list"
+                active={editor.isActive("orderedList")}
+                onClick={() => editor.chain().focus().toggleOrderedList().run()}
+              >
+                <ListOrdered aria-hidden className="size-4" strokeWidth={2} />
+              </ToolbarBtn>
+              <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden />
+              <ToolbarBtn
+                label="Photo"
+                onClick={() => photoInputRef.current?.click()}
+              >
+                <ImageIcon aria-hidden className="size-4" strokeWidth={2} />
+              </ToolbarBtn>
+              <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden />
+              <ToolbarBtn
+                label="Undo"
+                onClick={() => editor.chain().focus().undo().run()}
+              >
+                <Undo2 aria-hidden className="size-4" strokeWidth={2} />
+              </ToolbarBtn>
+              <ToolbarBtn
+                label="Redo"
+                onClick={() => editor.chain().focus().redo().run()}
+              >
+                <Redo2 aria-hidden className="size-4" strokeWidth={2} />
+              </ToolbarBtn>
+            </div>
+          ) : null}
+        </div>
         {voiceRecording || voiceError ? (
           <div className="border-t border-border px-4 py-2 text-xs">
             {voiceRecording ? (
@@ -454,7 +580,7 @@ export function JournalRichEditor({
           }}
         />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <JournalTranscribeApiContext.Provider value={transcribeApiBase}>
           <EditorContent editor={editor} />
         </JournalTranscribeApiContext.Provider>
@@ -481,6 +607,23 @@ function IconMore({ className }: { className?: string }) {
       <circle cx="12" cy="5" r="1.75" />
       <circle cx="12" cy="12" r="1.75" />
       <circle cx="12" cy="19" r="1.75" />
+    </svg>
+  );
+}
+
+function IconDotsHorizontal({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+      fill="currentColor"
+      aria-hidden
+    >
+      <circle cx="5" cy="12" r="1.75" />
+      <circle cx="12" cy="12" r="1.75" />
+      <circle cx="19" cy="12" r="1.75" />
     </svg>
   );
 }

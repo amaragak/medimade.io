@@ -198,7 +198,7 @@ export function MeditationTypeCardGrid({
       {cards.map((card, i) => {
         const fillIndex = includeAll ? i : i + 1;
         const active = selected === card.value;
-        const [light, dark] =
+        const [light] =
           CATEGORY_CARD_FILLS[fillIndex % CATEGORY_CARD_FILLS.length]!;
         const title = titles?.[card.value];
         return (
@@ -212,18 +212,21 @@ export function MeditationTypeCardGrid({
             style={
               {
                 "--type-card-bg": light,
-                "--type-card-bg-dark": dark,
+                /* Soften pastels in dark mode — not the near-black fills. */
+                "--type-card-bg-dark": `color-mix(in srgb, ${light} 85%, #1a222c 15%)`,
               } as CSSProperties
             }
-            className={`flex aspect-square min-w-0 cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border px-2 py-3 text-center shadow-sm transition-[box-shadow,filter] bg-[var(--type-card-bg)] text-[#1E2530] dark:bg-[var(--type-card-bg-dark)] dark:text-[#FAF8F3] ${
+            className={`flex aspect-square w-full min-w-0 min-h-0 cursor-pointer flex-col items-center justify-center gap-2.5 self-start overflow-hidden rounded-2xl border px-2 py-2.5 text-center text-[#1E2530] shadow-sm transition-[box-shadow,filter] bg-[var(--type-card-bg)] hover:brightness-[0.97] dark:bg-[var(--type-card-bg-dark)] dark:hover:brightness-105 ${
               active
                 ? "border-accent ring-2 ring-accent ring-offset-2 ring-offset-background"
-                : "border-transparent hover:brightness-[0.97] dark:hover:brightness-110"
+                : "border-transparent"
             }`}
           >
             <CommunityCategoryIcon name={card.icon} />
-            <span className="text-sm font-semibold leading-tight sm:text-base">
-              {card.label}
+            <span className="flex h-[2.5rem] w-full shrink-0 items-center justify-center sm:h-[2.75rem]">
+              <span className="line-clamp-2 text-center text-sm font-semibold leading-tight sm:text-base">
+                {card.label}
+              </span>
             </span>
           </button>
         );
@@ -258,16 +261,21 @@ export function MeditationTypeCard({
 export function CommunityCategoryGrid({
   selected,
   onSelect,
+  className,
 }: {
   selected: string;
   onSelect: (value: string) => void;
+  className?: string;
 }) {
   return (
     <MeditationTypeCardGrid
       selected={selected}
       onSelect={onSelect}
       includeAll
-      className="mt-8 grid w-full grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 md:grid-cols-5 lg:grid-cols-7"
+      className={
+        className ??
+        "mt-8 grid w-full grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3 md:grid-cols-5 lg:grid-cols-7"
+      }
     />
   );
 }

@@ -93,7 +93,13 @@ export function SiteHeader() {
       ? pathname === "/"
       : pathname === href || pathname.startsWith(`${href}/`);
   return (
-    <header className="relative sticky top-0 z-[100] border-b border-white/10 bg-nav shadow-[0_4px_18px_rgb(30_37_48_/_0.22)]">
+    <header
+      className={`relative sticky top-0 z-[100] bg-nav ${
+        pathname === "/"
+          ? "border-b border-white/[0.08] shadow-[0_1px_0_rgb(255_255_255_/_0.04)]"
+          : "border-b border-white/10 shadow-[0_4px_18px_rgb(30_37_48_/_0.22)]"
+      }`}
+    >
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 overflow-hidden"

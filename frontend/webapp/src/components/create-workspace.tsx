@@ -100,7 +100,7 @@ import {
 } from "@/lib/plan-create-handoff";
 import { loadPlanDreamsStore, type PlanDream } from "@/lib/plan-dreams";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import { bedElementVolume, BED_VOICE_INTRO_SECONDS } from "@/lib/bed-volume";
+import { applyBedElementVolume, BED_VOICE_INTRO_SECONDS } from "@/lib/bed-volume";
 
 function mediaFileUrl(base: string, key: string): string {
   const b = base.replace(/\/$/, "");
@@ -644,6 +644,7 @@ function StyleIntakeField({
   focusNonce?: number;
 }) {
   const [entered, setEntered] = useState(false);
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const shouldFocusRef = useRef(Boolean(autoFocus));
   shouldFocusRef.current = Boolean(autoFocus);
@@ -688,13 +689,30 @@ function StyleIntakeField({
   }, [syncTextareaHeight, entered]);
   useEffect(() => {
     if (!autoFocus || !entered) return;
-    if (scrollOnEnter) {
-      textareaRef.current?.scrollIntoView({
+    const scrollCardIntoView = () => {
+      const isNarrow =
+        typeof window !== "undefined" &&
+        window.matchMedia("(max-width: 639px)").matches;
+      cardRef.current?.scrollIntoView({
         behavior: "smooth",
-        block: "nearest",
+        // Mobile: center keeps label + input above the keyboard when possible.
+        block: isNarrow ? "center" : "start",
+        inline: "nearest",
       });
+    };
+    if (scrollOnEnter) {
+      // After reveal animation / keyboard, keep the whole card (label + input) on screen.
+      scrollCardIntoView();
+      const retry = window.setTimeout(scrollCardIntoView, 280);
+      const tFocus = window.setTimeout(() => {
+        textareaRef.current?.focus();
+        syncTextareaHeight();
+      }, 30);
+      return () => {
+        window.clearTimeout(retry);
+        window.clearTimeout(tFocus);
+      };
     }
-    // After button click, wait a tick so the newly revealed field is in the DOM.
     const t = window.setTimeout(() => {
       textareaRef.current?.focus();
       syncTextareaHeight();
@@ -710,7 +728,8 @@ function StyleIntakeField({
 
   return (
     <div
-      className={`rounded-2xl border border-border bg-surface p-4 shadow-sm transition-[opacity,transform] duration-500 ease-out sm:p-5 dark:border-border dark:bg-surface ${
+      ref={cardRef}
+      className={`scroll-mt-3 rounded-2xl border border-border bg-surface p-4 shadow-sm transition-[opacity,transform] duration-500 ease-out sm:scroll-mt-4 sm:p-5 dark:border-border dark:bg-surface ${
         entered ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
       }`}
     >
@@ -734,7 +753,7 @@ function StyleIntakeField({
             }}
             rows={1}
             enterKeyHint={enterKeyHint}
-            className="min-h-[2.625rem] min-w-0 flex-1 resize-none overflow-hidden rounded-2xl border border-border bg-background px-3.5 py-2.5 text-sm leading-relaxed text-foreground outline-none ring-accent/30 focus:ring-2 sm:text-[15px]"
+            className="min-h-[2.625rem] min-w-0 flex-1 resize-none overflow-hidden rounded-2xl border border-border bg-background px-3.5 py-2.5 text-base leading-relaxed text-foreground outline-none ring-accent/30 focus:ring-2"
           />
           <DictationMicButton
             variant="inset"
@@ -1303,6 +1322,43 @@ export function CreateWorkspace({
     drums: "",
     noise: "",
   });
+  /** Live fader values — updated immediately while dragging (avoid waiting on React state). */
+  const bedGainRef = useRef({
+    nature: backgroundNatureGain,
+    music: backgroundMusicGain,
+    drums: backgroundDrumsGain,
+    noise: backgroundNoiseGain,
+  });
+
+  useEffect(() => {
+    bedGainRef.current = {
+      nature: backgroundNatureGain,
+      music: backgroundMusicGain,
+      drums: backgroundDrumsGain,
+      noise: backgroundNoiseGain,
+    };
+  }, [
+    backgroundNatureGain,
+    backgroundMusicGain,
+    backgroundDrumsGain,
+    backgroundNoiseGain,
+  ]);
+
+  function applyLiveBedGain(
+    track: "nature" | "music" | "drums" | "noise",
+    gain: number,
+  ) {
+    bedGainRef.current[track] = gain;
+    const el =
+      track === "nature"
+        ? previewNatureRef.current
+        : track === "music"
+          ? previewMusicRef.current
+          : track === "drums"
+            ? previewDrumsRef.current
+            : previewNoiseRef.current;
+    applyBedElementVolume(el, gain);
+  }
   // Speakers come from backend `GET /fish/speakers` (single source of truth).
   const [fishSpeakers, setFishSpeakers] = useState<FishSpeaker[]>([]);
   const [orpheusSpeakers, setOrpheusSpeakers] = useState<OrpheusSpeaker[]>(
@@ -3393,13 +3449,13 @@ export function CreateWorkspace({
     const sync = async (
       el: HTMLAudioElement | null,
       key: string,
-      gain: number,
       track: Exclude<SoloTrack, "speaker">,
     ) => {
       if (!el) return;
       el.loop = true;
+      const gain = bedGainRef.current[track];
       // Mixer 100% is 0.5 so speech at 1.0 stays louder.
-      el.volume = bedElementVolume(gain);
+      applyBedElementVolume(el, gain);
       if (base && key) {
         const next = mediaFileUrl(base, backgroundAudioStreamingKey(key));
         const prevKey = lastBgKeysRef.current[track];
@@ -3408,6 +3464,8 @@ export function CreateWorkspace({
           el.src = next;
           void el.load();
         }
+        el.onloadeddata = () =>
+          applyBedElementVolume(el, bedGainRef.current[track]);
         // Requirement: selecting a new sample should auto-play even if the track was paused.
         // Also keep playing if it was already playing.
         if (keyChanged || playing[track]) {
@@ -3428,20 +3486,16 @@ export function CreateWorkspace({
         lastBgKeysRef.current[track] = "";
       }
     };
-    void sync(previewNatureRef.current, backgroundNatureKey, backgroundNatureGain, "nature");
-    void sync(previewMusicRef.current, backgroundMusicKey, backgroundMusicGain, "music");
-    void sync(previewDrumsRef.current, drumsPreviewKey, backgroundDrumsGain, "drums");
-    void sync(previewNoiseRef.current, backgroundNoiseKey, backgroundNoiseGain, "noise");
+    void sync(previewNatureRef.current, backgroundNatureKey, "nature");
+    void sync(previewMusicRef.current, backgroundMusicKey, "music");
+    void sync(previewDrumsRef.current, drumsPreviewKey, "drums");
+    void sync(previewNoiseRef.current, backgroundNoiseKey, "noise");
   }, [
     mediaBaseUrl,
     backgroundNatureKey,
     backgroundMusicKey,
     drumsPreviewKey,
     backgroundNoiseKey,
-    backgroundNatureGain,
-    backgroundMusicGain,
-    backgroundDrumsGain,
-    backgroundNoiseGain,
     playing.nature,
     playing.music,
     playing.drums,
@@ -3598,15 +3652,31 @@ export function CreateWorkspace({
       speakerRepeatWantedRef.current = false;
     }
     if (backgroundNatureKey && previewNatureRef.current?.src) {
+      applyBedElementVolume(
+        previewNatureRef.current,
+        bedGainRef.current.nature,
+      );
       parts.push(previewNatureRef.current.play());
     }
     if (backgroundMusicKey && previewMusicRef.current?.src) {
+      applyBedElementVolume(
+        previewMusicRef.current,
+        bedGainRef.current.music,
+      );
       parts.push(previewMusicRef.current.play());
     }
     if (drumsPreviewKey && previewDrumsRef.current?.src) {
+      applyBedElementVolume(
+        previewDrumsRef.current,
+        bedGainRef.current.drums,
+      );
       parts.push(previewDrumsRef.current.play());
     }
     if (backgroundNoiseKey && previewNoiseRef.current?.src) {
+      applyBedElementVolume(
+        previewNoiseRef.current,
+        bedGainRef.current.noise,
+      );
       parts.push(previewNoiseRef.current.play());
     }
 
@@ -3687,6 +3757,8 @@ export function CreateWorkspace({
 
       if (track === "speaker") {
         speakerRepeatWantedRef.current = true;
+      } else {
+        applyBedElementVolume(el, bedGainRef.current[track]);
       }
 
       await el.play();
@@ -3845,14 +3917,14 @@ export function CreateWorkspace({
   const createMobileHeading = createLastCrumb?.label ?? createPageChrome.title;
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 pt-3 pb-6 sm:px-6 sm:py-6">
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col pt-3 sm:pt-6">
       {/* Keep preview elements mounted on every step so src is assigned before the Audio panel. */}
       <audio ref={previewNatureRef} className="hidden" playsInline />
       <audio ref={previewMusicRef} className="hidden" playsInline />
       <audio ref={previewDrumsRef} className="hidden" playsInline />
       <audio ref={previewNoiseRef} className="hidden" playsInline />
       <audio ref={speakerSampleRef} className="hidden" playsInline />
-      <div className="mb-4 shrink-0 sm:mb-6">
+      <div className="mx-auto mb-4 w-full max-w-6xl shrink-0 px-4 sm:mb-6 sm:px-6">
           {createCrumbs.length > 0 ? (
             <>
               {/* Full trail — tablet/desktop (sm = 640px+) */}
@@ -3953,10 +4025,14 @@ export function CreateWorkspace({
 
       {draftLoadError ? (
         <div
-          className="mb-4 rounded-xl border border-border bg-card px-4 py-3 text-sm text-foreground"
+          className="mx-auto mb-4 w-full max-w-6xl px-4 sm:px-6"
+        >
+        <div
+          className="rounded-xl border border-border bg-card px-4 py-3 text-sm text-foreground"
           role="alert"
         >
           {draftLoadError}
+        </div>
         </div>
       ) : null}
 
@@ -3969,10 +4045,10 @@ export function CreateWorkspace({
           {initialDraftSk?.trim() ? "Loading draft…" : "Loading…"}
         </div>
       ) : (
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="relative flex min-h-0 flex-1 flex-col">
         {showPathChooser ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+          <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4 overflow-y-auto px-4 sm:px-6">
           <h2 className="shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
             How would you like to generate your script?
           </h2>
@@ -4227,8 +4303,8 @@ export function CreateWorkspace({
           </div>
           <div className="min-h-8 flex-1" aria-hidden />
           </div>
-          <div className="shrink-0 border-t border-border/60 bg-background pt-4">
-            <div className="flex min-h-[2.75rem] justify-end">
+          <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
+            <div className="mx-auto flex min-h-[2.75rem] w-full max-w-6xl justify-end px-4 sm:px-6">
             {pendingModeChoice ? (
             <button
               type="button"
@@ -4279,7 +4355,7 @@ export function CreateWorkspace({
         ) : null}
         {showStyleTypePick ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+            <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4 overflow-y-auto px-4 sm:px-6">
               <MeditationTypeCardGrid
                 selected={pendingStyleType ?? ""}
                 onSelect={setPendingStyleType}
@@ -4296,8 +4372,8 @@ export function CreateWorkspace({
                 </div>
               ) : null}
             </div>
-            <div className="shrink-0 border-t border-border/60 bg-background pt-4">
-              <div className="flex items-center justify-between gap-3">
+            <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
+              <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
                 <button
                   type="button"
                   onClick={() => {
@@ -4325,7 +4401,7 @@ export function CreateWorkspace({
         ) : null}
         {showStyleQuestions ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto sm:gap-6">
+            <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4 overflow-y-auto px-4 sm:gap-6 sm:px-6">
               <div className="space-y-4 pb-4 sm:space-y-7">
                 {intakeQuestionsForStyle(meditationStyle ?? "")
                   .slice(0, Math.min(3, styleQuestionsRevealed))
@@ -4390,8 +4466,8 @@ export function CreateWorkspace({
                 ) : null}
               </div>
             </div>
-            <div className="shrink-0 border-t border-border/60 bg-background pt-4">
-              <div className="flex items-center justify-between gap-3">
+            <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
+              <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
                 <button
                   type="button"
                   onClick={() => {
@@ -4419,7 +4495,7 @@ export function CreateWorkspace({
         ) : null}
         {showJournalPick ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="mx-auto flex min-h-0 min-w-0 w-full max-w-6xl flex-1 flex-col px-4 sm:px-6">
             <JournalReflectPicker
               entries={journalPickerEntries}
               folders={journalPickerFolders}
@@ -4430,8 +4506,8 @@ export function CreateWorkspace({
               onGuidanceChange={setJournalReflectGuidance}
             />
             </div>
-            <div className="shrink-0 border-t border-border/60 bg-background pt-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
+              <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6">
                 <button
                   type="button"
                   onClick={goBackToChatStyle}
@@ -4462,12 +4538,12 @@ export function CreateWorkspace({
         ) : null}
         {workspaceSectionStep === 1 && !showStyleTypePick && !showStyleQuestions && !showJournalPick ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="mx-auto flex min-h-0 min-w-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-4 sm:px-6">
         <section className="flex w-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden p-4">
             <div
               ref={chatScrollRef}
-              className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3"
+              className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3"
               onScroll={() => {
                 const el = chatScrollRef.current;
                 if (!el) return;
@@ -4477,6 +4553,9 @@ export function CreateWorkspace({
                 isAtBottomRef.current = distanceFromBottom < 50;
               }}
             >
+              {/* mt-auto: short threads sit on the bottom (near the input); once
+                  content overflows, scrolling behaves like a normal chat. */}
+              <div className="mt-auto flex w-full min-w-0 flex-col">
               {/* Track whether user is already at bottom so streaming doesn't yank scroll */}
               {messages.filter((m) => !m.muted).map((msg, i, visible) => {
                 const isScript =
@@ -4701,6 +4780,7 @@ export function CreateWorkspace({
               ) : null}
               {showChatTyping ? <ChatTypingIndicator /> : null}
               <div ref={messagesEndRef} />
+              </div>
             </div>
             {phase === "journalPick" || phase === "goalPick" ? null : (
             <div className="mt-3 flex shrink-0 items-center gap-2 border-t border-border pt-3">
@@ -4749,8 +4829,8 @@ export function CreateWorkspace({
           </div>
         </section>
         </div>
-          <div className="shrink-0 border-t border-border/60 bg-background pt-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
+          <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6">
             <button
               type="button"
               onClick={goBackToChatStyle}
@@ -4781,7 +4861,7 @@ export function CreateWorkspace({
         ) : null}
         {workspaceSectionStep === 2 ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-        <div className="flex min-h-0 flex-1 flex-col gap-2 sm:gap-3">
+        <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-2 px-4 sm:gap-3 sm:px-6">
           {/* Stacked mixer — below lg: Voice + bed cards share one scroll */}
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto lg:hidden">
             <section className="shrink-0 rounded-2xl border border-border bg-card px-4 shadow-sm">
@@ -4828,6 +4908,7 @@ export function CreateWorkspace({
                   onChange={setBackgroundMusicKey}
                   gain={backgroundMusicGain}
                   onGainChange={setBackgroundMusicGain}
+                  onLiveGainChange={(g) => applyLiveBedGain("music", g)}
                   disabled={soundControlsDisabled}
                   faderDisabled={soundControlsDisabled || !backgroundMusicKey}
                   playing={playing.music}
@@ -4844,6 +4925,7 @@ export function CreateWorkspace({
                   onChange={setBackgroundNatureKey}
                   gain={backgroundNatureGain}
                   onGainChange={setBackgroundNatureGain}
+                  onLiveGainChange={(g) => applyLiveBedGain("nature", g)}
                   disabled={soundControlsDisabled}
                   faderDisabled={soundControlsDisabled || !backgroundNatureKey}
                   playing={playing.nature}
@@ -4866,6 +4948,7 @@ export function CreateWorkspace({
                     onChange={setBackgroundDrumsKey}
                     gain={backgroundDrumsGain}
                     onGainChange={setBackgroundDrumsGain}
+                    onLiveGainChange={(g) => applyLiveBedGain("drums", g)}
                     disabled={soundControlsDisabled || drumsLockedForMelodic}
                     faderDisabled={
                       soundControlsDisabled ||
@@ -4893,6 +4976,7 @@ export function CreateWorkspace({
                   onChange={setBackgroundNoiseKey}
                   gain={backgroundNoiseGain}
                   onGainChange={setBackgroundNoiseGain}
+                  onLiveGainChange={(g) => applyLiveBedGain("noise", g)}
                   disabled={soundControlsDisabled}
                   faderDisabled={soundControlsDisabled || !backgroundNoiseKey}
                   playing={playing.noise}
@@ -4975,6 +5059,7 @@ export function CreateWorkspace({
                     onChange={setBackgroundMusicKey}
                     gain={backgroundMusicGain}
                     onGainChange={setBackgroundMusicGain}
+                    onLiveGainChange={(g) => applyLiveBedGain("music", g)}
                     disabled={soundControlsDisabled}
                     faderDisabled={soundControlsDisabled || !backgroundMusicKey}
                     playing={playing.music}
@@ -4990,6 +5075,7 @@ export function CreateWorkspace({
                     onChange={setBackgroundNatureKey}
                     gain={backgroundNatureGain}
                     onGainChange={setBackgroundNatureGain}
+                    onLiveGainChange={(g) => applyLiveBedGain("nature", g)}
                     disabled={soundControlsDisabled}
                     faderDisabled={soundControlsDisabled || !backgroundNatureKey}
                     playing={playing.nature}
@@ -5011,6 +5097,7 @@ export function CreateWorkspace({
                       onChange={setBackgroundDrumsKey}
                       gain={backgroundDrumsGain}
                       onGainChange={setBackgroundDrumsGain}
+                      onLiveGainChange={(g) => applyLiveBedGain("drums", g)}
                       disabled={soundControlsDisabled || drumsLockedForMelodic}
                       faderDisabled={
                         soundControlsDisabled ||
@@ -5037,6 +5124,7 @@ export function CreateWorkspace({
                     onChange={setBackgroundNoiseKey}
                     gain={backgroundNoiseGain}
                     onGainChange={setBackgroundNoiseGain}
+                    onLiveGainChange={(g) => applyLiveBedGain("noise", g)}
                     disabled={soundControlsDisabled}
                     faderDisabled={soundControlsDisabled || !backgroundNoiseKey}
                     playing={playing.noise}
@@ -5064,13 +5152,13 @@ export function CreateWorkspace({
                     <option value={2}>2 min</option>
                     <option value={5}>5 min</option>
                     <option value={10}>10 min</option>
-                  </select>
-            </div>
-          </section>
-        </div>
+                   </select>
+             </div>
+           </section>
+         </div>
           {draftSaveMessage ? (
             <p
-              className="shrink-0 py-2 text-center text-xs text-muted sm:text-right"
+              className="mx-auto w-full max-w-6xl shrink-0 px-4 py-2 text-center text-xs text-muted sm:px-6 sm:text-right"
               role="status"
               aria-live="polite"
             >
@@ -5079,14 +5167,14 @@ export function CreateWorkspace({
           ) : null}
           {audioError ? (
             <p
-              className="shrink-0 max-w-full break-words py-2 text-center text-sm text-danger sm:text-right"
+              className="mx-auto w-full max-w-6xl shrink-0 max-w-full break-words px-4 py-2 text-center text-sm text-danger sm:px-6 sm:text-right"
               role="alert"
             >
               {audioError}
             </p>
           ) : null}
-          <div className="shrink-0 border-t border-border/60 bg-background pt-4">
-            <div className="flex min-h-[3rem] w-full flex-nowrap items-center justify-between gap-4">
+          <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
+            <div className="mx-auto flex min-h-[3rem] w-full max-w-6xl flex-nowrap items-center justify-between gap-4 px-4 sm:px-6">
             <button
               type="button"
               onClick={() => {

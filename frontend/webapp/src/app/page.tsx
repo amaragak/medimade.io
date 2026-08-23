@@ -1,185 +1,334 @@
 import Link from "next/link";
+import {
+  IconBulb,
+  IconNotebook,
+  IconSparkles,
+  IconTargetArrow,
+} from "@tabler/icons-react";
+import {
+  HomeHeroListenCard,
+  HomeListenSection,
+} from "@/components/home-listen-section";
+import { LogoMark } from "@/components/logo-mark";
+import { createMeditationHref } from "@/lib/create-meditation-path";
+import { HOMEPAGE_LISTEN_SAMPLES } from "@/lib/homepage-listen-samples";
+
+/** Flat `bg-nav` — SiteHeader only (`--nav` / `#33465C`). */
+const GOLD = "#D9A24F";
+const GOLD_INK = "#3D2E10";
+const CREAM = "#F4F0E8";
+const MUTED = "#A8B0BC";
+
+/**
+ * Homepage section backgrounds — same navy family, each step clearly distinct
+ * from its neighbors (and from header `#33465C`).
+ * Hero → Pillars → Listen → Journal → Ideate → CTA
+ */
+const SECTION_BG = {
+  hero: "#1A2330",
+  pillars: "#2A3A4E",
+  listen: "#161D28",
+  journal: "#243447",
+  ideate: "#1A2330",
+  cta: "#2A3A4E",
+} as const;
+/** Inset demo cards: darker than their section so they read as panels. */
+const PANEL_BG = "#12181F";
+
+const journalCreateHref = createMeditationHref({ path: "journalReflect" });
+const ideateCreateHref = createMeditationHref({ path: "goal" });
 
 const pillars = [
   {
-    title: "Guided meditation generation",
-    body: "Chat through mood and intention, shape the script, then generate audio with the voice, ambience, and structure you want.",
+    href: "/meditate/create",
+    title: "Meditate",
+    body: "By type, chat, or a journal entry.",
+    Icon: IconSparkles,
+    highlight: true,
   },
   {
-    title: "Your meditation library",
-    body: "Save sessions, revisit favourites, and keep drafts until you are ready to finish or share them.",
+    href: "/journal",
+    title: "Journal",
+    body: "Write, speak, see what recurs.",
+    Icon: IconNotebook,
+    highlight: false,
   },
   {
-    title: "Smart journaling",
-    body: "Rich notes and voice clips in one place, with autosave in the browser and optional cloud sync when you are signed in.",
+    href: "/ideate",
+    title: "Ideate",
+    body: "Steps, and what's really stopping you.",
+    Icon: IconBulb,
+    highlight: false,
   },
   {
-    title: "Insights from your entries",
-    body: "Rolling themes and summaries by topic so patterns in your writing are easier to notice—without leaving the Journal.",
+    href: "/focus",
+    title: "Focus",
+    body: "Sessions tied to one task.",
+    Icon: IconTargetArrow,
+    highlight: false,
   },
-];
+] as const;
+
+function StartFreeButton({ className = "" }: { className?: string }) {
+  return (
+    <Link
+      href="/meditate/create"
+      className={`inline-flex items-center justify-center rounded-full px-7 py-3 text-sm font-semibold transition-opacity hover:opacity-90 ${className}`}
+      style={{ backgroundColor: GOLD, color: GOLD_INK }}
+    >
+      Start free
+    </Link>
+  );
+}
 
 export default function HomePage() {
   return (
-    <div className="mesh-hero">
-      <section className="mx-auto grid max-w-6xl gap-12 px-4 py-16 sm:grid-cols-2 sm:items-center sm:px-6 lg:py-24">
-        <div>
-          <p className="mb-3 text-sm font-medium uppercase tracking-widest text-accent-link">
-            consciously.live
-          </p>
-          <h1 className="text-4xl font-medium leading-tight tracking-tight sm:text-5xl">
-            <span className="font-display">Consciously</span>
-            <span className="mx-1.5 text-foreground">·</span>
-            <span className="font-hand text-[1.08em] font-medium leading-snug text-accent-link tracking-normal">
-              Live consciously
-            </span>
+    <div className="w-full">
+      {/*
+        Hero is a flat darker navy than header `#33465C` — deliberately distinct
+        so the boundary reads as a section break, not a near-miss gradient match.
+      */}
+      <section
+        className="w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16"
+        style={{ backgroundColor: SECTION_BG.hero }}
+      >
+        <div className="mx-auto flex max-w-3xl flex-col items-center text-center">
+          <LogoMark size={52} />
+          <h1
+            className="mt-8 font-display text-3xl font-medium leading-tight tracking-tight sm:text-4xl md:text-[2.75rem]"
+            style={{ color: CREAM }}
+          >
+            Personalised guided meditations that actually sound good.
           </h1>
-          <p className="mt-2 text-lg font-medium text-foreground/90">
-            AI guided meditations that actually sound good—and a journal that
-            remembers the story.
-          </p>
-          <p className="mt-5 max-w-lg text-lg text-muted">
-            Consciously combines guided meditation creation, a personal
-            meditation library, and smart journaling with rolling insights so your
-            practice and reflection stay in one flow.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link
-              href="/meditate/create"
-              className="inline-flex items-center justify-center rounded-full accent-fill-gradient px-6 py-3 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
-            >
-              Start creating
-            </Link>
-            <Link
-              href="/meditate/library"
-              className="inline-flex items-center justify-center rounded-full border border-border bg-card px-6 py-3 text-sm font-medium transition-colors hover:border-accent/40"
-            >
-              Open library
-            </Link>
-            <Link
-              href="/journal"
-              className="inline-flex items-center justify-center rounded-full border border-border bg-card px-6 py-3 text-sm font-medium transition-colors hover:border-accent/40"
-            >
-              Journal
-            </Link>
+          <div className="mt-8">
+            <StartFreeButton />
           </div>
-          <p className="mt-6 text-sm text-muted">
-            <span className="font-medium text-foreground">Pro</span> for
-            creators: WAV downloads, YouTube-ready workflows, and more.
-          </p>
-        </div>
-        <HeroVisual />
-      </section>
-
-      <section className="border-t border-border/50 py-16 sm:py-20">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <p className="text-xs font-medium uppercase tracking-widest text-muted">
-            What Consciously is
-          </p>
-          <div className="mt-6 grid gap-8 text-lg leading-relaxed text-foreground/85 sm:text-xl sm:leading-relaxed lg:mt-8 lg:grid-cols-2 lg:gap-12">
-            <p>
-              Consciously is a companion for using technology in a healthier
-              way—fewer endless loops, more intentional pauses—so screens can
-              support attention instead of draining it.
-            </p>
-            <p>
-              The same thread runs through meditation, library, and journal:
-              everyday life nudged toward greater awareness, with tools that
-              make room for consciousness rather than crowding it out.
-            </p>
+          <div className="mt-10 w-full">
+            <HomeHeroListenCard sample={HOMEPAGE_LISTEN_SAMPLES[0]} />
           </div>
         </div>
       </section>
 
-      <section className="border-t border-border/60 bg-card/40 py-16">
-        <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <h2 className="font-display text-2xl font-medium sm:text-3xl">
-            Meditation, library, and journal—together
+      {/* Not just meditation — lighter mid-navy than hero */}
+      <section
+        className="w-full px-4 py-16 sm:px-6 sm:py-20"
+        style={{ backgroundColor: SECTION_BG.pillars }}
+      >
+        <div className="mx-auto max-w-6xl">
+          <h2
+            className="text-center font-display text-3xl font-medium tracking-tight sm:text-4xl"
+            style={{ color: CREAM }}
+          >
+            Not just meditation.
           </h2>
-          <p className="mt-2 max-w-2xl text-muted">
-            Whether you are settling in for the day or preparing for something
-            that matters, Consciously is built to support both stillness and
-            clarity.
+          <p
+            className="mx-auto mt-3 max-w-2xl text-center text-base sm:text-lg"
+            style={{ color: MUTED }}
+          >
+            A journal, a project planner, and a meditation generator that
+            actually talk to each other.
           </p>
-          <ul className="mt-10 grid gap-6 sm:grid-cols-2">
-            {pillars.map((p) => (
-              <li
-                key={p.title}
-                className="rounded-2xl border border-border bg-card p-6 shadow-sm"
-              >
-                <h3 className="font-display text-lg font-medium">{p.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-muted">
-                  {p.body}
-                </p>
+          <ul className="mt-12 grid gap-4 sm:grid-cols-2 sm:gap-5 lg:grid-cols-4 lg:gap-6">
+            {pillars.map(({ href, title, body, Icon, highlight }) => (
+              <li key={title}>
+                <Link
+                  href={href}
+                  className="block h-full rounded-2xl border p-6 transition-opacity hover:opacity-95 sm:p-7"
+                  style={
+                    highlight
+                      ? {
+                          backgroundColor: "rgba(217,162,79,0.12)",
+                          borderColor: GOLD,
+                        }
+                      : {
+                          backgroundColor: "rgba(255,255,255,0.05)",
+                          borderColor: "rgba(255,255,255,0.12)",
+                        }
+                  }
+                >
+                  <span
+                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl"
+                    style={
+                      highlight
+                        ? {
+                            backgroundColor: "rgba(217,162,79,0.22)",
+                            color: GOLD,
+                          }
+                        : {
+                            backgroundColor: "rgba(255,255,255,0.08)",
+                            color: CREAM,
+                          }
+                    }
+                  >
+                    <Icon size={22} stroke={1.75} aria-hidden />
+                  </span>
+                  <p
+                    className="mt-4 font-display text-lg font-semibold"
+                    style={{ color: highlight ? GOLD : CREAM }}
+                  >
+                    {title}
+                  </p>
+                  <p
+                    className="mt-2 text-sm leading-relaxed sm:text-[15px]"
+                    style={{ color: MUTED }}
+                  >
+                    {body}
+                  </p>
+                </Link>
               </li>
             ))}
           </ul>
         </div>
       </section>
-    </div>
-  );
-}
 
-function HeroVisual() {
-  return (
-    <div className="relative flex min-h-[280px] items-center justify-center rounded-3xl border border-border bg-card/80 p-8 shadow-inner sm:min-h-[360px]">
-      <div
-        className="absolute inset-4 rounded-2xl opacity-40 hero-orb"
-      />
-      <div className="relative flex max-w-xs flex-col items-center text-center">
-        <HeadphonesGlyph className="h-24 w-24 text-accent-link" />
-        <p className="mt-6 font-display text-lg italic text-muted">
-          “A few minutes of guided audio, then a line in the journal—both shaped
-          by what you actually need today.”
-        </p>
-        <p className="mt-3 text-xs uppercase tracking-wider text-muted">
-          Concept visual · replace with photography
-        </p>
-      </div>
-    </div>
-  );
-}
+      <HomeListenSection />
 
-function HeadphonesGlyph({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 120 120"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden
-    >
-      <path
-        d="M24 64V52a36 36 0 1 1 72 0v12"
-        stroke="currentColor"
-        strokeWidth="4"
-        strokeLinecap="round"
-      />
-      <rect
-        x="12"
-        y="56"
-        width="28"
-        height="44"
-        rx="10"
-        stroke="currentColor"
-        strokeWidth="4"
-      />
-      <rect
-        x="80"
-        y="56"
-        width="28"
-        height="44"
-        rx="10"
-        stroke="currentColor"
-        strokeWidth="4"
-      />
-      <path
-        d="M40 100h40"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-        opacity="0.35"
-      />
-    </svg>
+      {/* Journal */}
+      <section
+        className="w-full px-4 py-16 sm:px-6 sm:py-20"
+        style={{ backgroundColor: SECTION_BG.journal }}
+      >
+        <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
+          <div>
+            <p
+              className="text-xs font-semibold uppercase tracking-[0.14em]"
+              style={{ color: GOLD }}
+            >
+              Journal
+            </p>
+            <h2
+              className="mt-3 font-display text-3xl font-medium tracking-tight sm:text-4xl"
+              style={{ color: CREAM }}
+            >
+              Write it down. Turn it into a meditation when you&apos;re ready.
+            </h2>
+            <p
+              className="mt-4 text-base leading-relaxed sm:text-lg"
+              style={{ color: MUTED }}
+            >
+              Any entry can become the starting point for a session — built from
+              what&apos;s actually there.
+            </p>
+          </div>
+          <div
+            className="rounded-2xl border p-5 sm:p-6"
+            style={{
+              backgroundColor: PANEL_BG,
+              borderColor: "rgba(255,255,255,0.12)",
+            }}
+          >
+            <p
+              className="text-xs font-medium uppercase tracking-wide"
+              style={{ color: MUTED }}
+            >
+              Today · journal entry
+            </p>
+            <p
+              className="mt-3 font-display text-lg font-medium leading-snug"
+              style={{ color: CREAM }}
+            >
+              Still carrying yesterday&apos;s conversation
+            </p>
+            <p
+              className="mt-3 text-sm leading-relaxed"
+              style={{ color: MUTED }}
+            >
+              I keep replaying what I should have said. My chest feels tight
+              when I think about tomorrow&apos;s meeting — like I&apos;m already
+              bracing for it.
+            </p>
+            <Link
+              href={journalCreateHref}
+              className="mt-5 inline-flex items-center rounded-full px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
+              style={{ backgroundColor: GOLD, color: GOLD_INK }}
+            >
+              Reflect on this entry →
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* Ideate — mirrored layout */}
+      <section
+        className="w-full px-4 py-16 sm:px-6 sm:py-20"
+        style={{ backgroundColor: SECTION_BG.ideate }}
+      >
+        <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
+          <div
+            className="order-2 rounded-2xl border p-5 sm:p-6 lg:order-1"
+            style={{
+              backgroundColor: PANEL_BG,
+              borderColor: "rgba(255,255,255,0.12)",
+            }}
+          >
+            <p
+              className="text-xs font-medium uppercase tracking-wide"
+              style={{ color: MUTED }}
+            >
+              Project
+            </p>
+            <p
+              className="mt-2 font-display text-lg font-medium leading-snug"
+              style={{ color: CREAM }}
+            >
+              Release my album
+            </p>
+            <p
+              className="mt-3 font-display text-base italic leading-relaxed"
+              style={{ color: MUTED }}
+            >
+              &ldquo;I freeze when I imagine people hearing the unfinished
+              tracks.&rdquo;
+            </p>
+            <Link
+              href={ideateCreateHref}
+              className="mt-5 inline-flex items-center rounded-full px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
+              style={{ backgroundColor: GOLD, color: GOLD_INK }}
+            >
+              Build a meditation from this →
+            </Link>
+          </div>
+          <div className="order-1 lg:order-2">
+            <p
+              className="text-xs font-semibold uppercase tracking-[0.14em]"
+              style={{ color: GOLD }}
+            >
+              Ideate
+            </p>
+            <h2
+              className="mt-3 font-display text-3xl font-medium tracking-tight sm:text-4xl"
+              style={{ color: CREAM }}
+            >
+              Turn what&apos;s blocking you into what you meditate on.
+            </h2>
+            <p
+              className="mt-4 text-base leading-relaxed sm:text-lg"
+              style={{ color: MUTED }}
+            >
+              Name the resistance, then build a visualisation or manifestation
+              session straight from it.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Closing CTA */}
+      <section
+        className="w-full px-4 py-20 sm:px-6 sm:py-24"
+        style={{ backgroundColor: SECTION_BG.cta }}
+      >
+        <div className="mx-auto flex max-w-2xl flex-col items-center text-center">
+          <h2
+            className="font-display text-3xl font-medium tracking-tight sm:text-4xl"
+            style={{ color: CREAM }}
+          >
+            Start with whatever&apos;s on your mind.
+          </h2>
+          <div className="mt-8">
+            <StartFreeButton />
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }

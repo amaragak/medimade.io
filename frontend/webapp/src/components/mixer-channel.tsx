@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import * as Switch from "@radix-ui/react-switch";
 import type { BackgroundAudioItem } from "@/lib/medimade-api";
 import type { SoundCategoryId } from "@/lib/sound-taxonomy";
@@ -133,6 +133,137 @@ function MixerRowPlayButton({
   );
 }
 
+/** Uncontrolled fader: live audio via onLiveGainChange; React state via onGainChange on commit. */
+function MixerGainFader({
+  label,
+  initialGain,
+  onLiveGainChange,
+  onGainChange,
+  disabled,
+  orientation,
+}: {
+  label: string;
+  initialGain: number;
+  onLiveGainChange?: (gain: number) => void;
+  onGainChange: (gain: number) => void;
+  disabled?: boolean;
+  orientation: "vertical" | "horizontal";
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const gainRef = useRef(initialGain);
+  const liveRef = useRef(onLiveGainChange);
+  const commitRef = useRef(onGainChange);
+  const draggingRef = useRef(false);
+
+  liveRef.current = onLiveGainChange;
+  commitRef.current = onGainChange;
+
+  useEffect(() => {
+    if (draggingRef.current) return;
+    gainRef.current = initialGain;
+    const el = inputRef.current;
+    if (el) {
+      el.value = String(initialGain);
+      el.style.background =
+        orientation === "horizontal"
+          ? `linear-gradient(to right, var(--accent) ${initialGain}%, var(--border) ${initialGain}%)`
+          : `linear-gradient(to top, var(--accent) ${initialGain}%, var(--border) ${initialGain}%)`;
+    }
+    if (labelRef.current) labelRef.current.textContent = `${initialGain}%`;
+  }, [initialGain, orientation]);
+
+  function onInput(e: FormEvent<HTMLInputElement>) {
+    draggingRef.current = true;
+    const v = Number(e.currentTarget.value);
+    if (!Number.isFinite(v)) return;
+    gainRef.current = v;
+    if (labelRef.current) labelRef.current.textContent = `${v}%`;
+    e.currentTarget.style.background =
+      orientation === "horizontal"
+        ? `linear-gradient(to right, var(--accent) ${v}%, var(--border) ${v}%)`
+        : `linear-gradient(to top, var(--accent) ${v}%, var(--border) ${v}%)`;
+    liveRef.current?.(v);
+  }
+
+  function commit() {
+    draggingRef.current = false;
+    const v = gainRef.current;
+    liveRef.current?.(v);
+    commitRef.current(v);
+  }
+
+  if (orientation === "horizontal") {
+    return (
+      <>
+        <div className="mixer-fader-h-well min-w-0 flex-1">
+          <input
+            ref={inputRef}
+            aria-label={`${label} level`}
+            type="range"
+            min={0}
+            max={100}
+            defaultValue={initialGain}
+            disabled={disabled}
+            onInput={onInput}
+            onPointerDown={() => {
+              draggingRef.current = true;
+            }}
+            onPointerUp={commit}
+            onMouseUp={commit}
+            onTouchEnd={commit}
+            onKeyUp={commit}
+            className="mixer-fader-h disabled:opacity-40"
+            style={{
+              background: `linear-gradient(to right, var(--accent) ${initialGain}%, var(--border) ${initialGain}%)`,
+            }}
+          />
+        </div>
+        <span
+          ref={labelRef}
+          className="w-8 shrink-0 text-right text-[11px] tabular-nums text-muted"
+        >
+          {initialGain}%
+        </span>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <span
+        ref={labelRef}
+        className="h-4 shrink-0 text-[11px] tabular-nums text-muted"
+      >
+        {initialGain}%
+      </span>
+      <div className="mixer-fader-well">
+        <input
+          ref={inputRef}
+          aria-label={`${label} level`}
+          type="range"
+          min={0}
+          max={100}
+          defaultValue={initialGain}
+          disabled={disabled}
+          onInput={onInput}
+          onPointerDown={() => {
+            draggingRef.current = true;
+          }}
+          onPointerUp={commit}
+          onMouseUp={commit}
+          onTouchEnd={commit}
+          onKeyUp={commit}
+          className="mixer-fader disabled:opacity-40"
+          style={{
+            background: `linear-gradient(to top, var(--accent) ${initialGain}%, var(--border) ${initialGain}%)`,
+          }}
+        />
+      </div>
+    </>
+  );
+}
+
 export function MixerChannel({
   label,
   category,
@@ -141,6 +272,7 @@ export function MixerChannel({
   onChange,
   gain,
   onGainChange,
+  onLiveGainChange,
   disabled,
   faderDisabled,
   playing,
@@ -156,6 +288,8 @@ export function MixerChannel({
   onChange: (key: string) => void;
   gain: number;
   onGainChange: (gain: number) => void;
+  /** Immediate audio volume while dragging — avoid setState here. */
+  onLiveGainChange?: (gain: number) => void;
   disabled?: boolean;
   faderDisabled?: boolean;
   playing: boolean;
@@ -194,24 +328,14 @@ export function MixerChannel({
         {active ? (
           <div className="mt-2 flex min-w-0 items-center gap-2">
             <span className="w-[3.75rem] shrink-0" aria-hidden />
-            <div className="mixer-fader-h-well min-w-0 flex-1">
-              <input
-                aria-label={`${label} level`}
-                type="range"
-                min={0}
-                max={100}
-                value={gain}
-                onChange={(e) => onGainChange(Number(e.target.value))}
-                disabled={faderDisabled}
-                className="mixer-fader-h disabled:opacity-40"
-                style={{
-                  background: `linear-gradient(to right, var(--accent) ${gain}%, var(--border) ${gain}%)`,
-                }}
-              />
-            </div>
-            <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-muted">
-              {gain}%
-            </span>
+            <MixerGainFader
+              label={label}
+              initialGain={gain}
+              onLiveGainChange={onLiveGainChange}
+              onGainChange={onGainChange}
+              disabled={faderDisabled}
+              orientation="horizontal"
+            />
             <MixerRowPlayButton
               playing={playing}
               onTogglePreview={onTogglePreview}
@@ -229,26 +353,14 @@ export function MixerChannel({
       label={label}
       picker={picker}
       meter={
-        <>
-          <span className="h-4 shrink-0 text-[11px] tabular-nums text-muted">
-            {gain}%
-          </span>
-          <div className="mixer-fader-well">
-            <input
-              aria-label={`${label} level`}
-              type="range"
-              min={0}
-              max={100}
-              value={gain}
-              onChange={(e) => onGainChange(Number(e.target.value))}
-              disabled={faderDisabled}
-              className="mixer-fader disabled:opacity-40"
-              style={{
-                background: `linear-gradient(to top, var(--accent) ${gain}%, var(--border) ${gain}%)`,
-              }}
-            />
-          </div>
-        </>
+        <MixerGainFader
+          label={label}
+          initialGain={gain}
+          onLiveGainChange={onLiveGainChange}
+          onGainChange={onGainChange}
+          disabled={faderDisabled}
+          orientation="vertical"
+        />
       }
       playing={playing}
       onTogglePreview={onTogglePreview}

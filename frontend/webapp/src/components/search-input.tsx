@@ -1,6 +1,6 @@
 "use client";
 
-import type { ChangeEvent } from "react";
+import type { ChangeEvent, Ref } from "react";
 
 function IconSearch({ className }: { className?: string }) {
   return (
@@ -29,6 +29,7 @@ type Props = {
   "aria-label"?: string;
   className?: string;
   inputClassName?: string;
+  inputRef?: Ref<HTMLInputElement>;
 };
 
 export function SearchInput({
@@ -38,6 +39,7 @@ export function SearchInput({
   "aria-label": ariaLabel,
   className = "",
   inputClassName = "",
+  inputRef,
 }: Props) {
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     onChange(e.target.value);
@@ -48,6 +50,7 @@ export function SearchInput({
         <IconSearch />
       </span>
       <input
+        ref={inputRef}
         type="search"
         value={value}
         onChange={handleChange}

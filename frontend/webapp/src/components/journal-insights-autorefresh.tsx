@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   fetchJournalInsightsRemote,
   getMedimadeApiBase,
-  getMedimadeSessionJwt,
   runJournalInsightsRemote,
 } from "@/lib/medimade-api";
 import { setCachedJournalInsights } from "@/lib/journal-remote-cache";
@@ -27,11 +26,10 @@ function maxUpdatedAtIso(): string | null {
 }
 
 function isJournalEditorPath(p: string): boolean {
-  return (
-    p === "/journal" ||
-    p === "/journal/gratitudes" ||
-    p.startsWith("/journal/gratitudes/")
-  );
+  if (p === "/journal/insights" || p.startsWith("/journal/insights/")) {
+    return false;
+  }
+  return p === "/journal" || p.startsWith("/journal/");
 }
 
 const inFlightRef = { current: false };
@@ -39,12 +37,11 @@ const lastTriggeredForUpdatedAtRef = { current: null as string | null };
 
 /**
  * Run after the user leaves the journal editor context (navigate away from
- * `/journal` or `/journal/gratitudes`, including to Insights).
+ * Journal / Gratitudes, including to Insights).
  */
 export function scheduleJournalInsightsRefreshAfterLeavingEditor(): void {
   const base = getMedimadeApiBase();
   if (!base) return;
-  if (!getMedimadeSessionJwt()) return;
 
   const localMax = maxUpdatedAtIso();
   if (!localMax) return;

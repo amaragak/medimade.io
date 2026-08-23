@@ -35,7 +35,7 @@ const pillars = [
 
 export default function MeditateMarketingPage() {
   return (
-    <div className="mesh-hero">
+    <div>
       <section className="mx-auto grid max-w-6xl gap-12 px-4 py-16 sm:grid-cols-2 sm:items-center sm:px-6 lg:py-24">
         <div>
           <p className="mb-3 text-sm font-medium uppercase tracking-widest text-accent-link">

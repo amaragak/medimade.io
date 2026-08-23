@@ -151,7 +151,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
 
   if (missing || !dream) {
     return (
-      <div className="mesh-hero mx-auto max-w-2xl px-4 py-20 sm:px-6">
+      <div className="mx-auto max-w-2xl px-4 py-20 sm:px-6">
         <p className="text-muted">
           {missing
             ? "This project isn’t here anymore—or the link is old."
@@ -171,8 +171,8 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
   const stepCount = subtasksForProject(loadIdeateStore(), dream.id).length;
 
   return (
-    <div className="mesh-hero min-h-[calc(100vh-3.5rem)]">
-      <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
+    <div className="min-h-[calc(100vh-3.5rem)]">
+      <div className="mx-auto max-w-3xl px-4 pt-3 pb-10 sm:px-6 sm:py-14">
         <div className="border-b border-border/70 pb-6">
           <Link
             href="/ideate"

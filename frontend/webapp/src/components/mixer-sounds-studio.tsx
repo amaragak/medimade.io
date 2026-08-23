@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { ChevronLeft } from "lucide-react";
+import { IconPlus } from "@tabler/icons-react";
 import { MixerChannel, MixerVoiceChannel } from "@/components/mixer-channel";
 import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
 import { FactoryIconSelect } from "@/components/factory-icons";
@@ -41,6 +44,40 @@ import {
   speakerPreviewLoudFxSampleKey,
   speakerPreviewLoudSampleKey,
 } from "@/lib/speaker-sample-speed";
+
+const SOUNDS_HREF = "/meditate/sounds";
+
+type SoundsRoute =
+  | { kind: "list" }
+  | { kind: "new" }
+  | { kind: "mix"; id: string }
+  | { kind: "preset"; id: string };
+
+function soundsRouteFromPath(pathname: string): SoundsRoute {
+  if (pathname === SOUNDS_HREF || pathname === `${SOUNDS_HREF}/`) {
+    return { kind: "list" };
+  }
+  if (pathname === `${SOUNDS_HREF}/new` || pathname === `${SOUNDS_HREF}/new/`) {
+    return { kind: "new" };
+  }
+  const mix = /^\/meditate\/sounds\/mix\/([^/]+)\/?$/.exec(pathname);
+  if (mix?.[1]) {
+    try {
+      return { kind: "mix", id: decodeURIComponent(mix[1]) };
+    } catch {
+      return { kind: "mix", id: mix[1] };
+    }
+  }
+  const preset = /^\/meditate\/sounds\/preset\/([^/]+)\/?$/.exec(pathname);
+  if (preset?.[1]) {
+    try {
+      return { kind: "preset", id: decodeURIComponent(preset[1]) };
+    } catch {
+      return { kind: "preset", id: preset[1] };
+    }
+  }
+  return { kind: "list" };
+}
 
 type BedTrack = "nature" | "music" | "drums" | "noise";
 
@@ -84,6 +121,14 @@ export function MixerSoundsStudio({
   initialFactoryPresets?: MixerFactoryPreset[] | null;
 }) {
   const isAdmin = variant === "admin";
+  const pathname = usePathname() || SOUNDS_HREF;
+  const router = useRouter();
+  const soundsRoute = isAdmin ? { kind: "list" as const } : soundsRouteFromPath(pathname);
+  const mobileEditorOpen =
+    !isAdmin &&
+    (soundsRoute.kind === "new" ||
+      soundsRoute.kind === "mix" ||
+      soundsRoute.kind === "preset");
   const [hydrated, setHydrated] = useState(false);
   const [presets, setPresets] = useState<MixerPreset[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -139,12 +184,41 @@ export function MixerSoundsStudio({
   const factoryMusicRef = useRef<HTMLAudioElement | null>(null);
   const factoryDrumsRef = useRef<HTMLAudioElement | null>(null);
   const factoryNoiseRef = useRef<HTMLAudioElement | null>(null);
+  const handledNewRouteRef = useRef(false);
   const lastBgKeysRef = useRef<Record<BedTrack, string>>({
     nature: "",
     music: "",
     drums: "",
     noise: "",
   });
+  const bedGainRef = useRef({
+    nature: mix.natureGain,
+    music: mix.musicGain,
+    drums: mix.drumsGain,
+    noise: mix.noiseGain,
+  });
+
+  useEffect(() => {
+    bedGainRef.current = {
+      nature: mix.natureGain,
+      music: mix.musicGain,
+      drums: mix.drumsGain,
+      noise: mix.noiseGain,
+    };
+  }, [mix.natureGain, mix.musicGain, mix.drumsGain, mix.noiseGain]);
+
+  function applyLiveBedGain(track: BedTrack, gain: number) {
+    bedGainRef.current[track] = gain;
+    const el =
+      track === "nature"
+        ? previewNatureRef.current
+        : track === "music"
+          ? previewMusicRef.current
+          : track === "drums"
+            ? previewDrumsRef.current
+            : previewNoiseRef.current;
+    applyBedElementVolume(el, gain);
+  }
 
   const drumsLockedForMelodic = isMelodicMusicKey(
     backgroundMusic,
@@ -221,6 +295,82 @@ export function MixerSoundsStudio({
       presets,
     });
   }, [hydrated, isAdmin, activeId, presets]);
+
+  /** Deep-link / browser back: sync editor from `/meditate/sounds/...` (user only). */
+  useEffect(() => {
+    if (isAdmin || !hydrated) return;
+    const route = soundsRouteFromPath(pathname);
+
+    if (route.kind === "list") {
+      handledNewRouteRef.current = false;
+      return;
+    }
+
+    if (route.kind === "new") {
+      if (handledNewRouteRef.current) return;
+      handledNewRouteRef.current = true;
+      const p = newMixerPreset();
+      setPresets((prev) => [p, ...prev]);
+      setActiveId(p.id);
+      setLoadedFactoryId(null);
+      setNameDraft(p.name);
+      setMix(emptyMixerMix());
+      setSaveError(null);
+      router.replace(`${SOUNDS_HREF}/mix/${encodeURIComponent(p.id)}`);
+      return;
+    }
+
+    handledNewRouteRef.current = false;
+
+    if (route.kind === "mix") {
+      const p = presets.find((x) => x.id === route.id);
+      if (!p) {
+        // createNew may navigate before presets state commits
+        if (activeId === route.id) return;
+        router.replace(SOUNDS_HREF);
+        return;
+      }
+      if (activeId === p.id && !loadedFactoryId) return;
+      loadMixIntoEditor({
+        name: p.name,
+        mix: mixerPresetToMix(p),
+        savedId: p.id,
+      });
+      return;
+    }
+
+    if (route.kind === "preset") {
+      if (factoryPresetsLoading) return;
+      const p = factoryPresets.find((x) => x.id === route.id);
+      if (!p) {
+        router.replace(SOUNDS_HREF);
+        return;
+      }
+      if (loadedFactoryId === p.id) return;
+      loadMixIntoEditor({
+        name: p.name,
+        mix: factoryPresetToMix(p),
+        savedId: null,
+        factoryId: p.id,
+        factoryMeta: {
+          description: p.description,
+          icon: p.icon,
+          icon_bg: p.icon_bg,
+          icon_color: p.icon_color,
+        },
+      });
+    }
+  }, [
+    isAdmin,
+    hydrated,
+    pathname,
+    presets,
+    factoryPresets,
+    factoryPresetsLoading,
+    activeId,
+    loadedFactoryId,
+    router,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -358,7 +508,6 @@ export function MixerSoundsStudio({
     const sync = async (
       el: HTMLAudioElement | null,
       key: string,
-      gain: number,
       track: BedTrack,
     ) => {
       if (!el) return;
@@ -372,8 +521,10 @@ export function MixerSoundsStudio({
           void el.load();
         }
         // Mixer 100% → 0.5 playback. Re-apply after load(); load() resets volume to 1.
+        const gain = bedGainRef.current[track];
         applyBedElementVolume(el, gain);
-        el.onloadeddata = () => applyBedElementVolume(el, gain);
+        el.onloadeddata = () =>
+          applyBedElementVolume(el, bedGainRef.current[track]);
         if (keyChanged || playing[track]) {
           try {
             await el.play();
@@ -390,20 +541,16 @@ export function MixerSoundsStudio({
         lastBgKeysRef.current[track] = "";
       }
     };
-    void sync(previewNatureRef.current, mix.natureKey, mix.natureGain, "nature");
-    void sync(previewMusicRef.current, mix.musicKey, mix.musicGain, "music");
-    void sync(previewDrumsRef.current, drumsPreviewKey, mix.drumsGain, "drums");
-    void sync(previewNoiseRef.current, mix.noiseKey, mix.noiseGain, "noise");
+    void sync(previewNatureRef.current, mix.natureKey, "nature");
+    void sync(previewMusicRef.current, mix.musicKey, "music");
+    void sync(previewDrumsRef.current, drumsPreviewKey, "drums");
+    void sync(previewNoiseRef.current, mix.noiseKey, "noise");
   }, [
     mediaBaseUrl,
     mix.natureKey,
     mix.musicKey,
     drumsPreviewKey,
     mix.noiseKey,
-    mix.natureGain,
-    mix.musicGain,
-    mix.drumsGain,
-    mix.noiseGain,
     playing.nature,
     playing.music,
     playing.drums,
@@ -484,19 +631,22 @@ export function MixerSoundsStudio({
     stopAll();
     const parts: Promise<void>[] = [];
     if (mix.natureKey && previewNatureRef.current?.src) {
-      applyBedElementVolume(previewNatureRef.current, mix.natureGain);
+      applyBedElementVolume(
+        previewNatureRef.current,
+        bedGainRef.current.nature,
+      );
       parts.push(previewNatureRef.current.play());
     }
     if (mix.musicKey && previewMusicRef.current?.src) {
-      applyBedElementVolume(previewMusicRef.current, mix.musicGain);
+      applyBedElementVolume(previewMusicRef.current, bedGainRef.current.music);
       parts.push(previewMusicRef.current.play());
     }
     if (drumsPreviewKey && previewDrumsRef.current?.src) {
-      applyBedElementVolume(previewDrumsRef.current, mix.drumsGain);
+      applyBedElementVolume(previewDrumsRef.current, bedGainRef.current.drums);
       parts.push(previewDrumsRef.current.play());
     }
     if (mix.noiseKey && previewNoiseRef.current?.src) {
-      applyBedElementVolume(previewNoiseRef.current, mix.noiseGain);
+      applyBedElementVolume(previewNoiseRef.current, bedGainRef.current.noise);
       parts.push(previewNoiseRef.current.play());
     }
     if (isAdmin && speakerModelId && speakerSampleRef.current?.src) {
@@ -572,15 +722,21 @@ export function MixerSoundsStudio({
     }
   }
 
-  function applyPreset(p: MixerPreset) {
+  function applyPreset(p: MixerPreset, opts?: { navigate?: boolean }) {
     loadMixIntoEditor({
       name: p.name,
       mix: mixerPresetToMix(p),
       savedId: p.id,
     });
+    if (!isAdmin && opts?.navigate !== false) {
+      router.push(`${SOUNDS_HREF}/mix/${encodeURIComponent(p.id)}`);
+    }
   }
 
-  function applyFactoryPreset(p: MixerFactoryPreset) {
+  function applyFactoryPreset(
+    p: MixerFactoryPreset,
+    opts?: { navigate?: boolean },
+  ) {
     loadMixIntoEditor({
       name: p.name,
       mix: factoryPresetToMix(p),
@@ -593,6 +749,9 @@ export function MixerSoundsStudio({
         icon_color: p.icon_color,
       },
     });
+    if (!isAdmin && opts?.navigate !== false) {
+      router.push(`${SOUNDS_HREF}/preset/${encodeURIComponent(p.id)}`);
+    }
   }
 
   async function toggleFactoryPreview(p: MixerFactoryPreset) {
@@ -684,6 +843,11 @@ export function MixerSoundsStudio({
     setLoadedFactoryId(null);
     setNameDraft(p.name);
     setMix(emptyMixerMix());
+    router.push(`${SOUNDS_HREF}/mix/${encodeURIComponent(p.id)}`);
+  }
+
+  function openSoundsList() {
+    router.push(SOUNDS_HREF);
   }
 
   async function saveCurrent() {
@@ -786,7 +950,7 @@ export function MixerSoundsStudio({
       className={
         isAdmin
           ? "flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden"
-          : "mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6"
+          : "mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 pt-2 pb-6 sm:px-6 sm:py-6"
       }
     >
       <audio ref={previewNatureRef} className="hidden" playsInline />
@@ -804,7 +968,7 @@ export function MixerSoundsStudio({
       <div
         className={`flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 ${
           isAdmin ? "mb-3" : "mb-6"
-        }`}
+        } ${mobileEditorOpen ? "max-sm:hidden" : ""}`}
       >
         {isAdmin ? (
           <p className="text-sm text-muted">
@@ -818,19 +982,36 @@ export function MixerSoundsStudio({
         <button
           type="button"
           onClick={createNew}
-          className="cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+          className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 sm:px-3"
+          aria-label="New mix"
         >
-          + New mix
+          <IconPlus size={18} stroke={2} className="sm:hidden" aria-hidden />
+          <span className="sm:hidden">New</span>
+          <span className="hidden sm:inline">+ New mix</span>
         </button>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-6 lg:flex-row lg:gap-4">
+      {mobileEditorOpen ? (
+        <div className="mb-3 flex shrink-0 items-center justify-between gap-2 sm:hidden">
+          <button
+            type="button"
+            onClick={openSoundsList}
+            className="inline-flex cursor-pointer items-center gap-0.5 text-sm font-semibold text-accent-link"
+            aria-label="Back to Sounds list"
+          >
+            <ChevronLeft aria-hidden className="size-5" strokeWidth={2} />
+            Sounds
+          </button>
+        </div>
+      ) : null}
+
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden lg:flex-row lg:gap-4">
         <aside
           className={`flex shrink-0 flex-col gap-2 overflow-hidden border-b border-border pb-4 lg:w-72 lg:border-b-0 lg:pb-0 ${
             isAdmin
               ? "max-h-[11rem] min-h-0 lg:max-h-none lg:h-full"
-              : "max-h-[28rem] overflow-visible lg:max-h-none"
-          }`}
+              : "max-h-[14rem] max-sm:max-h-none max-sm:min-h-0 max-sm:flex-1 max-sm:border-b-0 max-sm:pb-0 overflow-visible lg:max-h-none"
+          } ${mobileEditorOpen ? "max-sm:hidden" : ""}`}
         >
           <nav
             className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1 [scrollbar-gutter:stable]"
@@ -908,7 +1089,11 @@ export function MixerSoundsStudio({
           </nav>
         </aside>
 
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <section
+          className={`flex min-h-0 min-w-0 flex-1 flex-col ${
+            !isAdmin && !mobileEditorOpen ? "max-sm:hidden" : ""
+          }`}
+        >
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
             <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-3">
               <label className="sr-only" htmlFor="mixer-preset-name">
@@ -922,6 +1107,11 @@ export function MixerSoundsStudio({
                 placeholder="Name this mix"
                 className="min-w-0 flex-1 border-0 bg-transparent font-display text-xl font-medium tracking-tight text-foreground outline-none placeholder:text-muted/45"
               />
+              {dirty && !isAdmin ? (
+                <span className="shrink-0 text-xs font-medium text-muted">
+                  Modified
+                </span>
+              ) : null}
               <button
                 type="button"
                 onClick={() => void togglePlayAll()}
@@ -996,7 +1186,106 @@ export function MixerSoundsStudio({
                 ) : null}
               </div>
             ) : null}
-            <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto p-4">
+
+            {/* Stacked row mixer — below lg (same pattern as Create) */}
+            <div className="flex min-h-0 flex-1 flex-col gap-0 overflow-y-auto lg:hidden">
+              {isAdmin ? (
+                <div className="shrink-0 border-b border-border px-4">
+                  <MixerVoiceChannel
+                    layout="row"
+                    voices={fishSpeakers}
+                    value={speakerModelId}
+                    onChange={setSpeakerModelId}
+                    fxOn={speakerFxPreviewOn}
+                    onFxChange={setSpeakerFxPreviewOn}
+                    fxDisabled={!mediaBaseUrl || !speakerModelId}
+                    playing={speakerPlaying}
+                    onTogglePreview={() => void toggleSpeakerPreview()}
+                    playDisabled={!mediaBaseUrl || !speakerModelId}
+                    showDisc={false}
+                  />
+                </div>
+              ) : null}
+              <div className="shrink-0 px-4 pb-3 pt-1">
+                <MixerChannel
+                  layout="row"
+                  label="Music"
+                  category="music"
+                  items={backgroundMusic}
+                  value={mix.musicKey}
+                  onChange={(key) => patchMix({ musicKey: key })}
+                  gain={mix.musicGain}
+                  onGainChange={(gain) => patchMix({ musicGain: gain })}
+                  onLiveGainChange={(gain) => applyLiveBedGain("music", gain)}
+                  faderDisabled={!mix.musicKey}
+                  playing={playing.music}
+                  onTogglePreview={() => void toggleRowPreview("music")}
+                  playDisabled={!mix.musicKey}
+                  playAriaLabel={playing.music ? "Pause music" : "Play music"}
+                />
+                <MixerChannel
+                  layout="row"
+                  label="Ambience"
+                  category="ambience"
+                  items={backgroundNature}
+                  value={mix.natureKey}
+                  onChange={(key) => patchMix({ natureKey: key })}
+                  gain={mix.natureGain}
+                  onGainChange={(gain) => patchMix({ natureGain: gain })}
+                  onLiveGainChange={(gain) => applyLiveBedGain("nature", gain)}
+                  faderDisabled={!mix.natureKey}
+                  playing={playing.nature}
+                  onTogglePreview={() => void toggleRowPreview("nature")}
+                  playDisabled={!mix.natureKey}
+                  playAriaLabel={
+                    playing.nature ? "Pause ambience" : "Play ambience"
+                  }
+                />
+                <DrumsLockedWrap
+                  locked={drumsLockedForMelodic}
+                  className="block"
+                >
+                  <MixerChannel
+                    layout="row"
+                    label="Drums"
+                    category="drums"
+                    items={backgroundDrums}
+                    value={mix.drumsKey}
+                    onChange={(key) => patchMix({ drumsKey: key })}
+                    gain={mix.drumsGain}
+                    onGainChange={(gain) => patchMix({ drumsGain: gain })}
+                    onLiveGainChange={(gain) => applyLiveBedGain("drums", gain)}
+                    disabled={drumsLockedForMelodic}
+                    faderDisabled={drumsLockedForMelodic || !mix.drumsKey}
+                    playing={playing.drums}
+                    onTogglePreview={() => void toggleRowPreview("drums")}
+                    playDisabled={drumsLockedForMelodic || !mix.drumsKey}
+                    playAriaLabel={
+                      playing.drums ? "Pause drums" : "Play drums"
+                    }
+                  />
+                </DrumsLockedWrap>
+                <MixerChannel
+                  layout="row"
+                  label="Noise"
+                  category="noise"
+                  items={backgroundNoise}
+                  value={mix.noiseKey}
+                  onChange={(key) => patchMix({ noiseKey: key })}
+                  gain={mix.noiseGain}
+                  onGainChange={(gain) => patchMix({ noiseGain: gain })}
+                  onLiveGainChange={(gain) => applyLiveBedGain("noise", gain)}
+                  faderDisabled={!mix.noiseKey}
+                  playing={playing.noise}
+                  onTogglePreview={() => void toggleRowPreview("noise")}
+                  playDisabled={!mix.noiseKey}
+                  playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
+                />
+              </div>
+            </div>
+
+            {/* Column mixer — lg+ (unchanged) */}
+            <div className="hidden min-h-0 flex-1 items-stretch gap-2 overflow-x-auto p-4 lg:flex">
               {isAdmin ? (
                 <MixerVoiceChannel
                   voices={fishSpeakers}
@@ -1019,6 +1308,7 @@ export function MixerSoundsStudio({
                 onChange={(key) => patchMix({ musicKey: key })}
                 gain={mix.musicGain}
                 onGainChange={(gain) => patchMix({ musicGain: gain })}
+                onLiveGainChange={(gain) => applyLiveBedGain("music", gain)}
                 faderDisabled={!mix.musicKey}
                 playing={playing.music}
                 onTogglePreview={() => void toggleRowPreview("music")}
@@ -1033,6 +1323,7 @@ export function MixerSoundsStudio({
                 onChange={(key) => patchMix({ natureKey: key })}
                 gain={mix.natureGain}
                 onGainChange={(gain) => patchMix({ natureGain: gain })}
+                onLiveGainChange={(gain) => applyLiveBedGain("nature", gain)}
                 faderDisabled={!mix.natureKey}
                 playing={playing.nature}
                 onTogglePreview={() => void toggleRowPreview("nature")}
@@ -1053,6 +1344,7 @@ export function MixerSoundsStudio({
                   onChange={(key) => patchMix({ drumsKey: key })}
                   gain={mix.drumsGain}
                   onGainChange={(gain) => patchMix({ drumsGain: gain })}
+                  onLiveGainChange={(gain) => applyLiveBedGain("drums", gain)}
                   disabled={drumsLockedForMelodic}
                   faderDisabled={drumsLockedForMelodic || !mix.drumsKey}
                   playing={playing.drums}
@@ -1069,6 +1361,7 @@ export function MixerSoundsStudio({
                 onChange={(key) => patchMix({ noiseKey: key })}
                 gain={mix.noiseGain}
                 onGainChange={(gain) => patchMix({ noiseGain: gain })}
+                onLiveGainChange={(gain) => applyLiveBedGain("noise", gain)}
                 faderDisabled={!mix.noiseKey}
                 playing={playing.noise}
                 onTogglePreview={() => void toggleRowPreview("noise")}

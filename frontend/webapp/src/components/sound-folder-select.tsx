@@ -96,9 +96,6 @@ export function SoundFolderSelect({
 
   useEffect(() => {
     if (!open || !activeSub) return;
-    if (typeof window === "undefined") return;
-    // Nested sample panel is mobile-only (< sm / 640px)
-    if (window.matchMedia("(min-width: 640px)").matches) return;
     const el = mobileSamplesRef.current;
     if (!el) return;
     el.focus({ preventScroll: true });
@@ -127,7 +124,7 @@ export function SoundFolderSelect({
 
   const menu = (
     <div
-      className={`absolute z-[90] max-h-72 overflow-auto rounded-xl border border-border bg-card py-1 shadow-xl ${
+      className={`absolute z-[90] max-h-72 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-xl ${
         compact
           ? "left-0 right-0 top-full mt-1 sm:left-1/2 sm:right-auto sm:min-w-[13rem] sm:-translate-x-1/2"
           : "left-0 top-full mt-1 min-w-[12rem]"
@@ -159,16 +156,7 @@ export function SoundFolderSelect({
           const sounds = bySub.get(folder.id) ?? [];
           const isActive = activeSub === folder.id;
           return (
-            <div
-              key={folder.id}
-              className="relative"
-              onMouseEnter={() => {
-                if (typeof window === "undefined") return;
-                if (window.matchMedia("(min-width: 640px)").matches) {
-                  setActiveSub(folder.id);
-                }
-              }}
-            >
+            <div key={folder.id}>
               <button
                 type="button"
                 aria-expanded={isActive}
@@ -183,32 +171,19 @@ export function SoundFolderSelect({
                     ({sounds.length})
                   </span>
                 </span>
-                <span className="text-muted sm:hidden" aria-hidden>
+                <span className="text-muted" aria-hidden>
                   {isActive ? "▾" : "›"}
                 </span>
-                <span className="hidden text-muted sm:inline" aria-hidden>
-                  ›
-                </span>
               </button>
-              {/* Mobile: accordion samples directly under folder */}
+              {/* Inline accordion — side flyouts get clipped by overflow ancestors */}
               {isActive ? (
                 <div
                   ref={mobileSamplesRef}
                   tabIndex={-1}
                   role="group"
                   aria-label={`${folder.label} samples`}
-                  className="border-t border-border/60 bg-background/40 pb-1 pl-2 outline-none sm:hidden"
+                  className="border-t border-border/60 bg-background/40 pb-1 pl-2 outline-none"
                 >
-                  <SampleButtons
-                    sounds={sounds}
-                    value={value}
-                    onPick={pickSound}
-                  />
-                </div>
-              ) : null}
-              {/* Tablet+: side flyout */}
-              {isActive ? (
-                <div className="absolute top-0 left-full z-[91] ml-1 hidden max-h-64 min-w-[12rem] overflow-auto rounded-xl border border-border bg-card py-1 shadow-xl sm:block">
                   <SampleButtons
                     sounds={sounds}
                     value={value}
