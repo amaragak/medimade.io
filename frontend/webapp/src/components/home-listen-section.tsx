@@ -26,7 +26,7 @@ export function HomeListenSection() {
         <ul className="mt-10 grid gap-4 sm:grid-cols-3 sm:gap-5">
           {HOMEPAGE_LISTEN_SAMPLES.map((sample) => (
             <li key={sample.id}>
-              <HomeListenCard sample={sample} />
+              <HomeListenCard sample={sample} surface="dark" />
             </li>
           ))}
         </ul>
@@ -35,7 +35,7 @@ export function HomeListenSection() {
   );
 }
 
-/** Featured hero sample — same card UI as the Listen section. */
+/** Featured hero sample — theme-aware so it stays readable on the light hero. */
 export function HomeHeroListenCard({
   sample = HOMEPAGE_LISTEN_SAMPLES[0]!,
 }: {
@@ -43,16 +43,37 @@ export function HomeHeroListenCard({
 }) {
   return (
     <div className="mx-auto w-full max-w-[480px]">
-      <HomeListenCard sample={sample} />
+      <HomeListenCard sample={sample} surface="hero" />
     </div>
   );
 }
 
-export function HomeListenCard({ sample }: { sample: HomepageListenSample }) {
+/** All three listen samples in the hero — same card UI, theme-aware surface. */
+export function HomeHeroListenGrid() {
+  return (
+    <ul className="mx-auto grid w-full max-w-6xl gap-4 sm:grid-cols-3 sm:gap-5">
+      {HOMEPAGE_LISTEN_SAMPLES.map((sample) => (
+        <li key={sample.id}>
+          <HomeListenCard sample={sample} surface="hero" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function HomeListenCard({
+  sample,
+  surface = "dark",
+}: {
+  sample: HomepageListenSample;
+  /** `dark` = Listen section (always navy). `hero` = theme-aware for light/dark hero. */
+  surface?: "dark" | "hero";
+}) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(sample.durationSeconds);
+  const onHero = surface === "hero";
 
   useEffect(() => {
     const sync = (activeId: string | null) => {
@@ -89,7 +110,13 @@ export function HomeListenCard({ sample }: { sample: HomepageListenSample }) {
   }
 
   return (
-    <div className="flex h-full flex-col rounded-2xl border border-white/10 bg-white/[0.05] p-5 text-left">
+    <div
+      className={
+        onHero
+          ? "flex h-full flex-col rounded-2xl border border-[#D8D2C4] bg-white p-5 text-left shadow-[0_10px_28px_rgb(30_37_48_/_0.08)] dark:border-white/10 dark:bg-white/[0.05] dark:shadow-none"
+          : "flex h-full flex-col rounded-2xl border border-white/10 bg-white/[0.05] p-5 text-left"
+      }
+    >
       <audio
         ref={audioRef}
         src={sample.audioUrl}
@@ -134,15 +161,33 @@ export function HomeListenCard({ sample }: { sample: HomepageListenSample }) {
           )}
         </button>
         <div className="min-w-0 flex-1">
-          <p className="font-display text-base font-medium leading-snug text-[#F4F0E8]">
+          <p
+            className={
+              onHero
+                ? "font-display text-base font-medium leading-snug text-[#1E2530] dark:text-[#F4F0E8]"
+                : "font-display text-base font-medium leading-snug text-[#F4F0E8]"
+            }
+          >
             {sample.title}
           </p>
-          <p className="mt-1 text-sm text-[#A8B0BC]">
+          <p
+            className={
+              onHero
+                ? "mt-1 text-sm text-[#7A7566] dark:text-[#A8B0BC]"
+                : "mt-1 text-sm text-[#A8B0BC]"
+            }
+          >
             {sample.category} · {formatHomepageDuration(duration)}
           </p>
         </div>
       </div>
-      <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+      <div
+        className={
+          onHero
+            ? "mt-4 h-1.5 w-full overflow-hidden rounded-full bg-[#1E2530]/10 dark:bg-white/10"
+            : "mt-4 h-1.5 w-full overflow-hidden rounded-full bg-white/10"
+        }
+      >
         <div
           className="h-full rounded-full bg-[#D9A24F] transition-[width] duration-150"
           style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}

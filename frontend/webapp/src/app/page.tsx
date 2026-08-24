@@ -5,13 +5,13 @@ import {
   IconSparkles,
   IconTargetArrow,
 } from "@tabler/icons-react";
+import { HomeHeroOneShotPrompt } from "@/components/home-hero-one-shot-prompt";
 import {
-  HomeHeroListenCard,
+  HomeHeroListenGrid,
   HomeListenSection,
 } from "@/components/home-listen-section";
 import { LogoMark } from "@/components/logo-mark";
 import { createMeditationHref } from "@/lib/create-meditation-path";
-import { HOMEPAGE_LISTEN_SAMPLES } from "@/lib/homepage-listen-samples";
 
 /** Flat `bg-nav` — SiteHeader only (`--nav` / `#33465C`). */
 const GOLD = "#D9A24F";
@@ -20,12 +20,11 @@ const CREAM = "#F4F0E8";
 const MUTED = "#A8B0BC";
 
 /**
- * Homepage section backgrounds — same navy family, each step clearly distinct
- * from its neighbors (and from header `#33465C`).
- * Hero → Pillars → Listen → Journal → Ideate → CTA
+ * Homepage section backgrounds (below hero) — same navy family, each step
+ * clearly distinct from its neighbors. Hero is theme-aware via `.home-hero`.
+ * Pillars → Listen → Journal → Ideate → CTA
  */
 const SECTION_BG = {
-  hero: "#1A2330",
   pillars: "#2A3A4E",
   listen: "#161D28",
   journal: "#243447",
@@ -85,26 +84,20 @@ export default function HomePage() {
   return (
     <div className="w-full">
       {/*
-        Hero is a flat darker navy than header `#33465C` — deliberately distinct
-        so the boundary reads as a section break, not a near-miss gradient match.
+        Hero: light = off-white + mesh gradient; dark = solid #1A2330.
+        See .home-hero in globals.css.
       */}
-      <section
-        className="w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16"
-        style={{ backgroundColor: SECTION_BG.hero }}
-      >
-        <div className="mx-auto flex max-w-3xl flex-col items-center text-center">
+      <section className="home-hero w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16">
+        <div className="mx-auto flex max-w-6xl flex-col items-center text-center">
           <LogoMark size={52} />
-          <h1
-            className="mt-8 font-display text-3xl font-medium leading-tight tracking-tight sm:text-4xl md:text-[2.75rem]"
-            style={{ color: CREAM }}
-          >
+          <h1 className="mt-8 max-w-3xl font-display text-3xl font-medium leading-tight tracking-tight text-foreground sm:text-4xl md:text-[2.75rem] dark:text-[#F4F0E8]">
             Personalised guided meditations that actually sound good.
           </h1>
-          <div className="mt-8">
-            <StartFreeButton />
+          <div className="mt-8 w-full">
+            <HomeHeroOneShotPrompt />
           </div>
           <div className="mt-10 w-full">
-            <HomeHeroListenCard sample={HOMEPAGE_LISTEN_SAMPLES[0]} />
+            <HomeHeroListenGrid />
           </div>
         </div>
       </section>

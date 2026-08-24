@@ -335,6 +335,27 @@ body {
     );
 }
 
+/* Homepage hero: light = off-white mesh; dark = solid navy (no mesh). */
+.home-hero {
+  background-color: var(--background);
+  background-image:
+    radial-gradient(
+      ellipse 80% 60% at 70% 20%,
+      color-mix(in srgb, var(--accent) 18%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 50% 50% at 20% 80%,
+      color-mix(in srgb, var(--gold) 22%, transparent),
+      transparent 50%
+    );
+}
+
+.dark .home-hero {
+  background-color: #1a2330;
+  background-image: none;
+}
+
 /* Journal voice clips — warm mesh + native audio tint (matches app palette) */
 .journal-voice-clip-card {
   position: relative;

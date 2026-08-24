@@ -11,7 +11,8 @@ export type CreateSessionPhase =
   | "feeling"
   | "claude"
   | "journalPick"
-  | "goalPick";
+  | "goalPick"
+  | "promptPick";
 
 export type CreateSessionMessage = {
   role: "assistant" | "user";
@@ -58,10 +59,11 @@ export type CreateSessionV1 = {
   mobileCreateStep: "chat" | "audio";
   lastUsedScript: string | null;
   meditationTargetMinutes: MeditationTargetMinutes;
-  pendingModeChoice: null | "style" | "freeflow" | "journalReflect" | "goal";
+  pendingModeChoice: null | "style" | "freeflow" | "journalReflect" | "goal" | "oneShot";
   journalReflectSelectedIds: string[];
   journalReflectGuidance: string;
   goalSelectedId: string | null;
+  oneShotPrompt: string;
   draftSk: string | null;
   coachAudioReady: boolean;
 };
@@ -76,7 +78,8 @@ function isCreatePath(v: unknown): v is CreateMeditationPath {
     v === "style" ||
     v === "freeflow" ||
     v === "journalReflect" ||
-    v === "goal"
+    v === "goal" ||
+    v === "oneShot"
   );
 }
 
@@ -88,7 +91,8 @@ function isPhase(v: unknown): v is CreateSessionPhase {
     v === "feeling" ||
     v === "claude" ||
     v === "journalPick" ||
-    v === "goalPick"
+    v === "goalPick" ||
+    v === "promptPick"
   );
 }
 
@@ -181,7 +185,8 @@ export function parseCreateSession(raw: unknown): CreateSessionV1 | null {
     pending !== "style" &&
     pending !== "freeflow" &&
     pending !== "journalReflect" &&
-    pending !== "goal"
+    pending !== "goal" &&
+    pending !== "oneShot"
   ) {
     return null;
   }
@@ -232,6 +237,7 @@ export function parseCreateSession(raw: unknown): CreateSessionV1 | null {
     journalReflectGuidance:
       typeof o.journalReflectGuidance === "string" ? o.journalReflectGuidance : "",
     goalSelectedId: typeof o.goalSelectedId === "string" ? o.goalSelectedId : null,
+    oneShotPrompt: typeof o.oneShotPrompt === "string" ? o.oneShotPrompt : "",
     draftSk: typeof o.draftSk === "string" ? o.draftSk : null,
     coachAudioReady: o.coachAudioReady === true,
   };

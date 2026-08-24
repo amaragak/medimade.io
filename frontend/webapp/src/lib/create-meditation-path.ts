@@ -5,7 +5,8 @@ export type CreateMeditationPath =
   | "style"
   | "freeflow"
   | "journalReflect"
-  | "goal";
+  | "goal"
+  | "oneShot";
 
 export type ParsedCreateMeditationRoute = {
   path: CreateMeditationPath;
@@ -55,6 +56,9 @@ export function parseCreateMeditationPathname(
   if (a === "from-idea" && segs.length === 1) {
     return { path: "goal", styleStep: "type", mix, valid: true };
   }
+  if (a === "from-prompt" && segs.length === 1) {
+    return { path: "oneShot", styleStep: "type", mix, valid: true };
+  }
   return { path: "pending", styleStep: "type", mix: false, valid: false };
 }
 
@@ -71,7 +75,9 @@ export function createMeditationHref(opts: {
         ? `${CREATE_MEDITATE_ROOT}/from-chat`
         : opts.path === "journalReflect"
           ? `${CREATE_MEDITATE_ROOT}/from-journal`
-          : `${CREATE_MEDITATE_ROOT}/from-idea`;
+          : opts.path === "goal"
+            ? `${CREATE_MEDITATE_ROOT}/from-idea`
+            : `${CREATE_MEDITATE_ROOT}/from-prompt`;
   if (opts.path === "style" && opts.styleStep === "questions") {
     return opts.mix ? `${base}/questions/mix` : `${base}/questions`;
   }

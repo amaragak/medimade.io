@@ -845,7 +845,8 @@ type Phase =
   | "feeling"
   | "claude"
   | "journalPick"
-  | "goalPick";
+  | "goalPick"
+  | "promptPick";
 
 /** Before chat: user picks style-first vs free-flow vs journal-reflect creation. */
 type CreationPath = CreateMeditationPath;
@@ -1248,6 +1249,7 @@ export function CreateWorkspace({
     }
     if (parsedCreateRoute.path === "journalReflect") return "journalPick";
     if (parsedCreateRoute.path === "goal") return "goalPick";
+    if (parsedCreateRoute.path === "oneShot") return "promptPick";
     if (parsedCreateRoute.path === "freeflow") return "feeling";
     return "style";
   });
@@ -1413,7 +1415,7 @@ export function CreateWorkspace({
 
   /** On the first screen: which path is selected before tapping “Script”. */
   const [pendingModeChoice, setPendingModeChoice] = useState<
-    null | "style" | "freeflow" | "journalReflect" | "goal"
+    null | "style" | "freeflow" | "journalReflect" | "goal" | "oneShot"
   >(null);
   const [pendingStyleType, setPendingStyleType] = useState<string | null>(null);
   const [styleQuestionAnswers, setStyleQuestionAnswers] = useState<
@@ -1446,6 +1448,7 @@ export function CreateWorkspace({
   const [planGoals, setPlanGoals] = useState<PlanGoal[]>([]);
   const [planGoalsReady, setPlanGoalsReady] = useState(false);
   const [goalSelectedId, setGoalSelectedId] = useState<string | null>(null);
+  const [oneShotPrompt, setOneShotPrompt] = useState("");
 
   /** Dev: skip chat → audio; Generate asks the worker for a random script. */
   const [devSkipToAudio, setDevSkipToAudio] = useState(false);
@@ -1540,6 +1543,7 @@ export function CreateWorkspace({
     );
     setJournalReflectGuidance(s.journalReflectGuidance ?? "");
     setGoalSelectedId(s.goalSelectedId);
+    setOneShotPrompt(s.oneShotPrompt ?? "");
     if (s.draftSk) setDraftSk(s.draftSk);
     setIntroTypingDone(true);
     initedCreatePathsRef.current = new Set(s.initedPaths);
@@ -1723,7 +1727,8 @@ export function CreateWorkspace({
         ? "style"
         : phase === "styleQuestions" ||
             phase === "journalPick" ||
-            phase === "goalPick"
+            phase === "goalPick" ||
+            phase === "promptPick"
           ? "feeling"
           : phase;
     return {
@@ -1975,11 +1980,12 @@ export function CreateWorkspace({
     if (!el) return;
     // Only use 4-across when each card can stay ~as wide as the old 3-card row (~300px+).
     // Typical `max-w-6xl` viewports then use the 2×2 square grid instead of skinny quarters.
-    const CARD_MIN_PX = 300;
+    const CARD_MIN_PX = 280;
     const GAP_PX = 24; // md:gap-6
     const compute = () => {
       const w = el.getBoundingClientRect().width;
-      const need = CARD_MIN_PX * 4 + GAP_PX * 3;
+      // 5 options: prefer a 3-col wrap when there is room; otherwise 2-col.
+      const need = CARD_MIN_PX * 3 + GAP_PX * 2;
       setChooserLayout(w >= need ? "row4" : "grid2");
     };
     compute();
@@ -1995,6 +2001,7 @@ export function CreateWorkspace({
     else if (creationPath === "freeflow") setPendingModeChoice("freeflow");
     else if (creationPath === "journalReflect") setPendingModeChoice("journalReflect");
     else if (creationPath === "goal") setPendingModeChoice("goal");
+    else if (creationPath === "oneShot") setPendingModeChoice("oneShot");
   }, [creationPath]);
 
   useEffect(() => {
@@ -2599,6 +2606,10 @@ export function CreateWorkspace({
       setGoalSelectedId(null);
       setPhase("goalPick");
       setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+    } else if (creationPath === "oneShot") {
+      setOneShotPrompt("");
+      setPhase("promptPick");
+      setMessages([]);
     } else if (creationPath === "style") {
       setPendingStyleType(null);
       setStyleQuestionAnswers(emptyStyleQuestionAnswers());
@@ -2732,6 +2743,42 @@ export function CreateWorkspace({
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
+  }
+
+  function beginOneShotPath() {
+    initedCreatePathsRef.current.add("oneShot");
+    setCoachAudioReady(false);
+    setCreationPath("oneShot");
+    setJournalMode(true);
+    setOneShotPrompt("");
+    setPhase("promptPick");
+    setChatLoading(false);
+    setScriptLoading(false);
+    setClaudeThread([]);
+    setMeditationStyle("General");
+    setInput("");
+    setIntroTypingDone(true);
+    setMessages([]);
+    setMobileCreateStep("chat");
+    initialChatAutofocusDoneRef.current = false;
+    isAtBottomRef.current = true;
+  }
+
+  function confirmOneShotPrompt() {
+    const prompt = oneShotPrompt.trim();
+    if (!prompt) return;
+    const packaged =
+      "Please write a complete guided meditation script from this one-shot request. " +
+      "Use a calm, warm tone suitable for spoken guidance. Interpret the request generously — " +
+      "do not ask clarifying questions.\n\n" +
+      `Request:\n${prompt}`;
+    setMeditationStyle("General");
+    setJournalMode(true);
+    setMessages([{ role: "user", text: packaged, variant: "chat" }]);
+    setClaudeThread([{ role: "user", content: packaged }]);
+    setMobileCreateStep("audio");
+    setCreateStripStep(2);
+    pushCreate({ path: "oneShot", mix: true });
   }
 
   function beginDevSkipToAudio() {
@@ -2893,7 +2940,7 @@ export function CreateWorkspace({
   }
 
   function goBackToChatStyle() {
-    const modeFromPath: null | "style" | "freeflow" | "journalReflect" | "goal" =
+    const modeFromPath: null | "style" | "freeflow" | "journalReflect" | "goal" | "oneShot" =
       creationPath === "style"
         ? "style"
         : creationPath === "freeflow"
@@ -2902,6 +2949,8 @@ export function CreateWorkspace({
             ? "journalReflect"
             : creationPath === "goal"
               ? "goal"
+              : creationPath === "oneShot"
+                ? "oneShot"
             : null;
     setCreateStripStep(0);
     setCreationPath("pending");
@@ -3009,6 +3058,22 @@ export function CreateWorkspace({
         setCreateStripStep(1);
         setMobileCreateStep("chat");
       }
+      return;
+    }
+    if (parsed.path === "oneShot") {
+      if (!initedCreatePathsRef.current.has("oneShot")) beginOneShotPath();
+      else {
+        setCreationPath("oneShot");
+        setJournalMode(true);
+      }
+      if (parsed.mix) {
+        setCreateStripStep(2);
+        setMobileCreateStep("audio");
+      } else {
+        setCreateStripStep(1);
+        setMobileCreateStep("chat");
+        setPhase("promptPick");
+      }
     }
   }, [pathname, draftHydrated, sessionHydrated, initialDraftSk, router, seedJournalContext, seedPlanContext]);
 
@@ -3051,6 +3116,7 @@ export function CreateWorkspace({
         journalReflectSelectedIds: Array.from(journalReflectSelectedIds),
         journalReflectGuidance,
         goalSelectedId,
+        oneShotPrompt,
         draftSk,
         coachAudioReady,
       };
@@ -3092,12 +3158,18 @@ export function CreateWorkspace({
     journalReflectSelectedIds,
     journalReflectGuidance,
     goalSelectedId,
+    oneShotPrompt,
     draftSk,
     coachAudioReady,
   ]);
 
   async function send() {
-    if (phase === "journalPick" || phase === "goalPick" || phase === "styleQuestions")
+    if (
+      phase === "journalPick" ||
+      phase === "goalPick" ||
+      phase === "styleQuestions" ||
+      phase === "promptPick"
+    )
       return;
     const trimmed = input.trim();
     if (!trimmed || chatLoading || scriptLoading) return;
@@ -3786,6 +3858,10 @@ export function CreateWorkspace({
     creationPath === "journalReflect" &&
     phase === "journalPick" &&
     workspaceSectionStep !== 2;
+  const showPromptPick =
+    creationPath === "oneShot" &&
+    phase === "promptPick" &&
+    workspaceSectionStep !== 2;
   const styleQuestionsReady =
     styleQuestionAnswers[0].trim().length > 0 &&
     styleQuestionAnswers[1].trim().length > 0 &&
@@ -3795,6 +3871,7 @@ export function CreateWorkspace({
     !showStyleTypePick &&
     !showStyleQuestions &&
     !showJournalPick &&
+    !showPromptPick &&
     workspaceSectionStep === 1;
   const showAudioPlayAll = workspaceSectionStep === 2;
   const lastVisibleChat = [...messages]
@@ -3861,6 +3938,16 @@ export function CreateWorkspace({
                 { label: "Reflect on a journal entry" },
               ],
             }
+        : showPromptPick
+          ? {
+              title: "One-shot prompt",
+              blurb:
+                "Describe the meditation you want. We’ll turn it into a full guided script — no back-and-forth.",
+              crumbs: [
+                { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
+                { label: "One-shot prompt" },
+              ],
+            }
         : workspaceSectionStep === 2 && creationPath === "style"
           ? {
               title: "Customise how your meditation will sound",
@@ -3890,7 +3977,12 @@ export function CreateWorkspace({
                 crumbs: [
                   { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
                   {
-                    label: creationPath === "freeflow" ? "Chat" : "Script",
+                    label:
+                      creationPath === "freeflow"
+                        ? "Chat"
+                        : creationPath === "oneShot"
+                          ? "Prompt"
+                          : "Script",
                     href: createMeditationHref({
                       path: creationPath,
                     }),
@@ -3903,7 +3995,14 @@ export function CreateWorkspace({
                 blurb: "Chat with the guide to shape your script.",
                 crumbs: [
                   { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
-                  { label: creationPath === "freeflow" ? "Chat" : "Script" },
+                  {
+                    label:
+                      creationPath === "freeflow"
+                        ? "Chat"
+                        : creationPath === "oneShot"
+                          ? "Prompt"
+                          : "Script",
+                  },
                 ],
               };
 
@@ -4055,7 +4154,7 @@ export function CreateWorkspace({
           <div
             ref={chooserCardsRef}
             className={`grid grid-cols-1 items-stretch gap-4 md:gap-6 ${
-              chooserLayout === "row4" ? "md:grid-cols-4" : "sm:grid-cols-2"
+              chooserLayout === "row4" ? "md:grid-cols-3" : "sm:grid-cols-2"
             }`}
           >
             <button
@@ -4300,6 +4399,50 @@ export function CreateWorkspace({
                 </div>
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => setPendingModeChoice("oneShot")}
+              aria-pressed={pendingModeChoice === "oneShot"}
+              className={`flex h-full flex-col rounded-2xl border-2 bg-card text-left shadow-sm transition-colors ${
+                pendingModeChoice === "oneShot"
+                  ? "cursor-pointer border-accent ring-2 ring-accent/25"
+                  : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
+              } ${chooserLayout === "row4" ? "min-h-[200px] p-6 sm:min-h-[260px] sm:p-8" : "p-6"}`}
+            >
+              {chooserLayout === "row4" ? (
+                <>
+                  <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
+                    One-shot prompt
+                  </span>
+                  <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
+                    Write what you want in one go. We send it straight to the script generator — no coaching chat.
+                  </p>
+                  <span
+                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent-link shadow-inner sm:h-32 sm:w-32"
+                    aria-hidden
+                  >
+                    <IconChatBubbles className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
+                  </span>
+                </>
+              ) : (
+                <div className="flex items-start gap-4">
+                  <span
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent-link shadow-inner"
+                    aria-hidden
+                  >
+                    <IconChatBubbles className="h-9 w-9" />
+                  </span>
+                  <div className="min-w-0">
+                    <span className="block font-display text-lg font-medium tracking-tight text-foreground">
+                      One-shot prompt
+                    </span>
+                    <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
+                      Write what you want in one go. We send it straight to the script generator — no coaching chat.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </button>
           </div>
           <div className="min-h-8 flex-1" aria-hidden />
           </div>
@@ -4324,6 +4467,10 @@ export function CreateWorkspace({
                   beginGoalPath();
                   setCreateStripStep(1);
                   pushCreate({ path: "goal" });
+                } else if (pendingModeChoice === "oneShot") {
+                  beginOneShotPath();
+                  setCreateStripStep(1);
+                  pushCreate({ path: "oneShot" });
                 }
               }}
               className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
@@ -4334,7 +4481,9 @@ export function CreateWorkspace({
                     ? "Next: choose a journal entry"
                     : pendingModeChoice === "goal"
                       ? "Next: choose a goal"
-                      : "Next: chat"
+                      : pendingModeChoice === "oneShot"
+                        ? "Next: write your prompt"
+                        : "Next: chat"
               }
             >
               <span>
@@ -4344,7 +4493,9 @@ export function CreateWorkspace({
                     ? "Journal"
                     : pendingModeChoice === "goal"
                       ? "Goal"
-                      : "Chat"}
+                      : pendingModeChoice === "oneShot"
+                        ? "Prompt"
+                        : "Chat"}
               </span>
               <IconChevronRight className="text-accent-link" />
             </button>
@@ -4536,7 +4687,50 @@ export function CreateWorkspace({
             </div>
           </div>
         ) : null}
-        {workspaceSectionStep === 1 && !showStyleTypePick && !showStyleQuestions && !showJournalPick ? (
+        {showPromptPick ? (
+          <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+            <div className="mx-auto flex min-h-0 min-w-0 w-full max-w-6xl flex-1 flex-col px-4 sm:px-6">
+              <label className="sr-only" htmlFor="one-shot-prompt">
+                Meditation prompt
+              </label>
+              <textarea
+                id="one-shot-prompt"
+                value={oneShotPrompt}
+                onChange={(e) => setOneShotPrompt(e.target.value)}
+                rows={10}
+                placeholder="e.g. A 10-minute body scan for restless sleep, with soft rain imagery and no music references…"
+                className="min-h-[12rem] w-full flex-1 resize-y rounded-2xl border border-border bg-card px-4 py-3 text-base leading-relaxed text-foreground shadow-sm outline-none ring-accent/30 placeholder:text-muted/70 focus:ring-2"
+              />
+            </div>
+            <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
+              <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6">
+                <button
+                  type="button"
+                  onClick={goBackToChatStyle}
+                  disabled={chatControlsDisabled}
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
+                  aria-label="Back to chat style selection"
+                >
+                  <IconChevronLeft className="shrink-0 text-accent-link" />
+                  <span>Chat style</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    chatControlsDisabled || oneShotPrompt.trim().length === 0
+                  }
+                  onClick={confirmOneShotPrompt}
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
+                  aria-label="Next: audio and voice settings"
+                >
+                  <span>Audio & voice</span>
+                  <IconChevronRight className="text-accent-link" />
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {workspaceSectionStep === 1 && !showStyleTypePick && !showStyleQuestions && !showJournalPick && !showPromptPick ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
         <div className="mx-auto flex min-h-0 min-w-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-4 sm:px-6">
         <section className="flex w-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">

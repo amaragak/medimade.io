@@ -93,13 +93,7 @@ export function SiteHeader() {
       ? pathname === "/"
       : pathname === href || pathname.startsWith(`${href}/`);
   return (
-    <header
-      className={`relative sticky top-0 z-[100] bg-nav ${
-        pathname === "/"
-          ? "border-b border-white/[0.08] shadow-[0_1px_0_rgb(255_255_255_/_0.04)]"
-          : "border-b border-white/10 shadow-[0_4px_18px_rgb(30_37_48_/_0.22)]"
-      }`}
-    >
+    <header className="relative sticky top-0 z-[100] border-b border-white/10 bg-nav shadow-[0_4px_18px_rgb(20_28_38_/_0.28)]">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 overflow-hidden"
@@ -109,7 +103,7 @@ export function SiteHeader() {
             className="absolute left-[17px] top-[calc(50%+1px)] h-36 w-72 -translate-x-1/2 -translate-y-1/2 blur-lg"
             style={{
               background:
-                "radial-gradient(circle, rgb(118 148 176 / 0.42) 0%, rgb(88 118 146 / 0.2) 42%, rgb(51 70 92 / 0) 78%)",
+                "radial-gradient(circle, rgb(148 176 200 / 0.55) 0%, rgb(108 138 165 / 0.28) 42%, rgb(51 70 92 / 0) 78%)",
             }}
           />
         </div>
@@ -117,7 +111,7 @@ export function SiteHeader() {
           className="absolute right-0 top-1/2 h-40 w-[22rem] translate-x-[42%] -translate-y-1/2 blur-xl"
           style={{
             background:
-              "radial-gradient(circle, rgb(28 42 58 / 0.92) 0%, rgb(36 52 70 / 0.48) 32%, rgb(51 70 92 / 0) 68%)",
+              "radial-gradient(circle, rgb(16 26 38 / 0.96) 0%, rgb(24 36 50 / 0.58) 32%, rgb(51 70 92 / 0) 68%)",
           }}
         />
       </div>
