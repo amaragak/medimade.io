@@ -156,7 +156,7 @@ export async function startHomepageOneShotGeneration(opts: {
   const { jobId } = await createMeditationAudioJob({
     meditationStyle: "General",
     journalMode: true,
-    meditationTargetMinutes: 5,
+    meditationTargetMinutes: 2,
     transcript,
     scriptText: "",
     reference_id: speakerModelId,

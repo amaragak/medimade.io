@@ -89,7 +89,7 @@ export default function HomePage() {
       */}
       <section className="home-hero w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16">
         <div className="mx-auto flex max-w-6xl flex-col items-center text-center">
-          <LogoMark size={52} />
+          <LogoMark size={80} />
           <h1 className="mt-8 max-w-3xl font-display text-3xl font-medium leading-tight tracking-tight text-foreground sm:text-4xl md:text-[2.75rem] dark:text-[#F4F0E8]">
             Personalised guided meditations that actually sound good.
           </h1>

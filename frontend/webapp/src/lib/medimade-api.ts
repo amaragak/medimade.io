@@ -1877,6 +1877,9 @@ export type LibraryMeditationItem = {
   publisherBackgroundMusicGain?: number | null;
   publisherBackgroundDrumsGain?: number | null;
   publisherBackgroundNoiseGain?: number | null;
+  /** ms from Generate click (job create) until library row write. */
+  generationElapsedMs?: number | null;
+  jobCreatedAt?: string | null;
 };
 
 export const MEDITATION_DRAFT_STATE_VERSION = 1 as const;

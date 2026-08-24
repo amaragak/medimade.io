@@ -1266,6 +1266,13 @@ export function CreateWorkspace({
   const speechSpeed = FIXED_SPEECH_PREVIEW_SPEED;
   const [meditationTargetMinutes, setMeditationTargetMinutes] =
     useState<MeditationTargetMinutes>(5);
+  /**
+   * Minutes the latest chat `variant: "script"` bubble was written for.
+   * Audio generate reuses that script only when Length still matches; otherwise
+   * the worker regenerates at the selected length.
+   */
+  const [scriptTargetMinutes, setScriptTargetMinutes] =
+    useState<MeditationTargetMinutes | null>(null);
   /** When on, speaker row plays CDN `*-fx.wav` (Pedalboard preset mixer); when off, dry Fish `*.mp3`. */
   const [speakerFxPreviewOn, setSpeakerFxPreviewOn] = useState(true);
   const [backgroundNature, setBackgroundNature] = useState<
@@ -1534,6 +1541,12 @@ export function CreateWorkspace({
     setMobileCreateStep(s.mobileCreateStep);
     setLastUsedScript(s.lastUsedScript);
     setMeditationTargetMinutes(s.meditationTargetMinutes);
+    {
+      const lastMsg = s.messages[s.messages.length - 1];
+      const hasScript =
+        lastMsg?.role === "assistant" && lastMsg.variant === "script";
+      setScriptTargetMinutes(hasScript ? s.meditationTargetMinutes : null);
+    }
     setCreationPath(s.creationPath);
     setJournalMode(s.journalMode);
     setPhase(s.phase === "style" ? "stylePick" : s.phase);
@@ -1851,6 +1864,15 @@ export function CreateWorkspace({
         setMobileCreateStep(s.mobileCreateStep);
         setLastUsedScript(s.lastUsedScript);
         setMeditationTargetMinutes(parseMeditationTargetMinutes(s.meditationTargetMinutes));
+        {
+          const restoredMins = parseMeditationTargetMinutes(
+            s.meditationTargetMinutes,
+          );
+          const lastMsg = s.messages?.[s.messages.length - 1];
+          const hasScript =
+            lastMsg?.role === "assistant" && lastMsg.variant === "script";
+          setScriptTargetMinutes(hasScript ? restoredMins : null);
+        }
         const path = inferCreationPathFromDraft(s);
         setCreationPath(path);
         setJournalMode(path === "freeflow");
@@ -2275,6 +2297,7 @@ export function CreateWorkspace({
           }
         },
       );
+      setScriptTargetMinutes(meditationTargetMinutes);
     } catch (e) {
       const msg =
         e instanceof Error ? e.message : "Could not generate script.";
@@ -2597,6 +2620,7 @@ export function CreateWorkspace({
     setInput("");
     setIntroTypingDone(false);
     setIntroTypingSession((s) => s + 1);
+    setScriptTargetMinutes(null);
     if (creationPath === "journalReflect") {
       setJournalReflectSelectedIds(new Set());
       setJournalReflectGuidance("");
@@ -2644,6 +2668,7 @@ export function CreateWorkspace({
     setInput("");
     setIntroTypingDone(false);
     setMessages([]);
+    setScriptTargetMinutes(null);
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
@@ -2682,6 +2707,7 @@ export function CreateWorkspace({
     const built = transcriptFromStyleAnswers(style, styleQuestionAnswers);
     setMessages(built.messages);
     setClaudeThread(built.claudeThread);
+    setScriptTargetMinutes(null);
     setMobileCreateStep("audio");
     setCreateStripStep(2);
     pushCreate({ path: "style", styleStep: "questions", mix: true });
@@ -2700,6 +2726,7 @@ export function CreateWorkspace({
     setInput("");
     setIntroTypingDone(false);
     setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+    setScriptTargetMinutes(null);
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
@@ -2720,6 +2747,7 @@ export function CreateWorkspace({
     setInput("");
     setIntroTypingDone(true);
     setMessages([]);
+    setScriptTargetMinutes(null);
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
@@ -2740,6 +2768,7 @@ export function CreateWorkspace({
     setIntroTypingDone(false);
     setIntroTypingSession((s) => s + 1);
     setMessages([{ role: "assistant", text: "", variant: "chat" }]);
+    setScriptTargetMinutes(null);
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
@@ -2759,6 +2788,7 @@ export function CreateWorkspace({
     setInput("");
     setIntroTypingDone(true);
     setMessages([]);
+    setScriptTargetMinutes(null);
     setMobileCreateStep("chat");
     initialChatAutofocusDoneRef.current = false;
     isAtBottomRef.current = true;
@@ -2776,6 +2806,7 @@ export function CreateWorkspace({
     setJournalMode(true);
     setMessages([{ role: "user", text: packaged, variant: "chat" }]);
     setClaudeThread([{ role: "user", content: packaged }]);
+    setScriptTargetMinutes(null);
     setMobileCreateStep("audio");
     setCreateStripStep(2);
     pushCreate({ path: "oneShot", mix: true });
@@ -2797,6 +2828,7 @@ export function CreateWorkspace({
     setIntroTypingDone(true);
     setMessages([]);
     setLastUsedScript(null);
+    setScriptTargetMinutes(null);
     setAudioError(null);
     setPendingModeChoice("style");
     setMobileCreateStep("audio");
@@ -3356,8 +3388,14 @@ export function CreateWorkspace({
         devSkipToAudio
           ? null
           : last?.role === "assistant" && last.variant === "script"
-            ? last.text
+            ? last.text.trim()
             : null;
+      // Length on this page is authoritative: reuse a chat script only when it
+      // was written for the same target; otherwise the worker regenerates.
+      const scriptTextForJob =
+        existingScript && scriptTargetMinutes === meditationTargetMinutes
+          ? existingScript
+          : "";
 
       const transcript = devSkipToAudio
         ? (devRandomTranscriptRef.current?.trim() ||
@@ -3375,7 +3413,7 @@ export function CreateWorkspace({
         journalMode: journalMode === true,
         meditationTargetMinutes,
         transcript,
-        scriptText: existingScript,
+        scriptText: scriptTextForJob,
         reference_id: speakerModelId,
         ttsProvider: "fish",
         speed: speechSpeed,
@@ -5193,7 +5231,7 @@ export function CreateWorkspace({
                   }
                   disabled={audioLoading}
                   aria-label="Target meditation length"
-                  title="Coach + script target. Regenerate script if you already have one."
+                  title="Target spoken length. If you change this after generating a script in chat, audio will regenerate the script to match."
                 >
                   <option value={2}>2 min</option>
                   <option value={5}>5 min</option>
@@ -5341,7 +5379,7 @@ export function CreateWorkspace({
                     }
                     disabled={audioLoading}
                     aria-label="Target meditation length"
-                    title="Coach + script target. Regenerate script if you already have one."
+                    title="Target spoken length. If you change this after generating a script in chat, audio will regenerate the script to match."
                   >
                     <option value={2}>2 min</option>
                     <option value={5}>5 min</option>

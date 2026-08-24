@@ -51,6 +51,18 @@ function isLocalDevHost(): boolean {
   return host === "localhost" || host === "127.0.0.1";
 }
 
+function formatGenerationElapsed(ms: number | null | undefined): string | null {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return null;
+  const totalSec = Math.round(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  if (m < 60) return `${m}m ${s.toString().padStart(2, "0")}s`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return `${h}h ${remM.toString().padStart(2, "0")}m`;
+}
+
 function fishCostTooltipText(m: LibraryMeditationItem): string | null {
   const est = estimateFishBillableUtf8Bytes({
     scriptUtf8Bytes: m.scriptUtf8Bytes,
@@ -58,10 +70,23 @@ function fishCostTooltipText(m: LibraryMeditationItem): string | null {
     title: m.title,
     scriptTruncated: m.scriptTruncated,
   });
-  if (!est) return "Fish Audio S2.1 Pro: cost unknown (no script bytes)";
-  const usd = fishCostUsdFromBillableBytes(est.bytes);
-  const approx = est.approximate ? " ≈" : "";
-  return `Fish Audio S2.1 Pro${approx}\n${formatFishCostUsd(usd)} · ${est.bytes.toLocaleString()} UTF-8 bytes\n$15 / million UTF-8 bytes`;
+  const lines: string[] = [];
+  if (est) {
+    const usd = fishCostUsdFromBillableBytes(est.bytes);
+    const approx = est.approximate ? " ≈" : "";
+    lines.push(
+      `Fish Audio S2.1 Pro${approx}`,
+      `${formatFishCostUsd(usd)} · ${est.bytes.toLocaleString()} UTF-8 bytes`,
+      `$15 / million UTF-8 bytes`,
+    );
+  } else {
+    lines.push("Fish Audio S2.1 Pro: cost unknown (no script bytes)");
+  }
+  const elapsed = formatGenerationElapsed(m.generationElapsedMs);
+  if (elapsed) {
+    lines.push(`Generate → library: ${elapsed}`);
+  }
+  return lines.join("\n");
 }
 
 function FishCostDevTooltip({ text }: { text: string }) {

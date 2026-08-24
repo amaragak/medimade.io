@@ -979,6 +979,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   type JobItem = {
     jobId: string;
     userId?: string;
+    createdAt?: string;
     transcript?: string;
     meditationStyle?: string;
     journalMode?: boolean;
@@ -1464,6 +1465,15 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   try {
     const createdAt = new Date().toISOString();
     const id = randomUUID();
+    const jobCreatedAt =
+      typeof jobItem.createdAt === "string" && jobItem.createdAt.trim()
+        ? jobItem.createdAt.trim()
+        : null;
+    const jobStartedMs = jobCreatedAt ? Date.parse(jobCreatedAt) : NaN;
+    const generationElapsedMs =
+      Number.isFinite(jobStartedMs) && jobStartedMs > 0
+        ? Math.max(0, Date.parse(createdAt) - jobStartedMs)
+        : null;
     await ddb.send(
       new PutCommand({
         TableName: analyticsTableName,
@@ -1472,6 +1482,9 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
           sk: `${createdAt}#${id}`,
           id,
           createdAt,
+          ...(jobCreatedAt ? { jobCreatedAt } : {}),
+          ...(generationElapsedMs != null ? { generationElapsedMs } : {}),
+          ...(event.jobId ? { jobId: event.jobId } : {}),
           s3Key: key,
           audioUrl,
           mp3Bytes: mp3Buf.byteLength,

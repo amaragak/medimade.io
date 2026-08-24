@@ -88,6 +88,9 @@ type OutItem = {
   publisherBackgroundMusicGain: number | null;
   publisherBackgroundDrumsGain: number | null;
   publisherBackgroundNoiseGain: number | null;
+  /** ms from job create (Generate click) until library row write. */
+  generationElapsedMs: number | null;
+  jobCreatedAt: string | null;
 };
 
 function optTrimKey(v: unknown): string | null {
@@ -429,6 +432,16 @@ function buildLibraryItems(params: {
       publisherBackgroundMusicGain: optGain(row.backgroundMusicGain),
       publisherBackgroundDrumsGain: optGain(row.backgroundDrumsGain),
       publisherBackgroundNoiseGain: optGain(row.backgroundNoiseGain),
+      generationElapsedMs:
+        typeof row.generationElapsedMs === "number" &&
+        Number.isFinite(row.generationElapsedMs) &&
+        row.generationElapsedMs >= 0
+          ? Math.round(row.generationElapsedMs)
+          : null,
+      jobCreatedAt:
+        typeof row.jobCreatedAt === "string" && row.jobCreatedAt.trim()
+          ? row.jobCreatedAt.trim()
+          : null,
     });
   }
 
@@ -482,6 +495,8 @@ function buildLibraryItems(params: {
       publisherBackgroundMusicGain: null,
       publisherBackgroundDrumsGain: null,
       publisherBackgroundNoiseGain: null,
+      generationElapsedMs: null,
+      jobCreatedAt: null,
     });
   }
 
