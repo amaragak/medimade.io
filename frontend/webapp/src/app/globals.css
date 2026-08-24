@@ -356,6 +356,105 @@ body {
   background-image: none;
 }
 
+/* Hero brand sun: slow continuous spin + sinusoidal grow/shrink. */
+.home-hero-sun {
+  display: inline-flex;
+  line-height: 0;
+}
+
+.home-hero-sun-spin {
+  animation: home-hero-sun-spin 11s linear infinite;
+  will-change: transform;
+}
+
+.home-hero-sun-breathe {
+  /* ease-in-out + alternate ≈ sine pulse on scale */
+  animation: home-hero-sun-breathe 2.75s ease-in-out infinite alternate;
+  will-change: transform;
+  transform-origin: center;
+}
+
+@keyframes home-hero-sun-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes home-hero-sun-breathe {
+  from {
+    transform: scale(0.85);
+  }
+  to {
+    transform: scale(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-hero-sun-spin,
+  .home-hero-sun-breathe {
+    animation: none;
+  }
+}
+
+/* Hero one-shot input: gold border fade in/out (brand sun hue). */
+.home-hero-one-shot-shell {
+  border-width: 1.5px;
+  border-color: rgba(217, 162, 79, 0.28);
+  box-shadow:
+    0 0 4px 0 rgba(244, 220, 160, 0.15),
+    0 10px 28px rgb(30 37 48 / 0.08);
+  animation: home-hero-one-shot-border 1.35s ease-in-out infinite alternate;
+}
+
+.dark .home-hero-one-shot-shell {
+  border-color: rgba(217, 162, 79, 0.22);
+  box-shadow: 0 0 4px 0 rgba(244, 220, 160, 0.12);
+  animation-name: home-hero-one-shot-border-dark;
+}
+
+@keyframes home-hero-one-shot-border {
+  from {
+    border-color: rgba(217, 162, 79, 0.18);
+    box-shadow:
+      0 0 3px 0 rgba(244, 220, 160, 0.08),
+      0 10px 28px rgb(30 37 48 / 0.08);
+  }
+  to {
+    border-color: rgba(217, 162, 79, 1);
+    box-shadow:
+      0 0 8px 1px rgba(244, 220, 160, 0.45),
+      0 0 14px 2px rgba(217, 162, 79, 0.2),
+      0 10px 28px rgb(30 37 48 / 0.08);
+  }
+}
+
+@keyframes home-hero-one-shot-border-dark {
+  from {
+    border-color: rgba(217, 162, 79, 0.18);
+    box-shadow: 0 0 3px 0 rgba(244, 220, 160, 0.08);
+  }
+  to {
+    border-color: rgba(217, 162, 79, 1);
+    box-shadow:
+      0 0 8px 1px rgba(244, 220, 160, 0.4),
+      0 0 14px 2px rgba(217, 162, 79, 0.22);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-hero-one-shot-shell,
+  .dark .home-hero-one-shot-shell {
+    animation: none;
+    border-color: rgba(217, 162, 79, 0.75);
+    box-shadow:
+      0 0 6px 1px rgba(244, 220, 160, 0.35),
+      0 10px 28px rgb(30 37 48 / 0.08);
+  }
+}
+
 /* Journal voice clips — warm mesh + native audio tint (matches app palette) */
 .journal-voice-clip-card {
   position: relative;

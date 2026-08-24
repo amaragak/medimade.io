@@ -322,7 +322,7 @@ export function HomeHeroOneShotPrompt({ className = "" }: { className?: string }
       className={`mx-auto w-full max-w-3xl ${className}`}
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-2">
-        <div className="flex min-w-0 flex-1 items-stretch gap-2 rounded-full border border-[#D8D2C4] bg-white p-1.5 shadow-[0_10px_28px_rgb(30_37_48_/_0.08)] dark:border-white/15 dark:bg-white/[0.06] dark:shadow-none">
+        <div className="home-hero-one-shot-shell flex min-w-0 flex-1 items-stretch gap-2 rounded-full border bg-white p-1.5 dark:bg-white/[0.06]">
           <label className="sr-only" htmlFor="home-hero-one-shot">
             Describe the meditation you want
           </label>

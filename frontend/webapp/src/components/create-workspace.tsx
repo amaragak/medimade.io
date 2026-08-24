@@ -2904,9 +2904,9 @@ export function CreateWorkspace({
     });
   }
 
-  async function confirmJournalReflectSelection() {
+  function confirmJournalReflectSelection() {
     const id = [...journalReflectSelectedIds][0];
-    if (!id || chatLoading) return;
+    if (!id) return;
     const entry = journalPickerEntries.find((e) => e.id === id);
     if (!entry) return;
 
@@ -2924,51 +2924,26 @@ export function CreateWorkspace({
       journalCards,
       guidance || undefined,
     );
-    const history: MedimadeChatTurn[] = [
-      { role: "assistant", content: OPENING_JOURNAL },
-      { role: "user", content: apiUserContent },
-    ];
-    const styleHint = "General";
 
-    setCreationPath("freeflow");
+    setJournalMode(true);
     setPhase("claude");
     setIntroTypingDone(true);
-    setMeditationStyle(styleHint);
-    setClaudeThread([]);
+    setMeditationStyle("General");
+    setClaudeThread([{ role: "user", content: apiUserContent }]);
     setInput("");
     setMessages([
       {
         role: "user",
         text: JOURNAL_CREATE_FIRST_MESSAGE,
         journalSegments: journalCards,
+        variant: "chat",
       },
     ]);
-    setChatLoading(true);
-
-    try {
-      const text = await streamCoachChat(
-        {
-          meditationStyle: styleHint,
-          messages: history,
-          journalMode: true,
-          meditationTargetMinutes,
-          ...(guidance ? { journalGuidance: guidance } : {}),
-        },
-      );
-      setClaudeThread([...history, { role: "assistant", content: text }]);
-    } catch (e) {
-      const msg =
-        e instanceof Error ? e.message : "Could not reach the guide.";
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", text: `Sorry — ${msg}` },
-      ]);
-    } finally {
-      setChatLoading(false);
-      requestAnimationFrame(() => {
-        chatInputRef.current?.focus();
-      });
-    }
+    setScriptTargetMinutes(null);
+    setChatLoading(false);
+    setMobileCreateStep("audio");
+    setCreateStripStep(2);
+    pushCreate({ path: "journalReflect", mix: true });
   }
 
   function goBackToChatStyle() {
@@ -3402,10 +3377,16 @@ export function CreateWorkspace({
           "User: I want a short random guided meditation.\n\nGuide: Let's begin.")
         : messages
             .filter((m) => !(m.role === "assistant" && m.variant === "script"))
-            .map(
-              (m) =>
-                `${m.role === "user" ? "User" : "Guide"}: ${chatMessageTranscriptLine(m)}`,
-            )
+            .map((m) => {
+              const line =
+                m.role === "user" && m.journalSegments?.length
+                  ? buildJournalHandoffApiContent(
+                      m.journalSegments,
+                      journalReflectGuidance.trim() || undefined,
+                    )
+                  : chatMessageTranscriptLine(m);
+              return `${m.role === "user" ? "User" : "Guide"}: ${line}`;
+            })
             .join("\n\n");
 
       const { jobId } = await createMeditationAudioJob({
@@ -4020,7 +4001,11 @@ export function CreateWorkspace({
                         ? "Chat"
                         : creationPath === "oneShot"
                           ? "Prompt"
-                          : "Script",
+                          : creationPath === "journalReflect"
+                            ? "Journal"
+                            : creationPath === "goal"
+                              ? "Goal"
+                              : "Script",
                     href: createMeditationHref({
                       path: creationPath,
                     }),
@@ -4714,7 +4699,7 @@ export function CreateWorkspace({
                     chatControlsDisabled ||
                     journalReflectSelectedIds.size === 0
                   }
-                  onClick={() => void confirmJournalReflectSelection()}
+                  onClick={confirmJournalReflectSelection}
                   className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                   aria-label="Next: audio and voice settings"
                 >
