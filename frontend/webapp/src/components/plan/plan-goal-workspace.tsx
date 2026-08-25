@@ -158,7 +158,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
             : "Loading…"}
         </p>
         <Link
-          href="/ideate"
+          href="/ideate/my"
           className="mt-6 inline-block text-sm font-semibold text-accent-link underline-offset-2 hover:underline"
         >
           Back to Ideate
@@ -175,7 +175,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
       <div className="mx-auto max-w-3xl px-4 pt-3 pb-10 sm:px-6 sm:py-14">
         <div className="border-b border-border/70 pb-6">
           <Link
-            href="/ideate"
+            href="/ideate/my"
             className="text-xs font-semibold uppercase tracking-wide text-accent-link hover:underline"
           >
             ← Ideate

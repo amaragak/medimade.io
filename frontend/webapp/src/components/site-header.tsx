@@ -19,29 +19,37 @@ import {
   type ColorScheme,
 } from "@/lib/color-scheme";
 
-const meditateSub = [
+type NavSubItem = { href: string; label: string };
+
+const meditateSub: NavSubItem[] = [
   { href: "/meditate/create", label: "Create" },
   { href: "/meditate/library", label: "Library" },
   { href: "/meditate/sounds", label: "Sounds" },
-] as const;
+];
 
-const navRest = [
-  { href: "/journal", label: "Journal" },
-  { href: "/ideate", label: "Ideate" },
-  { href: "/focus", label: "Focus" },
+const journalSub: NavSubItem[] = [
+  { href: "/journal/my", label: "My Journal" },
+];
+
+const ideateSub: NavSubItem[] = [
+  { href: "/ideate/my", label: "My Ideas" },
+];
+
+const focusSub: NavSubItem[] = [];
+
+const utilityNav: NavSubItem[] = [
   { href: "/admin", label: "Admin" },
   { href: "/settings", label: "API" },
-] as const;
+];
 
-function isMeditateSection(path: string): boolean {
-  return path === "/meditate" || path.startsWith("/meditate/");
+function sectionActive(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
 }
 
 function ColorSchemeToggle({ className = "" }: { className?: string }) {
   const [scheme, setScheme] = useState<ColorScheme>("light");
 
   useEffect(() => {
-    // Re-apply after hydration — React's html className can drop the boot-script class.
     applyColorScheme(getStoredColorScheme());
     const sync = () => setScheme(getStoredColorScheme());
     sync();
@@ -68,11 +76,130 @@ function ColorSchemeToggle({ className = "" }: { className?: string }) {
   );
 }
 
+function NavFlyout({
+  href,
+  label,
+  items,
+  active,
+  isItemActive,
+}: {
+  href: string;
+  label: string;
+  items: NavSubItem[];
+  active: boolean;
+  isItemActive: (href: string) => boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const hasMenu = items.length > 0;
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => {
+        if (hasMenu) setOpen(true);
+      }}
+      onMouseLeave={() => setOpen(false)}
+      onFocusCapture={() => {
+        if (hasMenu) setOpen(true);
+      }}
+      onBlurCapture={(e) => {
+        const next = e.relatedTarget as Node | null;
+        if (next && e.currentTarget.contains(next)) return;
+        setOpen(false);
+      }}
+    >
+      <Link
+        href={href}
+        aria-haspopup={hasMenu ? "true" : undefined}
+        aria-expanded={hasMenu ? open : undefined}
+        className={`inline-flex rounded-lg px-3 py-2 text-sm transition-colors hover:bg-nav-active hover:text-nav-foreground ${
+          active
+            ? "bg-nav-active font-semibold text-nav-foreground"
+            : "text-nav-muted"
+        }`}
+      >
+        {label}
+      </Link>
+      {hasMenu && open ? (
+        <div
+          className="absolute left-0 top-full z-[110] min-w-[11rem] pt-1"
+          role="menu"
+          aria-label={label}
+        >
+          <div className="rounded-xl border border-border bg-card py-1 shadow-lg">
+            {items.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                role="menuitem"
+                aria-current={isItemActive(item.href) ? "page" : undefined}
+                className={`block px-3 py-2 text-sm transition-colors hover:bg-accent-soft/50 ${
+                  isItemActive(item.href)
+                    ? "font-semibold text-foreground"
+                    : "text-muted"
+                }`}
+              >
+                {item.label}
+              </Link>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MobileSection({
+  title,
+  overviewHref,
+  overviewLabel = "Overview",
+  items,
+  pathname,
+  isItemActive,
+  onNavigate,
+}: {
+  title: string;
+  overviewHref: string;
+  overviewLabel?: string;
+  items: NavSubItem[];
+  pathname: string;
+  isItemActive: (href: string) => boolean;
+  onNavigate: () => void;
+}) {
+  return (
+    <>
+      <p className="px-4 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
+        {title}
+      </p>
+      <Link
+        href={overviewHref}
+        onClick={onNavigate}
+        className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
+          pathname === overviewHref ? "font-semibold text-foreground" : ""
+        }`}
+      >
+        {overviewLabel}
+      </Link>
+      {items.map((item) => (
+        <Link
+          key={item.href}
+          href={item.href}
+          onClick={onNavigate}
+          aria-current={isItemActive(item.href) ? "page" : undefined}
+          className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
+            isItemActive(item.href) ? "font-semibold text-foreground" : ""
+          }`}
+        >
+          {item.label}
+        </Link>
+      ))}
+    </>
+  );
+}
+
 export function SiteHeader() {
   const pathname = usePathname() || "/";
   const mobileMenuRef = useRef<HTMLDetailsElement | null>(null);
-  const [meditateMenuOpen, setMeditateMenuOpen] = useState(false);
-  /** Session is read from storage; SSR has no JWT — keep initial false so server and first client paint match (avoids hydration mismatch). */
   const [signedIn, setSignedIn] = useState(false);
   const [sessionLabel, setSessionLabel] = useState<string | null>(null);
 
@@ -88,10 +215,16 @@ export function SiteHeader() {
     window.addEventListener("medimade-session-changed", sync);
     return () => window.removeEventListener("medimade-session-changed", sync);
   }, []);
-  const isActive = (href: string) =>
+
+  const isItemActive = (href: string) =>
     href === "/"
       ? pathname === "/"
       : pathname === href || pathname.startsWith(`${href}/`);
+
+  const closeMobile = () => {
+    if (mobileMenuRef.current) mobileMenuRef.current.open = false;
+  };
+
   return (
     <header className="relative sticky top-0 z-[100] border-b border-white/10 bg-nav shadow-[0_4px_18px_rgb(20_28_38_/_0.28)]">
       <div
@@ -129,62 +262,41 @@ export function SiteHeader() {
           </span>
         </Link>
         <nav className="hidden items-center gap-1 sm:flex">
-          <div
-            className="relative"
-            onMouseEnter={() => setMeditateMenuOpen(true)}
-            onMouseLeave={() => setMeditateMenuOpen(false)}
-            onFocusCapture={() => setMeditateMenuOpen(true)}
-            onBlurCapture={(e) => {
-              const next = e.relatedTarget as Node | null;
-              if (next && e.currentTarget.contains(next)) return;
-              setMeditateMenuOpen(false);
-            }}
-          >
-            <Link
-              href="/meditate"
-              aria-haspopup="true"
-              aria-expanded={meditateMenuOpen}
-              className={`inline-flex rounded-lg px-3 py-2 text-sm transition-colors hover:bg-nav-active hover:text-nav-foreground ${
-                isMeditateSection(pathname)
-                  ? "bg-nav-active font-semibold text-nav-foreground"
-                  : "text-nav-muted"
-              }`}
-            >
-              Meditate
-            </Link>
-            {meditateMenuOpen ? (
-              <div
-                className="absolute left-0 top-full z-[110] min-w-[11rem] pt-1"
-                role="menu"
-                aria-label="Meditate"
-              >
-                <div className="rounded-xl border border-border bg-card py-1 shadow-lg">
-                  {meditateSub.map((item) => (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      role="menuitem"
-                      aria-current={isActive(item.href) ? "page" : undefined}
-                      className={`block px-3 py-2 text-sm transition-colors hover:bg-accent-soft/50 ${
-                        isActive(item.href)
-                          ? "font-semibold text-foreground"
-                          : "text-muted"
-                      }`}
-                    >
-                      {item.label}
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
-          {navRest.map((item) => (
+          <NavFlyout
+            href="/meditate"
+            label="Meditate"
+            items={meditateSub}
+            active={sectionActive(pathname, "/meditate")}
+            isItemActive={isItemActive}
+          />
+          <NavFlyout
+            href="/journal"
+            label="Journal"
+            items={journalSub}
+            active={sectionActive(pathname, "/journal")}
+            isItemActive={isItemActive}
+          />
+          <NavFlyout
+            href="/ideate"
+            label="Ideate"
+            items={ideateSub}
+            active={sectionActive(pathname, "/ideate")}
+            isItemActive={isItemActive}
+          />
+          <NavFlyout
+            href="/focus"
+            label="Focus"
+            items={focusSub}
+            active={sectionActive(pathname, "/focus")}
+            isItemActive={isItemActive}
+          />
+          {utilityNav.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              aria-current={isActive(item.href) ? "page" : undefined}
+              aria-current={isItemActive(item.href) ? "page" : undefined}
               className={`rounded-lg px-3 py-2 text-sm transition-colors hover:bg-nav-active hover:text-nav-foreground ${
-                isActive(item.href)
+                isItemActive(item.href)
                   ? "bg-nav-active font-semibold text-nav-foreground"
                   : "text-nav-muted"
               }`}
@@ -244,47 +356,51 @@ export function SiteHeader() {
                 <path d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </summary>
-            <div className="absolute right-0 mt-2 w-52 rounded-xl border border-border bg-card py-2 shadow-lg">
-              <p className="px-4 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
-                Meditate
-              </p>
-              <Link
-                href="/meditate"
-                onClick={() => {
-                  if (mobileMenuRef.current) mobileMenuRef.current.open = false;
-                }}
-                className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
-                  pathname === "/meditate" ? "font-semibold text-foreground" : ""
-                }`}
-              >
-                Overview
-              </Link>
-              {meditateSub.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => {
-                    if (mobileMenuRef.current) mobileMenuRef.current.open = false;
-                  }}
-                  aria-current={isActive(item.href) ? "page" : undefined}
-                  className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
-                    isActive(item.href) ? "font-semibold text-foreground" : ""
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              ))}
+            <div className="absolute right-0 mt-2 max-h-[70vh] w-56 overflow-y-auto rounded-xl border border-border bg-card py-2 shadow-lg">
+              <MobileSection
+                title="Meditate"
+                overviewHref="/meditate"
+                items={meditateSub}
+                pathname={pathname}
+                isItemActive={isItemActive}
+                onNavigate={closeMobile}
+              />
               <div className="my-2 border-t border-border" role="separator" />
-              {navRest.map((item) => (
+              <MobileSection
+                title="Journal"
+                overviewHref="/journal"
+                items={journalSub}
+                pathname={pathname}
+                isItemActive={isItemActive}
+                onNavigate={closeMobile}
+              />
+              <div className="my-2 border-t border-border" role="separator" />
+              <MobileSection
+                title="Ideate"
+                overviewHref="/ideate"
+                items={ideateSub}
+                pathname={pathname}
+                isItemActive={isItemActive}
+                onNavigate={closeMobile}
+              />
+              <div className="my-2 border-t border-border" role="separator" />
+              <MobileSection
+                title="Focus"
+                overviewHref="/focus"
+                items={focusSub}
+                pathname={pathname}
+                isItemActive={isItemActive}
+                onNavigate={closeMobile}
+              />
+              <div className="my-2 border-t border-border" role="separator" />
+              {utilityNav.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
-                  onClick={() => {
-                    if (mobileMenuRef.current) mobileMenuRef.current.open = false;
-                  }}
-                  aria-current={isActive(item.href) ? "page" : undefined}
+                  onClick={closeMobile}
+                  aria-current={isItemActive(item.href) ? "page" : undefined}
                   className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
-                    isActive(item.href) ? "font-semibold text-foreground" : ""
+                    isItemActive(item.href) ? "font-semibold text-foreground" : ""
                   }`}
                 >
                   {item.label}
@@ -295,7 +411,7 @@ export function SiteHeader() {
                   type="button"
                   onClick={() => {
                     clearMedimadeSession();
-                    if (mobileMenuRef.current) mobileMenuRef.current.open = false;
+                    closeMobile();
                   }}
                   className="block w-full px-4 py-2 text-left text-sm text-muted"
                 >
@@ -304,9 +420,7 @@ export function SiteHeader() {
               ) : (
                 <Link
                   href="/login"
-                  onClick={() => {
-                    if (mobileMenuRef.current) mobileMenuRef.current.open = false;
-                  }}
+                  onClick={closeMobile}
                   className="block px-4 py-2 text-sm font-medium text-accent-link"
                 >
                   Sign in
@@ -314,9 +428,7 @@ export function SiteHeader() {
               )}
               <Link
                 href="/pro"
-                onClick={() => {
-                  if (mobileMenuRef.current) mobileMenuRef.current.open = false;
-                }}
+                onClick={closeMobile}
                 className="block px-4 py-2 text-sm font-medium text-accent-link"
               >
                 Pro

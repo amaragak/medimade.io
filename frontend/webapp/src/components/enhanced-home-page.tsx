@@ -5,182 +5,107 @@ import {
   IconSparkles,
   IconTargetArrow,
 } from "@tabler/icons-react";
-import { HomeHeroCreatePaths } from "@/components/home-hero-create-paths";
-import { HomeHeroOneShotPrompt } from "@/components/home-hero-one-shot-prompt";
-import {
-  HomeHeroListenGrid,
-  HomeListenSection,
-} from "@/components/home-listen-section";
 import { LogoMark } from "@/components/logo-mark";
-import { createMeditationHref } from "@/lib/create-meditation-path";
 
-/** Flat `bg-nav` — SiteHeader only (`--nav` / `#33465C`). */
 const GOLD = "#D9A24F";
 const GOLD_INK = "#3D2E10";
 const CREAM = "#F4F0E8";
 const MUTED = "#A8B0BC";
 
-/**
- * Homepage section backgrounds (below hero) — same navy family, each step
- * clearly distinct from its neighbors. Hero is theme-aware via `.home-hero`.
- * Pillars → Listen → Journal → Ideate → CTA
- */
 const SECTION_BG = {
-  pillars: "#2A3A4E",
-  listen: "#161D28",
-  journal: "#243447",
-  ideate: "#1A2330",
-  cta: "#2A3A4E",
+  features: "#2A3A4E",
+  cta: "#1A2330",
 } as const;
-/** Inset demo cards: darker than their section so they read as panels. */
-const PANEL_BG = "#12181F";
 
-const journalCreateHref = createMeditationHref({ path: "journalReflect" });
-const ideateCreateHref = createMeditationHref({ path: "goal" });
-
-const pillars = [
+const features = [
   {
-    href: "/meditate/create",
+    href: "/meditate",
     title: "Meditate",
-    body: "By type, chat, or a journal entry.",
+    body: "Personalised guided sessions from a prompt, a style, a chat, a journal entry, or a goal — with voices and sound beds that actually sound good.",
     Icon: IconSparkles,
     highlight: true,
   },
   {
     href: "/journal",
     title: "Journal",
-    body: "Write, speak, see what recurs.",
+    body: "Write or speak what’s on your mind. Spot patterns over time, then turn any entry into a meditation when you’re ready.",
     Icon: IconNotebook,
     highlight: false,
   },
   {
     href: "/ideate",
     title: "Ideate",
-    body: "Steps, and what's really stopping you.",
+    body: "Name the project, the resistance, and the next steps — then build a visualisation or manifestation practice from what’s blocking you.",
     Icon: IconBulb,
     highlight: false,
   },
   {
     href: "/focus",
     title: "Focus",
-    body: "Sessions tied to one task.",
+    body: "Sit with one task at a time. Short sessions that keep you in the work instead of escaping it.",
     Icon: IconTargetArrow,
     highlight: false,
   },
 ] as const;
 
-function StartFreeButton({ className = "" }: { className?: string }) {
-  return (
-    <Link
-      href="/meditate/create"
-      className={`inline-flex items-center justify-center rounded-full px-7 py-3 text-sm font-semibold transition-opacity hover:opacity-90 ${className}`}
-      style={{ backgroundColor: GOLD, color: GOLD_INK }}
-    >
-      Start free
-    </Link>
-  );
-}
-
+/**
+ * Site homepage — suite overview. Meditation-specific marketing lives on
+ * `/meditate` via `EnhancedMeditatePage`.
+ */
 export function EnhancedHomePage() {
   return (
     <div className="w-full">
-      {/*
-        Hero: light = off-white + mesh gradient; dark = solid #1A2330.
-        See .home-hero in globals.css.
-      */}
       <section className="home-hero w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16">
         <div className="mx-auto flex max-w-6xl flex-col items-center text-center">
           <div className="home-hero-sun" aria-hidden>
-            <div className="home-hero-sun-spin">
-              <div className="home-hero-sun-breathe">
-                <LogoMark size={80} />
-              </div>
-            </div>
+            <LogoMark size={80} />
           </div>
-          <h1 className="mt-8 max-w-3xl font-display text-3xl font-medium leading-tight tracking-tight text-foreground sm:text-4xl md:text-[2.75rem] dark:text-[#F4F0E8]">
-            Personalised guided meditations that actually sound good.
+          <h1 className="mt-8 max-w-3xl font-display text-4xl font-medium leading-tight tracking-tight text-foreground sm:text-5xl md:text-[3.5rem] dark:text-[#F4F0E8]">
+            Live Consciously.
           </h1>
-          <div className="mt-8 w-full">
-            <HomeHeroOneShotPrompt />
-          </div>
-          <div className="mt-10 w-full">
-            <h2 className="mb-6 text-center font-display text-xl font-medium tracking-tight text-foreground sm:mb-8 sm:text-2xl dark:text-[#F4F0E8]">
-              Shape how your script is written
-            </h2>
-            <HomeHeroCreatePaths />
-          </div>
-          <h2 className="mt-14 font-display text-2xl font-medium tracking-tight text-foreground sm:mt-16 sm:text-3xl dark:text-[#F4F0E8]">
-            Take a listen
-          </h2>
-          <div className="mt-6 w-full sm:mt-8">
-            <HomeHeroListenGrid />
-          </div>
-        </div>
-      </section>
-
-      {/* Not just meditation — lighter mid-navy than hero */}
-      <section
-        className="w-full px-4 py-16 sm:px-6 sm:py-20"
-        style={{ backgroundColor: SECTION_BG.pillars }}
-      >
-        <div className="mx-auto max-w-6xl">
-          <h2
-            className="text-center font-display text-3xl font-medium tracking-tight sm:text-4xl"
-            style={{ color: CREAM }}
-          >
-            Not just meditation.
-          </h2>
-          <p
-            className="mx-auto mt-3 max-w-2xl text-center text-base sm:text-lg"
-            style={{ color: MUTED }}
-          >
-            A journal, a project planner, and a meditation generator that
-            actually talk to each other.
+          <p className="mt-4 max-w-xl text-base leading-relaxed text-[#7A7566] sm:text-lg dark:text-[#A8B0BC]">
+            with our suite of self reflection tools.
           </p>
-          <ul className="mt-12 grid gap-4 sm:grid-cols-2 sm:gap-5 lg:grid-cols-4 lg:gap-6">
-            {pillars.map(({ href, title, body, Icon, highlight }) => (
-              <li key={title}>
+
+          <ul className="mt-10 grid w-full max-w-6xl grid-cols-1 gap-3 sm:mt-12 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+            {features.map(({ href, title, body, Icon, highlight }) => (
+              <li key={title} className="min-h-0">
                 <Link
                   href={href}
-                  className="block h-full rounded-2xl border p-6 transition-opacity hover:opacity-95 sm:p-7"
-                  style={
+                  className={`flex h-full flex-col rounded-2xl border p-5 text-left shadow-[0_10px_28px_rgb(30_37_48_/_0.06)] transition-colors sm:p-6 ${
                     highlight
-                      ? {
-                          backgroundColor: "rgba(217,162,79,0.12)",
-                          borderColor: GOLD,
-                        }
-                      : {
-                          backgroundColor: "rgba(255,255,255,0.05)",
-                          borderColor: "rgba(255,255,255,0.12)",
-                        }
-                  }
+                      ? "border-[#D9A24F]/70 bg-[#FFFBF3] hover:bg-[#FBF6EA] dark:border-[#D9A24F]/50 dark:bg-[rgba(217,162,79,0.12)] dark:hover:bg-[rgba(217,162,79,0.16)] dark:shadow-none"
+                      : "border-[#D8D2C4] bg-white hover:border-[#D9A24F]/70 hover:bg-[#FBF8F2] dark:border-white/10 dark:bg-white/[0.05] dark:shadow-none dark:hover:border-[#D9A24F]/50 dark:hover:bg-white/[0.08]"
+                  }`}
                 >
                   <span
-                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl"
+                    className={
+                      highlight
+                        ? "inline-flex h-11 w-11 items-center justify-center rounded-xl"
+                        : "inline-flex h-11 w-11 items-center justify-center rounded-xl bg-[#F4F0E8] text-[#5A6B7D] dark:bg-white/10 dark:text-[#D9A24F]"
+                    }
                     style={
                       highlight
                         ? {
                             backgroundColor: "rgba(217,162,79,0.22)",
                             color: GOLD,
                           }
-                        : {
-                            backgroundColor: "rgba(255,255,255,0.08)",
-                            color: CREAM,
-                          }
+                        : undefined
                     }
                   >
                     <Icon size={22} stroke={1.75} aria-hidden />
                   </span>
                   <p
-                    className="mt-4 font-display text-lg font-semibold"
-                    style={{ color: highlight ? GOLD : CREAM }}
+                    className={`mt-4 font-display text-lg font-semibold tracking-tight ${
+                      highlight
+                        ? ""
+                        : "text-[#1E2530] dark:text-[#F4F0E8]"
+                    }`}
+                    style={highlight ? { color: GOLD } : undefined}
                   >
                     {title}
                   </p>
-                  <p
-                    className="mt-2 text-sm leading-relaxed sm:text-[15px]"
-                    style={{ color: MUTED }}
-                  >
+                  <p className="mt-2 flex-1 text-sm leading-relaxed text-[#7A7566] dark:text-[#A8B0BC]">
                     {body}
                   </p>
                 </Link>
@@ -190,138 +115,28 @@ export function EnhancedHomePage() {
         </div>
       </section>
 
-      <HomeListenSection />
-
-      {/* Journal */}
       <section
         className="w-full px-4 py-16 sm:px-6 sm:py-20"
-        style={{ backgroundColor: SECTION_BG.journal }}
+        style={{ backgroundColor: SECTION_BG.features }}
       >
-        <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
-          <div>
-            <p
-              className="text-xs font-semibold uppercase tracking-[0.14em]"
-              style={{ color: GOLD }}
-            >
-              Journal
-            </p>
-            <h2
-              className="mt-3 font-display text-3xl font-medium tracking-tight sm:text-4xl"
-              style={{ color: CREAM }}
-            >
-              Write it down. Turn it into a meditation when you&apos;re ready.
-            </h2>
-            <p
-              className="mt-4 text-base leading-relaxed sm:text-lg"
-              style={{ color: MUTED }}
-            >
-              Any entry can become the starting point for a session — built from
-              what&apos;s actually there.
-            </p>
-          </div>
-          <div
-            className="rounded-2xl border p-5 sm:p-6"
-            style={{
-              backgroundColor: PANEL_BG,
-              borderColor: "rgba(255,255,255,0.12)",
-            }}
+        <div className="mx-auto max-w-3xl text-center">
+          <h2
+            className="font-display text-3xl font-medium tracking-tight sm:text-4xl"
+            style={{ color: CREAM }}
           >
-            <p
-              className="text-xs font-medium uppercase tracking-wide"
-              style={{ color: MUTED }}
-            >
-              Today · journal entry
-            </p>
-            <p
-              className="mt-3 font-display text-lg font-medium leading-snug"
-              style={{ color: CREAM }}
-            >
-              Still carrying yesterday&apos;s conversation
-            </p>
-            <p
-              className="mt-3 text-sm leading-relaxed"
-              style={{ color: MUTED }}
-            >
-              I keep replaying what I should have said. My chest feels tight
-              when I think about tomorrow&apos;s meeting — like I&apos;m already
-              bracing for it.
-            </p>
-            <Link
-              href={journalCreateHref}
-              className="mt-5 inline-flex items-center rounded-full px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
-              style={{ backgroundColor: GOLD, color: GOLD_INK }}
-            >
-              Reflect on this entry →
-            </Link>
-          </div>
+            Tools that talk to each other.
+          </h2>
+          <p
+            className="mx-auto mt-4 max-w-2xl text-base leading-relaxed sm:text-lg"
+            style={{ color: MUTED }}
+          >
+            Journal what you feel. Plan what you want. Focus on what matters.
+            Meditate on all of it — so reflection becomes practice, not another
+            tab you forget about.
+          </p>
         </div>
       </section>
 
-      {/* Ideate — mirrored layout */}
-      <section
-        className="w-full px-4 py-16 sm:px-6 sm:py-20"
-        style={{ backgroundColor: SECTION_BG.ideate }}
-      >
-        <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
-          <div
-            className="order-2 rounded-2xl border p-5 sm:p-6 lg:order-1"
-            style={{
-              backgroundColor: PANEL_BG,
-              borderColor: "rgba(255,255,255,0.12)",
-            }}
-          >
-            <p
-              className="text-xs font-medium uppercase tracking-wide"
-              style={{ color: MUTED }}
-            >
-              Project
-            </p>
-            <p
-              className="mt-2 font-display text-lg font-medium leading-snug"
-              style={{ color: CREAM }}
-            >
-              Release my album
-            </p>
-            <p
-              className="mt-3 font-display text-base italic leading-relaxed"
-              style={{ color: MUTED }}
-            >
-              &ldquo;I freeze when I imagine people hearing the unfinished
-              tracks.&rdquo;
-            </p>
-            <Link
-              href={ideateCreateHref}
-              className="mt-5 inline-flex items-center rounded-full px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
-              style={{ backgroundColor: GOLD, color: GOLD_INK }}
-            >
-              Build a meditation from this →
-            </Link>
-          </div>
-          <div className="order-1 lg:order-2">
-            <p
-              className="text-xs font-semibold uppercase tracking-[0.14em]"
-              style={{ color: GOLD }}
-            >
-              Ideate
-            </p>
-            <h2
-              className="mt-3 font-display text-3xl font-medium tracking-tight sm:text-4xl"
-              style={{ color: CREAM }}
-            >
-              Turn what&apos;s blocking you into what you meditate on.
-            </h2>
-            <p
-              className="mt-4 text-base leading-relaxed sm:text-lg"
-              style={{ color: MUTED }}
-            >
-              Name the resistance, then build a visualisation or manifestation
-              session straight from it.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* Closing CTA */}
       <section
         className="w-full px-4 py-20 sm:px-6 sm:py-24"
         style={{ backgroundColor: SECTION_BG.cta }}
@@ -334,7 +149,13 @@ export function EnhancedHomePage() {
             Start with whatever&apos;s on your mind.
           </h2>
           <div className="mt-8">
-            <StartFreeButton />
+            <Link
+              href="/meditate"
+              className="inline-flex items-center justify-center rounded-full px-7 py-3 text-sm font-semibold transition-opacity hover:opacity-90"
+              style={{ backgroundColor: GOLD, color: GOLD_INK }}
+            >
+              Start free
+            </Link>
           </div>
         </div>
       </section>

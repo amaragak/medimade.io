@@ -4301,7 +4301,7 @@ export function CreateWorkspace({
                     <p className="mt-3 text-sm leading-relaxed text-muted">
                       Start journaling to unlock this option.{" "}
                       <Link
-                        href="/journal"
+                        href="/journal/my"
                         className="font-semibold text-accent-link underline-offset-2 hover:underline"
                       >
                         Open Journal
@@ -4336,7 +4336,7 @@ export function CreateWorkspace({
                       <p className="mt-2 text-sm leading-relaxed text-muted">
                         Start journaling to unlock this option.{" "}
                         <Link
-                          href="/journal"
+                          href="/journal/my"
                           className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                         >
                           Open Journal
@@ -4374,7 +4374,7 @@ export function CreateWorkspace({
                     <p className="mt-3 text-sm leading-relaxed text-muted">
                       Add a project in{" "}
                       <Link
-                        href="/ideate"
+                        href="/ideate/my"
                         className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                       >
                         Ideate
@@ -4410,7 +4410,7 @@ export function CreateWorkspace({
                       <p className="mt-2 text-sm leading-relaxed text-muted">
                         Add a project in{" "}
                         <Link
-                          href="/ideate"
+                          href="/ideate/my"
                           className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                         >
                           Ideate
@@ -4936,7 +4936,7 @@ export function CreateWorkspace({
                     <p className="text-sm leading-relaxed text-muted">
                       Add a project in{" "}
                       <Link
-                        href="/ideate"
+                        href="/ideate/my"
                         className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                       >
                         Ideate

@@ -22,7 +22,7 @@ import {
 import { JournalWeeklyReflectionCard } from "@/components/journal-weekly-reflection-card";
 import { ChatMarkdown } from "@/components/chat-markdown";
 
-const INSIGHTS_HREF = "/journal/insights";
+const INSIGHTS_HREF = "/journal/my/insights";
 
 /**
  * Collapsed “more insights” sections. Ordered to match the Insights assembly
@@ -47,7 +47,7 @@ const MORE_INSIGHTS_TOPICS: Array<{ id: JournalInsightsTopicId; label: string }>
 ];
 
 function insightsWeekKeyFromPath(pathname: string): string | null {
-  const m = /^\/journal\/insights\/([^/]+)\/?$/.exec(pathname);
+  const m = /^\/journal\/my\/insights\/([^/]+)\/?$/.exec(pathname);
   if (!m?.[1]) return null;
   try {
     return decodeURIComponent(m[1]);

@@ -45,7 +45,7 @@
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
   font-family: var(--font-dm-sans), system-ui, sans-serif;
 }
@@ -335,20 +335,28 @@ body {
     );
 }
 
-/* Homepage hero: light = off-white mesh; dark = solid navy (no mesh). */
+/* Marketing heroes: paper/navy + tiled paisley at low opacity. */
 .home-hero {
+  position: relative;
   background-color: var(--background);
-  background-image:
-    radial-gradient(
-      ellipse 80% 60% at 70% 20%,
-      color-mix(in srgb, var(--accent) 18%, transparent),
-      transparent 55%
-    ),
-    radial-gradient(
-      ellipse 50% 50% at 20% 80%,
-      color-mix(in srgb, var(--gold) 22%, transparent),
-      transparent 50%
-    );
+  background-image: none;
+}
+
+.home-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.07;
+  background-image: url("/patterns/paisley-tile-800-offwhite.webp");
+  background-repeat: repeat;
+  background-size: 800px 800px;
+}
+
+.home-hero > * {
+  position: relative;
+  z-index: 1;
 }
 
 .dark .home-hero {
@@ -356,47 +364,15 @@ body {
   background-image: none;
 }
 
-/* Hero brand sun: slow continuous spin + sinusoidal grow/shrink. */
+.dark .home-hero::before {
+  opacity: 0.18;
+  background-image: url("/patterns/paisley-tile-800-tonal-navy.webp");
+}
+
+/* Hero brand sun mark. */
 .home-hero-sun {
   display: inline-flex;
   line-height: 0;
-}
-
-.home-hero-sun-spin {
-  animation: home-hero-sun-spin 11s linear infinite;
-  will-change: transform;
-}
-
-.home-hero-sun-breathe {
-  /* ease-in-out + alternate ≈ sine pulse on scale */
-  animation: home-hero-sun-breathe 2.75s ease-in-out infinite alternate;
-  will-change: transform;
-  transform-origin: center;
-}
-
-@keyframes home-hero-sun-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes home-hero-sun-breathe {
-  from {
-    transform: scale(0.85);
-  }
-  to {
-    transform: scale(1.15);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .home-hero-sun-spin,
-  .home-hero-sun-breathe {
-    animation: none;
-  }
 }
 
 /* Hero one-shot input: gold border fade in/out (brand sun hue). */
@@ -452,6 +428,44 @@ body {
     box-shadow:
       0 0 6px 1px rgba(244, 220, 160, 0.35),
       0 10px 28px rgb(30 37 48 / 0.08);
+  }
+}
+
+/* Border-only gold pulse (create-path cards on meditate hero). */
+.home-hero-gold-border-pulse {
+  border-width: 1.5px;
+  border-color: rgba(217, 162, 79, 0.28);
+  animation: home-hero-gold-border-only 1.35s ease-in-out infinite alternate;
+}
+
+.dark .home-hero-gold-border-pulse {
+  border-color: rgba(217, 162, 79, 0.22);
+  animation-name: home-hero-gold-border-only-dark;
+}
+
+@keyframes home-hero-gold-border-only {
+  from {
+    border-color: rgba(217, 162, 79, 0.18);
+  }
+  to {
+    border-color: rgba(217, 162, 79, 1);
+  }
+}
+
+@keyframes home-hero-gold-border-only-dark {
+  from {
+    border-color: rgba(217, 162, 79, 0.18);
+  }
+  to {
+    border-color: rgba(217, 162, 79, 1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-hero-gold-border-pulse,
+  .dark .home-hero-gold-border-pulse {
+    animation: none;
+    border-color: rgba(217, 162, 79, 0.75);
   }
 }
 

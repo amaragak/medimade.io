@@ -129,7 +129,7 @@ export function HomeHeroCreatePaths({ className = "" }: { className?: string }) 
           <li key={path} className="min-h-0">
             <Link
               href={createMeditationHref({ path })}
-              className="flex h-full flex-col rounded-2xl border border-[#D8D2C4] bg-white p-5 text-left shadow-[0_10px_28px_rgb(30_37_48_/_0.06)] transition-colors hover:border-[#D9A24F]/70 hover:bg-[#FBF8F2] dark:border-white/10 dark:bg-white/[0.05] dark:shadow-none dark:hover:border-[#D9A24F]/50 dark:hover:bg-white/[0.08] sm:p-6"
+              className="home-hero-gold-border-pulse flex h-full flex-col rounded-2xl border bg-white p-5 text-left shadow-[0_10px_28px_rgb(30_37_48_/_0.06)] transition-colors hover:bg-[#FBF8F2] dark:bg-white/[0.05] dark:shadow-none dark:hover:bg-white/[0.08] sm:p-6"
             >
               <span className="font-display text-lg font-medium tracking-tight text-[#1E2530] dark:text-[#F4F0E8] sm:text-xl">
                 {title}
