@@ -1,10 +1,38 @@
 import { claudeHaiku45UsdFromTokens } from "./claude-pricing";
 
 /**
- * Fish Audio S2 billing (UTF-8 input to TTS), for analytics / margin estimates.
+ * Fish Audio TTS billing (UTF-8 input), for analytics / margin estimates.
  * @see https://docs.fish.audio — priced per million UTF-8 bytes of script.
  */
-export const FISH_USD_PER_UTF8_BYTE = 15 / 1_000_000;
+export const FISH_S21_USD_PER_MILLION = 15;
+export const FISH_S1_USD_PER_MILLION = 10;
+/** Default / S2.1 Pro rate (legacy constant). */
+export const FISH_USD_PER_UTF8_BYTE = FISH_S21_USD_PER_MILLION / 1_000_000;
+
+export function fishUsdPerMillionForModel(model?: string | null): number {
+  const m = (model ?? "").trim().toLowerCase();
+  if (m === "s1") return FISH_S1_USD_PER_MILLION;
+  return FISH_S21_USD_PER_MILLION;
+}
+
+export function fishUsdPerUtf8ByteForModel(model?: string | null): number {
+  return fishUsdPerMillionForModel(model) / 1_000_000;
+}
+
+/** Display label for stored Fish TTS model id. */
+export function fishTtsModelLabel(model?: string | null): string {
+  const m = (model ?? "").trim();
+  if (!m) return "s2.1-pro (assumed)";
+  return m;
+}
+
+export function fishCostUsdFromBillableBytes(
+  bytes: number,
+  model?: string | null,
+): number {
+  if (!Number.isFinite(bytes) || bytes <= 0) return 0;
+  return bytes * fishUsdPerUtf8ByteForModel(model);
+}
 
 const PAUSE_RE = /\[\[PAUSE\s+([^\]]+)\]\]/gi;
 
@@ -66,11 +94,6 @@ export function countWordsSpoken(plain: string): number {
   return t.split(/\s+/).filter(Boolean).length;
 }
 
-export function fishCostUsdFromBillableBytes(bytes: number): number {
-  if (!Number.isFinite(bytes) || bytes <= 0) return 0;
-  return bytes * FISH_USD_PER_UTF8_BYTE;
-}
-
 export function formatFishCostUsd(usd: number): string {
   if (!Number.isFinite(usd) || usd <= 0) return "$0";
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
@@ -78,7 +101,81 @@ export function formatFishCostUsd(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
-/** Fish S2.1 Pro billable UTF-8 bytes for a library row. */
+export type GenerationSectionTiming = {
+  i: number;
+  ttsMs: number;
+  fxMs?: number;
+  utf8Bytes?: number;
+  pauseSec?: number;
+};
+
+export type GenerationPhaseTimings = {
+  scriptMs?: number;
+  metadataMs?: number;
+  concatMs?: number;
+  loudnormMs?: number;
+  uploadMs?: number;
+};
+
+export type GenerationTimings = {
+  phases: GenerationPhaseTimings;
+  sections: GenerationSectionTiming[];
+};
+
+/** Short duration for dev flyover step timings. */
+export function formatStepMs(ms: number | null | undefined): string | null {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60_000);
+  const s = Math.round((ms % 60_000) / 1000);
+  return `${m}m ${s}s`;
+}
+
+/** Dev flyover lines for per-section / phase generation timings. */
+export function generationTimingsFlyoverLines(
+  timings: GenerationTimings | null | undefined,
+  opts?: { maxSections?: number },
+): string[] {
+  if (!timings) return [];
+  const maxSections = opts?.maxSections ?? 14;
+  const lines: string[] = [];
+  const p = timings.phases ?? {};
+
+  const phaseLabels: Array<[keyof GenerationPhaseTimings, string]> = [
+    ["scriptMs", "Script"],
+    ["metadataMs", "Metadata"],
+    ["concatMs", "Concat"],
+    ["loudnormMs", "Loudnorm"],
+    ["uploadMs", "Upload"],
+  ];
+  for (const [key, label] of phaseLabels) {
+    const formatted = formatStepMs(p[key]);
+    if (formatted) lines.push(`${label}: ${formatted}`);
+  }
+
+  const sections = timings.sections ?? [];
+  if (sections.length > 0) {
+    lines.push(`Speech sections (${sections.length}):`);
+    const show = sections.slice(0, maxSections);
+    for (const s of show) {
+      const parts: string[] = [`#${s.i + 1} TTS ${formatStepMs(s.ttsMs) ?? "—"}`];
+      if (s.fxMs != null) parts.push(`FX ${formatStepMs(s.fxMs) ?? "—"}`);
+      if (s.utf8Bytes != null) parts.push(`${s.utf8Bytes.toLocaleString()} B`);
+      if (s.pauseSec != null && s.pauseSec > 0) {
+        parts.push(`pause ${s.pauseSec.toFixed(1)}s`);
+      }
+      lines.push(`  ${parts.join(" · ")}`);
+    }
+    if (sections.length > maxSections) {
+      lines.push(`  … +${sections.length - maxSections} more`);
+    }
+  }
+
+  return lines;
+}
+
+/** Fish billable UTF-8 bytes for a library row. */
 export function estimateFishBillableUtf8Bytes(params: {
   scriptUtf8Bytes?: number | null;
   scriptText?: string | null;
@@ -102,6 +199,7 @@ export function estimateFishBillableUtf8Bytes(params: {
 
 export type MeditationAnalyticsRow = {
   scriptUtf8Bytes?: number;
+  fishTtsModel?: string | null;
   durationSeconds?: number | null;
   pauseSecondsTotal?: number;
   spokenUtf8Bytes?: number;
@@ -241,7 +339,10 @@ export function enrichMeditationAnalytics(
   return {
     raw: row,
     billableUtf8Bytes: billable,
-    fishCostUsd: fishCostUsdFromBillableBytes(billable),
+    fishCostUsd: fishCostUsdFromBillableBytes(
+      billable,
+      typeof row.fishTtsModel === "string" ? row.fishTtsModel : null,
+    ),
     pauseSecondsTotal,
     spokenPlain,
     spokenUtf8Bytes,

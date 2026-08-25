@@ -178,10 +178,26 @@ def _decode_audio_bytes(raw: bytes, input_format: str) -> tuple[np.ndarray, int]
         with AudioFile(src) as f:
             return _read_entire_file(f)
 
+    # MP3 via BytesIO often truncates mid-stream in Pedalboard/miniaudio (no error).
+    # Always decode MP3 from a real tempfile. WAV is fine from memory.
+    if suffix == ".mp3":
+        path: str | None = None
+        fd, path = tempfile.mkstemp(suffix=".mp3")
+        try:
+            with os.fdopen(fd, "wb") as tmp:
+                tmp.write(raw)
+            return load_from(path)
+        finally:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
     try:
         return load_from(io.BytesIO(raw))
     except Exception as first:
-        path: str | None = None
+        path = None
         fd, path = tempfile.mkstemp(suffix=suffix)
         try:
             with os.fdopen(fd, "wb") as tmp:
@@ -262,11 +278,18 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
     except Exception as e:
         return _json_response(400, {"error": str(e)})
 
+    # Optional override for mixer reverb tail (default 2s). Sectioned FX passes 0
+    # on non-final segments so pause markers are not inflated by 2s each.
+    tail_pad_raw = data.get("tailPadSeconds", None)
     try:
         audio_cf = _ensure_channels_first(np.asarray(audio, dtype=np.float32))
         pnorm = (preset or "neutral").strip().lower()
         if pnorm == "mixer":
-            pad_n = int(sr * 2.0)
+            if tail_pad_raw is None:
+                pad_sec = 2.0
+            else:
+                pad_sec = max(0.0, float(tail_pad_raw))
+            pad_n = int(sr * pad_sec)
             if pad_n > 0:
                 pad = np.zeros((audio_cf.shape[0], pad_n), dtype=np.float32)
                 audio_cf = np.concatenate([audio_cf, pad], axis=1)

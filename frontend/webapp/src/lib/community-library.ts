@@ -91,6 +91,7 @@ export function communityLibraryAsItems(): LibraryMeditationItem[] {
       scriptText: e.scriptText?.trim() || null,
       scriptTruncated: false,
       scriptUtf8Bytes: null,
+      fishTtsModel: null,
       rating: null,
       favourite: false,
       archived: false,

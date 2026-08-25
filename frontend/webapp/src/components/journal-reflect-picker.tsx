@@ -421,7 +421,7 @@ export function JournalReflectPicker({
                       <span
                         className={`flex h-6 w-6 items-center justify-center rounded-md ${
                           selected
-                            ? "bg-[#33465C] text-white"
+                            ? "bg-selected text-on-selected"
                             : "border-[1.5px] border-border bg-transparent text-transparent"
                         }`}
                       >

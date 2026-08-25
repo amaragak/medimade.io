@@ -35,7 +35,7 @@ const cards = [
 export function EnhancedFocusPage() {
   return (
     <div className="w-full">
-      <section className="home-hero w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16">
+      <section className="home-hero home-hero--product w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16">
         <div className="mx-auto flex max-w-6xl flex-col items-center text-center">
           <h1 className="max-w-3xl font-display text-3xl font-medium leading-tight tracking-tight text-marketing-ink sm:text-4xl md:text-[2.75rem]">
             Block noise. Stay with one thing.
@@ -86,7 +86,7 @@ export function EnhancedFocusPage() {
             <button
               type="button"
               disabled
-              className="inline-flex cursor-not-allowed items-center justify-center rounded-full bg-gold px-7 py-3 text-sm font-semibold text-on-accent opacity-70"
+              className="inline-flex cursor-not-allowed items-center justify-center rounded-full accent-fill-gradient px-7 py-3 text-sm font-semibold text-on-accent opacity-70"
             >
               Chrome Web Store
             </button>

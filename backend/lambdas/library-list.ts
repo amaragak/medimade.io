@@ -53,6 +53,7 @@ type OutItem = {
   scriptText: string | null;
   scriptTruncated: boolean;
   scriptUtf8Bytes: number | null;
+  fishTtsModel?: string | null;
   rating: number | null;
   favourite: boolean;
   archived: boolean;
@@ -91,6 +92,22 @@ type OutItem = {
   /** ms from job create (Generate click) until library row write. */
   generationElapsedMs: number | null;
   jobCreatedAt: string | null;
+  generationTimings: {
+    phases: {
+      scriptMs?: number;
+      metadataMs?: number;
+      concatMs?: number;
+      loudnormMs?: number;
+      uploadMs?: number;
+    };
+    sections: Array<{
+      i: number;
+      ttsMs: number;
+      fxMs?: number;
+      utf8Bytes?: number;
+      pauseSec?: number;
+    }>;
+  } | null;
 };
 
 function optTrimKey(v: unknown): string | null {
@@ -100,6 +117,55 @@ function optTrimKey(v: unknown): string | null {
 function optGain(v: unknown): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
   return Math.min(100, Math.max(0, v));
+}
+
+function optMs(v: unknown): number | undefined {
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0) return undefined;
+  return Math.round(v);
+}
+
+function parseGenerationTimings(raw: unknown): OutItem["generationTimings"] {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const phasesRaw = o.phases;
+  const sectionsRaw = o.sections;
+  const phases: NonNullable<OutItem["generationTimings"]>["phases"] = {};
+  if (phasesRaw && typeof phasesRaw === "object") {
+    const p = phasesRaw as Record<string, unknown>;
+    const scriptMs = optMs(p.scriptMs);
+    const metadataMs = optMs(p.metadataMs);
+    const concatMs = optMs(p.concatMs);
+    const loudnormMs = optMs(p.loudnormMs);
+    const uploadMs = optMs(p.uploadMs);
+    if (scriptMs != null) phases.scriptMs = scriptMs;
+    if (metadataMs != null) phases.metadataMs = metadataMs;
+    if (concatMs != null) phases.concatMs = concatMs;
+    if (loudnormMs != null) phases.loudnormMs = loudnormMs;
+    if (uploadMs != null) phases.uploadMs = uploadMs;
+  }
+  const sections: NonNullable<OutItem["generationTimings"]>["sections"] = [];
+  if (Array.isArray(sectionsRaw)) {
+    for (const row of sectionsRaw) {
+      if (!row || typeof row !== "object") continue;
+      const s = row as Record<string, unknown>;
+      const ttsMs = optMs(s.ttsMs);
+      if (ttsMs == null) continue;
+      const i =
+        typeof s.i === "number" && Number.isFinite(s.i) ? Math.round(s.i) : sections.length;
+      const entry: (typeof sections)[number] = { i, ttsMs };
+      const fxMs = optMs(s.fxMs);
+      if (fxMs != null) entry.fxMs = fxMs;
+      if (typeof s.utf8Bytes === "number" && Number.isFinite(s.utf8Bytes) && s.utf8Bytes > 0) {
+        entry.utf8Bytes = Math.round(s.utf8Bytes);
+      }
+      if (typeof s.pauseSec === "number" && Number.isFinite(s.pauseSec) && s.pauseSec > 0) {
+        entry.pauseSec = s.pauseSec;
+      }
+      sections.push(entry);
+    }
+  }
+  if (sections.length === 0 && Object.keys(phases).length === 0) return null;
+  return { phases, sections };
 }
 
 async function queryAllMeditationItems(
@@ -347,6 +413,10 @@ function buildLibraryItems(params: {
       row.scriptUtf8Bytes > 0
         ? row.scriptUtf8Bytes
         : null;
+    const fishTtsModel =
+      typeof row.fishTtsModel === "string" && row.fishTtsModel.trim()
+        ? row.fishTtsModel.trim()
+        : null;
     const rating =
       typeof row.rating === "number" &&
       Number.isFinite(row.rating) &&
@@ -381,6 +451,7 @@ function buildLibraryItems(params: {
       scriptText,
       scriptTruncated,
       scriptUtf8Bytes,
+      fishTtsModel,
       rating,
       favourite,
       archived,
@@ -442,6 +513,7 @@ function buildLibraryItems(params: {
         typeof row.jobCreatedAt === "string" && row.jobCreatedAt.trim()
           ? row.jobCreatedAt.trim()
           : null,
+      generationTimings: parseGenerationTimings(row.generationTimings),
     });
   }
 
@@ -460,6 +532,7 @@ function buildLibraryItems(params: {
       scriptText: null,
       scriptTruncated: false,
       scriptUtf8Bytes: null,
+      fishTtsModel: null,
       rating: null,
       favourite: false,
       archived: false,
@@ -497,6 +570,7 @@ function buildLibraryItems(params: {
       publisherBackgroundNoiseGain: null,
       generationElapsedMs: null,
       jobCreatedAt: null,
+      generationTimings: null,
     });
   }
 

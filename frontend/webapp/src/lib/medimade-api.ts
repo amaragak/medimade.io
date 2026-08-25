@@ -1,5 +1,6 @@
 import type { JournalStoreV2 } from "./journal-storage";
 import { getMedimadeSessionJwt, setMedimadeSession } from "./auth-session";
+import type { GenerationTimings } from "./meditation-analytics";
 import type { MixerFactoryPreset } from "./mixer-factory-presets";
 import { normalizeFactoryPreset } from "./mixer-factory-presets";
 
@@ -1190,6 +1191,8 @@ export async function createMeditationAudioJob(params: {
   scriptText?: string | null;
   reference_id: string;
   ttsProvider?: TtsProvider;
+  /** Fish Audio model for quality A/B: `s2.1-pro` (uses free) or `s1`. */
+  fishTtsModel?: "s2.1-pro" | "s2.1-pro-free" | "s1" | string;
   speed?: number;
   /** If set, applies voice FX (Pedalboard) after loudness normalization. */
   voiceFxPreset?: string | null;
@@ -1238,6 +1241,7 @@ export async function createMeditationAudioJob(params: {
     scriptText: params.scriptText ?? "",
     reference_id: params.reference_id,
     ...(params.ttsProvider ? { ttsProvider: params.ttsProvider } : {}),
+    ...(params.fishTtsModel ? { fishTtsModel: params.fishTtsModel } : {}),
     meditationTargetMinutes,
     ...(params.journalMode === true ? { journalMode: true } : {}),
     ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
@@ -1843,6 +1847,8 @@ export type LibraryMeditationItem = {
   scriptTruncated: boolean;
   /** UTF-8 bytes actually sent to TTS (Fish billable input), when stored. */
   scriptUtf8Bytes?: number | null;
+  /** Fish TTS model used at generate time (e.g. s2.1-pro-free, s1). */
+  fishTtsModel?: string | null;
   rating: number | null;
   favourite: boolean;
   archived: boolean;
@@ -1880,6 +1886,8 @@ export type LibraryMeditationItem = {
   /** ms from Generate click (job create) until library row write. */
   generationElapsedMs?: number | null;
   jobCreatedAt?: string | null;
+  /** Per-phase + per speech-section worker timings (dev flyover). */
+  generationTimings?: GenerationTimings | null;
 };
 
 export const MEDITATION_DRAFT_STATE_VERSION = 1 as const;

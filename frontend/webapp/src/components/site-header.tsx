@@ -18,6 +18,7 @@ import {
   toggleColorScheme,
   type ColorScheme,
 } from "@/lib/color-scheme";
+import { markSpaClientNavigation } from "@/lib/spa-client-nav";
 
 type NavSubItem = { href: string; label: string };
 
@@ -47,7 +48,7 @@ function sectionActive(path: string, root: string): boolean {
 }
 
 function ColorSchemeToggle({ className = "" }: { className?: string }) {
-  const [scheme, setScheme] = useState<ColorScheme>("dark");
+  const [scheme, setScheme] = useState<ColorScheme>("light");
 
   useEffect(() => {
     applyColorScheme(getStoredColorScheme());
@@ -199,9 +200,17 @@ function MobileSection({
 
 export function SiteHeader() {
   const pathname = usePathname() || "/";
+  const prevPathnameRef = useRef(pathname);
   const mobileMenuRef = useRef<HTMLDetailsElement | null>(null);
   const [signedIn, setSignedIn] = useState(false);
   const [sessionLabel, setSessionLabel] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (prevPathnameRef.current !== pathname) {
+      markSpaClientNavigation();
+      prevPathnameRef.current = pathname;
+    }
+  }, [pathname]);
 
   useEffect(() => {
     const sync = () => {
@@ -243,7 +252,7 @@ export function SiteHeader() {
         >
           <LogoMark
             size={34}
-            className="relative z-[1] top-px mr-[13px] shrink-0 text-[#D9A24F]"
+            className="relative z-[1] top-px mr-[13px] shrink-0 text-accent-button"
           />
           <span className="brand-wordmark relative z-[1] -top-px font-display text-2xl font-medium tracking-tight lowercase">
             consciously

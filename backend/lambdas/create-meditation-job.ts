@@ -42,6 +42,8 @@ export async function handler(
     scriptText?: string;
     reference_id?: string;
     ttsProvider?: string;
+    /** Fish Audio model: `s2.1-pro` / `s2.1-pro-free` or `s1` (quality A/B). */
+    fishTtsModel?: string;
     speed?: number;
     voiceFxPreset?: string;
     sessionToken?: string;
@@ -133,6 +135,17 @@ export async function handler(
   const meditationTargetMinutes =
     rawLen === 2 || rawLen === 5 || rawLen === 10 ? rawLen : 5;
 
+  const rawFishModel =
+    typeof body.fishTtsModel === "string" ? body.fishTtsModel.trim() : "";
+  const fishTtsModel =
+    rawFishModel === "s1"
+      ? "s1"
+      : rawFishModel === "s2.1-pro" ||
+          rawFishModel === "s2.1-pro-free" ||
+          rawFishModel === ""
+        ? "s2.1-pro-free"
+        : "s2.1-pro-free";
+
   const jobId = randomUUID();
   const now = new Date().toISOString();
 
@@ -150,6 +163,7 @@ export async function handler(
         scriptText,
         referenceId,
         ttsProvider,
+        fishTtsModel,
         speed,
         ...(journalMode ? { journalMode: true } : {}),
         meditationTargetMinutes,

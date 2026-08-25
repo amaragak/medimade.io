@@ -344,7 +344,7 @@ export function HomeHeroOneShotPrompt({ className = "" }: { className?: string }
             type="submit"
             disabled={busy || prompt.trim().length === 0}
             aria-label={busy ? "Creating meditation" : "Create meditation"}
-            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full bg-gold px-4 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45 sm:px-5"
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full accent-fill-gradient px-4 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45 sm:px-5"
           >
             {busy ? (
               <>

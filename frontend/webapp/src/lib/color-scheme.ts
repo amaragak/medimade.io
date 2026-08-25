@@ -1,5 +1,5 @@
 /**
- * Light / dark appearance. Default is dark; user choice is stored in localStorage
+ * Light / dark appearance. Default is light; user choice is stored in localStorage
  * and applied as `class="dark"` on `<html>` (not `prefers-color-scheme`).
  */
 
@@ -8,14 +8,20 @@ export type ColorScheme = "light" | "dark";
 export const COLOR_SCHEME_STORAGE_KEY = "mm_color_scheme";
 export const COLOR_SCHEME_CHANGED_EVENT = "mm-color-scheme-changed";
 
+/** Hero paisley tiles — keep in sync with `--home-hero-pattern` in theme-colors. */
+export const HOME_HERO_PATTERN_LIGHT =
+  "/patterns/paisley-tile-800-offwhite.webp";
+export const HOME_HERO_PATTERN_DARK =
+  "/patterns/paisley-tile-800-tonal-navy.webp";
+
 export function getStoredColorScheme(): ColorScheme {
-  if (typeof window === "undefined") return "dark";
+  if (typeof window === "undefined") return "light";
   try {
-    return localStorage.getItem(COLOR_SCHEME_STORAGE_KEY) === "light"
-      ? "light"
-      : "dark";
+    return localStorage.getItem(COLOR_SCHEME_STORAGE_KEY) === "dark"
+      ? "dark"
+      : "light";
   } catch {
-    return "dark";
+    return "light";
   }
 }
 
@@ -50,5 +56,9 @@ export function toggleColorScheme(): ColorScheme {
   return next;
 }
 
-/** Inline boot script — set class before first paint to avoid a light flash. */
-export const colorSchemeBootScript = `(function(){try{var t=localStorage.getItem(${JSON.stringify(COLOR_SCHEME_STORAGE_KEY)});if(t==="light"){document.documentElement.style.colorScheme="light"}else{document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark"}}catch(e){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark"}})();`;
+/**
+ * Inline boot script — set class before first paint, and preload the active
+ * hero paisley so `background-image` does not flash in after layout.
+ * Default is light; only an explicit stored `"dark"` opts into dark mode.
+ */
+export const colorSchemeBootScript = `(function(){var dark=false;try{dark=localStorage.getItem(${JSON.stringify(COLOR_SCHEME_STORAGE_KEY)})==="dark"}catch(e){}var root=document.documentElement;if(dark){root.classList.add("dark");root.style.colorScheme="dark"}else{root.style.colorScheme="light"}var l=document.createElement("link");l.rel="preload";l.as="image";l.href=dark?${JSON.stringify(HOME_HERO_PATTERN_DARK)}:${JSON.stringify(HOME_HERO_PATTERN_LIGHT)};l.setAttribute("fetchpriority","high");document.head.appendChild(l)})();`;

@@ -1,3 +1,5 @@
+/** Client-side placeholders while a meditation audio job is running. */
+
 export type PendingLibraryGeneration = {
   jobId: string;
   createdAt: string;
@@ -6,12 +8,17 @@ export type PendingLibraryGeneration = {
   meditationStyle: string | null;
   speakerName: string | null;
   speakerModelId: string | null;
+  status?: "pending" | "running" | "failed";
+  error?: string | null;
 };
 
 export const PENDING_LIBRARY_GENERATIONS_LS_KEY =
   "mm_pending_library_generations_v1";
 
-export function loadPendingLibraryGenerations(): PendingLibraryGeneration[] {
+export const PENDING_LIBRARY_GENERATIONS_CHANGED_EVENT =
+  "mm-pending-library-generations-changed";
+
+export function loadPendingGenerations(): PendingLibraryGeneration[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(PENDING_LIBRARY_GENERATIONS_LS_KEY);
@@ -32,25 +39,15 @@ export function loadPendingLibraryGenerations(): PendingLibraryGeneration[] {
   }
 }
 
-export function savePendingLibraryGenerations(
-  next: PendingLibraryGeneration[],
-): void {
+export function savePendingGenerations(next: PendingLibraryGeneration[]) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(
       PENDING_LIBRARY_GENERATIONS_LS_KEY,
       JSON.stringify(next.slice(0, 20)),
     );
+    window.dispatchEvent(new Event(PENDING_LIBRARY_GENERATIONS_CHANGED_EVENT));
   } catch {
-    /* ignore */
+    // ignore
   }
-}
-
-export function appendPendingLibraryGeneration(
-  pending: PendingLibraryGeneration,
-): void {
-  const next = [pending, ...loadPendingLibraryGenerations()].filter(
-    (x, idx, arr) => arr.findIndex((y) => y.jobId === x.jobId) === idx,
-  );
-  savePendingLibraryGenerations(next);
 }

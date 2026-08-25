@@ -2,8 +2,13 @@
  * Theme source of truth.
  *
  * `PRIMARY` is the brand fill (gold-tan). Neutrals (paper, navy ink, borders)
- * are independent so the page stays cream and the light header can be warm tan.
+ * are independent so the page stays cream and the light header matches the app canvas.
  */
+
+import {
+  HOME_HERO_PATTERN_DARK,
+  HOME_HERO_PATTERN_LIGHT,
+} from "@/lib/color-scheme";
 
 /** Brand fill — gold-tan. Text on this fill must use `onAccent` (#3D2E10). */
 export const PRIMARY = "#D9A24F";
@@ -15,13 +20,11 @@ export const ACCENT_LINK = "#B8703A";
 export const ON_ACCENT = "#3D2E10";
 
 /**
- * Gold-tan button fill. Same speaker-disc stops, slightly quieter.
- * Edit this CSS string (and BLEND) — it becomes `--accent-gradient-button`.
- * Placeholders: {light} {mid} {accent} {deep}. BLEND 0 = disc contrast, 1 = flat.
+ * @deprecated Flat `PRIMARY` fills replaced button gradients. Kept so existing
+ * `--accent-gradient*` CSS vars still resolve without breaking older CSS.
  */
-export const ACCENT_BUTTON_GRADIENT =
-  "linear-gradient(160deg, {light} 0%, {mid} 38%, {accent} 72%, {deep} 100%)";
-export const ACCENT_BUTTON_GRADIENT_BLEND = 0.08;
+export const ACCENT_BUTTON_GRADIENT = "{accent}";
+export const ACCENT_BUTTON_GRADIENT_BLEND = 1;
 
 /**
  * Header wordmark fill. Radial origin sits on the sun (left of the text).
@@ -45,25 +48,25 @@ export const INFO = "#0284c7";
 
 const NAV = "#33465C";
 // const NAV = "#6E88A3";
-/** Light-mode header base — same paper off-white as the page. */
-const NAV_LIGHT = "#FAF8F3";
+/** Light app canvas + header base — one off-white (#FAF8F3). */
+const APP_CANVAS_LIGHT = "#FAF8F3";
+/** Light-mode header base — matches app canvas. */
+const NAV_LIGHT = APP_CANVAS_LIGHT;
 const NAV_FOREGROUND = WHITE;
 const NAV_MUTED = "rgb(255 255 255 / 0.68)";
 const NAV_ACTIVE = "rgb(255 255 255 / 0.14)";
 const NAV_FOREGROUND_LIGHT = "#1E2530";
 const NAV_MUTED_LIGHT = "#5A5648";
-const NAV_ACTIVE_LIGHT = "rgb(30 37 48 / 0.08)";
 /** Unrated star glyphs. */
 export const STAR_IDLE = "#B5AF9F";
 
 const GOLD_LIGHT = "#D9A24F";
-const GOLD_DARK = "#E8C07A";
 
 /**
  * Paper / ink / chrome. Independent of PRIMARY.
  */
 const PAPER_LIGHT = {
-  background: "#FAF8F3",
+  background: APP_CANVAS_LIGHT,
   foreground: "#1E2530",
   muted: "#7A7566",
   faint: "#A39C8C",
@@ -184,6 +187,12 @@ export function rel(hex: string, dh: number, ds: number, dl: number): string {
   return hslToHex(h + dh, s + ds, l + dl);
 }
 
+/**
+ * Brighter gold for filled CTAs (header Pro, accent-fill-gradient buttons).
+ * Matches dark-mode `--accent`; light mode keeps `--accent` at PRIMARY for borders/tabs.
+ */
+export const ACCENT_BUTTON_FILL = rel(resolveColor(PRIMARY), 1.8, 0.08, 0.12);
+
 export function mixHex(a: string, b: string, t: number): string {
   const A = hexToRgb(a);
   const B = hexToRgb(b);
@@ -217,6 +226,8 @@ type Semantic = {
   border: string;
   borderSubtle: string;
   accent: string;
+  /** Brighter gold for filled buttons — same in both themes (dark-mode accent). */
+  accentButton: string;
   accentSoft: string;
   accentLink: string;
   gold: string;
@@ -228,7 +239,7 @@ type Semantic = {
   navForeground: string;
   navMuted: string;
   navActive: string;
-  /** Selected / active segment fills (navy). */
+  /** Selected / active segment fills — gold-tan in light, navy in dark. */
   selected: string;
   onSelected: string;
   starIdle: string;
@@ -322,15 +333,19 @@ function assemble(
   return {
     ...paper,
     ...brand,
+    accentButton: ACCENT_BUTTON_FILL,
     gold,
     overlay: BLACK,
     accentLink: dark ? mixHex(ACCENT_LINK, WHITE, 0.28) : ACCENT_LINK,
     nav: dark ? NAV : NAV_LIGHT,
     navForeground: dark ? NAV_FOREGROUND : NAV_FOREGROUND_LIGHT,
     navMuted: dark ? NAV_MUTED : NAV_MUTED_LIGHT,
-    navActive: dark ? NAV_ACTIVE : NAV_ACTIVE_LIGHT,
-    selected: NAV,
-    onSelected: WHITE,
+    navActive: dark
+      ? NAV_ACTIVE
+      : mixHex(ACCENT_BUTTON_FILL, NAV_LIGHT, 0.84),
+    // Light: Pro/button gold for active fills. Dark: navy selected.
+    selected: dark ? NAV : ACCENT_BUTTON_FILL,
+    onSelected: dark ? WHITE : ON_ACCENT,
     starIdle: STAR_IDLE,
     danger: dark ? mixHex(DANGER, WHITE, 0.35) : DANGER,
     dangerSoft: dark ? mixHex(DANGER, BLACK, 0.78) : mixHex(DANGER, WHITE, 0.92),
@@ -338,9 +353,9 @@ function assemble(
     info: dark ? mixHex(INFO, WHITE, 0.2) : INFO,
     homeHeroBg: dark ? "#1A2330" : paper.background,
     homeHeroPattern: dark
-      ? 'url("/patterns/paisley-tile-800-tonal-navy.webp")'
-      : 'url("/patterns/paisley-tile-800-offwhite.webp")',
-    homeHeroPatternOpacity: dark ? "0.18" : "0.07",
+      ? `url(${JSON.stringify(HOME_HERO_PATTERN_DARK)})`
+      : `url(${JSON.stringify(HOME_HERO_PATTERN_LIGHT)})`,
+    homeHeroPatternOpacity: dark ? "0.18" : "0.32",
     marketingInk: dark ? "#F4F0E8" : "#1E2530",
     marketingMuted: dark ? "#A8B0BC" : "#5A5342",
     marketingBody: dark ? "#A8B0BC" : "#7A7566",
@@ -350,9 +365,10 @@ function assemble(
     marketingBandB: dark ? "#1A2330" : "#E8CE9C",
     /** Mid band (meditate journal). */
     marketingBandC: dark ? "#243447" : "#E8CE9C",
-    /** Deepest band (meditate listen). */
-    marketingBandD: dark ? "#161D28" : "#C49A58",
-    marketingBandIdeate: dark ? "#1A2330" : "#D4AE70",
+    /** Soft cream band (journal, listen samples) — warm linen, not deep gold. */
+    marketingBandD: dark ? "#161D28" : "#F2EBDC",
+    /** Soft cream band (ideate) — lighter ivory cream, distinct from journal band D. */
+    marketingBandIdeate: dark ? "#1A2330" : "#FBF6EA",
     marketingCardBg: dark ? "#2A3544" : "#FFFFFF",
     marketingCardBorder: dark ? "rgba(255,255,255,0.1)" : "#E5DFD0",
     marketingCardHover: dark ? "#323E4F" : "#FBF8F2",
@@ -388,32 +404,28 @@ function assemble(
     headerGlowRight: dark
       ? "radial-gradient(circle, rgb(16 26 38 / 0.4) 0%, rgb(24 36 50 / 0.22) 32%, rgb(51 70 92 / 0) 68%)"
       : "radial-gradient(circle, rgb(232 224 208 / 0.7) 0%, rgb(232 224 208 / 0.3) 36%, rgb(250 248 243 / 0) 70%)",
-    proHeaderCtaBg: dark ? "var(--accent)" : ACCENT_LINK,
-    proHeaderCtaFg: dark ? "var(--on-accent)" : "#FAF8F3",
-    proHeaderCtaImage: dark ? "var(--accent-gradient-button)" : "none",
-    proHeaderCtaShadow: dark
-      ? "inset 0 1px 2px color-mix(in srgb, var(--surface) 36%, transparent), inset 0 -2px 4px color-mix(in srgb, var(--deep) 14%, transparent), 0 1px 3px color-mix(in srgb, var(--foreground) 11%, transparent)"
-      : "none",
+    proHeaderCtaBg: ACCENT_BUTTON_FILL,
+    proHeaderCtaFg: ON_ACCENT,
+    proHeaderCtaImage: "none",
+    proHeaderCtaShadow: "none",
   };
 }
 
-export const light = assemble(PAPER_LIGHT, GOLD_LIGHT, false);
-export const dark = assemble(PAPER_DARK, GOLD_DARK, true);
+/** Filled CTA / `--gold` token — same brighter Pro gold in both themes. */
+export const light = assemble(PAPER_LIGHT, ACCENT_BUTTON_FILL, false);
+export const dark = assemble(PAPER_DARK, ACCENT_BUTTON_FILL, true);
 
 export function accentGradientCss(s: Semantic): string {
-  return `linear-gradient(160deg, ${s.gradientLight} 0%, ${s.gradientMid} 38%, ${s.accent} 72%, ${s.gradientDeep} 100%)`;
+  // Flat brand fill (legacy name kept for `--accent-gradient` consumers).
+  return s.accent;
 }
 
-/** Fills `ACCENT_BUTTON_GRADIENT` from the active theme. */
+/** Fills `ACCENT_BUTTON_GRADIENT` from the active theme — now a flat accent. */
 export function accentGradientButtonCss(s: Semantic): string {
-  const t = ACCENT_BUTTON_GRADIENT_BLEND;
-  return ACCENT_BUTTON_GRADIENT.replaceAll(
-    "{light}",
-    mixHex(s.gradientLight, s.accent, t),
-  )
-    .replaceAll("{mid}", mixHex(s.gradientMid, s.accent, t))
-    .replaceAll("{accent}", s.accent)
-    .replaceAll("{deep}", mixHex(s.gradientDeep, s.accent, t));
+  return ACCENT_BUTTON_GRADIENT.replaceAll("{accent}", s.accentButton)
+    .replaceAll("{light}", s.accentButton)
+    .replaceAll("{mid}", s.accentButton)
+    .replaceAll("{deep}", s.accentButton);
 }
 
 /** Fills `BRAND_WORDMARK_GRADIENT` from the active theme (resolved hex stops). */
@@ -453,7 +465,8 @@ export function chartSeriesColor(seed: string): string {
 
 function varsFor(s: Semantic, dark: boolean): Record<string, string> {
   return {
-    "--background": s.background,
+    /** Light: app canvas always matches header base (--nav). */
+    "--background": dark ? s.background : s.nav,
     "--foreground": s.foreground,
     "--muted": s.muted,
     "--faint": s.faint,
@@ -461,6 +474,7 @@ function varsFor(s: Semantic, dark: boolean): Record<string, string> {
     "--border": s.border,
     "--border-subtle": s.borderSubtle,
     "--accent": s.accent,
+    "--accent-button": s.accentButton,
     "--accent-soft": s.accentSoft,
     "--accent-link": s.accentLink,
     "--gold": s.gold,
@@ -541,6 +555,6 @@ function cssBlock(selector: string, vars: Record<string, string>, indent = ""): 
 /** Injected in root layout. The only place brand hexes become CSS variables. */
 export const themeRootCss = [
   cssBlock(":root", varsFor(light, false)),
-  /** Class-driven dark theme (header toggle). Default is dark. */
+  /** Class-driven dark theme (header toggle). Default is light. */
   cssBlock(":root.dark", varsFor(dark, true)),
 ].join("\n\n");

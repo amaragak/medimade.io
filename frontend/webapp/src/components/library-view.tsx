@@ -29,9 +29,19 @@ import { useMobileOrTouchChrome } from "@/hooks/use-mobile-or-touch-chrome";
 import {
   estimateFishBillableUtf8Bytes,
   fishCostUsdFromBillableBytes,
+  fishTtsModelLabel,
+  fishUsdPerMillionForModel,
   formatFishCostUsd,
+  generationTimingsFlyoverLines,
 } from "@/lib/meditation-analytics";
 import { communityLibraryAsItems, itemMatchesLibraryCategory } from "@/lib/community-library";
+import {
+  loadPendingGenerations,
+  savePendingGenerations,
+  PENDING_LIBRARY_GENERATIONS_CHANGED_EVENT,
+  PENDING_LIBRARY_GENERATIONS_LS_KEY,
+  type PendingLibraryGeneration,
+} from "@/lib/pending-library-generations";
 import { CommunityCategoryGrid } from "@/components/community-category-grid";
 import { bedElementVolume, BED_VOICE_INTRO_SECONDS } from "@/lib/bed-volume";
 
@@ -64,38 +74,78 @@ function formatGenerationElapsed(ms: number | null | undefined): string | null {
 }
 
 function fishCostTooltipText(m: LibraryMeditationItem): string | null {
+  const model = m.fishTtsModel ?? null;
   const est = estimateFishBillableUtf8Bytes({
     scriptUtf8Bytes: m.scriptUtf8Bytes,
     scriptText: m.scriptText,
     title: m.title,
     scriptTruncated: m.scriptTruncated,
   });
+  const perMillion = fishUsdPerMillionForModel(model);
   const lines: string[] = [];
+  lines.push(`Length: ${formatDuration(m.durationSeconds)}`);
   if (est) {
-    const usd = fishCostUsdFromBillableBytes(est.bytes);
+    const usd = fishCostUsdFromBillableBytes(est.bytes, model);
     const approx = est.approximate ? " ≈" : "";
     lines.push(
-      `Fish Audio S2.1 Pro${approx}`,
+      `Fish Audio · ${fishTtsModelLabel(model)}${approx}`,
       `${formatFishCostUsd(usd)} · ${est.bytes.toLocaleString()} UTF-8 bytes`,
-      `$15 / million UTF-8 bytes`,
+      `$${perMillion} / million UTF-8 bytes`,
     );
   } else {
-    lines.push("Fish Audio S2.1 Pro: cost unknown (no script bytes)");
+    lines.push(
+      `Fish Audio · ${fishTtsModelLabel(model)}: cost unknown (no script bytes)`,
+    );
   }
   const elapsed = formatGenerationElapsed(m.generationElapsedMs);
   if (elapsed) {
     lines.push(`Generate → library: ${elapsed}`);
   }
+  const timingLines = generationTimingsFlyoverLines(m.generationTimings);
+  if (timingLines.length > 0) {
+    lines.push("", ...timingLines);
+  }
   return lines.join("\n");
 }
 
 function FishCostDevTooltip({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyAll() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      setCopied(false);
+    }
+  }
+
   return (
+    // Outer box includes pb-2 as a hover bridge into the card so the mouse can
+    // reach Copy without dropping group-hover (mb-2 alone left a dead gap).
     <div
       role="tooltip"
-      className="pointer-events-none absolute bottom-full right-0 z-40 mb-2 hidden max-w-[16.5rem] rounded-lg border border-border bg-background px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-foreground shadow-md whitespace-pre-line group-hover:block"
+      className="pointer-events-none absolute bottom-full right-0 z-40 hidden max-w-[21rem] pb-2 group-hover:pointer-events-auto group-hover:block group-focus-within:pointer-events-auto group-focus-within:block"
     >
-      {text}
+      <div className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-foreground shadow-md">
+        <div className="flex items-start justify-between gap-2">
+          <p className="min-w-0 max-h-52 flex-1 overflow-y-auto whitespace-pre-line">{text}</p>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              void copyAll();
+            }}
+            className="shrink-0 cursor-pointer rounded border border-border bg-surface px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted transition-colors hover:border-accent/50 hover:text-foreground"
+            aria-label="Copy flyover text"
+            title="Copy all"
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -840,18 +890,6 @@ function LibraryMixEditorModal({
   );
 }
 
-type PendingLibraryGeneration = {
-  jobId: string;
-  createdAt: string;
-  title: string;
-  description: string | null;
-  meditationStyle: string | null;
-  speakerName: string | null;
-  speakerModelId: string | null;
-  status?: "pending" | "running" | "failed";
-  error?: string | null;
-};
-
 type PendingLibraryMeditationItem = {
   kind: "pending";
   pendingKey: string; // pending:<jobId>
@@ -868,7 +906,18 @@ type PendingLibraryMeditationItem = {
 
 type LibraryRow = LibraryMeditationItem | PendingLibraryMeditationItem;
 
-const PENDING_LIBRARY_GENERATIONS_LS_KEY = "mm_pending_library_generations_v1";
+function isCataloguedLibraryItem(m: LibraryMeditationItem): boolean {
+  return m.catalogued === true && m.isDraft !== true;
+}
+
+function findCataloguedLibraryItem(
+  list: LibraryMeditationItem[],
+  audioKey: string,
+): LibraryMeditationItem | undefined {
+  const key = audioKey.trim();
+  if (!key) return undefined;
+  return list.find((x) => x.s3Key === key && isCataloguedLibraryItem(x));
+}
 
 function isPendingRow(x: LibraryRow): x is PendingLibraryMeditationItem {
   return (x as PendingLibraryMeditationItem).kind === "pending";
@@ -905,39 +954,6 @@ function libraryRowMatchesSearch(m: LibraryRow, tokens: string[]): boolean {
   if (tokens.length === 0) return true;
   const hay = libraryRowSearchHaystack(m);
   return tokens.every((t) => hay.includes(t));
-}
-
-function loadPendingGenerations(): PendingLibraryGeneration[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(PENDING_LIBRARY_GENERATIONS_LS_KEY);
-    if (!raw) return [];
-    const data = JSON.parse(raw) as unknown;
-    if (!Array.isArray(data)) return [];
-    return data.filter((x): x is PendingLibraryGeneration => {
-      if (!x || typeof x !== "object") return false;
-      const o = x as Record<string, unknown>;
-      return (
-        typeof o.jobId === "string" &&
-        typeof o.createdAt === "string" &&
-        typeof o.title === "string"
-      );
-    });
-  } catch {
-    return [];
-  }
-}
-
-function savePendingGenerations(next: PendingLibraryGeneration[]) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      PENDING_LIBRARY_GENERATIONS_LS_KEY,
-      JSON.stringify(next.slice(0, 20)),
-    );
-  } catch {
-    // ignore
-  }
 }
 
 function formatAudioClock(sec: number): string {
@@ -1916,7 +1932,30 @@ export default function LibraryView({
   }, [load]);
 
   useEffect(() => {
-    setPending(loadPendingGenerations());
+    const syncPendingFromStorage = () => {
+      setPending(loadPendingGenerations());
+    };
+    syncPendingFromStorage();
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PENDING_LIBRARY_GENERATIONS_LS_KEY || e.key === null) {
+        syncPendingFromStorage();
+      }
+    };
+    const onCustom = () => syncPendingFromStorage();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") syncPendingFromStorage();
+    };
+    window.addEventListener("storage", onStorage);
+    window.addEventListener(PENDING_LIBRARY_GENERATIONS_CHANGED_EVENT, onCustom);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(
+        PENDING_LIBRARY_GENERATIONS_CHANGED_EVENT,
+        onCustom,
+      );
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   function removePendingJob(jobId: string) {
@@ -1960,10 +1999,30 @@ export default function LibraryView({
           }
           if (st.status === "completed") {
             changed = true;
-            if (st.audioKey) {
-              setPendingAutoplay({ jobId: p.jobId, audioKey: st.audioKey });
+            const audioKey = (st.audioKey ?? "").trim();
+            if (!audioKey) {
+              continue;
             }
-            continue; // drop from pending; the real item will appear via list refresh
+            let catalogued = findCataloguedLibraryItem(items, audioKey);
+            if (!catalogued) {
+              try {
+                const list = await listLibraryMeditations();
+                const merged = applyLocalMixOverlay(
+                  list,
+                  localMixByKeyRef.current,
+                );
+                setItems(merged);
+                catalogued = findCataloguedLibraryItem(merged, audioKey);
+              } catch {
+                // keep pending; slow poll will retry
+              }
+            }
+            if (catalogued) {
+              setPendingAutoplay({ jobId: p.jobId, audioKey });
+              continue;
+            }
+            next.push({ ...nextP, status: "running" });
+            continue;
           }
           if (st.status === "failed") {
             changed = true;
@@ -2117,7 +2176,7 @@ export default function LibraryView({
   // If we were focused on a pending card, auto-switch focus to the real item and autoplay once it appears.
   useEffect(() => {
     if (!pendingAutoplay) return;
-    const found = items.find((x) => x.s3Key === pendingAutoplay.audioKey);
+    const found = findCataloguedLibraryItem(items, pendingAutoplay.audioKey);
     if (!found) return;
 
     // Update URL so refresh/share lands on the actual item.

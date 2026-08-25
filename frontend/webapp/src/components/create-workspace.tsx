@@ -101,6 +101,11 @@ import {
 import { loadPlanDreamsStore, type PlanDream } from "@/lib/plan-dreams";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { applyBedElementVolume, BED_VOICE_INTRO_SECONDS } from "@/lib/bed-volume";
+import {
+  loadPendingGenerations,
+  savePendingGenerations,
+  type PendingLibraryGeneration,
+} from "@/lib/pending-library-generations";
 
 function mediaFileUrl(base: string, key: string): string {
   const b = base.replace(/\/$/, "");
@@ -182,51 +187,6 @@ function pickDevRandomScriptSeed(): { style: string; transcript: string } {
 function parseMeditationTargetMinutes(raw: unknown): MeditationTargetMinutes {
   if (raw === 2 || raw === 5 || raw === 10) return raw;
   return 5;
-}
-
-type PendingLibraryGeneration = {
-  jobId: string;
-  createdAt: string;
-  title: string;
-  description: string | null;
-  meditationStyle: string | null;
-  speakerName: string | null;
-  speakerModelId: string | null;
-};
-
-const PENDING_LIBRARY_GENERATIONS_LS_KEY = "mm_pending_library_generations_v1";
-
-function loadPendingGenerations(): PendingLibraryGeneration[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(PENDING_LIBRARY_GENERATIONS_LS_KEY);
-    if (!raw) return [];
-    const data = JSON.parse(raw) as unknown;
-    if (!Array.isArray(data)) return [];
-    return data.filter((x): x is PendingLibraryGeneration => {
-      if (!x || typeof x !== "object") return false;
-      const o = x as Record<string, unknown>;
-      return (
-        typeof o.jobId === "string" &&
-        typeof o.createdAt === "string" &&
-        typeof o.title === "string"
-      );
-    });
-  } catch {
-    return [];
-  }
-}
-
-function savePendingGenerations(next: PendingLibraryGeneration[]) {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      PENDING_LIBRARY_GENERATIONS_LS_KEY,
-      JSON.stringify(next.slice(0, 20)),
-    );
-  } catch {
-    // ignore
-  }
 }
 
 function maybeScrollChatToBottom(
@@ -1266,6 +1226,10 @@ export function CreateWorkspace({
   const speechSpeed = FIXED_SPEECH_PREVIEW_SPEED;
   const [meditationTargetMinutes, setMeditationTargetMinutes] =
     useState<MeditationTargetMinutes>(5);
+  /** Fish TTS model A/B — UI labels; s2.1-pro maps to s2.1-pro-free on the API. */
+  const [fishTtsModelChoice, setFishTtsModelChoice] = useState<
+    "s2.1-pro" | "s1"
+  >("s2.1-pro");
   /**
    * Minutes the latest chat `variant: "script"` bubble was written for.
    * Audio generate reuses that script only when Length still matches; otherwise
@@ -3397,6 +3361,8 @@ export function CreateWorkspace({
         scriptText: scriptTextForJob,
         reference_id: speakerModelId,
         ttsProvider: "fish",
+        fishTtsModel:
+          fishTtsModelChoice === "s1" ? "s1" : "s2.1-pro-free",
         speed: speechSpeed,
         voiceFxPreset: speakerFxPreviewOn ? "mixer" : null,
         ...(backgroundNatureKey
@@ -4039,7 +4005,7 @@ export function CreateWorkspace({
   const createMobileHeading = createLastCrumb?.label ?? createPageChrome.title;
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-1 flex-col pt-3 sm:pt-6">
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col bg-background pt-3 sm:pt-6">
       {/* Keep preview elements mounted on every step so src is assigned before the Audio panel. */}
       <audio ref={previewNatureRef} className="hidden" playsInline />
       <audio ref={previewMusicRef} className="hidden" playsInline />
@@ -5202,26 +5168,60 @@ export function CreateWorkspace({
                   playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
                 />
               </div>
-              <div className="flex shrink-0 items-center gap-2 border-t border-border px-4 py-2.5">
-                <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
-                  Length
-                </span>
-                <select
-                  className="h-9 min-w-0 w-full max-w-[11rem] shrink-0 rounded-lg border border-border bg-background px-2.5 text-sm sm:w-auto"
-                  value={meditationTargetMinutes}
-                  onChange={(e) =>
-                    setMeditationTargetMinutes(
-                      parseMeditationTargetMinutes(Number(e.target.value)),
-                    )
-                  }
-                  disabled={audioLoading}
-                  aria-label="Target meditation length"
-                  title="Target spoken length. If you change this after generating a script in chat, audio will regenerate the script to match."
-                >
-                  <option value={2}>2 min</option>
-                  <option value={5}>5 min</option>
-                  <option value={10}>10 min</option>
-                </select>
+              <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-4 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
+                    Length
+                  </span>
+                  <select
+                    className="h-9 min-w-0 w-full max-w-[11rem] shrink-0 rounded-lg border border-border bg-background px-2.5 text-sm sm:w-auto"
+                    value={meditationTargetMinutes}
+                    onChange={(e) =>
+                      setMeditationTargetMinutes(
+                        parseMeditationTargetMinutes(Number(e.target.value)),
+                      )
+                    }
+                    disabled={audioLoading}
+                    aria-label="Target meditation length"
+                    title="Target spoken length. If you change this after generating a script in chat, audio will regenerate the script to match."
+                  >
+                    <option value={2}>2 min</option>
+                    <option value={5}>5 min</option>
+                    <option value={10}>10 min</option>
+                  </select>
+                </div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
+                    Model
+                  </span>
+                  <div
+                    className="inline-flex h-9 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
+                    role="group"
+                    aria-label="Fish TTS model"
+                    title="Audio quality test — s2.1-pro uses the free tier already configured"
+                  >
+                    {(
+                      [
+                        ["s2.1-pro", "s2.1-pro"],
+                        ["s1", "s1"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        disabled={audioLoading}
+                        onClick={() => setFishTtsModelChoice(value)}
+                        className={`px-2.5 text-xs font-semibold transition-colors ${
+                          fishTtsModelChoice === value
+                            ? "bg-accent-soft text-foreground"
+                            : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </section>
           </div>
@@ -5350,26 +5350,60 @@ export function CreateWorkspace({
                     playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
                   />
             </div>
-            <div className="flex shrink-0 items-center gap-2 border-t border-border px-4 py-2.5">
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
-                    Length
-                  </span>
-                  <select
-                    className="h-9 min-w-0 w-full max-w-[11rem] shrink-0 rounded-lg border border-border bg-background px-2.5 text-sm sm:w-auto"
-                    value={meditationTargetMinutes}
-                    onChange={(e) =>
-                      setMeditationTargetMinutes(
-                        parseMeditationTargetMinutes(Number(e.target.value)),
-                      )
-                    }
-                    disabled={audioLoading}
-                    aria-label="Target meditation length"
-                    title="Target spoken length. If you change this after generating a script in chat, audio will regenerate the script to match."
-                  >
-                    <option value={2}>2 min</option>
-                    <option value={5}>5 min</option>
-                    <option value={10}>10 min</option>
-                   </select>
+            <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-4 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
+                      Length
+                    </span>
+                    <select
+                      className="h-9 min-w-0 w-full max-w-[11rem] shrink-0 rounded-lg border border-border bg-background px-2.5 text-sm sm:w-auto"
+                      value={meditationTargetMinutes}
+                      onChange={(e) =>
+                        setMeditationTargetMinutes(
+                          parseMeditationTargetMinutes(Number(e.target.value)),
+                        )
+                      }
+                      disabled={audioLoading}
+                      aria-label="Target meditation length"
+                      title="Target spoken length. If you change this after generating a script in chat, audio will regenerate the script to match."
+                    >
+                      <option value={2}>2 min</option>
+                      <option value={5}>5 min</option>
+                      <option value={10}>10 min</option>
+                    </select>
+                  </div>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
+                      Model
+                    </span>
+                    <div
+                      className="inline-flex h-9 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
+                      role="group"
+                      aria-label="Fish TTS model"
+                      title="Audio quality test — s2.1-pro uses the free tier already configured"
+                    >
+                      {(
+                        [
+                          ["s2.1-pro", "s2.1-pro"],
+                          ["s1", "s1"],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          disabled={audioLoading}
+                          onClick={() => setFishTtsModelChoice(value)}
+                          className={`px-2.5 text-xs font-semibold transition-colors ${
+                            fishTtsModelChoice === value
+                              ? "bg-accent-soft text-foreground"
+                              : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
              </div>
            </section>
          </div>

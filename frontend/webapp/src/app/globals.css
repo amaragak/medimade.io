@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Class-based dark mode (header toggle). Default is dark. */
+/* Class-based dark mode (header toggle). Default is light. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
@@ -22,6 +22,7 @@
   --color-border: var(--border);
   --color-border-subtle: var(--border-subtle);
   --color-accent: var(--accent);
+  --color-accent-button: var(--accent-button);
   --color-accent-soft: var(--accent-soft);
   --color-accent-link: var(--accent-link);
   --color-gold: var(--gold);
@@ -279,22 +280,15 @@ body {
 }
 
 .mixer-voice-disc {
-  background-image: var(--accent-gradient);
-  box-shadow:
-    inset 0 2px 6px color-mix(in srgb, var(--surface) 28%, transparent),
-    inset 0 -5px 10px color-mix(in srgb, var(--deep) 22%, transparent),
-    0 2px 6px color-mix(in srgb, var(--foreground) 14%, transparent),
-    0 6px 16px color-mix(in srgb, var(--foreground) 12%, transparent);
+  background-color: var(--accent-button);
+  background-image: none;
 }
 
-/* Gold-tan buttons. Gradient string lives in theme-colors.ts (`ACCENT_BUTTON_GRADIENT`). */
+/* Flat gold CTA fill — brighter gold, matches dark-mode header Pro. */
 @utility accent-fill-gradient {
-  background-color: var(--accent);
-  background-image: var(--accent-gradient-button);
-  box-shadow:
-    inset 0 1px 2px color-mix(in srgb, var(--surface) 36%, transparent),
-    inset 0 -2px 4px color-mix(in srgb, var(--deep) 14%, transparent),
-    0 1px 3px color-mix(in srgb, var(--foreground) 11%, transparent);
+  background-color: var(--accent-button);
+  background-image: none;
+  color: var(--on-accent);
 }
 
 /* Header “consciously” — radial from sun (white) → light gold-tan. Edit in theme-colors.ts.
@@ -321,7 +315,7 @@ body {
   background: var(--header-glow-right);
 }
 
-/* Header Pro CTA: clay on light; gold-tan gradient in dark. */
+/* Header Pro CTA: flat gold-tan + on-accent (same token as other brand fills). */
 .pro-header-cta {
   background-color: var(--pro-header-cta-bg);
   background-image: var(--pro-header-cta-image);
@@ -358,7 +352,8 @@ body {
 
 @keyframes mmIndeterminateBar {
   0% {
-    transform: translateX(-40%);
+    /* Fully off-left (w-1/3 bar); -40% left most of the bar already visible. */
+    transform: translateX(-100%);
   }
   50% {
     transform: translateX(120%);
@@ -397,11 +392,30 @@ body {
     );
 }
 
-/* Marketing heroes: paper/navy + tiled paisley at low opacity. */
+/* Marketing heroes: paper/navy + tiled paisley with horizontal clear band at center. */
 .home-hero {
   position: relative;
   background-color: var(--home-hero-bg);
   background-image: none;
+  /* Shared horizontal mask — same clear band on every hero page (adjust % here only). */
+  --home-hero-pattern-mask-linear: linear-gradient(
+    to right,
+    black 0%,
+    transparent 30%,
+    transparent 70%,
+    black 100%
+  );
+  --home-hero-pattern-mask: var(--home-hero-pattern-mask-linear);
+  /* previous radial mask — kept for easy rollback */
+  /*
+  --home-hero-pattern-mask: radial-gradient(
+    ellipse 68% 52% at 50% 20%,
+    transparent 0%,
+    transparent 22%,
+    rgb(0 0 0 / 0.45) 55%,
+    black 100%
+  );
+  */
 }
 
 .home-hero::before {
@@ -414,11 +428,65 @@ body {
   background-image: var(--home-hero-pattern);
   background-repeat: repeat;
   background-size: 800px 800px;
+  /* Horizontal clear band — light mode only; dark keeps flat opacity. */
+  -webkit-mask-image: var(--home-hero-pattern-mask);
+  mask-image: var(--home-hero-pattern-mask);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+.dark .home-hero::before {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 .home-hero > * {
   position: relative;
   z-index: 1;
+}
+
+/* Explicit product alias (journal / ideate / focus — inherits shared linear mask). */
+.home-hero--product {
+  /* previous radial mask — kept for easy rollback */
+  /*
+  --home-hero-pattern-mask: radial-gradient(
+    ellipse 68% 52% at 50% 20%,
+    transparent 0%,
+    transparent 22%,
+    rgb(0 0 0 / 0.45) 55%,
+    black 100%
+  );
+  */
+}
+
+/* Homepage: larger “Live Consciously.” — inherits shared linear mask. */
+.home-hero--live {
+  /* previous radial mask — kept for easy rollback */
+  /*
+  --home-hero-pattern-mask: radial-gradient(
+    ellipse 72% 48% at 50% 16%,
+    transparent 0%,
+    transparent 26%,
+    rgb(0 0 0 / 0.4) 58%,
+    black 100%
+  );
+  */
+}
+
+/* Meditate: tall hero — inherits shared linear mask (same 30% / 70% band). */
+.home-hero--meditate {
+  /* previous radial mask — kept for easy rollback */
+  /*
+  --home-hero-pattern-mask: radial-gradient(
+    ellipse 78% 22% at 50% 7%,
+    transparent 0%,
+    transparent 30%,
+    rgb(0 0 0 / 0.35) 62%,
+    black 100%
+  );
+  */
 }
 
 /* Hero brand sun mark. */

@@ -52,7 +52,7 @@ export default function RootLayout({
           <ProfileNameGate />
         </Suspense>
         <SiteHeader />
-        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain">
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain bg-background">
           {children}
         </main>
         {/* <SiteFooter /> */}

@@ -35,7 +35,7 @@ const cards = [
 export function EnhancedJournalPage() {
   return (
     <div className="w-full">
-      <section className="home-hero w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16">
+      <section className="home-hero home-hero--product w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16">
         <div className="mx-auto flex max-w-6xl flex-col items-center text-center">
           <h1 className="max-w-3xl font-display text-3xl font-medium leading-tight tracking-tight text-marketing-ink sm:text-4xl md:text-[2.75rem]">
             Write it down. Hear yourself think.
@@ -85,7 +85,7 @@ export function EnhancedJournalPage() {
           <div className="mt-8">
             <Link
               href="/journal/my"
-              className="inline-flex items-center justify-center rounded-full bg-gold px-7 py-3 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+              className="inline-flex items-center justify-center rounded-full accent-fill-gradient px-7 py-3 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
             >
               My Journal
             </Link>

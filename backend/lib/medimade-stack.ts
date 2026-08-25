@@ -1198,6 +1198,8 @@ export class MedimadeStack extends cdk.Stack {
         "Spotify Pedalboard (rebuild: scripts/build-pedalboard-layer, commit layers/pedalboard/python)",
     });
 
+    // Worker fans out one concurrent VoiceFx execution per speech section
+    // (direct IAM invoke). HTTP route stays for short admin/preview clips.
     const voiceFx = new lambda.Function(this, "VoiceFxFunction", {
       runtime: lambda.Runtime.PYTHON_3_12,
       handler: "handler.handler",
@@ -1205,14 +1207,19 @@ export class MedimadeStack extends cdk.Stack {
         path.join(__dirname, "../lambdas-python/voice-fx"),
       ),
       layers: [pedalboardLayer],
-      timeout: cdk.Duration.seconds(60),
-      memorySize: 1024,
-      description: "Apply Pedalboard effects to voice WAV (base64 in/out)",
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 3008,
+      description: "Apply Pedalboard effects to voice audio (S3 or base64)",
       environment: {
         MEDIA_BUCKET_NAME: mediaBucket.bucketName,
       },
     });
     mediaBucket.grantReadWrite(voiceFx);
+    meditationAudioWorker.addEnvironment(
+      "VOICE_FX_FUNCTION_NAME",
+      voiceFx.functionName,
+    );
+    voiceFx.grantInvoke(meditationAudioWorker);
 
     httpApi.addRoutes({
       path: "/audio/voice-fx",

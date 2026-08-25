@@ -143,7 +143,7 @@ export function HomeListenCard({
           aria-label={
             playing ? `Pause ${sample.title}` : `Play ${sample.title}`
           }
-          className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-gold text-on-accent transition-opacity hover:opacity-90"
+          className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90"
         >
           {playing ? (
             <IconPlayerPause size={20} stroke={2.25} aria-hidden />
@@ -167,7 +167,7 @@ export function HomeListenCard({
       </div>
       <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-marketing-ink/10">
         <div
-          className="h-full rounded-full bg-gold transition-[width] duration-150"
+          className="h-full rounded-full bg-accent-button transition-[width] duration-150"
           style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}
         />
       </div>
