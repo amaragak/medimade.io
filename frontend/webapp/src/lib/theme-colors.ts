@@ -558,3 +558,14 @@ export const themeRootCss = [
   /** Class-driven dark theme (header toggle). Default is light. */
   cssBlock(":root.dark", varsFor(dark, true)),
 ].join("\n\n");
+
+/**
+ * Critical hero paisley URLs — inlined in `<head>` so fetch starts before the
+ * globals.css bundle; keep paths in sync with color-scheme.ts constants.
+ */
+export const homeHeroPatternCriticalCss = [
+  `.home-hero::before{background-image:url("${HOME_HERO_PATTERN_LIGHT}")}`,
+  `:root.dark .home-hero::before{background-image:url("${HOME_HERO_PATTERN_DARK}")}`,
+  `.page-pattern-tile{background-image:url("${HOME_HERO_PATTERN_LIGHT}")}`,
+  `:root.dark .page-pattern-tile{background-image:url("${HOME_HERO_PATTERN_DARK}")}`,
+].join("\n");

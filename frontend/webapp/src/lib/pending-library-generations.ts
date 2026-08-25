@@ -51,3 +51,13 @@ export function savePendingGenerations(next: PendingLibraryGeneration[]) {
     // ignore
   }
 }
+
+/** Prepend one pending job (deduped by jobId) — used by Create and homepage one-shot. */
+export function appendPendingLibraryGeneration(
+  entry: PendingLibraryGeneration,
+): void {
+  const next = [entry, ...loadPendingGenerations()].filter(
+    (x, idx, arr) => arr.findIndex((y) => y.jobId === x.jobId) === idx,
+  );
+  savePendingGenerations(next);
+}

@@ -6,6 +6,8 @@
 :root {
   /* Keep in sync with site header height (h-14) */
   --site-header-h: 3.5rem;
+  /* App content column — matches Tailwind `max-w-6xl` (72rem). */
+  --content-max-width: 72rem;
   color-scheme: light;
 }
 
@@ -425,7 +427,8 @@ body {
   z-index: 0;
   pointer-events: none;
   opacity: var(--home-hero-pattern-opacity);
-  background-image: var(--home-hero-pattern);
+  /* URLs duplicated in layout critical CSS + color-scheme.ts for early fetch. */
+  background-image: url("/patterns/paisley-tile-800-offwhite.webp");
   background-repeat: repeat;
   background-size: 800px 800px;
   /* Horizontal clear band — light mode only; dark keeps flat opacity. */
@@ -438,6 +441,7 @@ body {
 }
 
 .dark .home-hero::before {
+  background-image: url("/patterns/paisley-tile-800-tonal-navy.webp");
   -webkit-mask-image: none;
   mask-image: none;
 }
@@ -445,6 +449,86 @@ body {
 .home-hero > * {
   position: relative;
   z-index: 1;
+}
+
+main[data-page-kind="standard"] {
+  --content-edge: max(
+    0px,
+    calc((100% - min(100%, var(--content-max-width))) / 2)
+  );
+  /* Visible in gutters, but still softer than hero. */
+  --page-pattern-opacity: 0.24;
+}
+
+:root.dark main[data-page-kind="standard"] {
+  --page-pattern-opacity: 0.18;
+}
+
+/*
+ * Tiled paisley in gutters on standard pages. Height is set in px on the element
+ * (see MainShell) so repeat covers the full scrollable content — not one viewport strip.
+ */
+.page-pattern-tile {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--page-pattern-opacity);
+  background-image: url("/patterns/paisley-tile-800-offwhite.webp");
+  background-repeat: repeat;
+  background-size: 800px 800px;
+  background-position: 0 0;
+  -webkit-mask-image: var(--page-pattern-gutter-mask);
+  mask-image: var(--page-pattern-gutter-mask);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  /*
+   * Fade spans ~the entire gutter: peak only at the viewport edge, then a long
+   * gentle falloff to transparent at the content column — no bold band.
+   */
+  --page-pattern-gutter-mask: linear-gradient(
+    to right,
+    rgb(0 0 0 / 0.72) 0,
+    rgb(0 0 0 / 0.64) calc(var(--content-edge) * 0.08),
+    rgb(0 0 0 / 0.55) calc(var(--content-edge) * 0.16),
+    rgb(0 0 0 / 0.46) calc(var(--content-edge) * 0.26),
+    rgb(0 0 0 / 0.37) calc(var(--content-edge) * 0.36),
+    rgb(0 0 0 / 0.28) calc(var(--content-edge) * 0.46),
+    rgb(0 0 0 / 0.2) calc(var(--content-edge) * 0.56),
+    rgb(0 0 0 / 0.13) calc(var(--content-edge) * 0.66),
+    rgb(0 0 0 / 0.085) calc(var(--content-edge) * 0.76),
+    rgb(0 0 0 / 0.05) calc(var(--content-edge) * 0.86),
+    rgb(0 0 0 / 0.022) calc(var(--content-edge) * 0.94),
+    rgb(0 0 0 / 0.006) calc(var(--content-edge) * 0.98),
+    transparent var(--content-edge),
+    transparent calc(100% - var(--content-edge)),
+    rgb(0 0 0 / 0.006) calc(100% - var(--content-edge) * 0.98),
+    rgb(0 0 0 / 0.022) calc(100% - var(--content-edge) * 0.94),
+    rgb(0 0 0 / 0.05) calc(100% - var(--content-edge) * 0.86),
+    rgb(0 0 0 / 0.085) calc(100% - var(--content-edge) * 0.76),
+    rgb(0 0 0 / 0.13) calc(100% - var(--content-edge) * 0.66),
+    rgb(0 0 0 / 0.2) calc(100% - var(--content-edge) * 0.56),
+    rgb(0 0 0 / 0.28) calc(100% - var(--content-edge) * 0.46),
+    rgb(0 0 0 / 0.37) calc(100% - var(--content-edge) * 0.36),
+    rgb(0 0 0 / 0.46) calc(100% - var(--content-edge) * 0.26),
+    rgb(0 0 0 / 0.55) calc(100% - var(--content-edge) * 0.16),
+    rgb(0 0 0 / 0.64) calc(100% - var(--content-edge) * 0.08),
+    rgb(0 0 0 / 0.72) 100%
+  );
+}
+
+:root.dark .page-pattern-tile {
+  background-image: url("/patterns/paisley-tile-800-tonal-navy.webp");
+}
+
+@media (max-width: 72rem) {
+  .page-pattern-tile {
+    display: none;
+  }
 }
 
 /* Explicit product alias (journal / ideate / focus — inherits shared linear mask). */

@@ -3,9 +3,14 @@ import { Caveat, DM_Sans, Fraunces } from "next/font/google";
 import { Suspense } from "react";
 import "./globals.css";
 import { ProfileNameGate } from "@/components/profile-name-gate";
+import { MainShell } from "@/components/main-shell";
 import { SiteHeader } from "@/components/site-header";
-import { colorSchemeBootScript } from "@/lib/color-scheme";
-import { themeRootCss } from "@/lib/theme-colors";
+import {
+  colorSchemeBootScript,
+  HOME_HERO_PATTERN_DARK,
+  HOME_HERO_PATTERN_LIGHT,
+} from "@/lib/color-scheme";
+import { homeHeroPatternCriticalCss, themeRootCss } from "@/lib/theme-colors";
 // import { SiteFooter } from "@/components/site-footer";
 
 const dmSans = DM_Sans({
@@ -42,8 +47,20 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <link
+          rel="preload"
+          href={HOME_HERO_PATTERN_LIGHT}
+          as="image"
+          fetchPriority="high"
+        />
+        <link
+          rel="preload"
+          href={HOME_HERO_PATTERN_DARK}
+          as="image"
+        />
         <script dangerouslySetInnerHTML={{ __html: colorSchemeBootScript }} />
         <style dangerouslySetInnerHTML={{ __html: themeRootCss }} />
+        <style dangerouslySetInnerHTML={{ __html: homeHeroPatternCriticalCss }} />
       </head>
       <body
         className={`${dmSans.variable} ${fraunces.variable} ${caveat.variable} flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground antialiased`}
@@ -52,9 +69,7 @@ export default function RootLayout({
           <ProfileNameGate />
         </Suspense>
         <SiteHeader />
-        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain bg-background">
-          {children}
-        </main>
+        <MainShell>{children}</MainShell>
         {/* <SiteFooter /> */}
       </body>
     </html>

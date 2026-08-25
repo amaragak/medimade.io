@@ -102,8 +102,7 @@ import { loadPlanDreamsStore, type PlanDream } from "@/lib/plan-dreams";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { applyBedElementVolume, BED_VOICE_INTRO_SECONDS } from "@/lib/bed-volume";
 import {
-  loadPendingGenerations,
-  savePendingGenerations,
+  appendPendingLibraryGeneration,
   type PendingLibraryGeneration,
 } from "@/lib/pending-library-generations";
 
@@ -3445,10 +3444,7 @@ export function CreateWorkspace({
         speakerName,
         speakerModelId,
       };
-      const nextPending = [pending, ...loadPendingGenerations()].filter(
-        (x, idx, arr) => arr.findIndex((y) => y.jobId === x.jobId) === idx,
-      );
-      savePendingGenerations(nextPending);
+      appendPendingLibraryGeneration(pending);
 
       isRedirectingToLibraryRef.current = true;
       clearCreateSession();
@@ -4005,7 +4001,7 @@ export function CreateWorkspace({
   const createMobileHeading = createLastCrumb?.label ?? createPageChrome.title;
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-1 flex-col bg-background pt-3 sm:pt-6">
+    <div className="flex h-full min-h-0 w-full flex-1 flex-col pt-3 sm:pt-6">
       {/* Keep preview elements mounted on every step so src is assigned before the Audio panel. */}
       <audio ref={previewNatureRef} className="hidden" playsInline />
       <audio ref={previewMusicRef} className="hidden" playsInline />
