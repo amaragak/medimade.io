@@ -129,16 +129,16 @@ export function HomeHeroCreatePaths({ className = "" }: { className?: string }) 
           <li key={path} className="min-h-0">
             <Link
               href={createMeditationHref({ path })}
-              className="home-hero-gold-border-pulse flex h-full flex-col rounded-2xl border bg-white p-5 text-left shadow-[0_10px_28px_rgb(30_37_48_/_0.06)] transition-colors hover:bg-[#FBF8F2] dark:bg-white/[0.05] dark:shadow-none dark:hover:bg-white/[0.08] sm:p-6"
+              className="home-hero-gold-border-pulse flex h-full flex-col rounded-2xl border border-marketing-card-border bg-marketing-card-bg p-5 text-left shadow-[var(--marketing-card-shadow)] transition-[background-color] duration-150 ease-out hover:bg-marketing-card-hover sm:p-6"
             >
-              <span className="font-display text-lg font-medium tracking-tight text-[#1E2530] dark:text-[#F4F0E8] sm:text-xl">
+              <span className="font-display text-lg font-medium tracking-tight text-marketing-ink sm:text-xl">
                 {title}
               </span>
-              <p className="mt-2 flex-1 text-sm leading-relaxed text-[#7A7566] dark:text-[#A8B0BC]">
+              <p className="mt-2 flex-1 text-sm leading-relaxed text-marketing-body">
                 {body}
               </p>
               <span
-                className="mx-auto mt-5 flex h-20 w-20 shrink-0 items-center justify-center rounded-3xl bg-[#F4F0E8] text-[#5A6B7D] shadow-inner dark:bg-white/10 dark:text-[#D9A24F] sm:h-24 sm:w-24"
+                className="mx-auto mt-5 flex h-20 w-20 shrink-0 items-center justify-center rounded-3xl bg-marketing-icon-bg text-marketing-icon-fg shadow-inner sm:h-24 sm:w-24"
                 aria-hidden
               >
                 <Icon className="h-12 w-12 sm:h-14 sm:w-14" />

@@ -4,9 +4,12 @@ export const LOGO_MARK_FILL = "#D9A24F";
 export function LogoMark({
   size = 34,
   className,
+  fill = "currentColor",
 }: {
   size?: number;
   className?: string;
+  /** Defaults to `currentColor` so parents can theme light (clay) vs dark (gold). */
+  fill?: string;
 }) {
   return (
     <svg
@@ -18,8 +21,8 @@ export function LogoMark({
       aria-hidden
       focusable="false"
     >
-      <circle cx="18" cy="18" r="7" fill={LOGO_MARK_FILL} />
-      <g fill={LOGO_MARK_FILL}>
+      <circle cx="18" cy="18" r="7" fill={fill} />
+      <g fill={fill}>
         <polygon points="18,0 20,7 16,7" />
         <polygon points="18,36 20,29 16,29" />
         <polygon points="0,18 7,20 7,16" />

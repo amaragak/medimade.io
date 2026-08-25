@@ -1,5 +1,5 @@
 /**
- * Light / dark appearance. Default is light; user choice is stored in localStorage
+ * Light / dark appearance. Default is dark; user choice is stored in localStorage
  * and applied as `class="dark"` on `<html>` (not `prefers-color-scheme`).
  */
 
@@ -9,21 +9,28 @@ export const COLOR_SCHEME_STORAGE_KEY = "mm_color_scheme";
 export const COLOR_SCHEME_CHANGED_EVENT = "mm-color-scheme-changed";
 
 export function getStoredColorScheme(): ColorScheme {
-  if (typeof window === "undefined") return "light";
+  if (typeof window === "undefined") return "dark";
   try {
-    return localStorage.getItem(COLOR_SCHEME_STORAGE_KEY) === "dark"
-      ? "dark"
-      : "light";
+    return localStorage.getItem(COLOR_SCHEME_STORAGE_KEY) === "light"
+      ? "light"
+      : "dark";
   } catch {
-    return "light";
+    return "dark";
   }
 }
 
 export function applyColorScheme(scheme: ColorScheme): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
+  /* Disable color transitions for one frame so the root token swap paints once. */
+  root.classList.add("theme-switching");
   root.classList.toggle("dark", scheme === "dark");
   root.style.colorScheme = scheme;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      root.classList.remove("theme-switching");
+    });
+  });
 }
 
 export function setColorScheme(scheme: ColorScheme): void {
@@ -44,4 +51,4 @@ export function toggleColorScheme(): ColorScheme {
 }
 
 /** Inline boot script — set class before first paint to avoid a light flash. */
-export const colorSchemeBootScript = `(function(){try{var t=localStorage.getItem(${JSON.stringify(COLOR_SCHEME_STORAGE_KEY)});if(t==="dark"){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark"}else{document.documentElement.style.colorScheme="light"}}catch(e){}})();`;
+export const colorSchemeBootScript = `(function(){try{var t=localStorage.getItem(${JSON.stringify(COLOR_SCHEME_STORAGE_KEY)});if(t==="light"){document.documentElement.style.colorScheme="light"}else{document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark"}}catch(e){document.documentElement.classList.add("dark");document.documentElement.style.colorScheme="dark"}})();`;

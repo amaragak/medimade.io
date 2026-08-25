@@ -11,29 +11,7 @@ import {
   HomeHeroListenGrid,
   HomeListenSection,
 } from "@/components/home-listen-section";
-import { LogoMark } from "@/components/logo-mark";
 import { createMeditationHref } from "@/lib/create-meditation-path";
-
-/** Flat `bg-nav` — SiteHeader only (`--nav` / `#33465C`). */
-const GOLD = "#D9A24F";
-const GOLD_INK = "#3D2E10";
-const CREAM = "#F4F0E8";
-const MUTED = "#A8B0BC";
-
-/**
- * Homepage section backgrounds (below hero) — same navy family, each step
- * clearly distinct from its neighbors. Hero is theme-aware via `.home-hero`.
- * Pillars → Listen → Journal → Ideate → CTA
- */
-const SECTION_BG = {
-  pillars: "#2A3A4E",
-  listen: "#161D28",
-  journal: "#243447",
-  ideate: "#1A2330",
-  cta: "#2A3A4E",
-} as const;
-/** Inset demo cards: darker than their section so they read as panels. */
-const PANEL_BG = "#12181F";
 
 const journalCreateHref = createMeditationHref({ path: "journalReflect" });
 const ideateCreateHref = createMeditationHref({ path: "goal" });
@@ -73,8 +51,7 @@ function StartFreeButton({ className = "" }: { className?: string }) {
   return (
     <Link
       href="/meditate/create"
-      className={`inline-flex items-center justify-center rounded-full px-7 py-3 text-sm font-semibold transition-opacity hover:opacity-90 ${className}`}
-      style={{ backgroundColor: GOLD, color: GOLD_INK }}
+      className={`inline-flex items-center justify-center rounded-full bg-gold px-7 py-3 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 ${className}`}
     >
       Start free
     </Link>
@@ -84,28 +61,21 @@ function StartFreeButton({ className = "" }: { className?: string }) {
 export function EnhancedMeditatePage() {
   return (
     <div className="w-full">
-      {/*
-        Hero: light = off-white + mesh gradient; dark = solid #1A2330.
-        See .home-hero in globals.css.
-      */}
       <section className="home-hero w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16">
         <div className="mx-auto flex max-w-6xl flex-col items-center text-center">
-          <div className="home-hero-sun" aria-hidden>
-            <LogoMark size={80} />
-          </div>
-          <h1 className="mt-8 max-w-3xl font-display text-3xl font-medium leading-tight tracking-tight text-foreground sm:text-4xl md:text-[2.75rem] dark:text-[#F4F0E8]">
+          <h1 className="max-w-3xl font-display text-3xl font-medium leading-tight tracking-tight text-marketing-ink sm:text-4xl md:text-[2.75rem]">
             Personalised guided meditations that actually sound good.
           </h1>
           <div className="mt-8 w-full">
             <HomeHeroOneShotPrompt />
           </div>
           <div className="mt-10 w-full">
-            <h2 className="mb-6 text-center font-display text-xl font-medium tracking-tight text-foreground sm:mb-8 sm:text-2xl dark:text-[#F4F0E8]">
+            <h2 className="mb-6 text-center font-display text-xl font-medium tracking-tight text-marketing-ink sm:mb-8 sm:text-2xl">
               Shape how your script is written
             </h2>
             <HomeHeroCreatePaths />
           </div>
-          <h2 className="mt-14 font-display text-2xl font-medium tracking-tight text-foreground sm:mt-16 sm:text-3xl dark:text-[#F4F0E8]">
+          <h2 className="mt-14 font-display text-2xl font-medium tracking-tight text-marketing-ink sm:mt-16 sm:text-3xl">
             Take a listen
           </h2>
           <div className="mt-6 w-full sm:mt-8">
@@ -114,22 +84,12 @@ export function EnhancedMeditatePage() {
         </div>
       </section>
 
-      {/* Not just meditation — lighter mid-navy than hero */}
-      <section
-        className="w-full px-4 py-16 sm:px-6 sm:py-20"
-        style={{ backgroundColor: SECTION_BG.pillars }}
-      >
+      <section className="w-full bg-marketing-band-a px-4 py-16 sm:px-6 sm:py-20">
         <div className="mx-auto max-w-6xl">
-          <h2
-            className="text-center font-display text-3xl font-medium tracking-tight sm:text-4xl"
-            style={{ color: CREAM }}
-          >
+          <h2 className="text-center font-display text-3xl font-medium tracking-tight text-marketing-ink sm:text-4xl">
             Not just meditation.
           </h2>
-          <p
-            className="mx-auto mt-3 max-w-2xl text-center text-base sm:text-lg"
-            style={{ color: MUTED }}
-          >
+          <p className="mx-auto mt-3 max-w-2xl text-center text-base text-marketing-muted sm:text-lg">
             A journal, a project planner, and a meditation generator that
             actually talk to each other.
           </p>
@@ -138,45 +98,31 @@ export function EnhancedMeditatePage() {
               <li key={title}>
                 <Link
                   href={href}
-                  className="block h-full rounded-2xl border p-6 transition-opacity hover:opacity-95 sm:p-7"
-                  style={
+                  className={`block h-full rounded-2xl border p-6 transition-opacity hover:opacity-95 sm:p-7 ${
                     highlight
-                      ? {
-                          backgroundColor: "rgba(217,162,79,0.12)",
-                          borderColor: GOLD,
-                        }
-                      : {
-                          backgroundColor: "rgba(255,255,255,0.05)",
-                          borderColor: "rgba(255,255,255,0.12)",
-                        }
-                  }
+                      ? "border-gold bg-marketing-pillar-selected-bg"
+                      : "border-marketing-card-border bg-marketing-pillar-idle-bg"
+                  }`}
                 >
                   <span
-                    className="inline-flex h-11 w-11 items-center justify-center rounded-xl"
-                    style={
+                    className={`inline-flex h-11 w-11 items-center justify-center rounded-xl ${
                       highlight
-                        ? {
-                            backgroundColor: "rgba(217,162,79,0.22)",
-                            color: GOLD,
-                          }
-                        : {
-                            backgroundColor: "rgba(255,255,255,0.08)",
-                            color: CREAM,
-                          }
-                    }
+                        ? "bg-marketing-highlight-icon-bg text-marketing-highlight-icon-fg"
+                        : "bg-marketing-icon-bg text-marketing-pillar-idle-icon-fg"
+                    }`}
                   >
                     <Icon size={22} stroke={1.75} aria-hidden />
                   </span>
                   <p
-                    className="mt-4 font-display text-lg font-semibold"
-                    style={{ color: highlight ? GOLD : CREAM }}
+                    className={`mt-4 font-display text-lg font-semibold ${
+                      highlight
+                        ? "text-marketing-highlight-icon-fg"
+                        : "text-marketing-ink"
+                    }`}
                   >
                     {title}
                   </p>
-                  <p
-                    className="mt-2 text-sm leading-relaxed sm:text-[15px]"
-                    style={{ color: MUTED }}
-                  >
+                  <p className="mt-2 text-sm leading-relaxed text-marketing-body">
                     {body}
                   </p>
                 </Link>
@@ -188,64 +134,35 @@ export function EnhancedMeditatePage() {
 
       <HomeListenSection />
 
-      {/* Journal */}
-      <section
-        className="w-full px-4 py-16 sm:px-6 sm:py-20"
-        style={{ backgroundColor: SECTION_BG.journal }}
-      >
+      <section className="w-full bg-marketing-band-c px-4 py-16 sm:px-6 sm:py-20">
         <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
           <div>
-            <p
-              className="text-xs font-semibold uppercase tracking-[0.14em]"
-              style={{ color: GOLD }}
-            >
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-marketing-eyebrow">
               Journal
             </p>
-            <h2
-              className="mt-3 font-display text-3xl font-medium tracking-tight sm:text-4xl"
-              style={{ color: CREAM }}
-            >
+            <h2 className="mt-3 font-display text-3xl font-medium tracking-tight text-marketing-ink sm:text-4xl">
               Write it down. Turn it into a meditation when you&apos;re ready.
             </h2>
-            <p
-              className="mt-4 text-base leading-relaxed sm:text-lg"
-              style={{ color: MUTED }}
-            >
+            <p className="mt-4 text-base leading-relaxed text-marketing-muted sm:text-lg">
               Any entry can become the starting point for a session — built from
               what&apos;s actually there.
             </p>
           </div>
-          <div
-            className="rounded-2xl border p-5 sm:p-6"
-            style={{
-              backgroundColor: PANEL_BG,
-              borderColor: "rgba(255,255,255,0.12)",
-            }}
-          >
-            <p
-              className="text-xs font-medium uppercase tracking-wide"
-              style={{ color: MUTED }}
-            >
+          <div className="rounded-2xl border border-marketing-card-border bg-marketing-panel-bg p-5 sm:p-6">
+            <p className="text-xs font-medium uppercase tracking-wide text-marketing-body">
               Today · journal entry
             </p>
-            <p
-              className="mt-3 font-display text-lg font-medium leading-snug"
-              style={{ color: CREAM }}
-            >
+            <p className="mt-3 font-display text-lg font-medium leading-snug text-marketing-ink">
               Still carrying yesterday&apos;s conversation
             </p>
-            <p
-              className="mt-3 text-sm leading-relaxed"
-              style={{ color: MUTED }}
-            >
+            <p className="mt-3 text-sm leading-relaxed text-marketing-muted">
               I keep replaying what I should have said. My chest feels tight
               when I think about tomorrow&apos;s meeting — like I&apos;m already
               bracing for it.
             </p>
             <Link
               href={journalCreateHref}
-              className="mt-5 inline-flex items-center rounded-full px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
-              style={{ backgroundColor: GOLD, color: GOLD_INK }}
+              className="mt-5 inline-flex items-center rounded-full bg-gold px-5 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
             >
               Reflect on this entry →
             </Link>
@@ -253,63 +170,34 @@ export function EnhancedMeditatePage() {
         </div>
       </section>
 
-      {/* Ideate — mirrored layout */}
-      <section
-        className="w-full px-4 py-16 sm:px-6 sm:py-20"
-        style={{ backgroundColor: SECTION_BG.ideate }}
-      >
+      <section className="w-full bg-marketing-band-ideate px-4 py-16 sm:px-6 sm:py-20">
         <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
-          <div
-            className="order-2 rounded-2xl border p-5 sm:p-6 lg:order-1"
-            style={{
-              backgroundColor: PANEL_BG,
-              borderColor: "rgba(255,255,255,0.12)",
-            }}
-          >
-            <p
-              className="text-xs font-medium uppercase tracking-wide"
-              style={{ color: MUTED }}
-            >
+          <div className="order-2 rounded-2xl border border-marketing-card-border bg-marketing-panel-bg p-5 sm:p-6 lg:order-1">
+            <p className="text-xs font-medium uppercase tracking-wide text-marketing-body">
               Project
             </p>
-            <p
-              className="mt-2 font-display text-lg font-medium leading-snug"
-              style={{ color: CREAM }}
-            >
+            <p className="mt-2 font-display text-lg font-medium leading-snug text-marketing-ink">
               Release my album
             </p>
-            <p
-              className="mt-3 font-display text-base italic leading-relaxed"
-              style={{ color: MUTED }}
-            >
+            <p className="mt-3 font-display text-base italic leading-relaxed text-marketing-muted">
               &ldquo;I freeze when I imagine people hearing the unfinished
               tracks.&rdquo;
             </p>
             <Link
               href={ideateCreateHref}
-              className="mt-5 inline-flex items-center rounded-full px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
-              style={{ backgroundColor: GOLD, color: GOLD_INK }}
+              className="mt-5 inline-flex items-center rounded-full bg-gold px-5 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
             >
               Build a meditation from this →
             </Link>
           </div>
           <div className="order-1 lg:order-2">
-            <p
-              className="text-xs font-semibold uppercase tracking-[0.14em]"
-              style={{ color: GOLD }}
-            >
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-marketing-eyebrow">
               Ideate
             </p>
-            <h2
-              className="mt-3 font-display text-3xl font-medium tracking-tight sm:text-4xl"
-              style={{ color: CREAM }}
-            >
+            <h2 className="mt-3 font-display text-3xl font-medium tracking-tight text-marketing-ink sm:text-4xl">
               Turn what&apos;s blocking you into what you meditate on.
             </h2>
-            <p
-              className="mt-4 text-base leading-relaxed sm:text-lg"
-              style={{ color: MUTED }}
-            >
+            <p className="mt-4 text-base leading-relaxed text-marketing-muted sm:text-lg">
               Name the resistance, then build a visualisation or manifestation
               session straight from it.
             </p>
@@ -317,16 +205,9 @@ export function EnhancedMeditatePage() {
         </div>
       </section>
 
-      {/* Closing CTA */}
-      <section
-        className="w-full px-4 py-20 sm:px-6 sm:py-24"
-        style={{ backgroundColor: SECTION_BG.cta }}
-      >
+      <section className="w-full bg-marketing-band-a px-4 py-20 sm:px-6 sm:py-24">
         <div className="mx-auto flex max-w-2xl flex-col items-center text-center">
-          <h2
-            className="font-display text-3xl font-medium tracking-tight sm:text-4xl"
-            style={{ color: CREAM }}
-          >
+          <h2 className="font-display text-3xl font-medium tracking-tight text-marketing-ink sm:text-4xl">
             Start with whatever&apos;s on your mind.
           </h2>
           <div className="mt-8">

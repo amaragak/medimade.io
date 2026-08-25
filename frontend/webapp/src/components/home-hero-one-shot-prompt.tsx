@@ -29,9 +29,6 @@ import {
   speakerPreviewLoudSampleKey,
 } from "@/lib/speaker-sample-speed";
 
-const GOLD = "#D9A24F";
-const GOLD_INK = "#3D2E10";
-
 function mediaFileUrl(base: string, key: string): string {
   const b = base.replace(/\/$/, "");
   const path = key.split("/").map(encodeURIComponent).join("/");
@@ -145,7 +142,7 @@ function HomeHeroSpeakerPicker({
         onEnded={() => setPlayingModelId(null)}
       />
       <div
-        className={`flex max-w-[12.5rem] items-center gap-0.5 rounded-full bg-[#F4F0E8] py-1 pl-1 pr-2 dark:bg-white/10 sm:max-w-[14rem] ${
+        className={`flex max-w-[12.5rem] items-center gap-0.5 rounded-full bg-marketing-menu-hover py-1 pl-1 pr-2 sm:max-w-[14rem] ${
           disabled ? "opacity-60" : ""
         }`}
       >
@@ -162,7 +159,7 @@ function HomeHeroSpeakerPicker({
             if (!value) return;
             void toggleSample(value, e);
           }}
-          className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[#1E2530] transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:text-[#F4F0E8] dark:hover:bg-white/10"
+          className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-marketing-ink transition-[background-color] duration-150 ease-out hover:bg-marketing-menu-hover disabled:cursor-not-allowed disabled:opacity-40"
         >
           {triggerPlaying ? (
             <IconPlayerPause size={15} stroke={2.25} aria-hidden />
@@ -181,7 +178,7 @@ function HomeHeroSpeakerPicker({
             if (disabled || speakers.length === 0) return;
             setOpen((v) => !v);
           }}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 py-1 pr-0.5 text-left text-sm text-[#1E2530] outline-none disabled:cursor-not-allowed dark:text-[#F4F0E8]"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 py-1 pr-0.5 text-left text-sm text-marketing-ink outline-none disabled:cursor-not-allowed"
         >
           <span className="min-w-0 flex-1 truncate">{label}</span>
           <IconChevronDown
@@ -197,7 +194,7 @@ function HomeHeroSpeakerPicker({
 
       {open ? (
         <div
-          className="absolute left-0 top-full z-[90] mt-1.5 max-h-64 min-w-[14rem] overflow-auto rounded-2xl border border-[#D8D2C4] bg-white py-1 shadow-[0_12px_32px_rgb(30_37_48_/_0.14)] dark:border-white/15 dark:bg-[#1E2530] dark:shadow-none"
+          className="absolute left-0 top-full z-[90] mt-1.5 max-h-64 min-w-[14rem] overflow-auto rounded-2xl border border-marketing-menu-border bg-marketing-menu-bg py-1 shadow-[0_12px_32px_rgb(30_37_48_/_0.14)] dark:shadow-none"
           role="listbox"
           aria-labelledby="home-hero-speaker"
         >
@@ -217,10 +214,10 @@ function HomeHeroSpeakerPicker({
                     selectSpeaker(s.modelId);
                   }
                 }}
-                className={`flex cursor-pointer items-center gap-0.5 px-1.5 py-1 text-sm hover:bg-[#F4F0E8] dark:hover:bg-white/10 ${
+                className={`flex cursor-pointer items-center gap-0.5 px-1.5 py-1 text-sm hover:bg-marketing-menu-hover ${
                   isSelected
-                    ? "font-medium text-[#1E2530] dark:text-[#F4F0E8]"
-                    : "text-[#5A5548] dark:text-[#C8C0B2]"
+                    ? "font-medium text-marketing-ink"
+                    : "text-marketing-menu-muted"
                 }`}
               >
                 <button
@@ -237,7 +234,7 @@ function HomeHeroSpeakerPicker({
                       : `Play ${s.name} sample`
                   }
                   onClick={(e) => void toggleSample(s.modelId, e)}
-                  className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-[#1E2530] transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:text-[#F4F0E8] dark:hover:bg-white/10"
+                  className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-marketing-ink transition-[background-color] duration-150 ease-out hover:bg-marketing-menu-hover disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {isPlaying ? (
                     <IconPlayerPause size={15} stroke={2.25} aria-hidden />
@@ -322,7 +319,7 @@ export function HomeHeroOneShotPrompt({ className = "" }: { className?: string }
       className={`mx-auto w-full max-w-3xl ${className}`}
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-2">
-        <div className="home-hero-one-shot-shell flex min-w-0 flex-1 items-stretch gap-2 rounded-full border bg-white p-1.5 dark:bg-white/[0.06]">
+        <div className="home-hero-one-shot-shell flex min-w-0 flex-1 items-stretch gap-2 rounded-full border bg-marketing-input-shell-bg p-1.5">
           <label className="sr-only" htmlFor="home-hero-one-shot">
             Describe the meditation you want
           </label>
@@ -333,7 +330,7 @@ export function HomeHeroOneShotPrompt({ className = "" }: { className?: string }
             onChange={(e) => setPrompt(e.target.value)}
             disabled={busy}
             placeholder="e.g. I can’t sleep — racing thoughts about work tomorrow"
-            className="min-w-0 flex-1 bg-transparent px-4 py-2.5 text-left text-sm text-[#1E2530] outline-none placeholder:text-[#C8C0B2] disabled:opacity-60 dark:text-[#F4F0E8] dark:placeholder:text-white/30 sm:text-base"
+            className="min-w-0 flex-1 bg-transparent px-4 py-2.5 text-left text-sm text-marketing-ink outline-none placeholder:text-marketing-placeholder disabled:opacity-60 sm:text-base"
             autoComplete="off"
           />
           <HomeHeroSpeakerPicker
@@ -347,8 +344,7 @@ export function HomeHeroOneShotPrompt({ className = "" }: { className?: string }
             type="submit"
             disabled={busy || prompt.trim().length === 0}
             aria-label={busy ? "Creating meditation" : "Create meditation"}
-            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full px-4 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45 sm:px-5"
-            style={{ backgroundColor: GOLD, color: GOLD_INK }}
+            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full bg-gold px-4 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45 sm:px-5"
           >
             {busy ? (
               <>
@@ -369,7 +365,7 @@ export function HomeHeroOneShotPrompt({ className = "" }: { className?: string }
           {error}
         </p>
       ) : (
-        <p className="mt-2 text-center text-xs text-[#7A7566] dark:text-[#A8B0BC] sm:text-sm">
+        <p className="mt-2 text-center text-xs text-marketing-body sm:text-sm">
           {busy
             ? "Writing and generating your meditation — this can take a minute."
             : "Say how you feel and what you need — we’ll turn it into a guided meditation."}

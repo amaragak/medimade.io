@@ -47,7 +47,7 @@ function sectionActive(path: string, root: string): boolean {
 }
 
 function ColorSchemeToggle({ className = "" }: { className?: string }) {
-  const [scheme, setScheme] = useState<ColorScheme>("light");
+  const [scheme, setScheme] = useState<ColorScheme>("dark");
 
   useEffect(() => {
     applyColorScheme(getStoredColorScheme());
@@ -65,7 +65,7 @@ function ColorSchemeToggle({ className = "" }: { className?: string }) {
       onClick={() => setScheme(toggleColorScheme())}
       aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
       title={isDark ? "Light mode" : "Dark mode"}
-      className={`inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-white/20 text-nav-muted transition-colors hover:bg-nav-active hover:text-nav-foreground ${className}`}
+      className={`inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg border border-marketing-nav-chrome text-nav-muted transition-[background-color,color,border-color] duration-150 ease-out hover:bg-nav-active hover:text-nav-foreground ${className}`}
     >
       {isDark ? (
         <Sun aria-hidden className="size-4" strokeWidth={2} />
@@ -226,36 +226,24 @@ export function SiteHeader() {
   };
 
   return (
-    <header className="relative sticky top-0 z-[100] border-b border-white/10 bg-nav shadow-[0_4px_18px_rgb(20_28_38_/_0.28)]">
+    <header className="site-header relative sticky top-0 z-[100] border-b border-[color:var(--header-border)] bg-nav shadow-[var(--header-shadow)]">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 overflow-hidden"
       >
         <div className="relative mx-auto h-full max-w-6xl px-4 sm:px-6">
-          <span
-            className="absolute left-[17px] top-[calc(50%+1px)] h-36 w-72 -translate-x-1/2 -translate-y-1/2 blur-lg"
-            style={{
-              background:
-                "radial-gradient(circle, rgb(148 176 200 / 0.55) 0%, rgb(108 138 165 / 0.28) 42%, rgb(51 70 92 / 0) 78%)",
-            }}
-          />
+          <span className="site-header-glow-sun absolute left-[17px] top-[calc(50%+1px)] h-36 w-72 -translate-x-1/2 -translate-y-1/2 blur-lg" />
         </div>
-        <span
-          className="absolute right-0 top-1/2 h-40 w-[22rem] translate-x-[42%] -translate-y-1/2 blur-xl"
-          style={{
-            background:
-              "radial-gradient(circle, rgb(16 26 38 / 0.96) 0%, rgb(24 36 50 / 0.58) 32%, rgb(51 70 92 / 0) 68%)",
-          }}
-        />
+        <span className="site-header-glow-right absolute right-0 top-1/2 h-40 w-[22rem] translate-x-[42%] -translate-y-1/2 blur-xl" />
       </div>
       <div className="relative mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
         <Link
           href="/"
-          className="relative inline-flex items-center text-nav-foreground"
+          className="relative inline-flex items-center"
         >
           <LogoMark
             size={34}
-            className="relative z-[1] top-px mr-[13px] shrink-0"
+            className="relative z-[1] top-px mr-[13px] shrink-0 text-[#D9A24F]"
           />
           <span className="brand-wordmark relative z-[1] -top-px font-display text-2xl font-medium tracking-tight lowercase">
             consciously
@@ -316,7 +304,7 @@ export function SiteHeader() {
               <button
                 type="button"
                 onClick={() => clearMedimadeSession()}
-                className="rounded-lg border border-white/20 px-3 py-2 text-sm text-nav-muted transition-colors hover:bg-nav-active hover:text-nav-foreground"
+                className="rounded-lg border border-marketing-nav-chrome px-3 py-2 text-sm text-nav-muted transition-[background-color,color,border-color] duration-150 ease-out hover:bg-nav-active hover:text-nav-foreground"
               >
                 Sign out
               </button>
@@ -324,14 +312,14 @@ export function SiteHeader() {
           ) : (
             <Link
               href="/login"
-              className="ml-1 rounded-lg border border-white/20 px-3 py-2 text-sm font-medium text-nav-foreground transition-colors hover:bg-nav-active"
+              className="ml-1 rounded-lg border border-marketing-nav-chrome px-3 py-2 text-sm font-medium text-nav-foreground transition-[background-color,color,border-color] duration-150 ease-out hover:bg-nav-active"
             >
               Sign in
             </Link>
           )}
           <Link
             href="/pro"
-            className="accent-fill-gradient ml-2 rounded-xl px-4 py-2 text-sm font-medium text-on-accent transition-opacity hover:opacity-90"
+            className="pro-header-cta ml-2 rounded-xl px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90"
           >
             Pro
           </Link>
@@ -341,7 +329,7 @@ export function SiteHeader() {
           <details ref={mobileMenuRef} className="relative">
             <summary
               aria-label="Menu"
-              className="cursor-pointer list-none rounded-lg border border-white/20 p-2 text-sm text-nav-foreground"
+              className="cursor-pointer list-none rounded-lg border border-marketing-nav-chrome p-2 text-sm text-nav-foreground"
             >
               <svg
                 viewBox="0 0 24 24"

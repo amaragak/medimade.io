@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Class-based dark mode (header toggle). Default remains light. */
+/* Class-based dark mode (header toggle). Default is dark. */
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
@@ -40,8 +40,48 @@
   --color-danger-soft: var(--danger-soft);
   --color-success: var(--success);
   --color-info: var(--info);
+  --color-home-hero-bg: var(--home-hero-bg);
+  --color-marketing-ink: var(--marketing-ink);
+  --color-marketing-muted: var(--marketing-muted);
+  --color-marketing-body: var(--marketing-body);
+  --color-marketing-band-a: var(--marketing-band-a);
+  --color-marketing-band-b: var(--marketing-band-b);
+  --color-marketing-band-c: var(--marketing-band-c);
+  --color-marketing-band-d: var(--marketing-band-d);
+  --color-marketing-band-ideate: var(--marketing-band-ideate);
+  --color-marketing-card-bg: var(--marketing-card-bg);
+  --color-marketing-card-border: var(--marketing-card-border);
+  --color-marketing-card-hover: var(--marketing-card-hover);
+  --color-marketing-icon-bg: var(--marketing-icon-bg);
+  --color-marketing-icon-fg: var(--marketing-icon-fg);
+  --color-marketing-panel-bg: var(--marketing-panel-bg);
+  --color-marketing-eyebrow: var(--marketing-eyebrow);
+  --color-marketing-pillar-idle-bg: var(--marketing-pillar-idle-bg);
+  --color-marketing-pillar-selected-bg: var(--marketing-pillar-selected-bg);
+  --color-marketing-pillar-idle-icon-fg: var(--marketing-pillar-idle-icon-fg);
+  --color-marketing-highlight-icon-bg: var(--marketing-highlight-icon-bg);
+  --color-marketing-highlight-icon-fg: var(--marketing-highlight-icon-fg);
+  --color-marketing-nav-chrome: var(--marketing-nav-chrome);
+  --color-marketing-input-shell-bg: var(--marketing-input-shell-bg);
+  --color-marketing-placeholder: var(--marketing-placeholder);
+  --color-marketing-menu-bg: var(--marketing-menu-bg);
+  --color-marketing-menu-border: var(--marketing-menu-border);
+  --color-marketing-menu-hover: var(--marketing-menu-hover);
+  --color-marketing-menu-muted: var(--marketing-menu-muted);
+  --color-journal-warm-bg: var(--journal-warm-bg);
+  --color-journal-warm-border: var(--journal-warm-border);
+  --color-journal-warm-input-bg: var(--journal-warm-input-bg);
   --font-sans: var(--font-dm-sans);
   --font-display: var(--font-fraunces);
+}
+
+/* Instant theme swap: suppress staggered color transitions during toggle. */
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+  animation-duration: 0s !important;
 }
 
 body {
@@ -257,14 +297,36 @@ body {
     0 1px 3px color-mix(in srgb, var(--foreground) 11%, transparent);
 }
 
-/* Header “consciously” — radial from sun (white) → light gold-tan. Edit in theme-colors.ts. */
+/* Header “consciously” — radial from sun (white) → light gold-tan. Edit in theme-colors.ts.
+ * Light mode uses a solid clay fill (set via --brand-wordmark-gradient). */
 .brand-wordmark {
   display: inline-block;
-  color: #fff; /* fallback if clip unsupported */
+  color: #1e2530; /* light fallback if clip unsupported */
   background-image: var(--brand-wordmark-gradient);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+}
+
+.dark .brand-wordmark {
+  color: #fff;
+}
+
+/* Site header glows — values from --header-glow-* on :root / :root.dark. */
+.site-header-glow-sun {
+  background: var(--header-glow-sun);
+}
+
+.site-header-glow-right {
+  background: var(--header-glow-right);
+}
+
+/* Header Pro CTA: clay on light; gold-tan gradient in dark. */
+.pro-header-cta {
+  background-color: var(--pro-header-cta-bg);
+  background-image: var(--pro-header-cta-image);
+  color: var(--pro-header-cta-fg);
+  box-shadow: var(--pro-header-cta-shadow);
 }
 
 .hero-orb {
@@ -338,7 +400,7 @@ body {
 /* Marketing heroes: paper/navy + tiled paisley at low opacity. */
 .home-hero {
   position: relative;
-  background-color: var(--background);
+  background-color: var(--home-hero-bg);
   background-image: none;
 }
 
@@ -348,8 +410,8 @@ body {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  opacity: 0.07;
-  background-image: url("/patterns/paisley-tile-800-offwhite.webp");
+  opacity: var(--home-hero-pattern-opacity);
+  background-image: var(--home-hero-pattern);
   background-repeat: repeat;
   background-size: 800px 800px;
 }
@@ -357,16 +419,6 @@ body {
 .home-hero > * {
   position: relative;
   z-index: 1;
-}
-
-.dark .home-hero {
-  background-color: #1a2330;
-  background-image: none;
-}
-
-.dark .home-hero::before {
-  opacity: 0.18;
-  background-image: url("/patterns/paisley-tile-800-tonal-navy.webp");
 }
 
 /* Hero brand sun mark. */

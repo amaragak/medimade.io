@@ -32,8 +32,8 @@ export function JournalGratitudeEditor({ createdAt, lines, onChange, children }:
   const dateLabel = formatJournalEntryDate(createdAt);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#EEDFC0] bg-[#FBF6EA] shadow-sm dark:border-[#5a4f3a] dark:bg-[#2a261f]">
-      <div className="relative z-10 shrink-0 border-b border-[#EEDFC0] bg-[#FBF6EA] px-5 py-4 dark:border-[#5a4f3a] dark:bg-[#2a261f] sm:px-6">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-journal-warm-border bg-journal-warm-bg shadow-sm">
+      <div className="relative z-10 shrink-0 border-b border-journal-warm-border bg-journal-warm-bg px-5 py-4 sm:px-6">
         <h2 className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
           {isToday ? "Today" : dateLabel}
         </h2>
@@ -62,13 +62,13 @@ export function JournalGratitudeEditor({ createdAt, lines, onChange, children }:
               rows={3}
               placeholder="I’m grateful for…"
               aria-label={ariaLabel}
-              className="min-h-[4.5rem] min-w-0 flex-1 resize-y rounded-2xl border border-[#EEDFC0] bg-white px-4 py-3 text-base leading-relaxed text-foreground outline-none ring-accent/30 placeholder:text-muted/70 focus:ring-2 dark:border-[#5a4f3a] dark:bg-[#1c1914]"
+              className="min-h-[4.5rem] min-w-0 flex-1 resize-y rounded-2xl border border-journal-warm-border bg-journal-warm-input-bg px-4 py-3 text-base leading-relaxed text-foreground outline-none ring-accent/30 placeholder:text-muted/70 focus:ring-2"
             />
           </div>
         ))}
       </div>
       {children ? (
-        <div className="relative z-10 shrink-0 border-t border-[#EEDFC0] bg-[#FBF6EA] px-5 py-3 dark:border-[#5a4f3a] dark:bg-[#2a261f] sm:px-6">
+        <div className="relative z-10 shrink-0 border-t border-journal-warm-border bg-journal-warm-bg px-5 py-3 sm:px-6">
           {children}
         </div>
       ) : null}

@@ -2,7 +2,7 @@
  * Theme source of truth.
  *
  * `PRIMARY` is the brand fill (gold-tan). Neutrals (paper, navy ink, borders)
- * are independent so the page stays cream and the header can be navy.
+ * are independent so the page stays cream and the light header can be warm tan.
  */
 
 /** Brand fill — gold-tan. Text on this fill must use `onAccent` (#3D2E10). */
@@ -45,9 +45,14 @@ export const INFO = "#0284c7";
 
 const NAV = "#33465C";
 // const NAV = "#6E88A3";
+/** Light-mode header base — same paper off-white as the page. */
+const NAV_LIGHT = "#FAF8F3";
 const NAV_FOREGROUND = WHITE;
 const NAV_MUTED = "rgb(255 255 255 / 0.68)";
 const NAV_ACTIVE = "rgb(255 255 255 / 0.14)";
+const NAV_FOREGROUND_LIGHT = "#1E2530";
+const NAV_MUTED_LIGHT = "#5A5648";
+const NAV_ACTIVE_LIGHT = "rgb(30 37 48 / 0.08)";
 /** Unrated star glyphs. */
 export const STAR_IDLE = "#B5AF9F";
 
@@ -234,6 +239,50 @@ type Semantic = {
   gradientLight: string;
   gradientMid: string;
   gradientDeep: string;
+  /** Marketing / hero surfaces (role tokens — one value per theme). */
+  homeHeroBg: string;
+  homeHeroPattern: string;
+  homeHeroPatternOpacity: string;
+  marketingInk: string;
+  marketingMuted: string;
+  marketingBandA: string;
+  marketingBandB: string;
+  marketingBandC: string;
+  marketingBandD: string;
+  /** Ideate band on meditate page (distinct light tan). */
+  marketingBandIdeate: string;
+  marketingBody: string;
+  marketingCardBg: string;
+  marketingCardBorder: string;
+  marketingCardHover: string;
+  marketingCardShadow: string;
+  marketingIconBg: string;
+  marketingIconFg: string;
+  marketingPanelBg: string;
+  marketingEyebrow: string;
+  marketingPillarIdleBg: string;
+  marketingPillarSelectedBg: string;
+  marketingPillarIdleIconFg: string;
+  marketingHighlightIconBg: string;
+  marketingHighlightIconFg: string;
+  marketingNavChrome: string;
+  marketingInputShellBg: string;
+  marketingPlaceholder: string;
+  marketingMenuBg: string;
+  marketingMenuBorder: string;
+  marketingMenuHover: string;
+  marketingMenuMuted: string;
+  journalWarmBg: string;
+  journalWarmBorder: string;
+  journalWarmInputBg: string;
+  headerBorder: string;
+  headerShadow: string;
+  headerGlowSun: string;
+  headerGlowRight: string;
+  proHeaderCtaBg: string;
+  proHeaderCtaFg: string;
+  proHeaderCtaImage: string;
+  proHeaderCtaShadow: string;
 };
 
 /** Brand tints/shades from PRIMARY, mixed onto the given paper (not replacing it). */
@@ -276,10 +325,10 @@ function assemble(
     gold,
     overlay: BLACK,
     accentLink: dark ? mixHex(ACCENT_LINK, WHITE, 0.28) : ACCENT_LINK,
-    nav: NAV,
-    navForeground: NAV_FOREGROUND,
-    navMuted: NAV_MUTED,
-    navActive: NAV_ACTIVE,
+    nav: dark ? NAV : NAV_LIGHT,
+    navForeground: dark ? NAV_FOREGROUND : NAV_FOREGROUND_LIGHT,
+    navMuted: dark ? NAV_MUTED : NAV_MUTED_LIGHT,
+    navActive: dark ? NAV_ACTIVE : NAV_ACTIVE_LIGHT,
     selected: NAV,
     onSelected: WHITE,
     starIdle: STAR_IDLE,
@@ -287,6 +336,64 @@ function assemble(
     dangerSoft: dark ? mixHex(DANGER, BLACK, 0.78) : mixHex(DANGER, WHITE, 0.92),
     success: dark ? mixHex(SUCCESS, WHITE, 0.2) : SUCCESS,
     info: dark ? mixHex(INFO, WHITE, 0.2) : INFO,
+    homeHeroBg: dark ? "#1A2330" : paper.background,
+    homeHeroPattern: dark
+      ? 'url("/patterns/paisley-tile-800-tonal-navy.webp")'
+      : 'url("/patterns/paisley-tile-800-offwhite.webp")',
+    homeHeroPatternOpacity: dark ? "0.18" : "0.07",
+    marketingInk: dark ? "#F4F0E8" : "#1E2530",
+    marketingMuted: dark ? "#A8B0BC" : "#5A5342",
+    marketingBody: dark ? "#A8B0BC" : "#7A7566",
+    /** Lighter mid band (e.g. “Tools that talk…”, pillars). */
+    marketingBandA: dark ? "#2A3A4E" : "#F0DFC0",
+    /** Deeper CTA band (e.g. “Start with…”). */
+    marketingBandB: dark ? "#1A2330" : "#E8CE9C",
+    /** Mid band (meditate journal). */
+    marketingBandC: dark ? "#243447" : "#E8CE9C",
+    /** Deepest band (meditate listen). */
+    marketingBandD: dark ? "#161D28" : "#C49A58",
+    marketingBandIdeate: dark ? "#1A2330" : "#D4AE70",
+    marketingCardBg: dark ? "#2A3544" : "#FFFFFF",
+    marketingCardBorder: dark ? "rgba(255,255,255,0.1)" : "#E5DFD0",
+    marketingCardHover: dark ? "#323E4F" : "#FBF8F2",
+    marketingCardShadow: dark
+      ? "none"
+      : "0 10px 28px rgb(30 37 48 / 0.06)",
+    marketingIconBg: dark ? "rgba(255,255,255,0.1)" : "#F3ECD9",
+    marketingIconFg: dark ? GOLD_LIGHT : "#33465C",
+    marketingPanelBg: dark ? "#12181F" : "#FFFFFF",
+    marketingEyebrow: dark ? GOLD_LIGHT : ACCENT_LINK,
+    marketingPillarIdleBg: dark ? "#243041" : "#FFFFFF",
+    marketingPillarSelectedBg: dark ? "#2F2C24" : "#FFFFFF",
+    marketingPillarIdleIconFg: dark ? "#F4F0E8" : "#33465C",
+    marketingHighlightIconBg: dark ? "rgba(217,162,79,0.22)" : "#F3ECD9",
+    marketingHighlightIconFg: dark ? GOLD_LIGHT : ACCENT_LINK,
+    marketingNavChrome: dark ? "rgba(255,255,255,0.2)" : "#D8D0BC",
+    marketingInputShellBg: dark ? "rgba(255,255,255,0.06)" : "#FFFFFF",
+    marketingPlaceholder: dark ? "rgba(255,255,255,0.3)" : "#C8C0B2",
+    marketingMenuBg: dark ? "#1E2530" : "#FFFFFF",
+    marketingMenuBorder: dark ? "rgba(255,255,255,0.15)" : "#D8D2C4",
+    marketingMenuHover: dark ? "rgba(255,255,255,0.1)" : "#F4F0E8",
+    marketingMenuMuted: dark ? "#C8C0B2" : "#5A5548",
+    journalWarmBg: dark ? "#2A261F" : "#FBF6EA",
+    journalWarmBorder: dark ? "#5A4F3A" : "#EEDFC0",
+    journalWarmInputBg: dark ? "#1C1914" : "#FFFFFF",
+    headerBorder: dark ? "rgba(255,255,255,0.1)" : "#E5E0D2",
+    headerShadow: dark
+      ? "0 4px 18px rgb(20 28 38 / 0.28)"
+      : "0 4px 18px rgb(80 60 30 / 0.06)",
+    headerGlowSun: dark
+      ? "radial-gradient(circle, rgb(148 176 200 / 0.22) 0%, rgb(108 138 165 / 0.12) 42%, rgb(51 70 92 / 0) 78%)"
+      : "radial-gradient(circle, rgb(255 255 255 / 1) 0%, rgb(255 255 255 / 0.65) 42%, rgb(250 248 243 / 0) 78%)",
+    headerGlowRight: dark
+      ? "radial-gradient(circle, rgb(16 26 38 / 0.4) 0%, rgb(24 36 50 / 0.22) 32%, rgb(51 70 92 / 0) 68%)"
+      : "radial-gradient(circle, rgb(232 224 208 / 0.7) 0%, rgb(232 224 208 / 0.3) 36%, rgb(250 248 243 / 0) 70%)",
+    proHeaderCtaBg: dark ? "var(--accent)" : ACCENT_LINK,
+    proHeaderCtaFg: dark ? "var(--on-accent)" : "#FAF8F3",
+    proHeaderCtaImage: dark ? "var(--accent-gradient-button)" : "none",
+    proHeaderCtaShadow: dark
+      ? "inset 0 1px 2px color-mix(in srgb, var(--surface) 36%, transparent), inset 0 -2px 4px color-mix(in srgb, var(--deep) 14%, transparent), 0 1px 3px color-mix(in srgb, var(--foreground) 11%, transparent)"
+      : "none",
   };
 }
 
@@ -310,7 +417,12 @@ export function accentGradientButtonCss(s: Semantic): string {
 }
 
 /** Fills `BRAND_WORDMARK_GRADIENT` from the active theme (resolved hex stops). */
-export function brandWordmarkGradientCss(s: Semantic): string {
+export function brandWordmarkGradientCss(s: Semantic, dark: boolean): string {
+  if (!dark) {
+    /* Near-black wordmark on light-tan header; sun mark carries the gold. */
+    const ink = "#1E2530";
+    return `linear-gradient(0deg, ${ink}, ${ink})`;
+  }
   return BRAND_WORDMARK_GRADIENT.replaceAll("{white}", WHITE)
     .replaceAll("{soft}", mixHex(WHITE, s.accent, BRAND_WORDMARK_SOFT))
     .replaceAll("{end}", mixHex(WHITE, s.accent, BRAND_WORDMARK_END));
@@ -339,7 +451,7 @@ export function chartSeriesColor(seed: string): string {
   return hslToHex(n % 360, 0.55, 0.52);
 }
 
-function varsFor(s: Semantic): Record<string, string> {
+function varsFor(s: Semantic, dark: boolean): Record<string, string> {
   return {
     "--background": s.background,
     "--foreground": s.foreground,
@@ -369,10 +481,52 @@ function varsFor(s: Semantic): Record<string, string> {
     "--info": s.info,
     "--accent-gradient": accentGradientCss(s),
     "--accent-gradient-button": accentGradientButtonCss(s),
-    "--brand-wordmark-gradient": brandWordmarkGradientCss(s),
+    "--brand-wordmark-gradient": brandWordmarkGradientCss(s, dark),
     "--accent-rgb": rgbChannels(s.accent),
     "--foreground-rgb": rgbChannels(s.foreground),
     "--deep-rgb": rgbChannels(s.deep),
+    "--home-hero-bg": s.homeHeroBg,
+    "--home-hero-pattern": s.homeHeroPattern,
+    "--home-hero-pattern-opacity": s.homeHeroPatternOpacity,
+    "--marketing-ink": s.marketingInk,
+    "--marketing-muted": s.marketingMuted,
+    "--marketing-band-a": s.marketingBandA,
+    "--marketing-band-b": s.marketingBandB,
+    "--marketing-band-c": s.marketingBandC,
+    "--marketing-band-d": s.marketingBandD,
+    "--marketing-band-ideate": s.marketingBandIdeate,
+    "--marketing-body": s.marketingBody,
+    "--marketing-card-bg": s.marketingCardBg,
+    "--marketing-card-border": s.marketingCardBorder,
+    "--marketing-card-hover": s.marketingCardHover,
+    "--marketing-card-shadow": s.marketingCardShadow,
+    "--marketing-icon-bg": s.marketingIconBg,
+    "--marketing-icon-fg": s.marketingIconFg,
+    "--marketing-panel-bg": s.marketingPanelBg,
+    "--marketing-eyebrow": s.marketingEyebrow,
+    "--marketing-pillar-idle-bg": s.marketingPillarIdleBg,
+    "--marketing-pillar-selected-bg": s.marketingPillarSelectedBg,
+    "--marketing-pillar-idle-icon-fg": s.marketingPillarIdleIconFg,
+    "--marketing-highlight-icon-bg": s.marketingHighlightIconBg,
+    "--marketing-highlight-icon-fg": s.marketingHighlightIconFg,
+    "--marketing-nav-chrome": s.marketingNavChrome,
+    "--marketing-input-shell-bg": s.marketingInputShellBg,
+    "--marketing-placeholder": s.marketingPlaceholder,
+    "--marketing-menu-bg": s.marketingMenuBg,
+    "--marketing-menu-border": s.marketingMenuBorder,
+    "--marketing-menu-hover": s.marketingMenuHover,
+    "--marketing-menu-muted": s.marketingMenuMuted,
+    "--journal-warm-bg": s.journalWarmBg,
+    "--journal-warm-border": s.journalWarmBorder,
+    "--journal-warm-input-bg": s.journalWarmInputBg,
+    "--header-border": s.headerBorder,
+    "--header-shadow": s.headerShadow,
+    "--header-glow-sun": s.headerGlowSun,
+    "--header-glow-right": s.headerGlowRight,
+    "--pro-header-cta-bg": s.proHeaderCtaBg,
+    "--pro-header-cta-fg": s.proHeaderCtaFg,
+    "--pro-header-cta-image": s.proHeaderCtaImage,
+    "--pro-header-cta-shadow": s.proHeaderCtaShadow,
   };
 }
 
@@ -386,7 +540,7 @@ function cssBlock(selector: string, vars: Record<string, string>, indent = ""): 
 
 /** Injected in root layout. The only place brand hexes become CSS variables. */
 export const themeRootCss = [
-  cssBlock(":root", varsFor(light)),
-  /** Class-driven dark theme (header toggle). Light is the default — not system preference. */
-  cssBlock(":root.dark", varsFor(dark)),
+  cssBlock(":root", varsFor(light, false)),
+  /** Class-driven dark theme (header toggle). Default is dark. */
+  cssBlock(":root.dark", varsFor(dark, true)),
 ].join("\n\n");

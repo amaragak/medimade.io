@@ -15,18 +15,18 @@ import {
 
 export function HomeListenSection() {
   return (
-    <section className="w-full bg-[#161D28] px-4 py-16 sm:px-6 sm:py-20">
+    <section className="w-full bg-marketing-band-d px-4 py-16 sm:px-6 sm:py-20">
       <div className="mx-auto max-w-6xl">
-        <h2 className="text-center font-display text-3xl font-medium tracking-tight text-[#F4F0E8] sm:text-4xl">
+        <h2 className="text-center font-display text-3xl font-medium tracking-tight text-marketing-ink sm:text-4xl">
           Judge the sound yourself.
         </h2>
-        <p className="mx-auto mt-3 max-w-xl text-center text-base text-[#A8B0BC] sm:text-lg">
+        <p className="mx-auto mt-3 max-w-xl text-center text-base text-marketing-muted sm:text-lg">
           Three real generated sessions. No sign-up to listen.
         </p>
         <ul className="mt-10 grid gap-4 sm:grid-cols-3 sm:gap-5">
           {HOMEPAGE_LISTEN_SAMPLES.map((sample) => (
             <li key={sample.id}>
-              <HomeListenCard sample={sample} surface="dark" />
+              <HomeListenCard sample={sample} surface="section" />
             </li>
           ))}
         </ul>
@@ -63,17 +63,19 @@ export function HomeHeroListenGrid() {
 
 export function HomeListenCard({
   sample,
-  surface = "dark",
+  surface = "section",
 }: {
   sample: HomepageListenSample;
-  /** `dark` = Listen section (always navy). `hero` = theme-aware for light/dark hero. */
-  surface?: "dark" | "hero";
+  /** `section` = mid-page band (theme-aware). `hero` = theme-aware for light/dark hero. */
+  surface?: "section" | "hero" | "dark";
 }) {
+  void surface;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(sample.durationSeconds);
-  const onHero = surface === "hero";
+  const lightCard =
+    "flex h-full flex-col rounded-2xl border border-marketing-card-border bg-marketing-card-bg p-5 text-left shadow-[var(--marketing-card-shadow)]";
 
   useEffect(() => {
     const sync = (activeId: string | null) => {
@@ -110,13 +112,7 @@ export function HomeListenCard({
   }
 
   return (
-    <div
-      className={
-        onHero
-          ? "flex h-full flex-col rounded-2xl border border-[#D8D2C4] bg-white p-5 text-left shadow-[0_10px_28px_rgb(30_37_48_/_0.08)] dark:border-white/10 dark:bg-white/[0.05] dark:shadow-none"
-          : "flex h-full flex-col rounded-2xl border border-white/10 bg-white/[0.05] p-5 text-left"
-      }
-    >
+    <div className={lightCard}>
       <audio
         ref={audioRef}
         src={sample.audioUrl}
@@ -147,7 +143,7 @@ export function HomeListenCard({
           aria-label={
             playing ? `Pause ${sample.title}` : `Play ${sample.title}`
           }
-          className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#D9A24F] text-[#3D2E10] transition-opacity hover:opacity-90"
+          className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-gold text-on-accent transition-opacity hover:opacity-90"
         >
           {playing ? (
             <IconPlayerPause size={20} stroke={2.25} aria-hidden />
@@ -161,35 +157,17 @@ export function HomeListenCard({
           )}
         </button>
         <div className="min-w-0 flex-1">
-          <p
-            className={
-              onHero
-                ? "font-display text-base font-medium leading-snug text-[#1E2530] dark:text-[#F4F0E8]"
-                : "font-display text-base font-medium leading-snug text-[#F4F0E8]"
-            }
-          >
+          <p className="font-display text-base font-medium leading-snug text-marketing-ink">
             {sample.title}
           </p>
-          <p
-            className={
-              onHero
-                ? "mt-1 text-sm text-[#7A7566] dark:text-[#A8B0BC]"
-                : "mt-1 text-sm text-[#A8B0BC]"
-            }
-          >
+          <p className="mt-1 text-sm text-marketing-body">
             {sample.category} · {formatHomepageDuration(duration)}
           </p>
         </div>
       </div>
-      <div
-        className={
-          onHero
-            ? "mt-4 h-1.5 w-full overflow-hidden rounded-full bg-[#1E2530]/10 dark:bg-white/10"
-            : "mt-4 h-1.5 w-full overflow-hidden rounded-full bg-white/10"
-        }
-      >
+      <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-marketing-ink/10">
         <div
-          className="h-full rounded-full bg-[#D9A24F] transition-[width] duration-150"
+          className="h-full rounded-full bg-gold transition-[width] duration-150"
           style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}
         />
       </div>
