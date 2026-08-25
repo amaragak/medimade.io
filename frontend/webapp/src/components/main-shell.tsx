@@ -64,7 +64,10 @@ export function MainShell({ children }: { children: ReactNode }) {
           style={{ height: `${tileHeightPx}px` }}
         />
       ) : null}
-      <div ref={contentRef} className="relative z-[1] flex w-full flex-col">
+      <div
+        ref={contentRef}
+        className="relative z-[1] flex min-h-0 w-full flex-1 flex-col"
+      >
         {children}
       </div>
     </main>
