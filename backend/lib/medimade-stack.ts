@@ -12,6 +12,7 @@ import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as s3n from "aws-cdk-lib/aws-s3-notifications";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import { LayerVersion } from "aws-cdk-lib/aws-lambda";
 import type { Construct } from "constructs";
 
@@ -87,6 +88,9 @@ export class MedimadeStack extends cdk.Stack {
           maxAge: 3600,
         },
       ],
+      // Browser uploads that die mid-flight leave multipart parts behind and
+      // keep billing; drop them rather than accumulating invisible garbage.
+      lifecycleRules: [{ abortIncompleteMultipartUploadAfter: cdk.Duration.days(2) }],
     });
 
     const mediaOai = new cloudfront.OriginAccessIdentity(this, "MediaOAI");
@@ -258,19 +262,30 @@ export class MedimadeStack extends cdk.Stack {
     );
 
     // Background-audio ingest: S3 trigger normalizes uploads from background-audio-raw/ into background-audio/
+    /** Normalize failures land here after retries so nothing disappears silently. */
+    const bgAudioNormalizeDlq = new sqs.Queue(this, "BgAudioNormalizeDlq", {
+      retentionPeriod: cdk.Duration.days(14),
+    });
+
+    // Hour-long compositions decode to multi-GB intermediates, so this function
+    // is sized for the worst case rather than the median sample.
     const bgAudioNormalize = new lambda_nodejs.NodejsFunction(this, "BgAudioNormalizeFunction", {
       entry: path.join(__dirname, "../lambdas/bg-audio-normalize.ts"),
       handler: "handler",
       runtime: lambda.Runtime.NODEJS_20_X,
-      timeout: cdk.Duration.seconds(180),
-      memorySize: 2048,
-      ephemeralStorageSize: cdk.Size.mebibytes(2048),
+      timeout: cdk.Duration.minutes(15),
+      memorySize: 3008,
+      ephemeralStorageSize: cdk.Size.mebibytes(10240),
+      retryAttempts: 1,
+      deadLetterQueue: bgAudioNormalizeDlq,
       layers: [ffmpegLayer],
       environment: {
         MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+        SOUND_CATALOG_TABLE_NAME: soundCatalogTable.tableName,
       },
     });
     mediaBucket.grantReadWrite(bgAudioNormalize);
+    soundCatalogTable.grantReadWriteData(bgAudioNormalize);
     mediaBucket.addEventNotification(
       s3.EventType.OBJECT_CREATED,
       new s3n.LambdaDestination(bgAudioNormalize),
@@ -428,7 +443,9 @@ export class MedimadeStack extends cdk.Stack {
         handler: "handler",
         runtime: lambda.Runtime.NODEJS_20_X,
         timeout: cdk.Duration.seconds(900),
-        memorySize: 1024,
+        // A 20-minute meditation is a ~100 MB WAV through the FX round trip;
+        // 1024 MB ran out of memory on a 153-section script.
+        memorySize: 2048,
         layers: [ffmpegLayer],
         environment: {
           CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,

@@ -69,6 +69,7 @@ export async function handler(
     const buckets: Record<BgAudioCategory, ListedBgItem[]> = {
       ambience: [],
       music: [],
+      compositions: [],
       drums: [],
       noise: [],
     };
@@ -192,16 +193,24 @@ export async function handler(
       buckets[c].sort((a, b) => a.name.localeCompare(b.name));
     }
 
+    // Compositions have no fader of their own — they ride the music channel and
+    // show up there as a single folder, so picking one fills the music slot.
+    const musicChannel = [
+      ...buckets.music,
+      ...buckets.compositions.map((it) => ({ ...it, subcategory: "compositions" })),
+    ].sort((a, b) => a.name.localeCompare(b.name));
+
     return json(200, {
       ...(baseUrl ? { baseUrl } : {}),
       nature: buckets.ambience,
       ambience: buckets.ambience,
-      music: buckets.music,
+      music: musicChannel,
+      compositions: buckets.compositions,
       drums: buckets.drums,
       noise: buckets.noise,
       factoryMixes,
       /** @deprecated flat list; prefer nature/music/drums/noise */
-      items: [...buckets.ambience, ...buckets.music, ...buckets.drums, ...buckets.noise],
+      items: [...buckets.ambience, ...musicChannel, ...buckets.drums, ...buckets.noise],
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "ListObjects failed";

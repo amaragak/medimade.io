@@ -9,6 +9,8 @@ import {
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
   HeadObjectCommand,
+  ListMultipartUploadsCommand,
+  ListPartsCommand,
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
@@ -41,6 +43,7 @@ import {
   parseSoundReviewStatus,
   putSoundRow,
   soundEnabledFromStatus,
+  updateSoundProcessing,
   type SoundCatalogRow,
   type SoundReviewStatus,
 } from "../lib/sound-catalog";
@@ -53,7 +56,8 @@ const s3 = new S3Client({
 const PART_SIZE = 8 * 1024 * 1024;
 const MULTIPART_MIN = 8 * 1024 * 1024;
 const PRESIGN = {
-  expiresIn: 3600,
+  // A batch of hour-long WAVs on a slow uplink can outlive a one-hour window.
+  expiresIn: 6 * 3600,
   unsignableHeaders: new Set([
     "content-type",
     "x-amz-checksum-crc32",
@@ -88,18 +92,6 @@ function rawKeysForPublicMp3(mp3Key: string, packPath?: string): string[] {
   const stem = rel.replace(/\.mp3$/i, "");
   out.push(`${BG_AUDIO_RAW_PREFIX}${stem}.wav`, `${BG_AUDIO_RAW_PREFIX}${stem}.mp3`);
   return out;
-}
-
-function audioPresentOnS3(
-  mp3Key: string,
-  packPath: string | undefined,
-  publicKeys: Set<string>,
-  rawKeys: Set<string>,
-): boolean {
-  if (publicKeys.has(mp3Key)) return true;
-  const wav = siblingWavKey(mp3Key);
-  if (wav && publicKeys.has(wav)) return true;
-  return rawKeysForPublicMp3(mp3Key, packPath).some((k) => rawKeys.has(k));
 }
 
 async function objectExists(bucket: string, key: string): Promise<boolean> {
@@ -140,6 +132,7 @@ async function movePublicSoundToCategory(
   if (!move) return null;
   await copyIfExists(bucket, move.fromMp3, move.toMp3);
   await copyIfExists(bucket, move.fromWav, move.toWav);
+  await copyIfExists(bucket, move.fromOpus, move.toOpus);
   const fromOrigMp3 = originalKeyForPublicKey(move.fromMp3);
   const fromOrigWav = originalKeyForPublicKey(move.fromWav);
   await copyIfExists(bucket, fromOrigMp3, originalKeyForPublicKey(move.toMp3));
@@ -147,6 +140,7 @@ async function movePublicSoundToCategory(
   if (move.fromMp3 !== move.toMp3) {
     await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: move.fromMp3 })).catch(() => undefined);
     await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: move.fromWav })).catch(() => undefined);
+    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: move.fromOpus })).catch(() => undefined);
   }
   if (existing) await deleteSoundRow(existing.sk);
   return { nextKey: move.toMp3, category: toCategory };
@@ -179,11 +173,71 @@ export async function handler(
   }
 }
 
+/** A multipart upload that was started but never completed — the file is not in S3. */
+type PendingRawUpload = {
+  uploadId: string;
+  initiatedAt: string | null;
+  uploadedBytes: number;
+  partCount: number;
+};
+
+/**
+ * Distinguishes "the browser upload died halfway" from "nothing was ever sent",
+ * which the panel previously reported identically.
+ */
+async function listPendingRawUploads(bucket: string): Promise<Map<string, PendingRawUpload>> {
+  const out = new Map<string, PendingRawUpload>();
+  try {
+    let keyMarker: string | undefined;
+    let uploadIdMarker: string | undefined;
+    do {
+      const res = await s3.send(
+        new ListMultipartUploadsCommand({
+          Bucket: bucket,
+          Prefix: BG_AUDIO_RAW_PREFIX,
+          KeyMarker: keyMarker,
+          UploadIdMarker: uploadIdMarker,
+        }),
+      );
+      for (const u of res.Uploads ?? []) {
+        if (!u.Key || !u.UploadId) continue;
+        out.set(u.Key, {
+          uploadId: u.UploadId,
+          initiatedAt: u.Initiated ? u.Initiated.toISOString() : null,
+          uploadedBytes: 0,
+          partCount: 0,
+        });
+      }
+      keyMarker = res.IsTruncated ? res.NextKeyMarker : undefined;
+      uploadIdMarker = res.IsTruncated ? res.NextUploadIdMarker : undefined;
+    } while (keyMarker);
+
+    // Part sizes tell us how far the upload actually got.
+    await Promise.all(
+      [...out.entries()].map(async ([key, info]) => {
+        try {
+          const parts = await s3.send(
+            new ListPartsCommand({ Bucket: bucket, Key: key, UploadId: info.uploadId }),
+          );
+          info.partCount = parts.Parts?.length ?? 0;
+          info.uploadedBytes = (parts.Parts ?? []).reduce((sum, p) => sum + (p.Size ?? 0), 0);
+        } catch {
+          /* part listing is best-effort */
+        }
+      }),
+    );
+  } catch (e) {
+    console.warn("listPendingRawUploads failed", e instanceof Error ? e.message : e);
+  }
+  return out;
+}
+
 async function handleGet(bucket: string, baseUrl: string | undefined) {
-  const [objects, rawObjects, rows] = await Promise.all([
+  const [objects, rawObjects, rows, pendingUploads] = await Promise.all([
     listAllS3Objects(s3, bucket, BG_AUDIO_PREFIX),
     listAllS3Objects(s3, bucket, BG_AUDIO_RAW_PREFIX),
     listAllSoundRows(),
+    listPendingRawUploads(bucket),
   ]);
   const rawKeySet = s3KeySet(rawObjects);
   const metaBySk = new Map(rows.map((r) => [r.sk, r]));
@@ -222,9 +276,12 @@ async function handleGet(bucket: string, baseUrl: string | undefined) {
     hasRaw?: boolean;
   }) {
     const meta = metaBySk.get(item.key);
-    const hasRaw =
-      item.hasRaw ??
-      rawKeysForPublicMp3(item.key, meta?.packPath).some((k) => rawKeySet.has(k));
+    const candidateRawKeys = rawKeysForPublicMp3(item.key, meta?.packPath);
+    const hasRaw = item.hasRaw ?? candidateRawKeys.some((k) => rawKeySet.has(k));
+    const pendingUpload =
+      candidateRawKeys
+        .map((k) => pendingUploads.get(k))
+        .find((u): u is PendingRawUpload => Boolean(u)) ?? null;
     const folderCategory = folderCatByKey.get(item.key) ?? parseAnyBgAudioKey(item.key)?.folderCategory ?? null;
     const category: BgAudioCategory =
       (meta?.category && normalizeBgAudioCategory(meta.category)) ||
@@ -249,9 +306,14 @@ async function handleGet(bucket: string, baseUrl: string | undefined) {
       originalKey: meta?.originalKey,
       trimStartSec: meta?.trimStartSec ?? 0,
       trimEndSec: meta?.trimEndSec ?? null,
+      fadeInSec: meta?.fadeInSec ?? 0,
+      fadeOutSec: meta?.fadeOutSec ?? 0,
       inCatalog: Boolean(meta),
       ready: item.ready,
       hasRaw,
+      rawKey: candidateRawKeys.find((k) => rawKeySet.has(k)) ?? null,
+      processing: meta?.processing ?? null,
+      pendingUpload,
       importedAt: meta?.importedAt ?? meta?.updatedAt ?? null,
       updatedAt: meta?.updatedAt ?? null,
     };
@@ -285,11 +347,20 @@ async function handleGet(bucket: string, baseUrl: string | undefined) {
   const pending = items.filter((i) => i.status === "pending").length;
   const unused = items.filter((i) => i.status === "unused").length;
   const categorised = items.filter((i) => i.status === "categorised").length;
+  const loopVerified = items.filter((i) => i.status === "loop_verified").length;
 
   return json(200, {
     ...(baseUrl ? { baseUrl } : {}),
     categories: BG_AUDIO_CATEGORIES,
-    counts: { total: items.length, inUse, pending, unused, categorised, inCatalog: rows.length },
+    counts: {
+      total: items.length,
+      inUse,
+      pending,
+      unused,
+      categorised,
+      loopVerified,
+      inCatalog: rows.length,
+    },
     items,
   });
 }
@@ -349,16 +420,20 @@ async function handlePatch(event: APIGatewayProxyEventV2, bucket: string) {
       category,
       typeof body.subcategory === "string" ? body.subcategory : existing?.subcategory,
     ),
+    categoryPinned: requestedCategory ? true : existing?.categoryPinned,
     suggestedCategory: existing?.suggestedCategory,
     suggestedSubcategory: existing?.suggestedSubcategory,
     suggestedName: existing?.suggestedName,
     packPath: existing?.packPath,
     importedAt: existing?.importedAt ?? existing?.updatedAt,
+    processing: existing?.processing,
     originalKey: existing?.originalKey
       ? originalKeyForPublicKey(nextKey)
       : existing?.originalKey,
     trimStartSec: existing?.trimStartSec,
     trimEndSec: existing?.trimEndSec,
+    fadeInSec: existing?.fadeInSec,
+    fadeOutSec: existing?.fadeOutSec,
     updatedAt: new Date().toISOString(),
   };
   await putSoundRow(row);
@@ -380,6 +455,9 @@ async function handlePost(event: APIGatewayProxyEventV2, bucket: string) {
   }
   if (body.analyseTitles && typeof body.analyseTitles === "object") {
     return handleAnalyseTitles(bucket, body.analyseTitles as Record<string, unknown>);
+  }
+  if (body.reprocess && typeof body.reprocess === "object") {
+    return handleReprocess(bucket, body.reprocess as Record<string, unknown>);
   }
   if (body.suggest && typeof body.suggest === "object") {
     return handleSuggest(body.suggest as Record<string, unknown>);
@@ -427,6 +505,49 @@ async function handleAbortMultipart(bucket: string, rec: Record<string, unknown>
     new AbortMultipartUploadCommand({ Bucket: bucket, Key: rawKey, UploadId: uploadId }),
   ).catch(() => undefined);
   return json(200, { ok: true });
+}
+
+/**
+ * Re-runs normalization for an upload whose raw file is in S3 but never produced
+ * playable output. Copying the raw object onto itself re-fires the S3 trigger,
+ * so nothing has to be re-uploaded from the browser.
+ */
+async function handleReprocess(bucket: string, rec: Record<string, unknown>) {
+  const key = typeof rec.key === "string" ? rec.key.trim() : "";
+  if (!key.startsWith(BG_AUDIO_PREFIX)) {
+    return json(400, { error: "reprocess requires a background-audio key" });
+  }
+  const rows = await listAllSoundRows();
+  const existing = rows.find((r) => r.sk === key);
+  const candidates = rawKeysForPublicMp3(key, existing?.packPath);
+
+  let rawKey: string | null = null;
+  for (const candidate of candidates) {
+    try {
+      await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: candidate }));
+      rawKey = candidate;
+      break;
+    } catch {
+      /* try next candidate */
+    }
+  }
+  if (!rawKey) {
+    return json(409, {
+      error: "No raw upload found in S3 for this sound. Re-import the file.",
+    });
+  }
+
+  await updateSoundProcessing(key, { stage: "downloading", detail: "reprocess requested" });
+  await s3.send(
+    new CopyObjectCommand({
+      Bucket: bucket,
+      Key: rawKey,
+      CopySource: `${bucket}/${encodeURIComponent(rawKey).replace(/%2F/g, "/")}`,
+      MetadataDirective: "REPLACE",
+      Metadata: { reprocessedAt: new Date().toISOString() },
+    }),
+  );
+  return json(200, { ok: true, rawKey });
 }
 
 async function handleSuggest(rec: Record<string, unknown>) {
@@ -511,14 +632,17 @@ async function handleAnalyseTitles(bucket: string, rec: Record<string, unknown>)
     const hint = suggestions.get(item.id);
     const row = bySk.get(item.id);
     if (!hint || !row) continue;
-    const relocated = await movePublicSoundToCategory(bucket, item.id, row, hint.category);
+    // A pinned row keeps the category the admin chose at import; the classifier
+    // is only there for the name.
+    const target = row.categoryPinned ? row.category : hint.category;
+    const relocated = await movePublicSoundToCategory(bucket, item.id, row, target);
     if (!relocated) continue;
     await putSoundRow({
       ...row,
       sk: relocated.nextKey,
       name: hint.name || row.name,
       category: relocated.category,
-      subcategory: hint.subcategory,
+      subcategory: row.categoryPinned ? row.subcategory : hint.subcategory,
       suggestedCategory: hint.category,
       suggestedSubcategory: hint.subcategory,
       suggestedName: hint.name,
@@ -532,6 +656,13 @@ async function handleAnalyseTitles(bucket: string, rec: Record<string, unknown>)
 
 async function handleUploads(bucket: string, body: Record<string, unknown>) {
   const files = Array.isArray(body.files) ? body.files : [];
+  // Set from the import panel when the admin already knows where the folder
+  // belongs; it survives the classifier pass that follows the upload.
+  const pinnedCategory =
+    typeof body.category === "string" ? normalizeBgAudioCategory(body.category) : null;
+  const rawSubcategory = typeof body.subcategory === "string" ? body.subcategory.trim() : "";
+  const pinnedSubcategory =
+    pinnedCategory && rawSubcategory ? coerceSoundSubcategory(pinnedCategory, rawSubcategory) : "";
   if (files.length === 0) return json(400, { error: "files is required" });
   if (files.length > 24) return json(400, { error: "At most 24 files per request" });
 
@@ -542,11 +673,19 @@ async function handleUploads(bucket: string, body: Record<string, unknown>) {
   ]);
   const publicKeys = s3KeySet(publicObjects);
   const rawKeys = s3KeySet(rawObjects);
-  /** Leaf-name de-dup only for files that actually landed on S3 (raw or normalized). */
-  const uploadedSpliceIds = new Set<string>();
-  for (const key of [...publicKeys, ...rawKeys]) {
+  /**
+   * Leaf-name de-dup, split by how far the file got: a normalized copy means
+   * there is nothing to do, whereas a raw-only copy just needs reprocessing.
+   */
+  const processedSpliceIds = new Set<string>();
+  const rawKeyBySpliceId = new Map<string, string>();
+  for (const key of publicKeys) {
     const id = spliceFilenameId(key);
-    if (id) uploadedSpliceIds.add(id);
+    if (id) processedSpliceIds.add(id);
+  }
+  for (const key of rawKeys) {
+    const id = spliceFilenameId(key);
+    if (id && !rawKeyBySpliceId.has(id)) rawKeyBySpliceId.set(id, key);
   }
   const catalogById = new Map<string, SoundCatalogRow>();
   for (const row of catalog) {
@@ -566,7 +705,10 @@ async function handleUploads(bucket: string, body: Record<string, unknown>) {
     existing?: SoundCatalogRow;
   }> = [];
   const skipped: string[] = [];
+  const reprocessed: string[] = [];
   const seenRawKeys = new Set<string>();
+  /** Raw files already in S3 that never produced audio: re-run, do not re-upload. */
+  const toReprocess: Array<{ relativePath: string; rawKey: string; mp3Key: string }> = [];
 
   for (const raw of files) {
     if (!raw || typeof raw !== "object") continue;
@@ -578,14 +720,32 @@ async function handleUploads(bucket: string, body: Record<string, unknown>) {
     if (!keys) continue;
     const id = spliceFilenameId(keys.name) || spliceFilenameId(relativePath);
     if (!id) continue;
-    const alreadyUploaded =
-      uploadedSpliceIds.has(id) ||
-      audioPresentOnS3(keys.mp3Key, keys.rel, publicKeys, rawKeys);
-    if (alreadyUploaded || seenRawKeys.has(keys.rawKey)) {
+    if (seenRawKeys.has(keys.rawKey)) {
       skipped.push(relativePath);
       continue;
     }
     seenRawKeys.add(keys.rawKey);
+
+    // Already normalized: nothing to do.
+    const siblingWav = siblingWavKey(keys.mp3Key);
+    if (
+      processedSpliceIds.has(id) ||
+      publicKeys.has(keys.mp3Key) ||
+      (siblingWav && publicKeys.has(siblingWav))
+    ) {
+      skipped.push(relativePath);
+      continue;
+    }
+
+    // Raw is in S3 but produced nothing: reprocess that copy instead of re-uploading.
+    const existingRawKey =
+      rawKeysForPublicMp3(keys.mp3Key, keys.rel).find((k) => rawKeys.has(k)) ??
+      rawKeyBySpliceId.get(id) ??
+      null;
+    if (existingRawKey) {
+      toReprocess.push({ relativePath, rawKey: existingRawKey, mp3Key: keys.mp3Key });
+      continue;
+    }
     const contentType =
       typeof rec.contentType === "string" && rec.contentType.trim()
         ? rec.contentType.trim()
@@ -602,8 +762,39 @@ async function handleUploads(bucket: string, body: Record<string, unknown>) {
     });
   }
 
+  for (const r of toReprocess) {
+    try {
+      await updateSoundProcessing(r.mp3Key, {
+        stage: "downloading",
+        detail: "re-import found the raw file in S3",
+      });
+      await s3.send(
+        new CopyObjectCommand({
+          Bucket: bucket,
+          Key: r.rawKey,
+          CopySource: `${bucket}/${encodeURIComponent(r.rawKey).replace(/%2F/g, "/")}`,
+          MetadataDirective: "REPLACE",
+          Metadata: { reprocessedAt: new Date().toISOString() },
+        }),
+      );
+      reprocessed.push(r.relativePath);
+    } catch (e) {
+      console.warn("re-import reprocess failed", {
+        rawKey: r.rawKey,
+        msg: e instanceof Error ? e.message : String(e),
+      });
+      skipped.push(r.relativePath);
+    }
+  }
+
   if (prepared.length === 0) {
-    return json(200, { uploads: [], skipped, skippedCount: skipped.length });
+    return json(200, {
+      uploads: [],
+      skipped,
+      skippedCount: skipped.length,
+      reprocessed,
+      reprocessedCount: reprocessed.length,
+    });
   }
 
   const now = new Date().toISOString();
@@ -614,8 +805,9 @@ async function handleUploads(bucket: string, body: Record<string, unknown>) {
       pk: "SOUND",
       sk: p.keys.mp3Key,
       name: prev?.name ?? p.keys.name,
-      category: prev?.category ?? "music",
-      subcategory: prev?.subcategory,
+      category: pinnedCategory ?? prev?.category ?? "music",
+      subcategory: pinnedCategory ? pinnedSubcategory || undefined : prev?.subcategory,
+      categoryPinned: pinnedCategory ? true : prev?.categoryPinned,
       suggestedCategory: prev?.suggestedCategory,
       suggestedSubcategory: prev?.suggestedSubcategory,
       packPath: p.keys.rel,
@@ -624,8 +816,15 @@ async function handleUploads(bucket: string, body: Record<string, unknown>) {
       enabled: false,
       notes: prev?.notes,
       originalKey: prev?.originalKey,
+      processing: {
+        stage: "uploading",
+        detail: p.size ? `${Math.round(p.size / 1048576)}MB queued` : undefined,
+        updatedAt: now,
+      },
       trimStartSec: prev?.trimStartSec,
       trimEndSec: prev?.trimEndSec,
+      fadeInSec: prev?.fadeInSec,
+      fadeOutSec: prev?.fadeOutSec,
       importedAt: prev?.importedAt ?? now,
       updatedAt: now,
     });
@@ -678,5 +877,11 @@ async function handleUploads(bucket: string, body: Record<string, unknown>) {
     uploads.push(entry);
   }
 
-  return json(200, { uploads, skipped, skippedCount: skipped.length });
+  return json(200, {
+    uploads,
+    skipped,
+    skippedCount: skipped.length,
+    reprocessed,
+    reprocessedCount: reprocessed.length,
+  });
 }

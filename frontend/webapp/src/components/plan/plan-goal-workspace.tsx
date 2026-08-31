@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { PlanDrvSection } from "@/components/plan/plan-drv-section";
+import { PlanLifeAreaReflectSections } from "@/components/plan/plan-life-area-reflect-sections";
+import {
+  formatLastTouched,
+  PlanLooseNotesScratchpad,
+  PlanSurfacedContextPanel,
+} from "@/components/plan/plan-goal-reflect-stubs";
+import { PlanInsightsPanel } from "@/components/plan/plan-insights-panel";
 import { PlanProjectStageChip } from "@/components/plan/plan-project-stage-chip";
 import { PlanSubtasksPanel } from "@/components/plan/plan-subtasks-panel";
 import { activeResistanceThemesForProject } from "@/lib/plan-resistance-threads";
@@ -18,32 +24,6 @@ import {
   subtasksForProject,
   upsertDream,
 } from "@/lib/plan-ideate-store";
-
-const PROJECT_REFLECT_PREFIX =
-  "You are a warm, non-judgmental thinking partner in a private journal (not a productivity app). The user wrote freely about a dream or hope. Reply in 2–6 short sentences: mirror emotional truth, notice one image or pattern, optionally one gentle question. No bullet lists unless they feel natural. No pep-talk clichés.\n\nTheir words:\n\n";
-
-const PROJECT_OBSTACLE_PREFIX =
-  "You are a gentle thinking partner. The user named what feels in the way—fear, logistics, old stories, fatigue. Respond in 2–6 sentences with validation, nuance, and one reframing or question—still journal-toned, not clinical.\n\nWhat they shared:\n\n";
-
-const PROJECT_VISION_PREFIX =
-  "You are helping them deepen a future moment. They drafted a specific embodied scene. Expand it in present tense: sensory detail (sight, sound, touch, breath), emotional tone, and a sense of time and place. Two short paragraphs max; intimate, not hypey.\n\nTheir draft:\n\n";
-
-const PROJECT_DRV_COPY = {
-  dreamTitle: "The dream",
-  dreamHint: "Say it messy. No one is grading this.",
-  dreamPlaceholder:
-    "What are you quietly hoping for? What would it mean to you?",
-  dreamButton: "Reflect",
-  obstacleTitle: "What's in the way?",
-  obstacleHint: "Resistance, fear, logistics—the real stuff.",
-  obstaclePlaceholder: "Name it without fixing it yet.",
-  obstacleButton: "Explore",
-  visionTitle: "The vision",
-  visionHint: "A single moment when this has already happened.",
-  visionPlaceholder:
-    "Describe a specific moment in the future where this has happened. What do you see, hear, feel?",
-  visionButton: "Build my vision",
-};
 
 type ProjectTab = "reflect" | "steps";
 
@@ -92,7 +72,11 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
   const patch = useCallback((partial: Partial<PlanDream>) => {
     setDream((prev) => {
       if (!prev) return prev;
-      const next = { ...prev, ...partial };
+      const next = {
+        ...prev,
+        ...partial,
+        updatedAt: new Date().toISOString(),
+      };
       persistDream(next);
       return next;
     });
@@ -104,7 +88,9 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
     else params.delete("tab");
     const q = params.toString();
     router.replace(
-      q ? `/ideate/goal/${encodeURIComponent(dreamId)}?${q}` : `/ideate/goal/${encodeURIComponent(dreamId)}`,
+      q
+        ? `/ideate/goal/${encodeURIComponent(dreamId)}?${q}`
+        : `/ideate/goal/${encodeURIComponent(dreamId)}`,
       { scroll: false },
     );
   }
@@ -169,11 +155,12 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
 
   void storeTick;
   const stepCount = subtasksForProject(loadIdeateStore(), dream.id).length;
+  const canGenerate = Boolean(dream.visionText.trim());
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)]">
-      <div className="mx-auto max-w-3xl px-4 pt-3 pb-10 sm:px-6 sm:py-14">
-        <div className="border-b border-border/70 pb-6">
+      <div className="mx-auto max-w-6xl px-4 pt-3 pb-10 sm:px-6 sm:py-14">
+        <div className="pb-0">
           <Link
             href="/ideate/my"
             className="text-xs font-semibold uppercase tracking-wide text-accent-link hover:underline"
@@ -181,19 +168,37 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
             ← Ideate
           </Link>
           <div className="mt-2 flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <h1 className="font-display text-3xl font-medium tracking-tight text-foreground sm:text-4xl">
+            <div className="min-w-0 flex-1">
+              <h1 className="font-display text-3xl font-medium tracking-tight text-[#1E2530] dark:text-foreground sm:text-4xl">
                 {dream.title.trim() || "Untitled"}
               </h1>
               <p className="mt-2 text-sm text-muted">
                 A quiet place to think—with a little help when you want it.
               </p>
             </div>
-            <PlanProjectStageChip state={dream.state} onChange={setState} />
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              <button
+                type="button"
+                disabled={!canGenerate}
+                onClick={() => generateMeditation()}
+                title={
+                  canGenerate
+                    ? undefined
+                    : "Add a few lines to your vision first"
+                }
+                className="pro-header-cta cursor-pointer rounded-xl px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Generate meditation
+              </button>
+              <PlanProjectStageChip state={dream.state} onChange={setState} />
+              <p className="text-xs text-muted">
+                {formatLastTouched(dream.updatedAt, dream.createdAt)}
+              </p>
+            </div>
           </div>
 
           <nav
-            className="mt-6 flex gap-6 border-b border-border/60"
+            className="mt-6 flex gap-6 border-b border-border/70"
             role="tablist"
             aria-label="Project views"
           >
@@ -219,7 +224,9 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
                 >
                   {item.label}
                   {"count" in item && item.count > 0 ? (
-                    <span className="ml-1 font-normal text-muted">· {item.count}</span>
+                    <span className="ml-1 font-normal text-muted">
+                      · {item.count}
+                    </span>
                   ) : null}
                 </button>
               );
@@ -227,56 +234,42 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
           </nav>
         </div>
 
-        {tab === "reflect" ? (
-          <PlanDrvSection
-            copy={PROJECT_DRV_COPY}
-            values={{
-              dreamText: dream.dreamText,
-              obstacleText: dream.obstacleText,
-              visionText: dream.visionText,
-              dreamReflectReply: dream.dreamReflectReply,
-              obstacleExploreReply: dream.obstacleExploreReply,
-              visionBuildReply: dream.visionBuildReply,
-            }}
-            onPatch={(p) => patch(p)}
-            reflectPrefix={PROJECT_REFLECT_PREFIX}
-            obstaclePrefix={PROJECT_OBSTACLE_PREFIX}
-            visionPrefix={PROJECT_VISION_PREFIX}
-            afterVision={
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-10">
+          <div className="min-w-0">
+            {tab === "reflect" ? (
               <>
-                {dream.visionBuildReply ? (
-                  <button
-                    type="button"
-                    onClick={() => setTab("steps")}
-                    className="mt-4 cursor-pointer rounded-full border border-border bg-card px-4 py-2 text-sm font-medium transition-colors hover:border-accent/40 hover:bg-accent-soft/20"
-                  >
-                    Break this into steps
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  disabled={!dream.visionText.trim()}
-                  onClick={() => generateMeditation()}
-                  className="mt-8 w-full cursor-pointer rounded-full accent-fill-gradient px-5 py-3.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Generate visualisation meditation
-                </button>
-                {!dream.visionText.trim() ? (
-                  <p className="mt-2 text-center text-xs text-muted">
-                    Add a few lines to your vision first.
-                  </p>
-                ) : null}
+                <PlanLifeAreaReflectSections
+                  dreamText={dream.dreamText}
+                  obstacleText={dream.obstacleText}
+                  visionText={dream.visionText}
+                  dreamEntries={dream.dreamEntries ?? []}
+                  obstacleEntries={dream.obstacleEntries ?? []}
+                  visionEntries={dream.visionEntries ?? []}
+                  onPatch={(p) => patch(p)}
+                />
+
+                {/* PROTOTYPE — mock journal + meditation history in one panel */}
+                <PlanSurfacedContextPanel />
+
+                <PlanLooseNotesScratchpad
+                  value={dream.looseNotes ?? ""}
+                  onChange={(looseNotes) => patch({ looseNotes })}
+                />
               </>
-            }
-          />
-        ) : (
-          <PlanSubtasksPanel
-            project={dream}
-            onRefresh={load}
-            storeTick={storeTick}
-            embedded
-          />
-        )}
+            ) : (
+              <PlanSubtasksPanel
+                project={dream}
+                onRefresh={load}
+                storeTick={storeTick}
+                embedded
+              />
+            )}
+          </div>
+
+          <div className="lg:sticky lg:top-20 lg:self-start">
+            <PlanInsightsPanel key={dream.id} dream={dream} />
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -86,8 +86,15 @@ export function newId(prefix: string): string {
 }
 
 function normalizeDream(d: PlanDream): PlanDream {
+  const createdAt = d.createdAt || safeIso();
   return {
     ...d,
+    createdAt,
+    updatedAt: typeof d.updatedAt === "string" ? d.updatedAt : createdAt,
+    dreamEntries: Array.isArray(d.dreamEntries) ? d.dreamEntries : [],
+    obstacleEntries: Array.isArray(d.obstacleEntries) ? d.obstacleEntries : [],
+    visionEntries: Array.isArray(d.visionEntries) ? d.visionEntries : [],
+    looseNotes: typeof d.looseNotes === "string" ? d.looseNotes : "",
     completedAt:
       typeof (d as PlanDream & { completedAt?: unknown }).completedAt === "string"
         ? (d as PlanDream & { completedAt: string }).completedAt

@@ -1,4 +1,14 @@
-export type FishSpeaker = { name: string; modelId: string; description?: string };
+export type FishSpeaker = {
+  name: string;
+  modelId: string;
+  description?: string;
+  /** Meditation types this voice suits, rendered as tag pills. Free text. */
+  goodFor?: string[];
+  /** Omitted when not specified. */
+  gender?: VoiceGender;
+};
+
+export type VoiceGender = "male" | "female";
 
 /**
  * Single source of truth for mapping Fish Audio voice model ids → speaker names.

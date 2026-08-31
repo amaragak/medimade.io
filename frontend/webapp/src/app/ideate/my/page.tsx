@@ -3,7 +3,7 @@ import { PlanHomeClient } from "@/components/plan/plan-home-client";
 export const metadata = {
   title: "My Ideas",
   description:
-    "Hold dreams and goals gently—explore what is underneath, shape a vision, and turn it into a visualisation meditation.",
+    "A quieter Ideate home — vision board, reflection questions, and the life areas you’re tending.",
 };
 
 export default function MyIdeasPage() {

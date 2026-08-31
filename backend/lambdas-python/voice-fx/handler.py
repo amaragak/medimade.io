@@ -19,6 +19,7 @@ import io
 import json
 import os
 import tempfile
+import time
 from typing import Any
 
 import numpy as np
@@ -28,13 +29,27 @@ import boto3
 
 TARGET_LUFS_I = -16.0
 
+# Set once per container, so the first request can report the cold start it paid
+# for (importing pedalboard's native extension) separately from its own work.
+_MODULE_LOADED_AT = time.monotonic()
+_CONTAINER_REQUESTS = 0
 
-def _normalize_integrated_lufs(audio_cf: np.ndarray, sr: int) -> np.ndarray:
+
+def _ms_since(t0: float) -> int:
+    return int(round((time.monotonic() - t0) * 1000))
+
+
+def _normalize_integrated_lufs(
+    audio_cf: np.ndarray,
+    sr: int,
+    timings: dict[str, int] | None = None,
+) -> np.ndarray:
     """
     Normalize integrated loudness after the FX chain.
 
     Implemented via pyloudnorm (BS.1770 / K-weighting).
     """
+    import_started = time.monotonic()
     try:
         import pyloudnorm as pyln  # type: ignore
     except Exception as e:
@@ -43,6 +58,9 @@ def _normalize_integrated_lufs(audio_cf: np.ndarray, sr: int) -> np.ndarray:
             "Rebuild/redeploy the layer after updating docker/pedalboard-layer/requirements.txt. "
             f"Import error: {e!s}"
         ) from e
+    # Only the first call in a container pays this; later ones hit sys.modules.
+    if timings is not None:
+        timings["pyloudnormImportMs"] = _ms_since(import_started)
 
     if audio_cf.size == 0:
         return audio_cf.astype(np.float32)
@@ -218,6 +236,16 @@ def _decode_audio_bytes(raw: bytes, input_format: str) -> tuple[np.ndarray, int]
 
 
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
+    global _CONTAINER_REQUESTS
+    invoke_started = time.monotonic()
+    # Split out so a slow call can be attributed: container/plugin setup, moving
+    # bytes, or the reverb itself.
+    timings: dict[str, int] = {}
+    _CONTAINER_REQUESTS += 1
+    cold_start = _CONTAINER_REQUESTS == 1
+    if cold_start:
+        timings["moduleImportToFirstInvokeMs"] = _ms_since(_MODULE_LOADED_AT)
+
     try:
         raw_body = event.get("body") or "{}"
         if event.get("isBase64Encoded"):
@@ -261,10 +289,14 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
 
     raw_audio: bytes
     if use_s3:
+        s3_client_started = time.monotonic()
         s3 = boto3.client("s3")
+        timings["s3ClientMs"] = _ms_since(s3_client_started)
         try:
+            get_started = time.monotonic()
             obj = s3.get_object(Bucket=bucket, Key=s3_key_in.strip())
             raw_audio = obj["Body"].read()
+            timings["s3GetMs"] = _ms_since(get_started)
         except Exception as e:
             return _json_response(500, {"error": f"Could not read S3 input {s3_key_in!r}: {e!s}"})
     else:
@@ -274,7 +306,9 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             return _json_response(400, {"error": f"Invalid base64 audio: {e!s}"})
 
     try:
+        decode_started = time.monotonic()
         audio, sr = _decode_audio_bytes(raw_audio, ifmt)
+        timings["decodeMs"] = _ms_since(decode_started)
     except Exception as e:
         return _json_response(400, {"error": str(e)})
 
@@ -293,26 +327,36 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             if pad_n > 0:
                 pad = np.zeros((audio_cf.shape[0], pad_n), dtype=np.float32)
                 audio_cf = np.concatenate([audio_cf, pad], axis=1)
+        board_started = time.monotonic()
         board = _build_board(preset)
+        timings["boardInitMs"] = _ms_since(board_started)
+        process_started = time.monotonic()
         processed = board(audio_cf, sr)
+        timings["boardProcessMs"] = _ms_since(process_started)
+        timings["audioSeconds"] = int(round(audio_cf.shape[1] / max(1, sr)))
         processed = np.asarray(processed, dtype=np.float32)
         if processed.ndim == 1:
             processed = np.array([processed])
-        processed = _normalize_integrated_lufs(processed, sr)
+        lufs_started = time.monotonic()
+        processed = _normalize_integrated_lufs(processed, sr, timings)
+        timings["lufsMs"] = _ms_since(lufs_started)
     except Exception as e:
         return _json_response(500, {"error": f"Processing failed: {e!s}"})
 
     try:
+        encode_started = time.monotonic()
         out = io.BytesIO()
         num_channels = int(processed.shape[0])
         with AudioFile(out, "w", sr, num_channels, format="wav") as f:
             f.write(processed)
         out_wav = out.getvalue()
+        timings["encodeMs"] = _ms_since(encode_started)
     except Exception as e:
         return _json_response(500, {"error": f"Encode failed: {e!s}"})
 
     if use_s3:
         s3 = boto3.client("s3")
+        put_started = time.monotonic()
         try:
             s3.put_object(
                 Bucket=bucket,
@@ -323,6 +367,9 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             )
         except Exception as e:
             return _json_response(500, {"error": f"Could not write S3 output {s3_key_out!r}: {e!s}"})
+        timings["s3PutMs"] = _ms_since(put_started)
+        timings["handlerMs"] = _ms_since(invoke_started)
+        print(json.dumps({"voiceFxTimings": timings, "coldStart": cold_start}))
         return _json_response(
             200,
             {
@@ -333,9 +380,13 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
                 "inputFormat": ifmt,
                 "bucket": bucket,
                 "s3KeyOut": s3_key_out.strip(),
+                "coldStart": cold_start,
+                "timingsMs": timings,
             },
         )
 
+    timings["handlerMs"] = _ms_since(invoke_started)
+    print(json.dumps({"voiceFxTimings": timings, "coldStart": cold_start}))
     return _json_response(
         200,
         {
@@ -344,6 +395,8 @@ def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
             "channels": num_channels,
             "preset": preset.strip().lower() if isinstance(preset, str) else "neutral",
             "inputFormat": ifmt,
+            "coldStart": cold_start,
+            "timingsMs": timings,
             "audioBase64": base64.b64encode(out_wav).decode("ascii"),
         },
     )

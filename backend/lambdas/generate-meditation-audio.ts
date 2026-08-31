@@ -1,7 +1,13 @@
 import type { APIGatewayProxyStructuredResultV2 } from "aws-lambda";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
+import { siblingOpusKey } from "../lib/background-audio-keys";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
@@ -24,7 +30,8 @@ import {
   GLOBAL_MEDITATION_USER_ID,
   meditationUserPk,
 } from "../lib/meditation-user-pk";
-import { parseAnthropicMessageUsage } from "../lib/anthropic-pricing";
+import { coerceClaudeModel, parseAnthropicMessageUsage } from "../lib/anthropic-pricing";
+import { coerceMeditationTargetMinutes } from "../lib/meditation-target-minutes";
 import { estimateCoachChatTokensFromTranscript } from "../lib/claude-coach-chat-estimate";
 import { orpheusTtsWav } from "../lib/orpheus-tts-client";
 import {
@@ -49,7 +56,6 @@ import { randomUUID } from "crypto";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const FISH_TTS_URL = "https://api.fish.audio/v1/tts";
-const MODEL = "claude-haiku-4-5";
 const FISH_TTS_MODEL =
   (process.env.FISH_TTS_MODEL || "s2.1-pro-free").trim() || "s2.1-pro-free";
 
@@ -71,6 +77,14 @@ export type GenerationSectionTiming = {
   i: number;
   ttsMs: number;
   fxMs?: number;
+  /** Worker-side ffmpeg inside fxMs: loudnorm + the two format conversions. */
+  fxFfmpegMs?: number;
+  /** S3 put + VoiceFx invoke + S3 get, i.e. fxMs minus the local ffmpeg work. */
+  fxInvokeMs?: number;
+  /** Pedalboard's own processing, as reported by the FX Lambda. */
+  fxBoardMs?: number;
+  /** True when that section's FX Lambda had to start a fresh container. */
+  fxColdStart?: boolean;
   utf8Bytes?: number;
   pauseSec?: number;
 };
@@ -79,6 +93,16 @@ export type GenerationPhaseTimings = {
   scriptMs?: number;
   metadataMs?: number;
   concatMs?: number;
+  /** Single FX pass over the assembled track: loudnorm + Pedalboard. */
+  fxMs?: number;
+  /** Worker-side ffmpeg inside fxMs: loudnorm + the two format conversions. */
+  fxFfmpegMs?: number;
+  /** S3 put + VoiceFx invoke + S3 get, i.e. fxMs minus the local ffmpeg work. */
+  fxInvokeMs?: number;
+  /** Pedalboard's own processing, as reported by the FX Lambda. */
+  fxBoardMs?: number;
+  /** True when the FX Lambda had to start a fresh container. */
+  fxColdStart?: boolean;
   loudnormMs?: number;
   uploadMs?: number;
 };
@@ -105,9 +129,19 @@ async function voiceFxWavViaS3(params: {
   preset: string;
   bucket: string;
   jobId: string;
-  /** Mixer reverb pad; omit for preset default (2s). Use 0 on non-final sections. */
+  /** Mixer reverb pad; omit for the preset default (2s). */
   tailPadSeconds?: number;
-}): Promise<Buffer> {
+}): Promise<{
+  wav: Buffer;
+  /** Split of the round trip, plus whatever the FX Lambda reported about itself. */
+  timings: {
+    s3PutMs: number;
+    invokeMs: number;
+    s3GetMs: number;
+    lambda?: Record<string, number>;
+    coldStart?: boolean;
+  };
+}> {
   // Worker fans out one VoiceFx Lambda per section (IAM invoke). HTTP remains for
   // short preview/sample scripts that only have MEDIMADE_API_URL.
   const functionName = process.env.VOICE_FX_FUNCTION_NAME?.trim();
@@ -132,6 +166,7 @@ async function voiceFxWavViaS3(params: {
     requestBody.tailPadSeconds = params.tailPadSeconds;
   }
 
+  const putStarted = Date.now();
   await s3.send(
     new PutObjectCommand({
       Bucket: params.bucket,
@@ -141,9 +176,11 @@ async function voiceFxWavViaS3(params: {
       CacheControl: "no-store",
     }),
   );
+  const s3PutMs = elapsedMs(putStarted);
 
   let statusCode = 0;
   let responseBody = "";
+  const invokeStarted = Date.now();
 
   if (functionName) {
     // RequestResponse: each call is its own concurrent VoiceFx execution; the
@@ -188,10 +225,17 @@ async function voiceFxWavViaS3(params: {
     statusCode = res.status;
     responseBody = await res.text();
   }
+  const invokeMs = elapsedMs(invokeStarted);
 
-  let data: { s3KeyOut?: string; error?: string } | null = null;
+  type VoiceFxResponse = {
+    s3KeyOut?: string;
+    error?: string;
+    timingsMs?: Record<string, number>;
+    coldStart?: boolean;
+  };
+  let data: VoiceFxResponse | null = null;
   try {
-    data = JSON.parse(responseBody) as { s3KeyOut?: string; error?: string };
+    data = JSON.parse(responseBody) as VoiceFxResponse;
   } catch {
     data = null;
   }
@@ -200,10 +244,21 @@ async function voiceFxWavViaS3(params: {
     throw new Error(`voice-fx failed (${statusCode}): ${detail}`);
   }
 
+  const getStarted = Date.now();
   const fxObj = await s3.send(
     new GetObjectCommand({ Bucket: params.bucket, Key: outKey }),
   );
-  return Buffer.from(await fxObj.Body!.transformToByteArray());
+  const wav = Buffer.from(await fxObj.Body!.transformToByteArray());
+  return {
+    wav,
+    timings: {
+      s3PutMs,
+      invokeMs,
+      s3GetMs: elapsedMs(getStarted),
+      lambda: data?.timingsMs,
+      coldStart: data?.coldStart,
+    },
+  };
 }
 
 async function mp3ToWavBuffer(mp3Buf: Buffer): Promise<Buffer> {
@@ -242,12 +297,23 @@ async function loudnormThenVoiceFxMp3(params: {
   bucket: string;
   jobId: string;
   tailPadSeconds?: number;
-}): Promise<{ mp3: Buffer; ms: number }> {
+}): Promise<{
+  mp3: Buffer;
+  ms: number;
+  split: Pick<
+    GenerationSectionTiming,
+    "fxFfmpegMs" | "fxInvokeMs" | "fxBoardMs" | "fxColdStart"
+  >;
+}> {
   const started = Date.now();
+  const loudStarted = Date.now();
   const loud = await loudnormMp3Buffer(params.mp3);
+  const loudnormMs = elapsedMs(loudStarted);
   // Decode with ffmpeg first — Pedalboard MP3 decode was clipping phrases short.
+  const toWavStarted = Date.now();
   const wavIn = await mp3ToWavBuffer(loud);
-  const fxWav = await voiceFxWavViaS3({
+  const mp3ToWavMs = elapsedMs(toWavStarted);
+  const fx = await voiceFxWavViaS3({
     audio: wavIn,
     inputFormat: "wav",
     preset: params.preset,
@@ -255,8 +321,27 @@ async function loudnormThenVoiceFxMp3(params: {
     jobId: params.jobId,
     tailPadSeconds: params.tailPadSeconds,
   });
-  const mp3 = await wavToMp3Buffer(fxWav);
-  return { mp3, ms: elapsedMs(started) };
+  const toMp3Started = Date.now();
+  const mp3 = await wavToMp3Buffer(fx.wav);
+  const wavToMp3Ms = elapsedMs(toMp3Started);
+  const split = {
+    fxFfmpegMs: loudnormMs + mp3ToWavMs + wavToMp3Ms,
+    fxInvokeMs:
+      fx.timings.s3PutMs + fx.timings.invokeMs + fx.timings.s3GetMs,
+    ...(fx.timings.lambda?.boardProcessMs != null
+      ? { fxBoardMs: fx.timings.lambda.boardProcessMs }
+      : {}),
+    ...(fx.timings.coldStart != null ? { fxColdStart: fx.timings.coldStart } : {}),
+  };
+  console.log("voice-fx timing", {
+    jobId: params.jobId,
+    totalMs: elapsedMs(started),
+    workerLoudnormMs: loudnormMs,
+    workerMp3ToWavMs: mp3ToWavMs,
+    workerWavToMp3Ms: wavToMp3Ms,
+    ...fx.timings,
+  });
+  return { mp3, ms: elapsedMs(started), split };
 }
 
 async function wavToMp3Buffer(wavBuf: Buffer): Promise<Buffer> {
@@ -340,14 +425,31 @@ async function mixSpeechWithBackgrounds(params: {
     fs.writeFileSync(speechPath, params.speechBuf);
 
     for (let i = 0; i < layers.length; i++) {
+      // Beds are looped by `aloop` below, so prefer the gapless Opus sibling —
+      // MP3 carries encoder padding that would land on every loop seam.
+      const requested = layers[i].key.trim();
+      const opus = siblingOpusKey(requested);
+      let sourceKey = requested;
+      let ext = "mp3";
+      if (opus) {
+        try {
+          await s3.send(
+            new HeadObjectCommand({ Bucket: params.bucket, Key: opus }),
+          );
+          sourceKey = opus;
+          ext = "opus";
+        } catch {
+          /* not backfilled yet — fall back to the MP3 */
+        }
+      }
       const bgObj = await s3.send(
         new GetObjectCommand({
           Bucket: params.bucket,
-          Key: layers[i].key.trim(),
+          Key: sourceKey,
         }),
       );
       const bgBuf = Buffer.from(await bgObj.Body!.transformToByteArray());
-      const p = `/tmp/bg-${id}-${i}.mp3`;
+      const p = `/tmp/bg-${id}-${i}.${ext}`;
       fs.writeFileSync(p, bgBuf);
       bgPaths.push(p);
     }
@@ -489,6 +591,7 @@ type ChatTurn = { role: Role; content: string };
 
 async function generateScriptFromClaude(params: {
   apiKey: string;
+  model: string;
   meditationStyle?: string;
   transcript: string;
   speechSpeed: number;
@@ -561,7 +664,7 @@ async function generateScriptFromClaude(params: {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: params.model,
       max_tokens: 8192,
       system,
       messages: [{ role: "user", content: userContent } satisfies ChatTurn],
@@ -643,6 +746,7 @@ function parseMetadataJsonFromAnthropicText(responseText: string): {
 
 async function callAnthropicMetadataJson(params: {
   apiKey: string;
+  model: string;
   system: string;
   user: string;
 }): Promise<{
@@ -657,7 +761,7 @@ async function callAnthropicMetadataJson(params: {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: params.model,
       max_tokens: 512,
       system: params.system,
       messages: [{ role: "user", content: params.user } satisfies ChatTurn],
@@ -678,6 +782,7 @@ async function callAnthropicMetadataJson(params: {
 
 async function deriveLibraryMetadataFromClaude(params: {
   apiKey: string;
+  model: string;
   meditationStyle: string;
   transcript: string;
   scriptPreview: string;
@@ -731,6 +836,7 @@ async function deriveLibraryMetadataFromClaude(params: {
 
   const { responseText, usage } = await callAnthropicMetadataJson({
     apiKey: params.apiKey,
+    model: params.model,
     system,
     user: userMain,
   });
@@ -928,34 +1034,47 @@ async function synthesizeScriptWithPauses(params: {
   speed: number;
   fishTtsModel?: string;
   pauseBands?: Awaited<ReturnType<typeof loadPauseBandSeconds>>;
-  /** When set, loudnorm + Pedalboard run per speech section (async via API GW). */
+  /** When set, loudnorm + Pedalboard run once over the assembled track. */
   voiceFx?: { preset: string; bucket: string; jobId: string };
 }): Promise<{
   audio: Buffer;
   utf8Bytes: number;
   voiceFxApplied: boolean;
-  timings: Pick<GenerationTimings, "sections"> & { phases: { concatMs?: number } };
+  timings: Pick<GenerationTimings, "sections"> & {
+    phases: Pick<
+      GenerationPhaseTimings,
+      "concatMs" | "fxMs" | "fxFfmpegMs" | "fxInvokeMs" | "fxBoardMs" | "fxColdStart"
+    >;
+  };
 }> {
   const segments = parseScriptIntoSegments(params.script, params.pauseBands);
   const fishOpts = { fishTtsModel: params.fishTtsModel };
   const voiceFx = params.voiceFx;
   const sectionTimings: GenerationSectionTiming[] = [];
+  const fxPhase: Pick<
+    GenerationPhaseTimings,
+    "fxMs" | "fxFfmpegMs" | "fxInvokeMs" | "fxBoardMs" | "fxColdStart"
+  > = {};
 
-  async function finishSpeechMp3(
-    mp3: Buffer,
-    partId: string,
-    isLast: boolean,
-  ): Promise<{ mp3: Buffer; fxMs?: number }> {
-    if (!voiceFx) return { mp3 };
+  /**
+   * One pass over the finished track. Per-section FX used to fan out a Lambda
+   * per segment, which throttled on the account concurrency limit, starved the
+   * worker's ffmpeg on CPU, and clipped every reverb tail at a word boundary.
+   * Pauses are pure silence and the beds are mixed live in the player, so the
+   * assembled track holds exactly the same audio — the tails just get somewhere
+   * to decay into.
+   */
+  async function applyVoiceFx(mp3: Buffer): Promise<Buffer> {
+    if (!voiceFx) return mp3;
     const fx = await loudnormThenVoiceFxMp3({
       mp3,
       preset: voiceFx.preset,
       bucket: voiceFx.bucket,
-      jobId: `${voiceFx.jobId}-${partId}`,
-      // Only the final speech section keeps the mixer reverb tail pad.
-      tailPadSeconds: isLast ? undefined : 0,
+      jobId: `${voiceFx.jobId}-full`,
     });
-    return { mp3: fx.mp3, fxMs: fx.ms };
+    fxPhase.fxMs = fx.ms;
+    Object.assign(fxPhase, fx.split);
+    return fx.mp3;
   }
 
   if (segments.length === 0) {
@@ -970,22 +1089,17 @@ async function synthesizeScriptWithPauses(params: {
       speed: params.speed,
       ...fishOpts,
     });
-    const timing: GenerationSectionTiming = {
+    sectionTimings.push({
       i: 0,
       ttsMs: elapsedMs(ttsStarted),
       utf8Bytes: Buffer.byteLength(clean, "utf8"),
-    };
-    if (voiceFx) {
-      const fx = await finishSpeechMp3(audio, "all", true);
-      audio = fx.mp3;
-      if (fx.fxMs != null) timing.fxMs = fx.fxMs;
-    }
-    sectionTimings.push(timing);
+    });
+    audio = await applyVoiceFx(audio);
     return {
       audio,
       utf8Bytes: Buffer.byteLength(clean, "utf8"),
       voiceFxApplied: Boolean(voiceFx),
-      timings: { sections: sectionTimings, phases: {} },
+      timings: { sections: sectionTimings, phases: { ...fxPhase } },
     };
   }
 
@@ -1054,54 +1168,27 @@ async function synthesizeScriptWithPauses(params: {
       speed: params.speed,
       ...fishOpts,
     });
-    const timing: GenerationSectionTiming = {
+    sectionTimings.push({
       i: 0,
       ttsMs: elapsedMs(ttsStarted),
       utf8Bytes: Buffer.byteLength(clean, "utf8"),
-    };
-    if (voiceFx) {
-      const fx = await finishSpeechMp3(audio, "all", true);
-      audio = fx.mp3;
-      if (fx.fxMs != null) timing.fxMs = fx.fxMs;
-    }
-    sectionTimings.push(timing);
+    });
+    audio = await applyVoiceFx(audio);
     return {
       audio,
       utf8Bytes: Buffer.byteLength(clean, "utf8"),
       voiceFxApplied: Boolean(voiceFx),
-      timings: { sections: sectionTimings, phases: {} },
+      timings: { sections: sectionTimings, phases: { ...fxPhase } },
     };
   }
 
-  if (voiceFx && speechPaths.length > 0) {
-    console.log("voice-fx fan-out: one Lambda per speech section", {
-      sections: speechPaths.length,
-      preset: voiceFx.preset,
-    });
-    // Kick off every section at once — each invoke is a separate VoiceFx
-    // concurrent execution; master waits for the full set before concat.
-    await Promise.all(
-      speechPaths.map(async (segPath, idx) => {
-        const raw = fs.readFileSync(segPath);
-        const fx = await finishSpeechMp3(
-          raw,
-          `s${idx}`,
-          idx === speechPaths.length - 1,
-        );
-        fs.writeFileSync(segPath, fx.mp3);
-        const row = sectionTimings[idx];
-        if (row && fx.fxMs != null) row.fxMs = fx.fxMs;
-      }),
-    );
-  }
-
   if (files.length === 1) {
-    const only = fs.readFileSync(files[0]);
+    const only = await applyVoiceFx(fs.readFileSync(files[0]));
     return {
       audio: only,
       utf8Bytes: totalBytes,
       voiceFxApplied: Boolean(voiceFx),
-      timings: { sections: sectionTimings, phases: {} },
+      timings: { sections: sectionTimings, phases: { ...fxPhase } },
     };
   }
 
@@ -1113,51 +1200,30 @@ async function synthesizeScriptWithPauses(params: {
   const outPath = `/tmp/concat-out-${id}.mp3`;
 
   const concatStarted = Date.now();
-  // After per-section FX, streams are re-encoded — re-encode concat too so
-  // timestamps/codecs stay aligned with pause pads (copy can clip oddly).
-  await execFileAsync(
-    "ffmpeg",
-    voiceFx
-      ? [
-          "-y",
-          "-f",
-          "concat",
-          "-safe",
-          "0",
-          "-i",
-          listPath,
-          "-c:a",
-          "libmp3lame",
-          "-q:a",
-          "2",
-          "-ar",
-          "44100",
-          "-ac",
-          "1",
-          outPath,
-        ]
-      : [
-          "-y",
-          "-f",
-          "concat",
-          "-safe",
-          "0",
-          "-i",
-          listPath,
-          "-c",
-          "copy",
-          outPath,
-        ],
-  );
+  // Every part comes straight from TTS or anullsrc at the same codec/rate now
+  // that FX runs after this, so a stream copy is safe (and much cheaper).
+  await execFileAsync("ffmpeg", [
+    "-y",
+    "-f",
+    "concat",
+    "-safe",
+    "0",
+    "-i",
+    listPath,
+    "-c",
+    "copy",
+    outPath,
+  ]);
+  const concatMs = elapsedMs(concatStarted);
 
-  const outBuf = fs.readFileSync(outPath);
+  const outBuf = await applyVoiceFx(fs.readFileSync(outPath));
   return {
     audio: outBuf,
     utf8Bytes: totalBytes,
     voiceFxApplied: Boolean(voiceFx),
     timings: {
       sections: sectionTimings,
-      phases: { concatMs: elapsedMs(concatStarted) },
+      phases: { concatMs, ...fxPhase },
     },
   };
 }
@@ -1242,6 +1308,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     meditationStyle?: string;
     journalMode?: boolean;
     meditationTargetMinutes?: number;
+    claudeModel?: string;
     scriptText?: string;
     referenceId?: string;
     ttsProvider?: TtsProvider;
@@ -1292,6 +1359,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     meditationStyle?: string;
     journalMode?: boolean;
     meditationTargetMinutes?: number;
+    claudeModel?: string;
     scriptText?: string;
     reference_id?: string;
     ttsProvider?: TtsProvider;
@@ -1312,6 +1380,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     meditationStyle: jobItem.meditationStyle,
     journalMode: jobItem.journalMode,
     meditationTargetMinutes: jobItem.meditationTargetMinutes,
+    claudeModel: jobItem.claudeModel,
     scriptText: jobItem.scriptText,
     reference_id: jobItem.referenceId,
     ttsProvider: jobItem.ttsProvider,
@@ -1350,11 +1419,11 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   const meditationStyle =
     typeof body.meditationStyle === "string" ? body.meditationStyle : "";
   const journalModeFromJob = body.journalMode === true;
-  const rawTargetMin = body.meditationTargetMinutes;
-  const targetMinutes =
-    rawTargetMin === 2 || rawTargetMin === 5 || rawTargetMin === 10
-      ? rawTargetMin
-      : 5;
+  /** Dev A/B from the create flow; unsupported ids fall back to Haiku. */
+  const claudeModel = coerceClaudeModel(body.claudeModel);
+  const targetMinutes = coerceMeditationTargetMinutes(
+    body.meditationTargetMinutes,
+  );
   const styleTrimmed = meditationStyle.trim();
   const isJournalCatalog =
     journalModeFromJob ||
@@ -1455,6 +1524,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       const claudeKey = await getClaudeApiKey();
       const gen = await generateScriptFromClaude({
         apiKey: claudeKey,
+        model: claudeModel,
         meditationStyle,
         transcript,
         speechSpeed,
@@ -1517,6 +1587,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     const claudeKey = await getClaudeApiKey();
     const derived = await deriveLibraryMetadataFromClaude({
       apiKey: claudeKey,
+      model: claudeModel,
       meditationStyle,
       transcript,
       scriptPreview: scriptTextUsed,
@@ -1550,6 +1621,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     const ck = await getClaudeApiKey();
     const est = await estimateCoachChatTokensFromTranscript({
       apiKey: ck,
+      model: claudeModel,
       meditationStyle,
       transcript,
       journalMode: journalModeFromJob,
@@ -1646,9 +1718,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
         : {}),
     });
     generationTimings.sections = synthTimings.sections;
-    if (synthTimings.phases.concatMs != null) {
-      generationTimings.phases.concatMs = synthTimings.phases.concatMs;
-    }
+    Object.assign(generationTimings.phases, synthTimings.phases);
     mp3Buf = audio;
     scriptUtf8Bytes = utf8Bytes;
     console.log("TTS success", {
@@ -1796,7 +1866,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
                 claudeHaiku45ChatEstOutputTokens: claudeChatEstOutputTokens,
               }
             : {}),
-          claudeModel: MODEL,
+          claudeModel,
           speechSpeed,
           referenceId,
           meditationStyle: isJournalCatalog ? null : styleTrimmed || null,

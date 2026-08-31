@@ -109,6 +109,16 @@ async function handlePatch(event: APIGatewayProxyEventV2) {
       hidden: s.hidden === true,
       sort: typeof s.sort === "number" ? s.sort : undefined,
       description: typeof s.description === "string" ? s.description : undefined,
+      goodFor:
+        Array.isArray(s.goodFor) || typeof s.goodFor === "string"
+          ? (s.goodFor as string[] | string)
+          : undefined,
+      gender:
+        s.gender === "male" || s.gender === "female"
+          ? s.gender
+          : s.gender === null || s.gender === ""
+            ? null
+            : undefined,
     });
   }
 
@@ -154,6 +164,8 @@ async function handlePost(event: APIGatewayProxyEventV2) {
         hidden: existing.hidden,
         sort: existing.sort,
         description: existing.description,
+        goodFor: existing.goodFor,
+        gender: existing.gender,
       });
     }
     const domain = (process.env.MEDIA_CLOUDFRONT_DOMAIN || "").trim();

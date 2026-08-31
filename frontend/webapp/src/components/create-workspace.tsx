@@ -4,9 +4,15 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
+import { IconChevronDown, IconClock } from "@tabler/icons-react";
 import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
 import { MixerChannel, MixerPresetChannel, MixerVoiceChannel } from "@/components/mixer-channel";
+import { SoundscapePicker } from "@/components/soundscape-picker";
 import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
+import {
+  CLAUDE_HAIKU_45_MODEL_ID,
+  CLAUDE_SONNET_45_MODEL_ID,
+} from "@/lib/claude-pricing";
 import {
   CREATE_MEDITATE_ROOT,
   createMeditationHref,
@@ -34,6 +40,8 @@ import {
   type MeditationDraftStateV1,
   type MeditationTargetMinutes,
   MEDITATION_DRAFT_STATE_VERSION,
+  MEDITATION_TARGET_MINUTES,
+  coerceMeditationTargetMinutes,
   streamMedimadeChat,
   streamMeditationScript,
   createMeditationAudioJob,
@@ -46,6 +54,7 @@ import {
   listFishSpeakers,
   listOrpheusSpeakers,
   saveMeditationDraft,
+  backgroundAudioPlaybackKey,
   backgroundAudioStreamingKey,
   type FishSpeaker,
   type OrpheusSpeaker,
@@ -100,7 +109,20 @@ import {
 } from "@/lib/plan-create-handoff";
 import { loadPlanDreamsStore, type PlanDream } from "@/lib/plan-dreams";
 import { ChatMarkdown } from "@/components/chat-markdown";
-import { applyBedElementVolume, BED_VOICE_INTRO_SECONDS } from "@/lib/bed-volume";
+import {
+  bedElementVolume,
+  BED_VOICE_INTRO_SECONDS,
+  SOUNDSCAPE_ELEMENT_VOLUME,
+} from "@/lib/bed-volume";
+import {
+  pauseGaplessBed,
+  releaseGaplessBed,
+  resumeGaplessBed,
+  setGaplessBedVolume,
+  syncGaplessBed,
+} from "@/lib/gapless-bed-loop";
+import { playWithLeadBuffer } from "@/lib/audio-lead-buffer";
+import { VoiceCardRow } from "@/components/voice-card-row";
 import {
   appendPendingLibraryGeneration,
   type PendingLibraryGeneration,
@@ -183,10 +205,7 @@ function pickDevRandomScriptSeed(): { style: string; transcript: string } {
   };
 }
 
-function parseMeditationTargetMinutes(raw: unknown): MeditationTargetMinutes {
-  if (raw === 2 || raw === 5 || raw === 10) return raw;
-  return 5;
-}
+const parseMeditationTargetMinutes = coerceMeditationTargetMinutes;
 
 function maybeScrollChatToBottom(
   isAtBottomRef: React.MutableRefObject<boolean>,
@@ -388,6 +407,12 @@ function IconPaperAirplane({ className }: { className?: string }) {
 }
 
 type SoloTrack = "speaker" | "nature" | "music" | "drums" | "noise";
+
+/** Ready-made composition, or the hand-built mixer bed. */
+type SoundBedMode = "soundscape" | "mixer";
+
+/** Compositions have no fader; they sit where a music bed would in the render. */
+const SOUNDSCAPE_GAIN = 50;
 
 type JournalHandoffSegment = {
   entryId: string;
@@ -724,13 +749,15 @@ function StyleIntakeField({
             }}
           />
           {onAdvance ? (
+            /* Filled to match the mic beside it — an outlined gold circle had
+               too little contrast against the cream background. */
             <button
               type="button"
               onClick={tryAdvance}
               disabled={!canAdvance}
               aria-label="Confirm answer, next question"
               title="Next question"
-              className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-[3px] border-[#F2D08A] bg-surface text-[#F2D08A] transition-opacity hover:bg-[#F2D08A]/20 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-surface"
+              className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <svg
                 viewBox="0 0 24 24"
@@ -1225,10 +1252,17 @@ export function CreateWorkspace({
   const speechSpeed = FIXED_SPEECH_PREVIEW_SPEED;
   const [meditationTargetMinutes, setMeditationTargetMinutes] =
     useState<MeditationTargetMinutes>(5);
-  /** Fish TTS model A/B — UI labels; s2.1-pro maps to s2.1-pro-free on the API. */
+  /**
+   * Fish TTS model A/B — UI labels; s2.1-pro maps to s2.1-pro-free on the API.
+   * s1 is the shipped default; the toggle is dev-only.
+   */
   const [fishTtsModelChoice, setFishTtsModelChoice] = useState<
     "s2.1-pro" | "s1"
-  >("s2.1-pro");
+  >("s1");
+  /** Dev-only Claude A/B for coach chat + script generation. */
+  const [claudeModelChoice, setClaudeModelChoice] = useState<string>(
+    CLAUDE_HAIKU_45_MODEL_ID,
+  );
   /**
    * Minutes the latest chat `variant: "script"` bubble was written for.
    * Audio generate reuses that script only when Length still matches; otherwise
@@ -1250,7 +1284,18 @@ export function CreateWorkspace({
   const [backgroundDrums, setBackgroundDrums] = useState<BackgroundAudioItem[]>(
     [],
   );
+  const [compositions, setCompositions] = useState<BackgroundAudioItem[]>([]);
   const [mediaBaseUrl, setMediaBaseUrl] = useState<string | null>(null);
+  /**
+   * Two independent sound beds: a ready-made composition, or the hand-built
+   * mix. Generation reads whichever mode is active, so switching back and
+   * forth never discards the other one.
+   */
+  const [soundMode, setSoundMode] = useState<SoundBedMode>("soundscape");
+  const [compositionKey, setCompositionKey] = useState<string>("");
+  const [compositionPlaying, setCompositionPlaying] = useState(false);
+  const compositionAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [voiceCardStopNonce, setVoiceCardStopNonce] = useState(0);
   const [backgroundNatureKey, setBackgroundNatureKey] = useState<string>("");
   const [backgroundMusicKey, setBackgroundMusicKey] = useState<string>("");
   const [backgroundNoiseKey, setBackgroundNoiseKey] = useState<string>("");
@@ -1329,7 +1374,7 @@ export function CreateWorkspace({
           : track === "drums"
             ? previewDrumsRef.current
             : previewNoiseRef.current;
-    applyBedElementVolume(el, gain);
+    setGaplessBedVolume(el, bedElementVolume(gain));
   }
   // Speakers come from backend `GET /fish/speakers` (single source of truth).
   const [fishSpeakers, setFishSpeakers] = useState<FishSpeaker[]>([]);
@@ -1496,6 +1541,8 @@ export function CreateWorkspace({
     setBackgroundMusicKey(backgroundAudioStreamingKey(s.backgroundMusicKey));
     setBackgroundDrumsKey(backgroundAudioStreamingKey(s.backgroundDrumsKey));
     setBackgroundNoiseKey(backgroundAudioStreamingKey(s.backgroundNoiseKey));
+    setSoundMode(s.soundMode === "mixer" ? "mixer" : "soundscape");
+    setCompositionKey(backgroundAudioStreamingKey(s.compositionKey ?? ""));
     setBackgroundNatureGain(s.backgroundNatureGain);
     setBackgroundMusicGain(s.backgroundMusicGain);
     setBackgroundDrumsGain(s.backgroundDrumsGain);
@@ -1564,6 +1611,8 @@ export function CreateWorkspace({
     backgroundMusicKey,
   );
   const drumsPreviewKey = drumsLockedForMelodic ? "" : backgroundDrumsKey;
+  /** True only when the soundscape tab is showing and a piece is chosen. */
+  const soundscapeActive = soundMode === "soundscape" && Boolean(compositionKey);
 
   const currentBedMix: MixerPresetMix = {
     musicKey: backgroundMusicKey,
@@ -1824,6 +1873,15 @@ export function CreateWorkspace({
         setBackgroundMusicGain(s.backgroundMusicGain);
         setBackgroundDrumsGain(s.backgroundDrumsGain ?? 40);
         setBackgroundNoiseGain(s.backgroundNoiseGain ?? 10);
+        // Drafts only carry a hand-built mix, so open on the mixer when one exists.
+        if (
+          s.backgroundNatureKey ||
+          s.backgroundMusicKey ||
+          s.backgroundDrumsKey ||
+          s.backgroundNoiseKey
+        ) {
+          setSoundMode("mixer");
+        }
         setMobileCreateStep(s.mobileCreateStep);
         setLastUsedScript(s.lastUsedScript);
         setMeditationTargetMinutes(parseMeditationTargetMinutes(s.meditationTargetMinutes));
@@ -2614,8 +2672,29 @@ export function CreateWorkspace({
     focusChatInput();
   }
 
+  /**
+   * Starting a branch abandons every other branch: answers given to a different
+   * route no longer describe the meditation being built. Re-entering a branch
+   * that is already started never comes through here, so stepping back via the
+   * breadcrumb or the bottom nav keeps everything already typed.
+   */
+  function startBranch(next: CreationPath) {
+    initedCreatePathsRef.current = new Set([next]);
+    if (next !== "style") {
+      setPendingStyleType(null);
+      setStyleQuestionAnswers(emptyStyleQuestionAnswers());
+      resetStyleIntakeFocus(1);
+    }
+    if (next !== "oneShot") setOneShotPrompt("");
+    if (next !== "journalReflect") {
+      setJournalReflectSelectedIds(new Set());
+      setJournalReflectGuidance("");
+    }
+    if (next !== "goal") setGoalSelectedId(null);
+  }
+
   function beginStylePath() {
-    initedCreatePathsRef.current.add("style");
+    startBranch("style");
     abortCoachLetterStream();
     setCoachAudioReady(false);
     setCreationPath("style");
@@ -2677,7 +2756,7 @@ export function CreateWorkspace({
   }
 
   function beginFreeFlowPath() {
-    initedCreatePathsRef.current.add("freeflow");
+    startBranch("freeflow");
     setCoachAudioReady(false);
     setCreationPath("freeflow");
     setJournalMode(true);
@@ -2698,7 +2777,7 @@ export function CreateWorkspace({
   function beginJournalReflectPath() {
     setJournalReflectSelectedIds(new Set());
     setJournalReflectGuidance("");
-    initedCreatePathsRef.current.add("journalReflect");
+    startBranch("journalReflect");
     setCoachAudioReady(false);
     setCreationPath("journalReflect");
     setJournalMode(true);
@@ -2717,7 +2796,7 @@ export function CreateWorkspace({
   }
 
   function beginGoalPath() {
-    initedCreatePathsRef.current.add("goal");
+    startBranch("goal");
     setCoachAudioReady(false);
     setCreationPath("goal");
     setJournalMode(true);
@@ -2738,7 +2817,7 @@ export function CreateWorkspace({
   }
 
   function beginOneShotPath() {
-    initedCreatePathsRef.current.add("oneShot");
+    startBranch("oneShot");
     setCoachAudioReady(false);
     setCreationPath("oneShot");
     setJournalMode(true);
@@ -3074,6 +3153,8 @@ export function CreateWorkspace({
         backgroundMusicKey,
         backgroundDrumsKey,
         backgroundNoiseKey,
+        soundMode,
+        compositionKey,
         backgroundNatureGain,
         backgroundMusicGain,
         backgroundDrumsGain,
@@ -3116,6 +3197,8 @@ export function CreateWorkspace({
     backgroundMusicKey,
     backgroundDrumsKey,
     backgroundNoiseKey,
+    soundMode,
+    compositionKey,
     backgroundNatureGain,
     backgroundMusicGain,
     backgroundDrumsGain,
@@ -3362,9 +3445,18 @@ export function CreateWorkspace({
         ttsProvider: "fish",
         fishTtsModel:
           fishTtsModelChoice === "s1" ? "s1" : "s2.1-pro-free",
+        claudeModel: claudeModelChoice,
         speed: speechSpeed,
         voiceFxPreset: speakerFxPreviewOn ? "mixer" : null,
-        ...(backgroundNatureKey
+        // A soundscape replaces the whole bed: it rides the music slot alone,
+        // and the mixer's own selections stay out of this render.
+        ...(soundscapeActive
+          ? {
+              backgroundMusicKey: backgroundAudioStreamingKey(compositionKey),
+              backgroundMusicGain: SOUNDSCAPE_GAIN,
+            }
+          : {}),
+        ...(!soundscapeActive && backgroundNatureKey
           ? {
               backgroundNatureKey: backgroundAudioStreamingKey(
                 backgroundNatureKey,
@@ -3372,7 +3464,7 @@ export function CreateWorkspace({
               backgroundNatureGain,
             }
           : {}),
-        ...(backgroundMusicKey
+        ...(!soundscapeActive && backgroundMusicKey
           ? {
               backgroundMusicKey: backgroundAudioStreamingKey(
                 backgroundMusicKey,
@@ -3380,7 +3472,7 @@ export function CreateWorkspace({
               backgroundMusicGain,
             }
           : {}),
-        ...(drumsPreviewKey
+        ...(!soundscapeActive && drumsPreviewKey
           ? {
               backgroundDrumsKey: backgroundAudioStreamingKey(
                 drumsPreviewKey,
@@ -3388,7 +3480,7 @@ export function CreateWorkspace({
               backgroundDrumsGain,
             }
           : {}),
-        ...(backgroundNoiseKey
+        ...(!soundscapeActive && backgroundNoiseKey
           ? {
               backgroundNoiseKey: backgroundAudioStreamingKey(
                 backgroundNoiseKey,
@@ -3475,6 +3567,7 @@ export function CreateWorkspace({
         if (cancelled) return;
         setBackgroundNature(data.nature);
         setBackgroundMusic(data.music);
+        setCompositions(data.compositions);
         setBackgroundDrums(data.drums);
         setBackgroundNoise(data.noise);
         setFactoryMixes(data.factoryMixes ?? []);
@@ -3484,6 +3577,7 @@ export function CreateWorkspace({
         if (cancelled) return;
         setBackgroundNature([]);
         setBackgroundMusic([]);
+        setCompositions([]);
         setBackgroundDrums([]);
         setBackgroundNoise([]);
         setFactoryMixes([]);
@@ -3499,50 +3593,40 @@ export function CreateWorkspace({
 
   useEffect(() => {
     const base = mediaBaseUrl;
-    const sync = async (
+    const sync = (
       el: HTMLAudioElement | null,
       key: string,
       track: Exclude<SoloTrack, "speaker">,
     ) => {
       if (!el) return;
-      el.loop = true;
-      const gain = bedGainRef.current[track];
       // Mixer 100% is 0.5 so speech at 1.0 stays louder.
-      applyBedElementVolume(el, gain);
+      const volume = bedElementVolume(bedGainRef.current[track]);
       if (base && key) {
-        const next = mediaFileUrl(base, backgroundAudioStreamingKey(key));
         const prevKey = lastBgKeysRef.current[track];
         const keyChanged = prevKey !== key;
-        if (el.src !== next) {
-          el.src = next;
-          void el.load();
-        }
-        el.onloadeddata = () =>
-          applyBedElementVolume(el, bedGainRef.current[track]);
-        // Requirement: selecting a new sample should auto-play even if the track was paused.
-        // Also keep playing if it was already playing.
-        if (keyChanged || playing[track]) {
-          try {
-            await el.play();
-            setPlaying((p) => ({ ...p, [track]: true }));
-          } catch {
-            stopTrack(track);
-          }
-        }
+        // Selecting a new sample auto-plays even if the track was paused.
+        const shouldPlay = keyChanged || playing[track];
+        syncGaplessBed(el, {
+          url: mediaFileUrl(base, backgroundAudioPlaybackKey(key)),
+          fallbackUrl: mediaFileUrl(base, backgroundAudioStreamingKey(key)),
+          volume,
+          playing: shouldPlay,
+          onPlaybackBlocked: () => stopTrack(track),
+        });
+        if (shouldPlay) setPlaying((p) => ({ ...p, [track]: true }));
         lastBgKeysRef.current[track] = key;
       } else {
-        el.removeAttribute("src");
-        el.load();
+        syncGaplessBed(el, { url: null, volume, playing: false });
         if (playing[track]) {
           stopTrack(track);
         }
         lastBgKeysRef.current[track] = "";
       }
     };
-    void sync(previewNatureRef.current, backgroundNatureKey, "nature");
-    void sync(previewMusicRef.current, backgroundMusicKey, "music");
-    void sync(previewDrumsRef.current, drumsPreviewKey, "drums");
-    void sync(previewNoiseRef.current, backgroundNoiseKey, "noise");
+    sync(previewNatureRef.current, backgroundNatureKey, "nature");
+    sync(previewMusicRef.current, backgroundMusicKey, "music");
+    sync(previewDrumsRef.current, drumsPreviewKey, "drums");
+    sync(previewNoiseRef.current, backgroundNoiseKey, "noise");
   }, [
     mediaBaseUrl,
     backgroundNatureKey,
@@ -3576,25 +3660,68 @@ export function CreateWorkspace({
       speakerRepeatWantedRef.current = false;
       speakerSampleRef.current?.pause();
     } else if (track === "nature") {
-      previewNatureRef.current?.pause();
+      pauseGaplessBed(previewNatureRef.current);
     } else if (track === "music") {
-      previewMusicRef.current?.pause();
+      pauseGaplessBed(previewMusicRef.current);
     } else if (track === "drums") {
-      previewDrumsRef.current?.pause();
+      pauseGaplessBed(previewDrumsRef.current);
     } else if (track === "noise") {
-      previewNoiseRef.current?.pause();
+      pauseGaplessBed(previewNoiseRef.current);
     }
     setPlaying((p) => ({ ...p, [track]: false }));
+  }
+
+  /** Sample for any voice in the list, honouring the FX toggle and speed. */
+  function speakerPreviewUrl(modelId: string): string | null {
+    if (!mediaBaseUrl || !modelId) return null;
+    const key = speakerFxPreviewOn
+      ? speakerPreviewLoudFxSampleKey(modelId, speechSpeed)
+      : speakerPreviewLoudSampleKey(modelId, speechSpeed);
+    return mediaFileUrl(mediaBaseUrl, key);
+  }
+
+  function soundscapePreviewUrl(key: string): string | null {
+    if (!mediaBaseUrl || !key) return null;
+    return mediaFileUrl(mediaBaseUrl, backgroundAudioPlaybackKey(key));
+  }
+
+  function stopCompositionPreview() {
+    const el = compositionAudioRef.current;
+    if (el) el.pause();
+    setCompositionPlaying(false);
+  }
+
+  function toggleCompositionPreview(key: string) {
+    const el = compositionAudioRef.current;
+    const url = soundscapePreviewUrl(key);
+    if (!el || !url) return;
+    if (compositionPlaying && el.src === url) {
+      stopCompositionPreview();
+      return;
+    }
+    stopAllAudioPreview();
+    if (el.src !== url) {
+      el.src = url;
+      el.load();
+    }
+    // load() resets volume, so this has to be set after it.
+    el.volume = SOUNDSCAPE_ELEMENT_VOLUME;
+    setCompositionPlaying(true);
+    void playWithLeadBuffer(el).catch(() => setCompositionPlaying(false));
   }
 
   function stopAllAudioPreview() {
     clearSpeakerGapSchedule();
     speakerRepeatWantedRef.current = false;
-    previewNatureRef.current?.pause();
-    previewMusicRef.current?.pause();
-    previewDrumsRef.current?.pause();
-    previewNoiseRef.current?.pause();
+    const composition = compositionAudioRef.current;
+    if (composition) composition.pause();
+    setCompositionPlaying(false);
+    pauseGaplessBed(previewNatureRef.current);
+    pauseGaplessBed(previewMusicRef.current);
+    pauseGaplessBed(previewDrumsRef.current);
+    pauseGaplessBed(previewNoiseRef.current);
     speakerSampleRef.current?.pause();
+    setVoiceCardStopNonce((n) => n + 1);
     setPlayAllActive(false);
     setPlaying({ speaker: false, nature: false, music: false, drums: false, noise: false });
   }
@@ -3603,11 +3730,7 @@ export function CreateWorkspace({
     return () => {
       clearSpeakerGapSchedule();
       [previewNatureRef, previewMusicRef, previewDrumsRef, previewNoiseRef].forEach((r) => {
-        const el = r.current;
-        if (el) {
-          el.pause();
-          el.removeAttribute("src");
-        }
+        releaseGaplessBed(r.current);
       });
       const sp = speakerSampleRef.current;
       if (sp) {
@@ -3676,12 +3799,30 @@ export function CreateWorkspace({
 
   async function togglePlayAll() {
     if (!mediaBaseUrl) return;
-    if (anyTrackPlaying || playAllActive) {
+    if (anyTrackPlaying || playAllActive || compositionPlaying) {
       stopAllAudioPreview();
       return;
     }
 
     stopAllAudioPreview();
+
+    // In soundscape mode there is one bed, so "play all" is that piece plus the
+    // voice sample coming in over it.
+    if (soundMode === "soundscape") {
+      if (!compositionKey) return;
+      toggleCompositionPreview(compositionKey);
+      const voice = speakerSampleRef.current;
+      if (voice?.src) {
+        speakerRepeatWantedRef.current = true;
+        playAllVoiceDelayRef.current = window.setTimeout(() => {
+          playAllVoiceDelayRef.current = null;
+          void voice.play().catch(() => {});
+        }, BED_VOICE_INTRO_SECONDS * 1000);
+        setPlaying((p) => ({ ...p, speaker: true }));
+      }
+      setPlayAllActive(true);
+      return;
+    }
 
     const parts: Promise<void>[] = [];
     const sp = speakerSampleRef.current;
@@ -3705,32 +3846,32 @@ export function CreateWorkspace({
       speakerRepeatWantedRef.current = false;
     }
     if (backgroundNatureKey && previewNatureRef.current?.src) {
-      applyBedElementVolume(
+      setGaplessBedVolume(
         previewNatureRef.current,
-        bedGainRef.current.nature,
+        bedElementVolume(bedGainRef.current.nature),
       );
-      parts.push(previewNatureRef.current.play());
+      parts.push(resumeGaplessBed(previewNatureRef.current));
     }
     if (backgroundMusicKey && previewMusicRef.current?.src) {
-      applyBedElementVolume(
+      setGaplessBedVolume(
         previewMusicRef.current,
-        bedGainRef.current.music,
+        bedElementVolume(bedGainRef.current.music),
       );
-      parts.push(previewMusicRef.current.play());
+      parts.push(resumeGaplessBed(previewMusicRef.current));
     }
     if (drumsPreviewKey && previewDrumsRef.current?.src) {
-      applyBedElementVolume(
+      setGaplessBedVolume(
         previewDrumsRef.current,
-        bedGainRef.current.drums,
+        bedElementVolume(bedGainRef.current.drums),
       );
-      parts.push(previewDrumsRef.current.play());
+      parts.push(resumeGaplessBed(previewDrumsRef.current));
     }
     if (backgroundNoiseKey && previewNoiseRef.current?.src) {
-      applyBedElementVolume(
+      setGaplessBedVolume(
         previewNoiseRef.current,
-        bedGainRef.current.noise,
+        bedElementVolume(bedGainRef.current.noise),
       );
-      parts.push(previewNoiseRef.current.play());
+      parts.push(resumeGaplessBed(previewNoiseRef.current));
     }
 
     if (parts.length === 0) return;
@@ -3799,10 +3940,12 @@ export function CreateWorkspace({
       }
 
       if (!el.paused) {
-        el.pause();
         if (track === "speaker") {
+          el.pause();
           speakerRepeatWantedRef.current = false;
           clearSpeakerGapSchedule();
+        } else {
+          pauseGaplessBed(el);
         }
         setPlaying((p) => ({ ...p, [track]: false }));
         return;
@@ -3810,11 +3953,11 @@ export function CreateWorkspace({
 
       if (track === "speaker") {
         speakerRepeatWantedRef.current = true;
+        await el.play();
       } else {
-        applyBedElementVolume(el, bedGainRef.current[track]);
+        setGaplessBedVolume(el, bedElementVolume(bedGainRef.current[track]));
+        await resumeGaplessBed(el);
       }
-
-      await el.play();
       setPlaying((p) => ({ ...p, [track]: true }));
     } catch {
       // Don't stop other tracks; just mark this one as not playing.
@@ -3933,7 +4076,7 @@ export function CreateWorkspace({
           ? {
               title: "Customise how your meditation will sound",
               blurb:
-                "Pick a voice, mix nature sounds, music, and noise, then preview the blend before you generate.",
+                "Pick a voice, then a soundscape — or build your own from scratch.",
               crumbs: [
                 { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
                 {
@@ -3954,7 +4097,7 @@ export function CreateWorkspace({
             ? {
                 title: "Customise how your meditation will sound",
                 blurb:
-                  "Pick a voice, mix nature sounds, music, and noise, then preview the blend before you generate.",
+                  "Pick a voice, then a soundscape — or build your own from scratch.",
                 crumbs: [
                   { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
                   {
@@ -3999,6 +4142,40 @@ export function CreateWorkspace({
     .reverse()
     .find((c) => Boolean(c.href));
   const createMobileHeading = createLastCrumb?.label ?? createPageChrome.title;
+  /**
+   * Length applies to the whole meditation regardless of which type, question
+   * or audio choice is on screen, so it rides the persistent breadcrumb row
+   * rather than any one page's content.
+   */
+  const showLengthInCrumbs = createCrumbs.length > 0;
+  const lengthCrumbControl = (
+    <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#D9A24F]/60 bg-[#D9A24F]/15 px-2.5 py-1">
+      <IconClock className="h-3.5 w-3.5 shrink-0 text-[#B07C28] dark:text-[#D9A24F]" />
+      <span className="text-xs font-medium text-foreground/75">Length</span>
+      {/* Native select with its own chevron so the indicator can be gold. */}
+      <span className="relative flex items-center">
+        <select
+          className="cursor-pointer appearance-none bg-transparent pr-4 text-xs font-bold text-foreground outline-none"
+          value={meditationTargetMinutes}
+          onChange={(e) =>
+            setMeditationTargetMinutes(
+              parseMeditationTargetMinutes(Number(e.target.value)),
+            )
+          }
+          disabled={audioLoading}
+          aria-label="Target meditation length"
+          title="Target spoken length. If you change this after generating a script in chat, audio will regenerate the script to match."
+        >
+          {MEDITATION_TARGET_MINUTES.map((mins) => (
+            <option key={mins} value={mins}>
+              {mins} min
+            </option>
+          ))}
+        </select>
+        <IconChevronDown className="pointer-events-none absolute right-0 h-3.5 w-3.5 text-[#B07C28] dark:text-[#D9A24F]" />
+      </span>
+    </div>
+  );
 
   return (
     <div className="flex h-full min-h-0 w-full flex-1 flex-col pt-3 sm:pt-6">
@@ -4008,11 +4185,18 @@ export function CreateWorkspace({
       <audio ref={previewDrumsRef} className="hidden" playsInline />
       <audio ref={previewNoiseRef} className="hidden" playsInline />
       <audio ref={speakerSampleRef} className="hidden" playsInline />
+      <audio
+        ref={compositionAudioRef}
+        className="hidden"
+        playsInline
+        onEnded={() => setCompositionPlaying(false)}
+      />
       <div className="mx-auto mb-4 w-full max-w-6xl shrink-0 px-4 sm:mb-6 sm:px-6">
           {createCrumbs.length > 0 ? (
-            <>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
               {/* Full trail — tablet/desktop (sm = 640px+) */}
-              <nav aria-label="Breadcrumb" className="mb-2 hidden sm:block">
+              <nav aria-label="Breadcrumb" className="hidden sm:block">
                 <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
                   {createCrumbs.map((crumb, i) => {
                     const last = i === createCrumbs.length - 1;
@@ -4060,7 +4244,9 @@ export function CreateWorkspace({
                   </Link>
                 </nav>
               ) : null}
-            </>
+              </div>
+              {showLengthInCrumbs ? lengthCrumbControl : null}
+            </div>
           ) : null}
           <div className="flex items-center justify-between gap-4">
             <h1 className="min-w-0 font-display text-3xl font-medium tracking-tight">
@@ -4087,20 +4273,66 @@ export function CreateWorkspace({
                 <IconResetArrow className="h-3.5 w-3.5" />
                 Reset
               </button>
-            ) : showAudioPlayAll ? (
-              <button
-                type="button"
-                onClick={() => void togglePlayAll()}
-                disabled={soundControlsDisabled || !mediaBaseUrl}
-                aria-label={
-                  anyTrackPlaying || playAllActive
-                    ? "Pause all previews"
-                    : "Play all selected tracks"
-                }
-                className="accent-fill-gradient inline-flex shrink-0 cursor-pointer items-center rounded-full px-3 py-1.5 text-xs font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {anyTrackPlaying || playAllActive ? "Pause all" : "Play all"}
-              </button>
+            ) : showAudioPlayAll && isLocalDevHost() ? (
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
+                  Dev
+                </span>
+                <div
+                  className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
+                  role="group"
+                  aria-label="Fish TTS model"
+                  title="Dev-only A/B. Production always uses s1."
+                >
+                  {(
+                    [
+                      ["s2.1-pro", "s2.1-pro"],
+                      ["s1", "s1"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      disabled={audioLoading}
+                      onClick={() => setFishTtsModelChoice(value)}
+                      className={`cursor-pointer px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        fishTtsModelChoice === value
+                          ? "bg-accent-soft text-foreground"
+                          : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div
+                  className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
+                  role="group"
+                  aria-label="Claude model"
+                  title="Dev-only A/B for script generation. Production always uses Haiku. Cost per meditation shows in the library flyover."
+                >
+                  {(
+                    [
+                      [CLAUDE_HAIKU_45_MODEL_ID, "Haiku"],
+                      [CLAUDE_SONNET_45_MODEL_ID, "Sonnet"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      disabled={audioLoading}
+                      onClick={() => setClaudeModelChoice(value)}
+                      className={`cursor-pointer px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        claudeModelChoice === value
+                          ? "bg-accent-soft text-foreground"
+                          : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             ) : null}
           </div>
 
@@ -4437,26 +4669,24 @@ export function CreateWorkspace({
             <button
               type="button"
               onClick={() => {
-                if (pendingModeChoice === "style") {
-                  beginStylePath();
+                const mode = pendingModeChoice;
+                if (!mode) return;
+                // Coming back to the branch already in progress resumes it; the
+                // begin* reset only runs when the branch actually changes.
+                const resume = initedCreatePathsRef.current.has(mode);
+                if (mode === "style") {
+                  if (!resume) beginStylePath();
                   pushCreate({ path: "style" });
-                } else if (pendingModeChoice === "freeflow") {
-                  beginFreeFlowPath();
-                  setCreateStripStep(1);
-                  pushCreate({ path: "freeflow" });
-                } else if (pendingModeChoice === "journalReflect") {
-                  beginJournalReflectPath();
-                  setCreateStripStep(1);
-                  pushCreate({ path: "journalReflect" });
-                } else if (pendingModeChoice === "goal") {
-                  beginGoalPath();
-                  setCreateStripStep(1);
-                  pushCreate({ path: "goal" });
-                } else if (pendingModeChoice === "oneShot") {
-                  beginOneShotPath();
-                  setCreateStripStep(1);
-                  pushCreate({ path: "oneShot" });
+                  return;
                 }
+                if (!resume) {
+                  if (mode === "freeflow") beginFreeFlowPath();
+                  else if (mode === "journalReflect") beginJournalReflectPath();
+                  else if (mode === "goal") beginGoalPath();
+                  else if (mode === "oneShot") beginOneShotPath();
+                }
+                setCreateStripStep(1);
+                pushCreate({ path: mode });
               }}
               className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
               aria-label={
@@ -5041,28 +5271,77 @@ export function CreateWorkspace({
         {workspaceSectionStep === 2 ? (
         <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
         <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-2 px-4 sm:gap-3 sm:px-6">
-          {/* Stacked mixer — below lg: Voice + bed cards share one scroll */}
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto lg:hidden">
-            <section className="shrink-0 rounded-2xl border border-border bg-card px-4 shadow-sm">
-              <MixerVoiceChannel
-                layout="row"
-                voices={fishSpeakers}
-                value={speakerModelId}
-                onChange={setSpeakerModelId}
+          {/* The chosen voice applies to whichever sound bed is picked below. */}
+          <div className="shrink-0">
+            <VoiceCardRow
+              voices={fishSpeakers}
+              value={speakerModelId}
+              onChange={setSpeakerModelId}
+              disabled={soundControlsDisabled}
+              previewUrl={speakerPreviewUrl}
+              fxOn={speakerFxPreviewOn}
+              onFxChange={setSpeakerFxPreviewOn}
+              fxDisabled={soundControlsDisabled || !mediaBaseUrl}
+              stopNonce={voiceCardStopNonce}
+            />
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+            <h2 className="font-display text-lg font-medium tracking-tight text-foreground">
+              Sound
+            </h2>
+            <div
+              role="group"
+              aria-label="Sound bed"
+              className="inline-flex shrink-0 overflow-hidden rounded-full border border-border bg-background p-0.5"
+            >
+              {(
+                [
+                  ["soundscape", "Soundscapes"],
+                  ["mixer", "Build your own"],
+                ] as const
+              ).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={soundMode === mode}
+                  onClick={() => {
+                    if (soundMode === mode) return;
+                    stopAllAudioPreview();
+                    setSoundMode(mode);
+                  }}
+                  className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                    soundMode === mode
+                      ? "accent-fill-gradient text-on-accent"
+                      : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {soundMode === "soundscape" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto pb-1">
+              <SoundscapePicker
+                items={compositions}
+                value={compositionKey}
+                onChange={setCompositionKey}
+                previewUrl={soundscapePreviewUrl}
+                playingKey={compositionPlaying ? compositionKey : null}
+                onTogglePreview={(key) => {
+                  if (key !== compositionKey) setCompositionKey(key);
+                  toggleCompositionPreview(key);
+                }}
                 disabled={soundControlsDisabled}
-                fxOn={speakerFxPreviewOn}
-                onFxChange={setSpeakerFxPreviewOn}
-                fxDisabled={
-                  soundControlsDisabled || !mediaBaseUrl || !speakerModelId
-                }
-                playing={playing.speaker}
-                onTogglePreview={() => void toggleRowPreview("speaker")}
-                playDisabled={
-                  soundControlsDisabled || !mediaBaseUrl || !speakerModelId
-                }
-                showDisc={false}
+                loading={factoryMixesLoading}
               />
-            </section>
+            </div>
+          ) : (
+          <>
+          {/* Stacked mixer — below lg: bed cards share one scroll */}
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto lg:hidden">
             <section className="shrink-0 rounded-2xl border border-border bg-card shadow-sm">
               <div className="px-4 py-1">
                 <MixerPresetChannel
@@ -5164,61 +5443,6 @@ export function CreateWorkspace({
                   playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
                 />
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-4 py-2.5">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
-                    Length
-                  </span>
-                  <select
-                    className="h-9 min-w-0 w-full max-w-[11rem] shrink-0 rounded-lg border border-border bg-background px-2.5 text-sm sm:w-auto"
-                    value={meditationTargetMinutes}
-                    onChange={(e) =>
-                      setMeditationTargetMinutes(
-                        parseMeditationTargetMinutes(Number(e.target.value)),
-                      )
-                    }
-                    disabled={audioLoading}
-                    aria-label="Target meditation length"
-                    title="Target spoken length. If you change this after generating a script in chat, audio will regenerate the script to match."
-                  >
-                    <option value={2}>2 min</option>
-                    <option value={5}>5 min</option>
-                    <option value={10}>10 min</option>
-                  </select>
-                </div>
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
-                    Model
-                  </span>
-                  <div
-                    className="inline-flex h-9 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
-                    role="group"
-                    aria-label="Fish TTS model"
-                    title="Audio quality test — s2.1-pro uses the free tier already configured"
-                  >
-                    {(
-                      [
-                        ["s2.1-pro", "s2.1-pro"],
-                        ["s1", "s1"],
-                      ] as const
-                    ).map(([value, label]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        disabled={audioLoading}
-                        onClick={() => setFishTtsModelChoice(value)}
-                        className={`px-2.5 text-xs font-semibold transition-colors ${
-                          fishTtsModelChoice === value
-                            ? "bg-accent-soft text-foreground"
-                            : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
             </section>
           </div>
 
@@ -5238,29 +5462,6 @@ export function CreateWorkspace({
                         showSave={mixDirty}
                         modified={mixDirty}
                         defaultSaveName={mixSaveDefaultName}
-                      />
-                    </div>
-                    <div className="min-h-[10rem] flex-1">
-                      <MixerVoiceChannel
-                        voices={fishSpeakers}
-                        value={speakerModelId}
-                        onChange={setSpeakerModelId}
-                        disabled={soundControlsDisabled}
-                        fxOn={speakerFxPreviewOn}
-                        onFxChange={setSpeakerFxPreviewOn}
-                        fxDisabled={
-                          soundControlsDisabled ||
-                          !mediaBaseUrl ||
-                          !speakerModelId
-                        }
-                        playing={playing.speaker}
-                        onTogglePreview={() => void toggleRowPreview("speaker")}
-                        playDisabled={
-                          soundControlsDisabled ||
-                          !mediaBaseUrl ||
-                          !speakerModelId
-                        }
-                        showDisc={false}
                       />
                     </div>
                   </div>
@@ -5346,62 +5547,9 @@ export function CreateWorkspace({
                     playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
                   />
             </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-4 py-2.5">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
-                      Length
-                    </span>
-                    <select
-                      className="h-9 min-w-0 w-full max-w-[11rem] shrink-0 rounded-lg border border-border bg-background px-2.5 text-sm sm:w-auto"
-                      value={meditationTargetMinutes}
-                      onChange={(e) =>
-                        setMeditationTargetMinutes(
-                          parseMeditationTargetMinutes(Number(e.target.value)),
-                        )
-                      }
-                      disabled={audioLoading}
-                      aria-label="Target meditation length"
-                      title="Target spoken length. If you change this after generating a script in chat, audio will regenerate the script to match."
-                    >
-                      <option value={2}>2 min</option>
-                      <option value={5}>5 min</option>
-                      <option value={10}>10 min</option>
-                    </select>
-                  </div>
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
-                      Model
-                    </span>
-                    <div
-                      className="inline-flex h-9 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
-                      role="group"
-                      aria-label="Fish TTS model"
-                      title="Audio quality test — s2.1-pro uses the free tier already configured"
-                    >
-                      {(
-                        [
-                          ["s2.1-pro", "s2.1-pro"],
-                          ["s1", "s1"],
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          disabled={audioLoading}
-                          onClick={() => setFishTtsModelChoice(value)}
-                          className={`px-2.5 text-xs font-semibold transition-colors ${
-                            fishTtsModelChoice === value
-                              ? "bg-accent-soft text-foreground"
-                              : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-             </div>
            </section>
+           </>
+          )}
          </div>
           {draftSaveMessage ? (
             <p

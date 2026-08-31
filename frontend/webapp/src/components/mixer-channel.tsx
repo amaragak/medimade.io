@@ -375,14 +375,19 @@ function MixerSpeakerSelect({
   value,
   onChange,
   disabled,
+  previewUrlFor,
 }: {
   voices: Array<{ modelId: string; name: string }>;
   value: string;
   onChange: (modelId: string) => void;
   disabled?: boolean;
+  /** Supplied to audition any voice from inside the open list, not just the selected one. */
+  previewUrlFor?: (modelId: string) => string | null;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const optionAudioRef = useRef<HTMLAudioElement | null>(null);
   const [open, setOpen] = useState(false);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
   const selected = voices.find((s) => s.modelId === value);
   const label = selected?.name || "Voice";
 
@@ -396,6 +401,45 @@ function MixerSpeakerSelect({
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [open]);
+
+  // Closing the list should not leave a sample playing behind it.
+  useEffect(() => {
+    if (open) return;
+    optionAudioRef.current?.pause();
+    setPreviewingId(null);
+  }, [open]);
+
+  useEffect(
+    () => () => {
+      const el = optionAudioRef.current;
+      if (el) {
+        el.pause();
+        el.removeAttribute("src");
+      }
+    },
+    [],
+  );
+
+  async function toggleOptionPreview(modelId: string) {
+    const el = optionAudioRef.current;
+    const url = previewUrlFor?.(modelId) ?? null;
+    if (!el || !url) return;
+    if (previewingId === modelId && !el.paused) {
+      el.pause();
+      setPreviewingId(null);
+      return;
+    }
+    if (el.src !== url) {
+      el.src = url;
+      el.load();
+    }
+    try {
+      await el.play();
+      setPreviewingId(modelId);
+    } catch {
+      setPreviewingId(null);
+    }
+  }
 
   return (
     <div ref={rootRef} className="relative min-w-0 flex-1">
@@ -434,21 +478,55 @@ function MixerSpeakerSelect({
           role="listbox"
         >
           {voices.map((s) => (
-            <button
+            <div
               key={s.modelId}
-              type="button"
-              className={`block w-full truncate px-3 py-1.5 text-left text-sm hover:bg-background ${
-                s.modelId === value ? "font-medium text-foreground" : "text-muted"
-              }`}
-              onClick={() => {
-                onChange(s.modelId);
-                setOpen(false);
-              }}
+              className="flex items-center gap-1 pr-1.5 hover:bg-background"
             >
-              {s.name}
-            </button>
+              <button
+                type="button"
+                className={`min-w-0 flex-1 truncate px-3 py-1.5 text-left text-sm ${
+                  s.modelId === value ? "font-medium text-foreground" : "text-muted"
+                }`}
+                onClick={() => {
+                  onChange(s.modelId);
+                  setOpen(false);
+                }}
+              >
+                {s.name}
+              </button>
+              {previewUrlFor ? (
+                <button
+                  type="button"
+                  disabled={!previewUrlFor(s.modelId)}
+                  aria-label={
+                    previewingId === s.modelId
+                      ? `Pause ${s.name} sample`
+                      : `Play ${s.name} sample`
+                  }
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void toggleOptionPreview(s.modelId);
+                  }}
+                  className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-accent-link transition-colors hover:bg-accent-soft/50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <MixerPlayPauseIcon
+                    playing={previewingId === s.modelId}
+                    size={14}
+                  />
+                </button>
+              ) : null}
+            </div>
           ))}
         </div>
+      ) : null}
+      {previewUrlFor ? (
+        <audio
+          ref={optionAudioRef}
+          className="hidden"
+          playsInline
+          onEnded={() => setPreviewingId(null)}
+        />
       ) : null}
     </div>
   );
@@ -467,6 +545,8 @@ export function MixerVoiceChannel({
   playDisabled,
   showDisc = false,
   layout = "column",
+  previewUrlFor,
+  showDescription = true,
 }: {
   voices: Array<{ modelId: string; name: string; description?: string }>;
   value: string;
@@ -480,10 +560,14 @@ export function MixerVoiceChannel({
   playDisabled?: boolean;
   showDisc?: boolean;
   layout?: MixerLayout;
+  /** Lets each voice in the open list be auditioned before it is picked. */
+  previewUrlFor?: (modelId: string) => string | null;
+  /** Off where the row must stay a single compact line. */
+  showDescription?: boolean;
 }) {
-  const description = voices
-    .find((s) => s.modelId === value)
-    ?.description?.trim();
+  const description = showDescription
+    ? voices.find((s) => s.modelId === value)?.description?.trim()
+    : undefined;
 
   const fxControl = (
     <div
@@ -519,6 +603,7 @@ export function MixerVoiceChannel({
             value={value}
             onChange={onChange}
             disabled={disabled}
+            previewUrlFor={previewUrlFor}
           />
           {fxControl}
           <MixerRowPlayButton
@@ -550,6 +635,7 @@ export function MixerVoiceChannel({
               value={value}
               onChange={onChange}
               disabled={disabled}
+              previewUrlFor={previewUrlFor}
             />
             {fxControl}
           </div>

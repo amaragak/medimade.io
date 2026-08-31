@@ -257,7 +257,17 @@ async function streamChatRequest(
   return full;
 }
 
-export type MeditationTargetMinutes = 2 | 5 | 10;
+export type MeditationTargetMinutes = 2 | 5 | 10 | 20;
+
+export const MEDITATION_TARGET_MINUTES: readonly MeditationTargetMinutes[] = [
+  2, 5, 10, 20,
+];
+
+export function isMeditationTargetMinutes(
+  raw: unknown,
+): raw is MeditationTargetMinutes {
+  return MEDITATION_TARGET_MINUTES.includes(raw as MeditationTargetMinutes);
+}
 
 export async function streamMedimadeChat(
   params: {
@@ -274,9 +284,7 @@ export async function streamMedimadeChat(
       meditationStyle: params.meditationStyle,
       messages: params.messages,
       ...(params.journalMode === true ? { journalMode: true } : {}),
-      ...(params.meditationTargetMinutes === 2 ||
-      params.meditationTargetMinutes === 5 ||
-      params.meditationTargetMinutes === 10
+      ...(isMeditationTargetMinutes(params.meditationTargetMinutes)
         ? { meditationTargetMinutes: params.meditationTargetMinutes }
         : {}),
     },
@@ -301,9 +309,7 @@ export async function streamMeditationScript(
       meditationStyle: params.meditationStyle ?? "",
       transcript: params.transcript,
       ...(params.journalMode === true ? { journalMode: true } : {}),
-      ...(params.meditationTargetMinutes === 2 ||
-      params.meditationTargetMinutes === 5 ||
-      params.meditationTargetMinutes === 10
+      ...(isMeditationTargetMinutes(params.meditationTargetMinutes)
         ? { meditationTargetMinutes: params.meditationTargetMinutes }
         : {}),
       ...(typeof params.speechSpeed === "number" &&
@@ -393,9 +399,7 @@ export async function createMeditationAudioJob(params: {
   const backgroundSoundKey = trimBg(params.backgroundSoundKey ?? null);
 
   const meditationTargetMinutes: MeditationTargetMinutes =
-    params.meditationTargetMinutes === 2 ||
-    params.meditationTargetMinutes === 5 ||
-    params.meditationTargetMinutes === 10
+    isMeditationTargetMinutes(params.meditationTargetMinutes)
       ? params.meditationTargetMinutes
       : 5;
 

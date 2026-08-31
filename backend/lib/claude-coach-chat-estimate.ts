@@ -46,6 +46,8 @@ export async function estimateCoachChatTokensFromTranscript(params: {
   meditationStyle: string;
   journalMode: boolean;
   transcript: string;
+  /** Tokenizer is shared across Claude 4.5 models; this only affects pricing. */
+  model?: string;
 }): Promise<{ inputTokens: number; outputTokens: number } | null> {
   const messages = parseCoachTranscriptToMessages(params.transcript);
   if (messages.length === 0) {
@@ -71,7 +73,7 @@ export async function estimateCoachChatTokensFromTranscript(params: {
     calls += 1;
     const c = await anthropicCountMessageInputTokens({
       apiKey: params.apiKey,
-      model: CLAUDE_HAIKU_45_MODEL_ID,
+      model: params.model ?? CLAUDE_HAIKU_45_MODEL_ID,
       system,
       messages: prefix,
     });

@@ -2,18 +2,24 @@ export const BG_AUDIO_PREFIX = "background-audio/";
 export const BG_AUDIO_RAW_PREFIX = "background-audio-raw/";
 export const BG_AUDIO_ORIGINAL_PREFIX = "background-audio-original/";
 
-export const BG_AUDIO_CATEGORIES = ["music", "ambience", "drums", "noise"] as const;
+export const BG_AUDIO_CATEGORIES = [
+  "music",
+  "compositions",
+  "ambience",
+  "drums",
+  "noise",
+] as const;
 export type BgAudioCategory = (typeof BG_AUDIO_CATEGORIES)[number];
 
 /** Legacy S3 folder / catalog value `nature` maps to ambience. */
 const FOLDER_TO_CATEGORY: Record<string, BgAudioCategory> = {
   music: "music",
+  compositions: "compositions",
   ambience: "ambience",
   nature: "ambience",
   drums: "drums",
   noise: "noise",
 };
-
 export function isBgAudioCategory(v: string): v is BgAudioCategory {
   return (BG_AUDIO_CATEGORIES as readonly string[]).includes(v);
 }
@@ -178,6 +184,7 @@ export function stemKeysFromRelativePath(relativePath: string): {
   rawKey: string;
   mp3Key: string;
   wavKey: string;
+  opusKey: string;
   name: string;
   rel: string;
 } | null {
@@ -189,6 +196,7 @@ export function stemKeysFromRelativePath(relativePath: string): {
     rawKey: `${BG_AUDIO_RAW_PREFIX}${rel}`,
     mp3Key: `${BG_AUDIO_PREFIX}${stem}.mp3`,
     wavKey: `${BG_AUDIO_PREFIX}${stem}.wav`,
+    opusKey: `${BG_AUDIO_PREFIX}${stem}.opus`,
     name: leafNameFromKey(stem),
     rel,
   };
@@ -197,7 +205,13 @@ export function stemKeysFromRelativePath(relativePath: string): {
 export function stemKeysForCategory(
   category: BgAudioCategory,
   filename: string,
-): { rawKey: string; mp3Key: string; wavKey: string; name: string } | null {
+): {
+  rawKey: string;
+  mp3Key: string;
+  wavKey: string;
+  opusKey: string;
+  name: string;
+} | null {
   return stemKeysFromRelativePath(`${category}/${filename}`);
 }
 
@@ -218,16 +232,34 @@ export function siblingMp3Key(key: string): string | null {
   return `${key.slice(0, -4)}.mp3`;
 }
 
+/**
+ * Gapless streaming sibling. Not returned by listings — the catalog stays keyed
+ * on the MP3 so `.opus` never shows up as a separate sound.
+ */
+export function siblingOpusKey(key: string): string | null {
+  const lower = key.toLowerCase();
+  if (!lower.endsWith(".mp3") && !lower.endsWith(".wav")) return null;
+  return `${key.slice(0, -4)}.opus`;
+}
+
 export function publicKeysForCategoryMove(
   fromKey: string,
   toCategory: BgAudioCategory,
-): { fromMp3: string; fromWav: string; toMp3: string; toWav: string } | null {
+): {
+  fromMp3: string;
+  fromWav: string;
+  fromOpus: string;
+  toMp3: string;
+  toWav: string;
+  toOpus: string;
+} | null {
   const any = parseAnyBgAudioKey(fromKey);
   if (!any) return null;
   const fromMp3 = any.key.toLowerCase().endsWith(".wav")
     ? `${any.key.slice(0, -4)}.mp3`
     : any.key;
   const fromWav = `${fromMp3.slice(0, -4)}.wav`;
+  const fromOpus = `${fromMp3.slice(0, -4)}.opus`;
   let rest = any.rel.replace(/\.(mp3|wav)$/i, "");
   const slash = rest.indexOf("/");
   if (slash > 0 && categoryFromFolderSegment(rest.slice(0, slash))) {
@@ -236,5 +268,6 @@ export function publicKeysForCategoryMove(
   if (!rest) return null;
   const toMp3 = `${BG_AUDIO_PREFIX}${toCategory}/${rest}.mp3`;
   const toWav = `${BG_AUDIO_PREFIX}${toCategory}/${rest}.wav`;
-  return { fromMp3, fromWav, toMp3, toWav };
+  const toOpus = `${BG_AUDIO_PREFIX}${toCategory}/${rest}.opus`;
+  return { fromMp3, fromWav, fromOpus, toMp3, toWav, toOpus };
 }

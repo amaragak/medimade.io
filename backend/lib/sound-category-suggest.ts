@@ -4,7 +4,11 @@ import {
 } from "@aws-sdk/client-secrets-manager";
 import { CLAUDE_HAIKU_45_MODEL_ID } from "./anthropic-pricing";
 import { normalizeBgAudioCategory, type BgAudioCategory } from "./background-audio-keys";
-import { coerceSoundSubcategory } from "./sound-taxonomy";
+import {
+  binauralBandFromPath,
+  binauralFrequencyLabel,
+  coerceSoundSubcategory,
+} from "./sound-taxonomy";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const secrets = new SecretsManagerClient({});
@@ -51,6 +55,7 @@ function stripBinauralUnlessMusic(name: string, category: BgAudioCategory): stri
 
 const CATEGORY_TITLE_SKIP: Record<BgAudioCategory, string[]> = {
   music: ["music"],
+  compositions: ["composition", "compositions"],
   ambience: ["ambience", "ambient"],
   drums: ["drum", "drums"],
   noise: ["noise"],
@@ -61,6 +66,7 @@ const SUBCATEGORY_TITLE_SKIP: Record<string, string[]> = {
   instruments: ["instrument", "instruments"],
   melodic: ["melodic", "melody"],
   voices: ["voice", "voices", "vocal", "vocals"],
+  binaural: ["binaural", "isochronic", "entrainment"],
   nature: ["nature"],
   spaces: ["space", "spaces"],
   "lo-fi-beats": ["beat", "beats", "lofi", "lo-fi"],
@@ -86,6 +92,26 @@ function stripRedundantTaxonomyWords(
   return next;
 }
 
+const BAND_PREFIX =
+  /^\(?\s*(delta|theta|alpha|beta|gamma)?\s*(?:\d+(?:\.\d+)?\s*(?:-\s*\d+(?:\.\d+)?\s*)?hz)?\s*\)?\s*[-–—:]?\s*/i;
+
+/**
+ * Force binaural titles to read "(Alpha 8Hz) Ocean Drift". The model is
+ * inconsistent about the prefix, and the filename is the more reliable source
+ * for both the band and the frequency.
+ */
+function withBinauralBandPrefix(name: string, filename: string): string {
+  const stated = name.match(BAND_PREFIX)?.[1];
+  const bare = name.replace(BAND_PREFIX, "").trim();
+  const band =
+    binauralBandFromPath(filename) ??
+    (stated ? stated.charAt(0).toUpperCase() + stated.slice(1).toLowerCase() : null);
+  const hz = binauralFrequencyLabel(filename, band);
+  const prefix = [band, hz].filter(Boolean).join(" ");
+  if (!prefix) return name;
+  return bare ? `(${prefix}) ${bare}` : `(${prefix})`;
+}
+
 /**
  * Suggest mixer category, subcategory, and a short human-readable title from filenames.
  */
@@ -95,13 +121,17 @@ export async function suggestSoundCategories(
   const out = new Map<string, { category: BgAudioCategory; subcategory: string; name: string }>();
   if (items.length === 0) return out;
 
+  const filenameById = new Map(items.map((i) => [i.id, i.filename]));
   const apiKey = await getClaudeApiKey();
   const system = [
     "You classify meditation background audio stems from Splice sample packs and filenames.",
     "Use only the filename / relative path (BPM, key, pack folders, descriptive tokens).",
     "Pick exactly one category: music, ambience, drums, noise.",
     "The vast majority of Splice beds, loops, pads, keys, guitars, drones, and atmospheres are music.",
-    "music subcategories — pick exactly one of: pads-drones, instruments, melodic, voices (choirs, chants, vocal beds).",
+    "music subcategories — pick exactly one of: pads-drones, instruments, melodic, voices (choirs, chants, vocal beds), binaural (binaural beats, isochronic tones, brainwave entrainment — the filename names a band like alpha/beta/theta/delta/gamma, or gives a frequency in Hz), chakras (beds tied to a chakra — the filename says chakra, or names one such as root, sacral, solar plexus, heart, throat, third eye, crown, or their Sanskrit names).",
+    "Chakras wins over binaural when a filename mentions both, since chakra beds are often built on a solfeggio frequency.",
+    "Chakra is the one exception to not repeating the taxonomy in the name: keep the full chakra name in the title, e.g. Heart Chakra, so titles still read correctly if the folder ever goes away.",
+    "When the subcategory is binaural, start the name with the band in parentheses, then the rest of the title: \"(Alpha) Ocean Drift\". Work the band out from the filename — a named band wins, otherwise read the frequency: under 4 Hz is Delta, 4-8 Theta, 8-13 Alpha, 13-30 Beta, above 30 Gamma. If the filename states a frequency or a range in Hz, put it in the parentheses after the band: \"(Alpha 8Hz) Nordic Sunrise\", \"(Beta 100-120Hz) Rise\". When two frequencies are given and one falls inside the band, that one is the beat rate — show it alone, so \"Binaural-Beats-65hz-11hz-Alpha\" is \"(Alpha 11Hz)\". When both fall outside the band they are the two carriers, one per ear, and their difference is the beat — show them as a range, so \"Romeo-Alpha-129Hz-141Hz\" is \"(Alpha 129-141Hz)\". Do not repeat the frequency or the word Binaural in the rest of the name.",
     "ambience = environmental / spatial recordings, not musical beds. Subcategories — pick exactly one of: nature (wildlife, beach, weather, forest, rain, ocean), spaces (rooms, cities, cafes, interiors, crowds).",
     "drums is its own category, not a music subcategory. Subcategories — pick exactly one of: lo-fi-beats (lo-fi / hip-hop beats), shamanic (ritual, frame drums, taiko, tribal), other (everything else).",
     "noise = white/pink/brown noise, static, fan, hiss used as a noise bed — not musical texture. Subcategory must be empty.",
@@ -162,10 +192,15 @@ export async function suggestSoundCategories(
       subcategory,
     );
     if (!id) continue;
+    const filename = filenameById.get(id) ?? id;
+    const titled =
+      subcategory === "binaural"
+        ? withBinauralBandPrefix(name || "Tone", filename)
+        : name || "Untitled";
     out.set(id, {
       category,
       subcategory,
-      name: name || "Untitled",
+      name: titled,
     });
   }
   return out;

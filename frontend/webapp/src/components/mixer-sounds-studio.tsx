@@ -9,8 +9,16 @@ import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
 import { FactoryIconSelect } from "@/components/factory-icons";
 import { FactoryPresetRow } from "@/components/factory-preset-row";
 import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
-import { applyBedElementVolume } from "@/lib/bed-volume";
+import { bedElementVolume } from "@/lib/bed-volume";
 import {
+  pauseGaplessBed,
+  releaseGaplessBed,
+  resumeGaplessBed,
+  setGaplessBedVolume,
+  syncGaplessBed,
+} from "@/lib/gapless-bed-loop";
+import {
+  backgroundAudioPlaybackKey,
   backgroundAudioStreamingKey,
   deleteAdminFactoryMix,
   getMedimadeMediaBaseUrl,
@@ -217,7 +225,7 @@ export function MixerSoundsStudio({
           : track === "drums"
             ? previewDrumsRef.current
             : previewNoiseRef.current;
-    applyBedElementVolume(el, gain);
+    setGaplessBedVolume(el, bedElementVolume(gain));
   }
 
   const drumsLockedForMelodic = isMelodicMusicKey(
@@ -439,18 +447,18 @@ export function MixerSoundsStudio({
 
   function stopTrack(track: BedTrack) {
     setPlayAllActive(false);
-    if (track === "nature") previewNatureRef.current?.pause();
-    if (track === "music") previewMusicRef.current?.pause();
-    if (track === "drums") previewDrumsRef.current?.pause();
-    if (track === "noise") previewNoiseRef.current?.pause();
+    if (track === "nature") pauseGaplessBed(previewNatureRef.current);
+    if (track === "music") pauseGaplessBed(previewMusicRef.current);
+    if (track === "drums") pauseGaplessBed(previewDrumsRef.current);
+    if (track === "noise") pauseGaplessBed(previewNoiseRef.current);
     setPlaying((p) => ({ ...p, [track]: false }));
   }
 
   function stopAll() {
-    previewNatureRef.current?.pause();
-    previewMusicRef.current?.pause();
-    previewDrumsRef.current?.pause();
-    previewNoiseRef.current?.pause();
+    pauseGaplessBed(previewNatureRef.current);
+    pauseGaplessBed(previewMusicRef.current);
+    pauseGaplessBed(previewDrumsRef.current);
+    pauseGaplessBed(previewNoiseRef.current);
     speakerSampleRef.current?.pause();
     setPlayAllActive(false);
     setSpeakerPlaying(false);
@@ -458,10 +466,10 @@ export function MixerSoundsStudio({
   }
 
   function stopFactoryPreview() {
-    factoryNatureRef.current?.pause();
-    factoryMusicRef.current?.pause();
-    factoryDrumsRef.current?.pause();
-    factoryNoiseRef.current?.pause();
+    pauseGaplessBed(factoryNatureRef.current);
+    pauseGaplessBed(factoryMusicRef.current);
+    pauseGaplessBed(factoryDrumsRef.current);
+    pauseGaplessBed(factoryNoiseRef.current);
     setFactoryPreviewId(null);
   }
 
@@ -499,52 +507,43 @@ export function MixerSoundsStudio({
 
   useEffect(() => {
     if (!drumsLockedForMelodic) return;
-    previewDrumsRef.current?.pause();
+    pauseGaplessBed(previewDrumsRef.current);
     setPlaying((p) => (p.drums ? { ...p, drums: false } : p));
   }, [drumsLockedForMelodic]);
 
   useEffect(() => {
     const base = mediaBaseUrl;
-    const sync = async (
+    const sync = (
       el: HTMLAudioElement | null,
       key: string,
       track: BedTrack,
     ) => {
       if (!el) return;
-      el.loop = true;
+      // Mixer 100% → 0.5 playback so speech at 1.0 stays louder.
+      const volume = bedElementVolume(bedGainRef.current[track]);
       if (base && key) {
-        const next = mediaFileUrl(base, backgroundAudioStreamingKey(key));
         const prevKey = lastBgKeysRef.current[track];
         const keyChanged = prevKey !== key;
-        if (el.src !== next) {
-          el.src = next;
-          void el.load();
-        }
-        // Mixer 100% → 0.5 playback. Re-apply after load(); load() resets volume to 1.
-        const gain = bedGainRef.current[track];
-        applyBedElementVolume(el, gain);
-        el.onloadeddata = () =>
-          applyBedElementVolume(el, bedGainRef.current[track]);
-        if (keyChanged || playing[track]) {
-          try {
-            await el.play();
-            setPlaying((p) => ({ ...p, [track]: true }));
-          } catch {
-            stopTrack(track);
-          }
-        }
+        const shouldPlay = keyChanged || playing[track];
+        syncGaplessBed(el, {
+          url: mediaFileUrl(base, backgroundAudioPlaybackKey(key)),
+          fallbackUrl: mediaFileUrl(base, backgroundAudioStreamingKey(key)),
+          volume,
+          playing: shouldPlay,
+          onPlaybackBlocked: () => stopTrack(track),
+        });
+        if (shouldPlay) setPlaying((p) => ({ ...p, [track]: true }));
         lastBgKeysRef.current[track] = key;
       } else {
-        el.removeAttribute("src");
-        el.load();
+        syncGaplessBed(el, { url: null, volume, playing: false });
         if (playing[track]) stopTrack(track);
         lastBgKeysRef.current[track] = "";
       }
     };
-    void sync(previewNatureRef.current, mix.natureKey, "nature");
-    void sync(previewMusicRef.current, mix.musicKey, "music");
-    void sync(previewDrumsRef.current, drumsPreviewKey, "drums");
-    void sync(previewNoiseRef.current, mix.noiseKey, "noise");
+    sync(previewNatureRef.current, mix.natureKey, "nature");
+    sync(previewMusicRef.current, mix.musicKey, "music");
+    sync(previewDrumsRef.current, drumsPreviewKey, "drums");
+    sync(previewNoiseRef.current, mix.noiseKey, "noise");
   }, [
     mediaBaseUrl,
     mix.natureKey,
@@ -564,17 +563,18 @@ export function MixerSoundsStudio({
         previewMusicRef,
         previewDrumsRef,
         previewNoiseRef,
-        speakerSampleRef,
         factoryNatureRef,
         factoryMusicRef,
         factoryDrumsRef,
         factoryNoiseRef,
       ].forEach((r) => {
-        const el = r.current;
-        if (!el) return;
-        el.pause();
-        el.removeAttribute("src");
+        releaseGaplessBed(r.current);
       });
+      const speaker = speakerSampleRef.current;
+      if (speaker) {
+        speaker.pause();
+        speaker.removeAttribute("src");
+      }
     };
   }, []);
 
@@ -631,23 +631,32 @@ export function MixerSoundsStudio({
     stopAll();
     const parts: Promise<void>[] = [];
     if (mix.natureKey && previewNatureRef.current?.src) {
-      applyBedElementVolume(
+      setGaplessBedVolume(
         previewNatureRef.current,
-        bedGainRef.current.nature,
+        bedElementVolume(bedGainRef.current.nature),
       );
-      parts.push(previewNatureRef.current.play());
+      parts.push(resumeGaplessBed(previewNatureRef.current));
     }
     if (mix.musicKey && previewMusicRef.current?.src) {
-      applyBedElementVolume(previewMusicRef.current, bedGainRef.current.music);
-      parts.push(previewMusicRef.current.play());
+      setGaplessBedVolume(
+        previewMusicRef.current,
+        bedElementVolume(bedGainRef.current.music),
+      );
+      parts.push(resumeGaplessBed(previewMusicRef.current));
     }
     if (drumsPreviewKey && previewDrumsRef.current?.src) {
-      applyBedElementVolume(previewDrumsRef.current, bedGainRef.current.drums);
-      parts.push(previewDrumsRef.current.play());
+      setGaplessBedVolume(
+        previewDrumsRef.current,
+        bedElementVolume(bedGainRef.current.drums),
+      );
+      parts.push(resumeGaplessBed(previewDrumsRef.current));
     }
     if (mix.noiseKey && previewNoiseRef.current?.src) {
-      applyBedElementVolume(previewNoiseRef.current, bedGainRef.current.noise);
-      parts.push(previewNoiseRef.current.play());
+      setGaplessBedVolume(
+        previewNoiseRef.current,
+        bedElementVolume(bedGainRef.current.noise),
+      );
+      parts.push(resumeGaplessBed(previewNoiseRef.current));
     }
     if (isAdmin && speakerModelId && speakerSampleRef.current?.src) {
       parts.push(speakerSampleRef.current.play());
@@ -714,8 +723,8 @@ export function MixerSoundsStudio({
             ? mix.drumsGain
             : mix.noiseGain;
     try {
-      applyBedElementVolume(el, gain);
-      await el.play();
+      setGaplessBedVolume(el, bedElementVolume(gain));
+      await resumeGaplessBed(el);
       setPlaying((p) => ({ ...p, [track]: true }));
     } catch {
       stopTrack(track);
@@ -792,23 +801,20 @@ export function MixerSoundsStudio({
     for (const bed of beds) {
       const el = bed.el;
       if (!el) continue;
-      el.loop = true;
+      const volume = bedElementVolume(bed.gain);
       if (bed.key) {
-        const next = mediaFileUrl(
-          mediaBaseUrl,
-          backgroundAudioStreamingKey(bed.key),
-        );
-        if (el.src !== next) {
-          el.src = next;
-          void el.load();
-        }
-        applyBedElementVolume(el, bed.gain);
-        el.onloadeddata = () => applyBedElementVolume(el, bed.gain);
-        parts.push(el.play().catch(() => undefined));
+        syncGaplessBed(el, {
+          url: mediaFileUrl(mediaBaseUrl, backgroundAudioPlaybackKey(bed.key)),
+          fallbackUrl: mediaFileUrl(
+            mediaBaseUrl,
+            backgroundAudioStreamingKey(bed.key),
+          ),
+          volume,
+          playing: true,
+        });
+        parts.push(resumeGaplessBed(el));
       } else {
-        el.pause();
-        el.removeAttribute("src");
-        el.load();
+        syncGaplessBed(el, { url: null, volume, playing: false });
       }
     }
     if (parts.length === 0) return;

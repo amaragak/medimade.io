@@ -13,9 +13,10 @@ import {
   scriptDurationPlanningAppendix,
 } from "../lib/script-duration-planning-prompt";
 import { SCRIPT_PAUSE_PROMPT_RULES } from "../lib/script-pause-bands";
+import { coerceClaudeModel } from "../lib/anthropic-pricing";
+import { coerceMeditationTargetMinutes } from "../lib/meditation-target-minutes";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const MODEL = "claude-haiku-4-5";
 
 const secrets = new SecretsManagerClient({});
 let cachedKey: string | undefined;
@@ -132,13 +133,15 @@ async function streamHandler(
     meditationStyle?: string;
     messages?: ChatTurn[];
     transcript?: string;
-    /** Web create flow: 2, 5, or 10 minute guided target. */
+    /** Web create flow: guided length target in minutes. */
     meditationTargetMinutes?: number;
     /** Fish playback speed (1 = default); used with fleet word targets. */
     speechSpeed?: number;
     /** Web journal flow uses placeholder style; do not lock technique to that label. */
     journalMode?: boolean;
     journalGuidance?: string;
+    /** Dev-only A/B from the create flow; unknown values fall back to Haiku. */
+    claudeModel?: string;
   };
   try {
     body = JSON.parse(event.body || "{}");
@@ -147,12 +150,13 @@ async function streamHandler(
     return;
   }
 
-  const tm = body.meditationTargetMinutes;
-  const meditationTargetMinutes =
-    tm === 2 || tm === 5 || tm === 10 ? tm : 5;
+  const meditationTargetMinutes = coerceMeditationTargetMinutes(
+    body.meditationTargetMinutes,
+  );
 
   const mode =
     body.mode === "generate_script" ? "generate_script" : "chat";
+  const model = coerceClaudeModel(body.claudeModel);
 
   let system: string;
   let messages: ChatTurn[];
@@ -299,7 +303,7 @@ async function streamHandler(
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: MODEL,
+      model,
       max_tokens: maxTokens,
       system,
       messages,

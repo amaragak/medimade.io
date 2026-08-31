@@ -2,6 +2,7 @@ import {
   creatorChoseSpecificMeditationTechnique,
   styleAdherenceBlockForPrompt,
 } from "./meditation-types";
+import { coerceMeditationTargetMinutes } from "./meditation-target-minutes";
 
 /**
  * System prompt for coach chat — must stay aligned with `claude-chat.ts` (chat mode).
@@ -12,12 +13,7 @@ export function buildClaudeCoachSystemPrompt(params: {
   /** Creator-selected guided length; shapes when to stop asking questions. Default 5. */
   targetMinutes?: number;
 }): string {
-  const targetMinutes =
-    params.targetMinutes === 2 ||
-    params.targetMinutes === 5 ||
-    params.targetMinutes === 10
-      ? params.targetMinutes
-      : 5;
+  const targetMinutes = coerceMeditationTargetMinutes(params.targetMinutes);
   const meditationStyle = params.meditationStyle.trim();
   const styleLocked = creatorChoseSpecificMeditationTechnique({
     journalMode: params.journalMode,

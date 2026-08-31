@@ -1,4 +1,4 @@
-import { claudeHaiku45UsdFromTokens } from "./claude-pricing";
+import { claudeUsdFromTokens } from "./claude-pricing";
 
 /**
  * Fish Audio TTS billing (UTF-8 input), for analytics / margin estimates.
@@ -105,6 +105,14 @@ export type GenerationSectionTiming = {
   i: number;
   ttsMs: number;
   fxMs?: number;
+  /** Worker-side ffmpeg inside fxMs: loudnorm + the two format conversions. */
+  fxFfmpegMs?: number;
+  /** S3 put + VoiceFx invoke + S3 get, i.e. fxMs minus the local ffmpeg work. */
+  fxInvokeMs?: number;
+  /** Pedalboard's own processing, as reported by the FX Lambda. */
+  fxBoardMs?: number;
+  /** True when that section's FX Lambda had to start a fresh container. */
+  fxColdStart?: boolean;
   utf8Bytes?: number;
   pauseSec?: number;
 };
@@ -113,6 +121,12 @@ export type GenerationPhaseTimings = {
   scriptMs?: number;
   metadataMs?: number;
   concatMs?: number;
+  /** Single FX pass over the assembled track: loudnorm + Pedalboard. */
+  fxMs?: number;
+  fxFfmpegMs?: number;
+  fxInvokeMs?: number;
+  fxBoardMs?: number;
+  fxColdStart?: boolean;
   loudnormMs?: number;
   uploadMs?: number;
 };
@@ -142,16 +156,33 @@ export function generationTimingsFlyoverLines(
   const lines: string[] = [];
   const p = timings.phases ?? {};
 
-  const phaseLabels: Array<[keyof GenerationPhaseTimings, string]> = [
+  type PhaseMsKey = Extract<
+    keyof GenerationPhaseTimings,
+    "scriptMs" | "metadataMs" | "concatMs" | "fxMs" | "loudnormMs" | "uploadMs"
+  >;
+  const phaseLabels: Array<[PhaseMsKey, string]> = [
     ["scriptMs", "Script"],
     ["metadataMs", "Metadata"],
     ["concatMs", "Concat"],
+    ["fxMs", "FX"],
     ["loudnormMs", "Loudnorm"],
     ["uploadMs", "Upload"],
   ];
   for (const [key, label] of phaseLabels) {
     const formatted = formatStepMs(p[key]);
     if (formatted) lines.push(`${label}: ${formatted}`);
+    // Where the single FX pass went: worker ffmpeg, the round trip, the reverb.
+    if (key === "fxMs" && formatted) {
+      const fxParts: string[] = [];
+      const ffmpeg = formatStepMs(p.fxFfmpegMs);
+      if (ffmpeg) fxParts.push(`ffmpeg ${ffmpeg}`);
+      const invoke = formatStepMs(p.fxInvokeMs);
+      if (invoke) fxParts.push(`call ${invoke}`);
+      const board = formatStepMs(p.fxBoardMs);
+      if (board) fxParts.push(`board ${board}`);
+      if (p.fxColdStart) fxParts.push("cold");
+      if (fxParts.length > 0) lines.push(`  ${fxParts.join(" · ")}`);
+    }
   }
 
   const sections = timings.sections ?? [];
@@ -166,6 +197,17 @@ export function generationTimingsFlyoverLines(
         parts.push(`pause ${s.pauseSec.toFixed(1)}s`);
       }
       lines.push(`  ${parts.join(" · ")}`);
+      // Where that FX figure actually went — ffmpeg on the worker, the round
+      // trip to the FX Lambda, and the reverb itself.
+      const fxParts: string[] = [];
+      const ffmpeg = formatStepMs(s.fxFfmpegMs);
+      if (ffmpeg) fxParts.push(`ffmpeg ${ffmpeg}`);
+      const invoke = formatStepMs(s.fxInvokeMs);
+      if (invoke) fxParts.push(`call ${invoke}`);
+      const board = formatStepMs(s.fxBoardMs);
+      if (board) fxParts.push(`board ${board}`);
+      if (s.fxColdStart) fxParts.push("cold");
+      if (fxParts.length > 0) lines.push(`      ${fxParts.join(" · ")}`);
     }
     if (sections.length > maxSections) {
       lines.push(`  … +${sections.length - maxSections} more`);
@@ -226,6 +268,7 @@ export function claudeUsdBreakdownFromRow(row: MeditationAnalyticsRow): {
   combinedUsd: number;
   hasChatEstimate: boolean;
 } {
+  const model = typeof row.claudeModel === "string" ? row.claudeModel : null;
   const wi = row.claudeHaiku45WorkerInputTokens;
   const wo = row.claudeHaiku45WorkerOutputTokens;
   const workerUsd =
@@ -233,7 +276,7 @@ export function claudeUsdBreakdownFromRow(row: MeditationAnalyticsRow): {
     typeof wo === "number" &&
     Number.isFinite(wi) &&
     Number.isFinite(wo)
-      ? claudeHaiku45UsdFromTokens(wi, wo)
+      ? claudeUsdFromTokens(model, wi, wo)
       : 0;
   const ci = row.claudeHaiku45ChatEstInputTokens;
   const co = row.claudeHaiku45ChatEstOutputTokens;
@@ -242,7 +285,7 @@ export function claudeUsdBreakdownFromRow(row: MeditationAnalyticsRow): {
     typeof co === "number" &&
     Number.isFinite(ci) &&
     Number.isFinite(co);
-  const chatEstUsd = hasChatEstimate ? claudeHaiku45UsdFromTokens(ci, co) : 0;
+  const chatEstUsd = hasChatEstimate ? claudeUsdFromTokens(model, ci, co) : 0;
   return {
     workerUsd,
     chatEstUsd,

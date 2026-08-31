@@ -1,5 +1,11 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, DeleteCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  DeleteCommand,
+  PutCommand,
+  QueryCommand,
+  UpdateCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { normalizeBgAudioCategory, type BgAudioCategory } from "./background-audio-keys";
 import { coerceSoundSubcategory } from "./sound-taxonomy";
 
@@ -9,10 +15,21 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
 
 export const SOUND_PK = "SOUND";
 
-export type SoundReviewStatus = "in_use" | "pending" | "unused" | "categorised";
+export type SoundReviewStatus =
+  | "in_use"
+  | "pending"
+  | "unused"
+  | "categorised"
+  | "loop_verified";
 
 export function storedSoundReviewStatus(raw: unknown): SoundReviewStatus | null {
-  if (raw === "pending" || raw === "unused" || raw === "in_use" || raw === "categorised") {
+  if (
+    raw === "pending" ||
+    raw === "unused" ||
+    raw === "in_use" ||
+    raw === "categorised" ||
+    raw === "loop_verified"
+  ) {
     return raw;
   }
   return null;
@@ -42,11 +59,57 @@ export function parseSoundReviewStatus(raw: unknown): SoundReviewStatus {
 }
 
 export function soundIsInCustomerPicker(row: { status: SoundReviewStatus }): boolean {
-  return row.status === "categorised";
+  // loop_verified is categorised plus an admin-only note that the loop was
+  // checked, so both belong in the customer picker.
+  return row.status === "categorised" || row.status === "loop_verified";
 }
 
 export function soundEnabledFromStatus(status: SoundReviewStatus): boolean {
   return soundIsInCustomerPicker({ status });
+}
+
+/** Where an upload is in the raw -> normalized pipeline, so stalls are legible. */
+export type SoundProcessingStage =
+  | "uploading"
+  | "downloading"
+  | "normalizing"
+  | "encoding"
+  | "storing"
+  | "done"
+  | "failed";
+
+export type SoundProcessing = {
+  stage: SoundProcessingStage;
+  /** Failure detail (ffmpeg stderr tail, S3 error, out-of-memory hint). */
+  error?: string;
+  /** Source characteristics, useful when a specific file keeps failing. */
+  detail?: string;
+  attempt?: number;
+  updatedAt: string;
+};
+
+export function parseSoundProcessing(raw: unknown): SoundProcessing | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const stage = r.stage;
+  if (
+    stage !== "uploading" &&
+    stage !== "downloading" &&
+    stage !== "normalizing" &&
+    stage !== "encoding" &&
+    stage !== "storing" &&
+    stage !== "done" &&
+    stage !== "failed"
+  ) {
+    return undefined;
+  }
+  return {
+    stage,
+    error: typeof r.error === "string" ? r.error : undefined,
+    detail: typeof r.detail === "string" ? r.detail : undefined,
+    attempt: typeof r.attempt === "number" ? r.attempt : undefined,
+    updatedAt: typeof r.updatedAt === "string" ? r.updatedAt : "",
+  };
 }
 
 export type SoundCatalogRow = {
@@ -55,19 +118,25 @@ export type SoundCatalogRow = {
   name: string;
   category: BgAudioCategory;
   subcategory?: string;
+  /** Category was chosen by an admin, so the classifier must not move it. */
+  categoryPinned?: boolean;
   suggestedCategory?: BgAudioCategory;
   suggestedSubcategory?: string;
   suggestedName?: string;
   packPath?: string;
   tags: string[];
-  /** in_use = approved but uncategorised (not in mixer); categorised = in mixer; pending = fresh import; unused = skip */
+  /** in_use = approved but uncategorised (not in mixer); categorised = in mixer; loop_verified = in mixer, loop seam checked; pending = fresh import; unused = skip */
   status: SoundReviewStatus;
   enabled: boolean;
   notes?: string;
   originalKey?: string;
   trimStartSec?: number;
   trimEndSec?: number | null;
+  /** Fades baked in at the trim edges when the trim is applied. */
+  fadeInSec?: number;
+  fadeOutSec?: number;
   importedAt?: string;
+  processing?: SoundProcessing;
   updatedAt: string;
 };
 
@@ -102,6 +171,9 @@ export async function listAllSoundRows(): Promise<SoundCatalogRow[]> {
         KeyConditionExpression: "pk = :pk",
         ExpressionAttributeValues: { ":pk": SOUND_PK },
         ExclusiveStartKey: startKey,
+        // Admin reviews re-list immediately after a status write; an eventually
+        // consistent read here resurrects the old status in the UI.
+        ConsistentRead: true,
       }),
     );
     for (const it of out.Items ?? []) {
@@ -120,6 +192,7 @@ export async function listAllSoundRows(): Promise<SoundCatalogRow[]> {
           typeof it.subcategory === "string" && it.subcategory.trim()
             ? coerceSoundSubcategory(category, it.subcategory)
             : undefined,
+        categoryPinned: it.categoryPinned === true ? true : undefined,
         suggestedCategory: suggestedCategory ?? undefined,
         suggestedSubcategory:
           typeof it.suggestedSubcategory === "string"
@@ -134,7 +207,10 @@ export async function listAllSoundRows(): Promise<SoundCatalogRow[]> {
         originalKey: typeof it.originalKey === "string" ? it.originalKey : undefined,
         trimStartSec: typeof it.trimStartSec === "number" ? it.trimStartSec : undefined,
         trimEndSec: typeof it.trimEndSec === "number" ? it.trimEndSec : null,
+        fadeInSec: typeof it.fadeInSec === "number" ? it.fadeInSec : undefined,
+        fadeOutSec: typeof it.fadeOutSec === "number" ? it.fadeOutSec : undefined,
         importedAt,
+        processing: parseSoundProcessing(it.processing),
         updatedAt: typeof it.updatedAt === "string" ? it.updatedAt : "",
       });
     }
@@ -155,6 +231,38 @@ export async function putSoundRow(row: SoundCatalogRow): Promise<void> {
       },
     }),
   );
+}
+
+/**
+ * Records pipeline progress without touching the rest of the row, so a crash
+ * mid-normalize still leaves a readable trail. No-ops when the row is gone.
+ */
+export async function updateSoundProcessing(
+  sk: string,
+  processing: Omit<SoundProcessing, "updatedAt">,
+): Promise<void> {
+  const value: SoundProcessing = {
+    ...processing,
+    error: processing.error ? processing.error.slice(0, 3000) : undefined,
+    detail: processing.detail ? processing.detail.slice(0, 500) : undefined,
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: tableName(),
+        Key: { pk: SOUND_PK, sk },
+        UpdateExpression: "SET #p = :p",
+        ExpressionAttributeNames: { "#p": "processing" },
+        ExpressionAttributeValues: { ":p": value },
+        ConditionExpression: "attribute_exists(sk)",
+      }),
+    );
+  } catch (e) {
+    const name = (e as { name?: string })?.name;
+    if (name === "ConditionalCheckFailedException") return;
+    console.warn("updateSoundProcessing failed", { sk, stage: value.stage, name });
+  }
 }
 
 export async function deleteSoundRow(sk: string): Promise<void> {

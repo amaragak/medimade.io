@@ -92,11 +92,22 @@ type OutItem = {
   /** ms from job create (Generate click) until library row write. */
   generationElapsedMs: number | null;
   jobCreatedAt: string | null;
+  /** Claude script/metadata usage, for the dev cost flyover. */
+  claudeModel: string | null;
+  claudeHaiku45WorkerInputTokens: number | null;
+  claudeHaiku45WorkerOutputTokens: number | null;
+  claudeHaiku45ChatEstInputTokens: number | null;
+  claudeHaiku45ChatEstOutputTokens: number | null;
   generationTimings: {
     phases: {
       scriptMs?: number;
       metadataMs?: number;
       concatMs?: number;
+      fxMs?: number;
+      fxFfmpegMs?: number;
+      fxInvokeMs?: number;
+      fxBoardMs?: number;
+      fxColdStart?: boolean;
       loudnormMs?: number;
       uploadMs?: number;
     };
@@ -104,6 +115,10 @@ type OutItem = {
       i: number;
       ttsMs: number;
       fxMs?: number;
+      fxFfmpegMs?: number;
+      fxInvokeMs?: number;
+      fxBoardMs?: number;
+      fxColdStart?: boolean;
       utf8Bytes?: number;
       pauseSec?: number;
     }>;
@@ -142,6 +157,15 @@ function parseGenerationTimings(raw: unknown): OutItem["generationTimings"] {
     if (concatMs != null) phases.concatMs = concatMs;
     if (loudnormMs != null) phases.loudnormMs = loudnormMs;
     if (uploadMs != null) phases.uploadMs = uploadMs;
+    const fxMs = optMs(p.fxMs);
+    if (fxMs != null) phases.fxMs = fxMs;
+    const fxFfmpegMs = optMs(p.fxFfmpegMs);
+    if (fxFfmpegMs != null) phases.fxFfmpegMs = fxFfmpegMs;
+    const fxInvokeMs = optMs(p.fxInvokeMs);
+    if (fxInvokeMs != null) phases.fxInvokeMs = fxInvokeMs;
+    const fxBoardMs = optMs(p.fxBoardMs);
+    if (fxBoardMs != null) phases.fxBoardMs = fxBoardMs;
+    if (typeof p.fxColdStart === "boolean") phases.fxColdStart = p.fxColdStart;
   }
   const sections: NonNullable<OutItem["generationTimings"]>["sections"] = [];
   if (Array.isArray(sectionsRaw)) {
@@ -155,6 +179,13 @@ function parseGenerationTimings(raw: unknown): OutItem["generationTimings"] {
       const entry: (typeof sections)[number] = { i, ttsMs };
       const fxMs = optMs(s.fxMs);
       if (fxMs != null) entry.fxMs = fxMs;
+      const fxFfmpegMs = optMs(s.fxFfmpegMs);
+      if (fxFfmpegMs != null) entry.fxFfmpegMs = fxFfmpegMs;
+      const fxInvokeMs = optMs(s.fxInvokeMs);
+      if (fxInvokeMs != null) entry.fxInvokeMs = fxInvokeMs;
+      const fxBoardMs = optMs(s.fxBoardMs);
+      if (fxBoardMs != null) entry.fxBoardMs = fxBoardMs;
+      if (typeof s.fxColdStart === "boolean") entry.fxColdStart = s.fxColdStart;
       if (typeof s.utf8Bytes === "number" && Number.isFinite(s.utf8Bytes) && s.utf8Bytes > 0) {
         entry.utf8Bytes = Math.round(s.utf8Bytes);
       }
@@ -417,6 +448,12 @@ function buildLibraryItems(params: {
       typeof row.fishTtsModel === "string" && row.fishTtsModel.trim()
         ? row.fishTtsModel.trim()
         : null;
+    const claudeModel =
+      typeof row.claudeModel === "string" && row.claudeModel.trim()
+        ? row.claudeModel.trim()
+        : null;
+    const optTokens = (v: unknown): number | null =>
+      typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
     const rating =
       typeof row.rating === "number" &&
       Number.isFinite(row.rating) &&
@@ -513,6 +550,11 @@ function buildLibraryItems(params: {
         typeof row.jobCreatedAt === "string" && row.jobCreatedAt.trim()
           ? row.jobCreatedAt.trim()
           : null,
+      claudeModel,
+      claudeHaiku45WorkerInputTokens: optTokens(row.claudeHaiku45WorkerInputTokens),
+      claudeHaiku45WorkerOutputTokens: optTokens(row.claudeHaiku45WorkerOutputTokens),
+      claudeHaiku45ChatEstInputTokens: optTokens(row.claudeHaiku45ChatEstInputTokens),
+      claudeHaiku45ChatEstOutputTokens: optTokens(row.claudeHaiku45ChatEstOutputTokens),
       generationTimings: parseGenerationTimings(row.generationTimings),
     });
   }
@@ -570,6 +612,11 @@ function buildLibraryItems(params: {
       publisherBackgroundNoiseGain: null,
       generationElapsedMs: null,
       jobCreatedAt: null,
+      claudeModel: null,
+      claudeHaiku45WorkerInputTokens: null,
+      claudeHaiku45WorkerOutputTokens: null,
+      claudeHaiku45ChatEstInputTokens: null,
+      claudeHaiku45ChatEstOutputTokens: null,
       generationTimings: null,
     });
   }

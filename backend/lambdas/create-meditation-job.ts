@@ -14,6 +14,8 @@ import {
   normalizeTtsProvider,
   type TtsProvider,
 } from "../lib/orpheus-voices";
+import { coerceClaudeModel } from "../lib/anthropic-pricing";
+import { coerceMeditationTargetMinutes } from "../lib/meditation-target-minutes";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const lambdaClient = new LambdaClient({});
@@ -49,8 +51,10 @@ export async function handler(
     sessionToken?: string;
     /** True when the user used journal / “How I feel” flow (no real style label). */
     journalMode?: boolean;
-    /** 2, 5, or 10 — guided meditation length target for coach + script. */
+    /** Guided meditation length target in minutes, for coach + script. */
     meditationTargetMinutes?: number;
+    /** Dev-only Claude A/B; unsupported ids fall back to Haiku in the worker. */
+    claudeModel?: string;
     backgroundSoundKey?: string;
     backgroundNatureKey?: string;
     backgroundMusicKey?: string;
@@ -131,9 +135,11 @@ export async function handler(
 
   const journalMode = body.journalMode === true;
 
-  const rawLen = body.meditationTargetMinutes;
-  const meditationTargetMinutes =
-    rawLen === 2 || rawLen === 5 || rawLen === 10 ? rawLen : 5;
+  const meditationTargetMinutes = coerceMeditationTargetMinutes(
+    body.meditationTargetMinutes,
+  );
+
+  const claudeModel = coerceClaudeModel(body.claudeModel);
 
   const rawFishModel =
     typeof body.fishTtsModel === "string" ? body.fishTtsModel.trim() : "";
@@ -167,6 +173,7 @@ export async function handler(
         speed,
         ...(journalMode ? { journalMode: true } : {}),
         meditationTargetMinutes,
+        claudeModel,
         ...(voiceFxPreset ? { voiceFxPreset } : {}),
         backgroundSoundKey,
         ...(backgroundNatureKey ? { backgroundNatureKey } : {}),

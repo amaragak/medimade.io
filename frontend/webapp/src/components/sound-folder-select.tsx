@@ -4,9 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { BackgroundAudioItem } from "@/lib/medimade-api";
 import {
   categoryLabel,
+  channelSubcategoryOptions,
   inferSoundSubcategory,
+  prettySubcategoryLabel,
   subcategoryLabel,
-  subcategoryOptions,
   type SoundCategoryId,
 } from "@/lib/sound-taxonomy";
 
@@ -61,7 +62,16 @@ export function SoundFolderSelect({
   const mobileSamplesRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [activeSub, setActiveSub] = useState<string | null>(null);
-  const folders = subcategoryOptions(category);
+  const folders = useMemo(() => {
+    const base = channelSubcategoryOptions(category);
+    // Compositions arrive with a folder named after their pack, so the list of
+    // folders is whatever the items actually carry.
+    const known = new Set(base.map((o) => o.id));
+    const extra = [...new Set(items.map((it) => it.subcategory || "").filter((s) => s && !known.has(s)))]
+      .sort()
+      .map((id) => ({ id, label: prettySubcategoryLabel(id) }));
+    return extra.length > 0 ? [...base, ...extra] : base;
+  }, [category, items]);
   const selected = items.find((s) => s.key === value);
   const label = selected?.name || "None";
 

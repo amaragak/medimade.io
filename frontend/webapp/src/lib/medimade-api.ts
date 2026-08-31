@@ -811,6 +811,8 @@ export async function streamMedimadeChat(
     meditationTargetMinutes?: MeditationTargetMinutes;
     /** How to interpret a reflected journal entry; omit when empty. */
     journalGuidance?: string;
+    /** Dev-only Claude A/B; server falls back to Haiku for unknown ids. */
+    claudeModel?: string;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
@@ -822,9 +824,8 @@ export async function streamMedimadeChat(
       messages: params.messages,
       ...(params.journalMode === true ? { journalMode: true } : {}),
       ...(guidance ? { journalGuidance: guidance } : {}),
-      ...(params.meditationTargetMinutes === 2 ||
-      params.meditationTargetMinutes === 5 ||
-      params.meditationTargetMinutes === 10
+      ...(params.claudeModel ? { claudeModel: params.claudeModel } : {}),
+      ...(isMeditationTargetMinutes(params.meditationTargetMinutes)
         ? { meditationTargetMinutes: params.meditationTargetMinutes }
         : {}),
     },
@@ -844,6 +845,8 @@ export async function streamMeditationScript(
     meditationTargetMinutes?: MeditationTargetMinutes;
     /** Fish playback speed (1 = default); should match create job `speed` for consistent word targets. */
     speechSpeed?: number;
+    /** Dev-only Claude A/B; server falls back to Haiku for unknown ids. */
+    claudeModel?: string;
   },
   onDelta: (chunk: string) => void,
 ): Promise<string> {
@@ -853,9 +856,8 @@ export async function streamMeditationScript(
       meditationStyle: params.meditationStyle ?? "",
       transcript: params.transcript,
       ...(params.journalMode === true ? { journalMode: true } : {}),
-      ...(params.meditationTargetMinutes === 2 ||
-      params.meditationTargetMinutes === 5 ||
-      params.meditationTargetMinutes === 10
+      ...(params.claudeModel ? { claudeModel: params.claudeModel } : {}),
+      ...(isMeditationTargetMinutes(params.meditationTargetMinutes)
         ? { meditationTargetMinutes: params.meditationTargetMinutes }
         : {}),
       ...(typeof params.speechSpeed === "number" &&
@@ -903,10 +905,37 @@ export function backgroundAudioStreamingKey(key: string): string {
   return `${k.slice(0, -4)}.mp3`;
 }
 
+let cachedOpusSupport: boolean | null = null;
+
+function browserPlaysOggOpus(): boolean {
+  if (cachedOpusSupport !== null) return cachedOpusSupport;
+  if (typeof document === "undefined") return false;
+  const probe = document.createElement("audio");
+  cachedOpusSupport = probe.canPlayType('audio/ogg; codecs="opus"') !== "";
+  return cachedOpusSupport;
+}
+
+/**
+ * Playback-only key for beds. Opus is gapless, so looped beds have no encoder
+ * padding at the seam; MP3 stays the fallback where Ogg Opus is unsupported.
+ * Job payloads and stored mixes keep the MP3 key from
+ * `backgroundAudioStreamingKey` — the catalog is keyed on it.
+ */
+export function backgroundAudioPlaybackKey(key: string): string {
+  const mp3 = backgroundAudioStreamingKey(key);
+  if (!mp3) return mp3;
+  const lower = mp3.toLowerCase();
+  if (!lower.startsWith("background-audio/") || !lower.endsWith(".mp3")) return mp3;
+  if (!browserPlaysOggOpus()) return mp3;
+  return `${mp3.slice(0, -4)}.opus`;
+}
+
 export type BackgroundAudioByCategory = {
   baseUrl?: string;
   nature: BackgroundAudioItem[];
   music: BackgroundAudioItem[];
+  /** Full-length pieces picked whole, rather than looped beds. */
+  compositions: BackgroundAudioItem[];
   drums: BackgroundAudioItem[];
   noise: BackgroundAudioItem[];
   factoryMixes?: MixerFactoryPreset[];
@@ -916,7 +945,13 @@ export type FishSpeaker = {
   name: string;
   modelId: string;
   description?: string;
+  /** Meditation types this voice suits, for tag pills. Free text. */
+  goodFor?: string[];
+  /** Omitted when not specified. */
+  gender?: VoiceGender;
 };
+
+export type VoiceGender = "male" | "female";
 
 export type OrpheusSpeaker = {
   id: string;
@@ -1193,6 +1228,8 @@ export async function createMeditationAudioJob(params: {
   ttsProvider?: TtsProvider;
   /** Fish Audio model for quality A/B: `s2.1-pro` (uses free) or `s1`. */
   fishTtsModel?: "s2.1-pro" | "s2.1-pro-free" | "s1" | string;
+  /** Dev-only Claude A/B for worker script + metadata generation. */
+  claudeModel?: string;
   speed?: number;
   /** If set, applies voice FX (Pedalboard) after loudness normalization. */
   voiceFxPreset?: string | null;
@@ -1228,12 +1265,9 @@ export async function createMeditationAudioJob(params: {
   const backgroundDrumsKey = trimBg(params.backgroundDrumsKey ?? null);
   const backgroundNoiseKey = trimBg(params.backgroundNoiseKey ?? null);
 
-  const meditationTargetMinutes: MeditationTargetMinutes =
-    params.meditationTargetMinutes === 2 ||
-    params.meditationTargetMinutes === 5 ||
-    params.meditationTargetMinutes === 10
-      ? params.meditationTargetMinutes
-      : 5;
+  const meditationTargetMinutes = coerceMeditationTargetMinutes(
+    params.meditationTargetMinutes,
+  );
 
   const jobBody: Record<string, unknown> = {
     meditationStyle: params.meditationStyle ?? "",
@@ -1242,6 +1276,7 @@ export async function createMeditationAudioJob(params: {
     reference_id: params.reference_id,
     ...(params.ttsProvider ? { ttsProvider: params.ttsProvider } : {}),
     ...(params.fishTtsModel ? { fishTtsModel: params.fishTtsModel } : {}),
+    ...(params.claudeModel ? { claudeModel: params.claudeModel } : {}),
     meditationTargetMinutes,
     ...(params.journalMode === true ? { journalMode: true } : {}),
     ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
@@ -1321,7 +1356,40 @@ export async function getMeditationAudioJobStatus(
   return { ...data, jobId: data.jobId ?? id };
 }
 
-export type AdminSoundCategory = "music" | "ambience" | "drums" | "noise";
+export type AdminSoundCategory = "music" | "compositions" | "ambience" | "drums" | "noise";
+
+/** loop_verified is categorised with the loop seam checked — admin-only marker. */
+export type AdminSoundStatus =
+  | "in_use"
+  | "pending"
+  | "unused"
+  | "categorised"
+  | "loop_verified";
+
+export type AdminSoundProcessingStage =
+  | "uploading"
+  | "downloading"
+  | "normalizing"
+  | "encoding"
+  | "storing"
+  | "done"
+  | "failed";
+
+export type AdminSoundProcessing = {
+  stage: AdminSoundProcessingStage;
+  error?: string;
+  detail?: string;
+  attempt?: number;
+  updatedAt: string;
+};
+
+/** Multipart upload started in the browser but never completed. */
+export type AdminSoundPendingUpload = {
+  uploadId: string;
+  initiatedAt: string | null;
+  uploadedBytes: number;
+  partCount: number;
+};
 
 export type AdminSoundItem = {
   key: string;
@@ -1337,14 +1405,19 @@ export type AdminSoundItem = {
   suggestedName: string | null;
   tags: string[];
   enabled: boolean;
-  status: "in_use" | "pending" | "unused" | "categorised";
+  status: AdminSoundStatus;
   notes: string;
   originalKey?: string;
   trimStartSec: number;
   trimEndSec: number | null;
+  fadeInSec: number;
+  fadeOutSec: number;
   inCatalog: boolean;
   ready: boolean;
   hasRaw?: boolean;
+  rawKey?: string | null;
+  processing?: AdminSoundProcessing | null;
+  pendingUpload?: AdminSoundPendingUpload | null;
   importedAt: string | null;
   updatedAt: string | null;
 };
@@ -1358,6 +1431,7 @@ export type AdminSoundsList = {
     pending: number;
     unused: number;
     categorised: number;
+    loopVerified: number;
     inCatalog: number;
   };
   items: AdminSoundItem[];
@@ -1373,13 +1447,14 @@ export async function listAdminSounds(): Promise<AdminSoundsList> {
   }
   return {
     baseUrl: data.baseUrl,
-    categories: data.categories ?? ["music", "ambience", "drums", "noise"],
+    categories: data.categories ?? ["music", "compositions", "ambience", "drums", "noise"],
     counts: {
       total: data.counts?.total ?? 0,
       inUse: data.counts?.inUse ?? 0,
       pending: data.counts?.pending ?? 0,
       unused: data.counts?.unused ?? 0,
       categorised: data.counts?.categorised ?? 0,
+      loopVerified: data.counts?.loopVerified ?? 0,
       inCatalog: data.counts?.inCatalog ?? 0,
     },
     items: (data.items ?? []).map((it) => {
@@ -1406,7 +1481,7 @@ export async function listAdminSounds(): Promise<AdminSoundsList> {
 export async function patchAdminSound(body: {
   key: string;
   enabled?: boolean;
-  status?: "in_use" | "pending" | "unused" | "categorised";
+  status?: AdminSoundStatus;
   category?: AdminSoundCategory;
   subcategory?: string;
   tags?: string[];
@@ -1429,24 +1504,36 @@ export async function patchAdminSound(body: {
 
 export async function createAdminSoundUploads(params: {
   files: Array<{ relativePath: string; contentType: string; size: number }>;
+  /** Pins the imported files to a category instead of letting the classifier pick. */
+  category?: AdminSoundCategory;
+  subcategory?: string;
   signal?: AbortSignal;
 }): Promise<{
   uploads: AdminSoundUpload[];
   skippedCount: number;
   skipped: string[];
+  /** Already in S3 but unprocessed: normalization was re-triggered, no re-upload. */
+  reprocessedCount: number;
+  reprocessed: string[];
 }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const res = await fetch(`${base}/admin/sounds`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
-    body: JSON.stringify({ files: params.files }),
+    body: JSON.stringify({
+      files: params.files,
+      ...(params.category ? { category: params.category } : {}),
+      ...(params.category && params.subcategory ? { subcategory: params.subcategory } : {}),
+    }),
     signal: params.signal,
   });
   const data = (await res.json()) as {
     uploads?: AdminSoundUpload[];
     skippedCount?: number;
     skipped?: string[];
+    reprocessedCount?: number;
+    reprocessed?: string[];
     error?: string;
     detail?: string;
   };
@@ -1457,6 +1544,8 @@ export async function createAdminSoundUploads(params: {
     uploads: data.uploads ?? [],
     skippedCount: data.skippedCount ?? data.skipped?.length ?? 0,
     skipped: data.skipped ?? [],
+    reprocessedCount: data.reprocessedCount ?? data.reprocessed?.length ?? 0,
+    reprocessed: data.reprocessed ?? [],
   };
 }
 
@@ -1475,16 +1564,64 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function putS3WithRetry(url: string, body: Blob, signal?: AbortSignal): Promise<Response> {
+/** XHR rather than fetch: it is the only way to read upload progress. */
+function putS3Once(
+  url: string,
+  body: Blob,
+  signal?: AbortSignal,
+  onProgress?: (loaded: number) => void,
+): Promise<{ status: number; etag: string | null; detail: string }> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    const onAbort = () => xhr.abort();
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    xhr.open("PUT", url, true);
+    xhr.upload.onprogress = (e) => onProgress?.(e.loaded);
+    xhr.onload = () => {
+      cleanup();
+      onProgress?.(body.size);
+      resolve({
+        status: xhr.status,
+        etag: xhr.getResponseHeader("ETag"),
+        detail: typeof xhr.responseText === "string" ? xhr.responseText : "",
+      });
+    };
+    xhr.onerror = () => {
+      cleanup();
+      reject(new Error("network error"));
+    };
+    xhr.onabort = () => {
+      cleanup();
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    xhr.ontimeout = () => {
+      cleanup();
+      reject(new Error("timed out"));
+    };
+    xhr.send(body);
+  });
+}
+
+async function putS3WithRetry(
+  url: string,
+  body: Blob,
+  signal?: AbortSignal,
+  onProgress?: (loaded: number) => void,
+): Promise<{ etag: string | null }> {
   let lastStatus = 0;
   let lastDetail = "";
   for (let attempt = 0; attempt < 4; attempt++) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     try {
-      const res = await fetch(url, { method: "PUT", body, cache: "no-store", signal });
-      if (res.ok) return res;
+      const res = await putS3Once(url, body, signal, onProgress);
+      if (res.status >= 200 && res.status < 300) return { etag: res.etag };
       lastStatus = res.status;
-      lastDetail = await res.text().catch(() => "");
+      lastDetail = res.detail;
       const retryable = res.status === 403 || res.status === 408 || res.status === 429 || res.status >= 500;
       if (!retryable) break;
     } catch (e) {
@@ -1492,6 +1629,7 @@ async function putS3WithRetry(url: string, body: Blob, signal?: AbortSignal): Pr
       lastStatus = 0;
       lastDetail = e instanceof Error ? e.message : "network error";
     }
+    onProgress?.(0);
     await sleep(500 * 2 ** attempt);
   }
   throw new Error(
@@ -1525,6 +1663,19 @@ async function abortAdminSoundMultipart(rawKey: string, uploadId: string): Promi
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ abortMultipart: { rawKey, uploadId } }),
   }).catch(() => undefined);
+}
+
+/** Re-runs normalization from the raw upload already in S3, without re-uploading. */
+export async function reprocessAdminSound(key: string): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/sounds`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ reprocess: { key } }),
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+  if (!res.ok) throw new Error(data.detail ?? data.error ?? res.statusText);
 }
 
 export async function analyseAdminSoundTitles(keys: string[]): Promise<number> {
@@ -1567,6 +1718,8 @@ export async function uploadAdminSoundToS3(
   u: AdminSoundUpload,
   file: File,
   signal?: AbortSignal,
+  /** Bytes of this file sent so far, for progress display. */
+  onProgress?: (loaded: number) => void,
 ): Promise<void> {
   if (u.multipart?.urls?.length) {
     const etags: Array<{ partNumber: number; etag: string }> = [];
@@ -1576,8 +1729,9 @@ export async function uploadAdminSoundToS3(
         const url = u.multipart.urls[i];
         if (!url) throw new Error("missing part URL");
         const blob = file.slice(i * partSize, Math.min((i + 1) * partSize, file.size));
-        const res = await putS3WithRetry(url, blob, signal);
-        const etag = res.headers.get("ETag") || res.headers.get("etag");
+        const done = i * partSize;
+        const res = await putS3WithRetry(url, blob, signal, (loaded) => onProgress?.(done + loaded));
+        const etag = res.etag;
         if (!etag) throw new Error("S3 part missing ETag");
         etags.push({ partNumber: i + 1, etag });
       }
@@ -1593,13 +1747,15 @@ export async function uploadAdminSoundToS3(
     return;
   }
   if (!u.url) throw new Error("missing upload url");
-  await putS3WithRetry(u.url, file, signal);
+  await putS3WithRetry(u.url, file, signal, onProgress);
 }
 
 export async function trimAdminSound(body: {
   key: string;
   startSec: number;
   endSec: number | null;
+  fadeInSec?: number;
+  fadeOutSec?: number;
 }): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
@@ -1620,6 +1776,8 @@ export type AdminVoiceSpeaker = {
   hidden: boolean;
   sort: number;
   description?: string;
+  goodFor?: string[];
+  gender?: VoiceGender | null;
   hasSample?: boolean;
   sampleUrl?: string | null;
 };
@@ -1661,6 +1819,8 @@ export async function patchAdminVoice(body: {
     hidden?: boolean;
     sort?: number;
     description?: string;
+    goodFor?: string[];
+    gender?: VoiceGender | null;
   };
 }): Promise<{ pauses?: AdminPauseBands; speaker?: AdminVoiceSpeaker }> {
   const base = getMedimadeApiBase();
@@ -1784,6 +1944,7 @@ export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> 
     nature?: BackgroundAudioItem[];
     ambience?: BackgroundAudioItem[];
     music?: BackgroundAudioItem[];
+    compositions?: BackgroundAudioItem[];
     drums?: BackgroundAudioItem[];
     noise?: BackgroundAudioItem[];
     items?: BackgroundAudioItem[];
@@ -1799,6 +1960,7 @@ export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> 
     baseUrl: data.baseUrl,
     nature: data.ambience ?? data.nature ?? [],
     music: data.music ?? [],
+    compositions: data.compositions ?? [],
     drums: data.drums ?? [],
     noise: data.noise ?? [],
     factoryMixes: Array.isArray(data.factoryMixes)
@@ -1886,6 +2048,12 @@ export type LibraryMeditationItem = {
   /** ms from Generate click (job create) until library row write. */
   generationElapsedMs?: number | null;
   jobCreatedAt?: string | null;
+  /** Claude usage behind the script + metadata calls (dev cost flyover). */
+  claudeModel?: string | null;
+  claudeHaiku45WorkerInputTokens?: number | null;
+  claudeHaiku45WorkerOutputTokens?: number | null;
+  claudeHaiku45ChatEstInputTokens?: number | null;
+  claudeHaiku45ChatEstOutputTokens?: number | null;
   /** Per-phase + per speech-section worker timings (dev flyover). */
   generationTimings?: GenerationTimings | null;
 };
@@ -1893,7 +2061,23 @@ export type LibraryMeditationItem = {
 export const MEDITATION_DRAFT_STATE_VERSION = 1 as const;
 
 /** Creator-selected guided length (coach + script targets). */
-export type MeditationTargetMinutes = 2 | 5 | 10;
+export type MeditationTargetMinutes = 2 | 5 | 10 | 20;
+
+export const MEDITATION_TARGET_MINUTES: readonly MeditationTargetMinutes[] = [
+  2, 5, 10, 20,
+];
+
+export function isMeditationTargetMinutes(
+  raw: unknown,
+): raw is MeditationTargetMinutes {
+  return MEDITATION_TARGET_MINUTES.includes(raw as MeditationTargetMinutes);
+}
+
+export function coerceMeditationTargetMinutes(
+  raw: unknown,
+): MeditationTargetMinutes {
+  return isMeditationTargetMinutes(raw) ? raw : 5;
+}
 
 export type MeditationDraftStateV1 = {
   v: typeof MEDITATION_DRAFT_STATE_VERSION;

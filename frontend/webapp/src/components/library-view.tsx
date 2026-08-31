@@ -21,9 +21,15 @@ import {
   patchMeditationPublic,
   patchMeditationBackgroundMix,
   patchMeditationRating,
+  backgroundAudioPlaybackKey,
   backgroundAudioStreamingKey,
   type BackgroundAudioItem,
 } from "@/lib/medimade-api";
+import {
+  releaseGaplessBed,
+  setGaplessBedVolume,
+  syncGaplessBed,
+} from "@/lib/gapless-bed-loop";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import { useMobileOrTouchChrome } from "@/hooks/use-mobile-or-touch-chrome";
 import {
@@ -34,6 +40,13 @@ import {
   formatFishCostUsd,
   generationTimingsFlyoverLines,
 } from "@/lib/meditation-analytics";
+import {
+  CLAUDE_HAIKU_45_MODEL_ID,
+  CLAUDE_MODEL_RATES,
+  claudeModelLabel,
+  claudeRatesPerMillion,
+  claudeUsdFromTokens,
+} from "@/lib/claude-pricing";
 import { communityLibraryAsItems, itemMatchesLibraryCategory } from "@/lib/community-library";
 import {
   loadPendingGenerations,
@@ -43,7 +56,16 @@ import {
   type PendingLibraryGeneration,
 } from "@/lib/pending-library-generations";
 import { CommunityCategoryGrid } from "@/components/community-category-grid";
-import { bedElementVolume, BED_VOICE_INTRO_SECONDS } from "@/lib/bed-volume";
+import {
+  bedElementVolume,
+  BED_VOICE_INTRO_SECONDS,
+  SOUNDSCAPE_ELEMENT_VOLUME,
+} from "@/lib/bed-volume";
+import { SoundscapePicker } from "@/components/soundscape-picker";
+import { playWithLeadBuffer } from "@/lib/audio-lead-buffer";
+
+/** Mixer gain persisted for a soundscape; live playback uses its own volume. */
+const SOUNDSCAPE_MIX_GAIN = 50;
 
 function formatDuration(seconds: number | null): string {
   if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) {
@@ -73,6 +95,75 @@ function formatGenerationElapsed(ms: number | null | undefined): string | null {
   return `${h}h ${remM.toString().padStart(2, "0")}m`;
 }
 
+function formatUsd(usd: number): string {
+  if (usd <= 0) return "$0";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(3)}`;
+}
+
+/**
+ * Script-generation spend, so Haiku and Sonnet runs can be compared side by
+ * side in the library. Worker tokens are measured; coach chat is an estimate.
+ */
+function claudeCostFlyover(m: LibraryMeditationItem): {
+  lines: string[];
+  totalUsd: number;
+} {
+  const model = m.claudeModel ?? null;
+  const wi = m.claudeHaiku45WorkerInputTokens;
+  const wo = m.claudeHaiku45WorkerOutputTokens;
+  const ci = m.claudeHaiku45ChatEstInputTokens;
+  const co = m.claudeHaiku45ChatEstOutputTokens;
+  const hasWorker = typeof wi === "number" && typeof wo === "number";
+  const hasChat = typeof ci === "number" && typeof co === "number";
+  if (!hasWorker && !hasChat) {
+    return {
+      lines: [`Claude · ${claudeModelLabel(model)}: no usage recorded`],
+      totalUsd: 0,
+    };
+  }
+  const rates = claudeRatesPerMillion(model);
+  const workerUsd = hasWorker ? claudeUsdFromTokens(model, wi, wo) : 0;
+  const chatUsd = hasChat ? claudeUsdFromTokens(model, ci, co) : 0;
+  const inTokens = (hasWorker ? wi : 0) + (hasChat ? ci : 0);
+  const outTokens = (hasWorker ? wo : 0) + (hasChat ? co : 0);
+  const totalUsd = workerUsd + chatUsd;
+
+  const lines = [`Claude · ${claudeModelLabel(model)}`];
+  if (hasWorker) {
+    lines.push(
+      `Script + metadata: ${wi.toLocaleString()} in / ${wo.toLocaleString()} out · ${formatUsd(workerUsd)}`,
+    );
+  }
+  if (hasChat) {
+    lines.push(
+      `Coach chat ≈ ${ci.toLocaleString()} in / ${co.toLocaleString()} out · ${formatUsd(chatUsd)}`,
+    );
+  }
+  lines.push(
+    `Tokens: ${inTokens.toLocaleString()} in / ${outTokens.toLocaleString()} out`,
+    `Rate: $${rates.input} in / $${rates.output} out per MTok`,
+    `This run ≈ ${formatUsd(totalUsd)}`,
+  );
+
+  // Same tokens priced against the other models, to compare Haiku vs Sonnet.
+  // Rows written before the model was recorded are priced as Haiku.
+  const pricedAs = model ?? CLAUDE_HAIKU_45_MODEL_ID;
+  for (const [id, rate] of Object.entries(CLAUDE_MODEL_RATES)) {
+    if (id === pricedAs) continue;
+    const alt = claudeUsdFromTokens(id, inTokens, outTokens);
+    const delta = totalUsd > 0 ? alt / totalUsd : 0;
+    const factor = delta > 0 ? ` (${delta.toFixed(2)}×)` : "";
+    lines.push(
+      `If ${rate.label}: ${formatUsd(alt)}${factor} · $${rate.usdPerInputToken * 1_000_000} / $${
+        rate.usdPerOutputToken * 1_000_000
+      } per MTok`,
+    );
+  }
+
+  return { lines, totalUsd };
+}
+
 function fishCostTooltipText(m: LibraryMeditationItem): string | null {
   const model = m.fishTtsModel ?? null;
   const est = estimateFishBillableUtf8Bytes({
@@ -84,12 +175,13 @@ function fishCostTooltipText(m: LibraryMeditationItem): string | null {
   const perMillion = fishUsdPerMillionForModel(model);
   const lines: string[] = [];
   lines.push(`Length: ${formatDuration(m.durationSeconds)}`);
+  let fishUsd = 0;
   if (est) {
-    const usd = fishCostUsdFromBillableBytes(est.bytes, model);
+    fishUsd = fishCostUsdFromBillableBytes(est.bytes, model);
     const approx = est.approximate ? " ≈" : "";
     lines.push(
       `Fish Audio · ${fishTtsModelLabel(model)}${approx}`,
-      `${formatFishCostUsd(usd)} · ${est.bytes.toLocaleString()} UTF-8 bytes`,
+      `${formatFishCostUsd(fishUsd)} · ${est.bytes.toLocaleString()} UTF-8 bytes`,
       `$${perMillion} / million UTF-8 bytes`,
     );
   } else {
@@ -97,6 +189,12 @@ function fishCostTooltipText(m: LibraryMeditationItem): string | null {
       `Fish Audio · ${fishTtsModelLabel(model)}: cost unknown (no script bytes)`,
     );
   }
+  const claude = claudeCostFlyover(m);
+  lines.push("", ...claude.lines);
+  if (est || claude.totalUsd > 0) {
+    lines.push("", `Total ≈ ${formatUsd(fishUsd + claude.totalUsd)} (voice + Claude)`);
+  }
+  lines.push("");
   const elapsed = formatGenerationElapsed(m.generationElapsedMs);
   if (elapsed) {
     lines.push(`Generate → library: ${elapsed}`);
@@ -634,6 +732,7 @@ function LibraryMixEditorModal({
   musicItems,
   drumsItems,
   noiseItems,
+  compositionItems,
   error,
   resetMix,
   onLiveVolume,
@@ -648,6 +747,7 @@ function LibraryMixEditorModal({
   musicItems: BackgroundAudioItem[];
   drumsItems: BackgroundAudioItem[];
   noiseItems: BackgroundAudioItem[];
+  compositionItems: BackgroundAudioItem[];
   error: string | null;
   resetMix: LibraryMixValues;
   onLiveVolume: (channel: BedVolumeChannel, gain: number) => void;
@@ -724,6 +824,69 @@ function LibraryMixEditorModal({
   closeRef.current = closeAndSave;
 
   const drumsLockedForMelodic = isMelodicMusicKey(musicItems, musicKey);
+  const soundscapeSelected = isSoundscapeKey(compositionItems, musicKey);
+  const [bedTab, setBedTab] = useState<"soundscape" | "mixer">(
+    soundscapeSelected ? "soundscape" : "mixer",
+  );
+  const mediaBase = getMedimadeMediaBaseUrl();
+  const previewRef = useRef<HTMLAudioElement | null>(null);
+  const [previewKey, setPreviewKey] = useState<string | null>(null);
+
+  useEffect(
+    () => () => {
+      const el = previewRef.current;
+      if (el) {
+        el.pause();
+        el.removeAttribute("src");
+      }
+    },
+    [],
+  );
+
+  function soundscapePreviewUrl(key: string): string | null {
+    if (!mediaBase || !key.trim()) return null;
+    return mediaFileUrl(mediaBase, backgroundAudioStreamingKey(key));
+  }
+
+  function toggleSoundscapePreview(key: string) {
+    const el = previewRef.current;
+    const url = soundscapePreviewUrl(key);
+    if (!el || !url) return;
+    if (previewKey === key && !el.paused) {
+      el.pause();
+      setPreviewKey(null);
+      return;
+    }
+    if (el.src !== url) {
+      el.src = url;
+      el.load();
+    }
+    // load() resets volume, so this has to be set after it.
+    el.volume = SOUNDSCAPE_ELEMENT_VOLUME;
+    setPreviewKey(key);
+    void playWithLeadBuffer(el).catch(() => setPreviewKey(null));
+  }
+
+  /** A soundscape is the whole bed, so picking one clears the mixer channels. */
+  function chooseSoundscape(key: string) {
+    const next: LibraryMixValues = {
+      natureKey: "",
+      musicKey: key,
+      drumsKey: "",
+      noiseKey: "",
+      natureGain,
+      musicGain: SOUNDSCAPE_MIX_GAIN,
+      drumsGain,
+      noiseGain,
+    };
+    setNatureKey("");
+    setMusicKey(key);
+    setDrumsKey("");
+    setNoiseKey("");
+    setMusicGain(SOUNDSCAPE_MIX_GAIN);
+    mixRef.current = next;
+    previewNow(next);
+  }
 
   useLayoutEffect(() => {
     function place() {
@@ -799,6 +962,54 @@ function LibraryMixEditorModal({
           <IconMixReset />
         </button>
       </div>
+      <div className="mt-3 inline-flex rounded-full border border-border bg-background p-0.5 text-xs">
+        {([
+          { id: "soundscape" as const, label: "Soundscape" },
+          { id: "mixer" as const, label: "Build your own" },
+        ]).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => {
+              // Leaving a soundscape frees the music slot for a mixer sample.
+              if (t.id === "mixer" && soundscapeSelected) {
+                const next = mixWithKey(mixRef.current, "music", "");
+                setMusicKey("");
+                mixRef.current = next;
+                previewNow(next);
+              }
+              setBedTab(t.id);
+            }}
+            aria-pressed={bedTab === t.id}
+            className={`cursor-pointer rounded-full px-3 py-1 font-medium transition-colors ${
+              bedTab === t.id
+                ? "bg-accent-soft text-accent-link"
+                : "text-muted hover:text-foreground"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {bedTab === "soundscape" ? (
+        <div className="mt-3 max-h-72 overflow-y-auto pr-1">
+          <SoundscapePicker
+            compact
+            items={compositionItems}
+            value={soundscapeSelected ? musicKey : ""}
+            onChange={chooseSoundscape}
+            previewUrl={soundscapePreviewUrl}
+            playingKey={previewKey}
+            onTogglePreview={toggleSoundscapePreview}
+          />
+          <audio
+            ref={previewRef}
+            className="hidden"
+            playsInline
+            onEnded={() => setPreviewKey(null)}
+          />
+        </div>
+      ) : (
       <div className="mt-3 flex items-end justify-center gap-3">
         {(
           [
@@ -883,6 +1094,7 @@ function LibraryMixEditorModal({
           );
         })}
       </div>
+      )}
       {error ? (
         <p className="mt-2 text-xs text-danger">{error}</p>
       ) : null}
@@ -974,9 +1186,20 @@ function stripPauseMarkers(text: string): string {
   return text.replace(/\[\[PAUSE\s+[^\]]+\]\]/g, "");
 }
 
+/** A soundscape rides the music slot alone; that is how it is recognised later. */
+function isSoundscapeKey(
+  compositions: BackgroundAudioItem[],
+  key: string | null | undefined,
+): boolean {
+  const k = backgroundAudioStreamingKey(key ?? "");
+  if (!k) return false;
+  return compositions.some((c) => backgroundAudioStreamingKey(c.key) === k);
+}
+
 function LibraryAudioStrip({
   track,
   musicItems,
+  compositionItems,
   onDismiss,
   playbackToggleNonce,
   elevated = false,
@@ -987,6 +1210,7 @@ function LibraryAudioStrip({
 }: {
   track: ActiveTrack | null;
   musicItems: BackgroundAudioItem[];
+  compositionItems: BackgroundAudioItem[];
   onDismiss: () => void;
   playbackToggleNonce: number;
   elevated?: boolean;
@@ -1015,6 +1239,10 @@ function LibraryAudioStrip({
     noise: track?.noiseGain ?? 0,
   });
   const mediaBase = getMedimadeMediaBaseUrl();
+  const soundscapeActive =
+    track?.liveMix === true && isSoundscapeKey(compositionItems, track.musicKey);
+  const soundscapeActiveRef = useRef(soundscapeActive);
+  soundscapeActiveRef.current = soundscapeActive;
 
   const reportTime = useCallback(
     (t: number) => {
@@ -1101,13 +1329,25 @@ function LibraryAudioStrip({
               : channel === "drums"
                 ? drumsRef.current
                 : noiseRef.current;
-        if (el) el.volume = bedElementVolume(gain);
+        setGaplessBedVolume(
+          el,
+          soundscapeActiveRef.current && channel === "music"
+            ? SOUNDSCAPE_ELEMENT_VOLUME
+            : bedElementVolume(gain),
+        );
       },
     };
     return () => {
       bedVolumeApiRef.current = null;
     };
   }, [bedVolumeApiRef]);
+
+  useEffect(() => {
+    const beds = [natureRef, musicRef, drumsRef, noiseRef];
+    return () => {
+      for (const ref of beds) releaseGaplessBed(ref.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!track) return;
@@ -1124,6 +1364,7 @@ function LibraryAudioStrip({
   }, [track?.s3Key, track?.url]);
 
   useEffect(() => {
+    const soundscape = soundscapeActive;
     const beds: Array<{
       channel: BedVolumeChannel;
       el: HTMLAudioElement | null;
@@ -1157,23 +1398,20 @@ function LibraryAudioStrip({
     for (const bed of beds) {
       const el = bed.el;
       if (!el) continue;
-      el.loop = true;
-      el.volume = bedElementVolume(liveBedGainsRef.current[bed.channel]);
+      const volume =
+        soundscape && bed.channel === "music"
+          ? SOUNDSCAPE_ELEMENT_VOLUME
+          : bedElementVolume(liveBedGainsRef.current[bed.channel]);
       if (!mediaBase || !bed.key.trim()) {
-        el.pause();
-        if (el.getAttribute("src")) {
-          el.removeAttribute("src");
-          el.load();
-        }
+        syncGaplessBed(el, { url: null, volume, playing: false });
         continue;
       }
-      const next = mediaFileUrl(mediaBase, backgroundAudioStreamingKey(bed.key));
-      if (el.src !== next) {
-        el.src = next;
-        el.load();
-      }
-      if (playing) void el.play().catch(() => {});
-      else el.pause();
+      syncGaplessBed(el, {
+        url: mediaFileUrl(mediaBase, backgroundAudioPlaybackKey(bed.key)),
+        fallbackUrl: mediaFileUrl(mediaBase, backgroundAudioStreamingKey(bed.key)),
+        volume,
+        playing,
+      });
     }
   }, [
     track?.liveMix,
@@ -1188,6 +1426,7 @@ function LibraryAudioStrip({
     playing,
     mediaBase,
     musicItems,
+    soundscapeActive,
   ]);
 
   useEffect(() => {
@@ -1299,10 +1538,11 @@ function LibraryAudioStrip({
         preload="metadata"
         className="hidden"
       />
-      <audio ref={natureRef} className="hidden" loop playsInline />
-      <audio ref={musicRef} className="hidden" loop playsInline />
-      <audio ref={drumsRef} className="hidden" loop playsInline />
-      <audio ref={noiseRef} className="hidden" loop playsInline />
+      {/* Looping is scheduled by syncGaplessBed, so these must not set `loop`. */}
+      <audio ref={natureRef} className="hidden" playsInline />
+      <audio ref={musicRef} className="hidden" playsInline />
+      <audio ref={drumsRef} className="hidden" playsInline />
+      <audio ref={noiseRef} className="hidden" playsInline />
 
       <div className="mx-auto flex w-full max-w-6xl min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
@@ -1544,6 +1784,9 @@ export default function LibraryView({
   const [mixMusic, setMixMusic] = useState<BackgroundAudioItem[]>([]);
   const [mixDrums, setMixDrums] = useState<BackgroundAudioItem[]>([]);
   const [mixNoise, setMixNoise] = useState<BackgroundAudioItem[]>([]);
+  const [mixCompositions, setMixCompositions] = useState<BackgroundAudioItem[]>(
+    [],
+  );
   const bedVolumeApiRef = useRef<LibraryBedVolumeApi | null>(null);
   const [sortBy, setSortBy] = useState<SortBy>("newest");
   const [searchQuery, setSearchQuery] = useState("");
@@ -1584,6 +1827,7 @@ export default function LibraryView({
         setMixMusic(data.music ?? []);
         setMixDrums(data.drums ?? []);
         setMixNoise(data.noise ?? []);
+        setMixCompositions(data.compositions ?? []);
       })
       .catch(() => {
         if (cancelled) return;
@@ -1591,6 +1835,7 @@ export default function LibraryView({
         setMixMusic([]);
         setMixDrums([]);
         setMixNoise([]);
+        setMixCompositions([]);
       });
     return () => {
       cancelled = true;
@@ -3623,6 +3868,7 @@ export default function LibraryView({
         key={nowPlaying?.s3Key ?? "none"}
       track={nowPlaying}
       musicItems={mixMusic}
+      compositionItems={mixCompositions}
       onDismiss={() => setNowPlaying(null)}
         playbackToggleNonce={playbackToggleNonce}
         bedVolumeApiRef={bedVolumeApiRef}
@@ -3733,6 +3979,7 @@ export default function LibraryView({
         musicItems={mixMusic}
         drumsItems={mixDrums}
         noiseItems={mixNoise}
+        compositionItems={mixCompositions}
         error={mixError}
         resetMix={mixValuesFromItem(
           mixEditor,

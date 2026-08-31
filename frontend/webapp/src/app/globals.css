@@ -704,3 +704,49 @@ main[data-page-kind="standard"] {
     );
 }
 
+
+/*
+ * In-content scroll areas — card rows, panels, lists with their own overflow.
+ * Matched on the Tailwind overflow utilities so new scroll areas are covered
+ * without touching each component; `.scroll-styled` is there for the rare
+ * container that sets overflow some other way. The page scroll lives on
+ * <main>, which is excluded so the window keeps its native scrollbar.
+ */
+.scroll-styled,
+[class~="overflow-auto"]:not(main),
+[class~="overflow-x-auto"]:not(main),
+[class~="overflow-y-auto"]:not(main),
+[class~="overflow-scroll"]:not(main),
+[class~="overflow-x-scroll"]:not(main),
+[class~="overflow-y-scroll"]:not(main) {
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Muted well below the accent's full strength — a scrollbar shouldn't
+     compete with the content it sits beside. */
+  &::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--accent-button) 35%, transparent);
+    border-radius: 10px;
+  }
+
+  &::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--accent-button) 60%, transparent);
+  }
+
+  /*
+   * Chrome ignores ::-webkit-scrollbar once scrollbar-width/color are set, so
+   * the standard properties are scoped to engines without the pseudo-element
+   * (Firefox), which then gets the closest equivalent.
+   */
+  @supports not selector(::-webkit-scrollbar) {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--accent-button) 35%, transparent)
+      transparent;
+  }
+}

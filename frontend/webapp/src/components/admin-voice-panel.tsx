@@ -8,6 +8,7 @@ import {
   generateAdminVoiceSample,
   listAdminVoice,
   patchAdminVoice,
+  type VoiceGender,
 } from "@/lib/medimade-api";
 
 const PAUSE_FIELDS: Array<{ id: keyof AdminPauseBands; label: string }> = [
@@ -247,6 +248,18 @@ export function AdminVoicePanel() {
   );
 }
 
+function joinGoodFor(tags: string[] | undefined): string {
+  return (tags ?? []).join(", ");
+}
+
+/** Free text in, tags out — no taxonomy is enforced on these. */
+function splitGoodFor(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
 function SpeakerRow({
   speaker,
   onError,
@@ -259,15 +272,29 @@ function SpeakerRow({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [name, setName] = useState(speaker.name);
   const [description, setDescription] = useState(speaker.description ?? "");
+  /** Edited as free text; only split on commas when it is sent. */
+  const [goodFor, setGoodFor] = useState(joinGoodFor(speaker.goodFor));
+  const [gender, setGender] = useState<VoiceGender | null>(speaker.gender ?? null);
   const [hidden, setHidden] = useState(speaker.hidden);
   const [busy, setBusy] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
 
+  const savedGoodFor = joinGoodFor(speaker.goodFor);
+
   useEffect(() => {
     setName(speaker.name);
     setDescription(speaker.description ?? "");
+    setGoodFor(savedGoodFor);
+    setGender(speaker.gender ?? null);
     setHidden(speaker.hidden);
-  }, [speaker.modelId, speaker.name, speaker.description, speaker.hidden]);
+  }, [
+    speaker.modelId,
+    speaker.name,
+    speaker.description,
+    savedGoodFor,
+    speaker.gender,
+    speaker.hidden,
+  ]);
 
   useEffect(() => {
     const el = audioRef.current;
@@ -285,7 +312,8 @@ function SpeakerRow({
     };
   }, [speaker.sampleUrl]);
 
-  async function save() {
+  /** `next` lets a control save the value it just set, ahead of the re-render. */
+  async function save(next?: { gender?: VoiceGender | null }) {
     setBusy("save");
     onError(null);
     try {
@@ -296,6 +324,8 @@ function SpeakerRow({
           hidden,
           sort: speaker.sort,
           description,
+          goodFor: splitGoodFor(goodFor),
+          gender: next?.gender !== undefined ? next.gender : gender,
         },
       });
       onChanged();
@@ -355,6 +385,54 @@ function SpeakerRow({
               aria-label="How this voice sounds"
             />
           </label>
+          <label className="block text-xs font-medium text-muted">
+            Good for
+            <input
+              className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-sm font-normal text-foreground"
+              maxLength={300}
+              placeholder="stories, body scan, sleep"
+              value={goodFor}
+              disabled={busy !== null}
+              onChange={(e) => setGoodFor(e.target.value)}
+              onBlur={() => {
+                if (goodFor.trim() !== savedGoodFor) void save();
+              }}
+              aria-label="Meditation types this voice is good for"
+            />
+            <span className="mt-1 block text-[11px] font-normal text-muted">
+              Comma separated. Shown as tag pills; any wording is fine.
+            </span>
+          </label>
+          <fieldset className="text-xs font-medium text-muted">
+            <legend>Voice gender</legend>
+            <div className="mt-1 flex flex-wrap gap-3">
+              {(
+                [
+                  ["male", "Male"],
+                  ["female", "Female"],
+                  ["", "Not specified"],
+                ] as const
+              ).map(([val, label]) => (
+                <label
+                  key={label}
+                  className="flex cursor-pointer items-center gap-1.5 font-normal text-foreground"
+                >
+                  <input
+                    type="radio"
+                    name={`gender-${speaker.modelId}`}
+                    checked={(gender ?? "") === val}
+                    disabled={busy !== null}
+                    onChange={() => {
+                      const next = val === "" ? null : val;
+                      setGender(next);
+                      void save({ gender: next });
+                    }}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <label className="flex items-center gap-2 text-xs text-muted">
             <input
               type="checkbox"
@@ -370,6 +448,8 @@ function SpeakerRow({
                     hidden: next,
                     sort: speaker.sort,
                     description,
+                    goodFor: splitGoodFor(goodFor),
+                    gender,
                   },
                 })
                   .then(() => onChanged())

@@ -1,4 +1,9 @@
-import type { MedimadeChatTurn, MeditationTargetMinutes, TtsProvider } from "@/lib/medimade-api";
+import {
+  isMeditationTargetMinutes,
+  type MedimadeChatTurn,
+  type MeditationTargetMinutes,
+  type TtsProvider,
+} from "@/lib/medimade-api";
 import type { CreateMeditationPath } from "@/lib/create-meditation-path";
 
 export const CREATE_SESSION_STORAGE_KEY = "mm_create_session_v1";
@@ -51,6 +56,9 @@ export type CreateSessionV1 = {
   backgroundMusicKey: string;
   backgroundDrumsKey: string;
   backgroundNoiseKey: string;
+  /** Which sound bed the page is on: a ready-made composition or the mixer. */
+  soundMode: "soundscape" | "mixer";
+  compositionKey: string;
   backgroundNatureGain: number;
   backgroundMusicGain: number;
   backgroundDrumsGain: number;
@@ -172,13 +180,7 @@ export function parseCreateSession(raw: unknown): CreateSessionV1 | null {
   if (o.lastUsedScript != null && typeof o.lastUsedScript !== "string") {
     return null;
   }
-  if (
-    o.meditationTargetMinutes !== 2 &&
-    o.meditationTargetMinutes !== 5 &&
-    o.meditationTargetMinutes !== 10
-  ) {
-    return null;
-  }
+  if (!isMeditationTargetMinutes(o.meditationTargetMinutes)) return null;
   const pending = o.pendingModeChoice;
   if (
     pending !== null &&
@@ -224,6 +226,8 @@ export function parseCreateSession(raw: unknown): CreateSessionV1 | null {
     backgroundMusicKey: o.backgroundMusicKey,
     backgroundDrumsKey: o.backgroundDrumsKey,
     backgroundNoiseKey: o.backgroundNoiseKey,
+    soundMode: o.soundMode === "mixer" ? "mixer" : "soundscape",
+    compositionKey: typeof o.compositionKey === "string" ? o.compositionKey : "",
     backgroundNatureGain: o.backgroundNatureGain,
     backgroundMusicGain: o.backgroundMusicGain,
     backgroundDrumsGain: o.backgroundDrumsGain,

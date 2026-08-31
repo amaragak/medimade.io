@@ -14,11 +14,21 @@ export type DreamState =
   | "in_motion"
   | "released";
 
+/** Append-only reflection entries for Dream / Resistance / Vision. */
+export type DrvTimelineEntry = {
+  id: string;
+  text: string;
+  createdAt: string;
+  coachReply: string;
+};
+
 export type PlanDream = {
   id: string;
   title: string;
   state: DreamState;
   createdAt: string;
+  /** Last local edit — used for quiet “Last touched …” momentum. */
+  updatedAt: string;
   /** Optional seed from “Add a dream” modal */
   firstThought: string;
   dreamText: string;
@@ -27,6 +37,15 @@ export type PlanDream = {
   dreamReflectReply: string;
   obstacleExploreReply: string;
   visionBuildReply: string;
+  /**
+   * Running thoughts — append-only log, independent of the main answer fields
+   * (dreamText / obstacleText / visionText).
+   */
+  dreamEntries: DrvTimelineEntry[];
+  obstacleEntries: DrvTimelineEntry[];
+  visionEntries: DrvTimelineEntry[];
+  /** Free-text scratchpad — not part of DRV. */
+  looseNotes: string;
   meditationsGenerated: number;
   /** Set when user manually marks project complete */
   completedAt: string | null;
@@ -59,21 +78,31 @@ function safeIso(): string {
 export function createPlanDream(input: {
   title: string;
   firstThought?: string;
+  dreamText?: string;
+  obstacleText?: string;
+  visionText?: string;
 }): PlanDream {
   const first = (input.firstThought ?? "").trim();
+  const dreamText = (input.dreamText ?? first).trim();
   const title = (input.title ?? "").trim() || "Untitled";
+  const now = safeIso();
   return {
     id: newDreamId(),
     title,
     state: "germinating",
-    createdAt: safeIso(),
-    firstThought: first,
-    dreamText: first,
-    obstacleText: "",
-    visionText: "",
+    createdAt: now,
+    updatedAt: now,
+    firstThought: first || dreamText,
+    dreamText,
+    obstacleText: (input.obstacleText ?? "").trim(),
+    visionText: (input.visionText ?? "").trim(),
     dreamReflectReply: "",
     obstacleExploreReply: "",
     visionBuildReply: "",
+    dreamEntries: [],
+    obstacleEntries: [],
+    visionEntries: [],
+    looseNotes: "",
     meditationsGenerated: 0,
     completedAt: null,
   };
@@ -97,6 +126,26 @@ export function loadPlanDreamsStore(): PlanDreamsStoreV1 {
   return { v: 1, dreams: v2.dreams };
 }
 
+function normalizeTimelineEntry(x: unknown): DrvTimelineEntry | null {
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  if (typeof o.id !== "string" || typeof o.text !== "string") return null;
+  return {
+    id: o.id,
+    text: o.text,
+    createdAt: typeof o.createdAt === "string" ? o.createdAt : safeIso(),
+    coachReply: typeof o.coachReply === "string" ? o.coachReply : "",
+  };
+}
+
+function normalizeTimeline(raw: unknown): DrvTimelineEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(normalizeTimelineEntry)
+    .filter((e): e is DrvTimelineEntry => Boolean(e))
+    .slice(0, 100);
+}
+
 function normalizeDreams(raw: unknown[]): PlanDream[] {
   const out: PlanDream[] = [];
   for (const x of raw) {
@@ -104,11 +153,13 @@ function normalizeDreams(raw: unknown[]): PlanDream[] {
     const d = x as Record<string, unknown>;
     if (typeof d.id !== "string" || typeof d.title !== "string") continue;
     const state = normalizeState(d.state);
+    const createdAt = typeof d.createdAt === "string" ? d.createdAt : safeIso();
     out.push({
       id: d.id,
       title: d.title,
       state,
-      createdAt: typeof d.createdAt === "string" ? d.createdAt : safeIso(),
+      createdAt,
+      updatedAt: typeof d.updatedAt === "string" ? d.updatedAt : createdAt,
       firstThought: typeof d.firstThought === "string" ? d.firstThought : "",
       dreamText: typeof d.dreamText === "string" ? d.dreamText : "",
       obstacleText: typeof d.obstacleText === "string" ? d.obstacleText : "",
@@ -119,6 +170,10 @@ function normalizeDreams(raw: unknown[]): PlanDream[] {
         typeof d.obstacleExploreReply === "string" ? d.obstacleExploreReply : "",
       visionBuildReply:
         typeof d.visionBuildReply === "string" ? d.visionBuildReply : "",
+      dreamEntries: normalizeTimeline(d.dreamEntries),
+      obstacleEntries: normalizeTimeline(d.obstacleEntries),
+      visionEntries: normalizeTimeline(d.visionEntries),
+      looseNotes: typeof d.looseNotes === "string" ? d.looseNotes : "",
       meditationsGenerated:
         typeof d.meditationsGenerated === "number" && Number.isFinite(d.meditationsGenerated)
           ? Math.max(0, Math.floor(d.meditationsGenerated))
@@ -160,6 +215,7 @@ function migrateLegacyPlanIfNeeded(): PlanDreamsStoreV1 {
         title,
         state: "germinating",
         createdAt: typeof o.createdAt === "string" ? o.createdAt : safeIso(),
+        updatedAt: typeof o.createdAt === "string" ? o.createdAt : safeIso(),
         firstThought: "",
         dreamText: desc ? `${title}\n\n${desc}` : title,
         obstacleText: "",
@@ -167,6 +223,10 @@ function migrateLegacyPlanIfNeeded(): PlanDreamsStoreV1 {
         dreamReflectReply: "",
         obstacleExploreReply: "",
         visionBuildReply: "",
+        dreamEntries: [],
+        obstacleEntries: [],
+        visionEntries: [],
+        looseNotes: "",
         meditationsGenerated: 0,
         completedAt: null,
       });
