@@ -165,9 +165,8 @@ export async function listVoiceSpeakers(): Promise<VoiceSpeakerRow[]> {
 }
 
 export async function seedVoiceSpeakersIfEmpty(): Promise<VoiceSpeakerRow[]> {
-  const existing = await listVoiceSpeakers();
   const table = tableName();
-  if (!table) return existing;
+  if (!table) return defaultVoiceSpeakers();
   const out = await ddb.send(
     new QueryCommand({
       TableName: table,
@@ -176,7 +175,7 @@ export async function seedVoiceSpeakersIfEmpty(): Promise<VoiceSpeakerRow[]> {
       Limit: 1,
     }),
   );
-  if ((out.Items ?? []).length > 0) return existing;
+  if ((out.Items ?? []).length > 0) return listVoiceSpeakers();
   const seeded = defaultVoiceSpeakers();
   for (const row of seeded) {
     await putVoiceSpeaker(row);

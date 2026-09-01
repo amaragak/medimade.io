@@ -70,7 +70,7 @@ export async function listConstraintVocabulary(): Promise<ConstraintVocabRow[]> 
   return out;
 }
 
-export async function seedConstraintVocabularyIfEmpty(): Promise<ConstraintVocabRow[]> {
+export async function seedConstraintVocabularyIfEmpty(): Promise<void> {
   const TableName = requireTable();
   const existing = await ddb.send(
     new QueryCommand({
@@ -80,9 +80,7 @@ export async function seedConstraintVocabularyIfEmpty(): Promise<ConstraintVocab
       Limit: 1,
     }),
   );
-  if ((existing.Items ?? []).length > 0) {
-    return listConstraintVocabulary();
-  }
+  if ((existing.Items ?? []).length > 0) return;
   const now = new Date().toISOString();
   for (const seed of SEED_CONSTRAINT_TAGS) {
     await ddb.send(
@@ -98,7 +96,6 @@ export async function seedConstraintVocabularyIfEmpty(): Promise<ConstraintVocab
       }),
     );
   }
-  return listConstraintVocabulary();
 }
 
 export async function putConstraintVocabularyTag(raw: string): Promise<ConstraintVocabRow> {

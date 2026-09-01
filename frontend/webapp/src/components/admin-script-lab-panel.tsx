@@ -14,7 +14,7 @@ import {
   type ScriptLabVariant,
   type ScriptLabVariantAudio,
 } from "@/lib/medimade-api";
-import type { JournalEntry } from "@/lib/journal-storage";
+import type { JournalEntry, JournalFolder } from "@/lib/journal-storage";
 import {
   estimateScriptLabDurationSeconds,
   formatDurationClock,
@@ -37,6 +37,10 @@ import {
   tokenizeScriptSegmentTags,
   type ScriptLengthTier,
 } from "@/lib/script-segment-tags";
+import {
+  ScriptLabTestFlowPanel,
+  type ScriptLabFlowGenerationInput,
+} from "@/components/script-lab-test-flow-panel";
 
 const MEDITATION_TYPES = SCRIPT_LAB_MEDITATION_TYPES;
 
@@ -70,12 +74,17 @@ export function AdminScriptLabPanel() {
   const [newTagName, setNewTagName] = useState("");
 
   const [flow, setFlow] = useState<ScriptLabFlow>("by-type");
-  const [meditationStyle, setMeditationStyle] = useState<string>(MEDITATION_TYPES[0]);
-  const [moodFocus, setMoodFocus] = useState("");
-  const [chatText, setChatText] = useState("");
-  const [singlePrompt, setSinglePrompt] = useState("");
+  const [flowGenerationInput, setFlowGenerationInput] =
+    useState<ScriptLabFlowGenerationInput>({
+      flow: "by-type",
+      transcript: "",
+      journalMode: false,
+      meditationStyle: MEDITATION_TYPES[0],
+      userTextSample: "",
+      ready: false,
+    });
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
-  const [journalEntryId, setJournalEntryId] = useState("");
+  const [journalFolders, setJournalFolders] = useState<JournalFolder[]>([]);
   const [targetMinutes, setTargetMinutes] = useState<MeditationTargetMinutes>(5);
   const [voiceModelId, setVoiceModelId] = useState("");
   const [generateBusy, setGenerateBusy] = useState(false);
@@ -104,13 +113,9 @@ export function AdminScriptLabPanel() {
   const reload = useCallback(async () => {
     const data = await listAdminScriptLab();
     setState(data);
-    if (!voiceModelId && data.speakers[0]?.modelId) {
-      setVoiceModelId(data.speakers[0].modelId);
-    }
-    if (!bulkSpeakerId && data.speakers[0]?.modelId) {
-      setBulkSpeakerId(data.speakers[0].modelId);
-    }
-  }, [voiceModelId, bulkSpeakerId]);
+    setVoiceModelId((current) => current || data.speakers[0]?.modelId || "");
+    setBulkSpeakerId((current) => current || data.speakers[0]?.modelId || "");
+  }, []);
 
   useEffect(() => {
     void reload()
@@ -125,26 +130,42 @@ export function AdminScriptLabPanel() {
           (a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt),
         );
         setJournalEntries(entries.slice(0, 40));
-        if (entries[0]?.id) setJournalEntryId(entries[0].id);
+        setJournalFolders(store?.folders ?? []);
       })
-      .catch(() => setJournalEntries([]));
+      .catch(() => {
+        setJournalEntries([]);
+        setJournalFolders([]);
+      });
   }, []);
 
+  const handleFlowGenerationInputChange = useCallback(
+    (input: ScriptLabFlowGenerationInput) => {
+      setFlowGenerationInput(input);
+    },
+    [],
+  );
+
   const previewMeditationType = useMemo(
-    () => resolvedPreviewMeditationType({ flow, meditationStyle }),
-    [flow, meditationStyle],
+    () =>
+      resolvedPreviewMeditationType({
+        flow: flowGenerationInput.flow,
+        meditationStyle: flowGenerationInput.meditationStyle,
+      }),
+    [flowGenerationInput.flow, flowGenerationInput.meditationStyle],
   );
 
   const previewContextTags = useMemo(
     () =>
       buildPreviewContextTags({
-        flow,
-        meditationStyle,
-        moodFocus,
-        chatText,
-        singlePrompt,
+        flow: flowGenerationInput.flow,
+        meditationStyle: flowGenerationInput.meditationStyle,
+        userTextSample: flowGenerationInput.userTextSample,
       }),
-    [flow, meditationStyle, moodFocus, chatText, singlePrompt],
+    [
+      flowGenerationInput.flow,
+      flowGenerationInput.meditationStyle,
+      flowGenerationInput.userTextSample,
+    ],
   );
 
   const variantsByTagForEstimate = useMemo(() => {
@@ -274,24 +295,19 @@ export function AdminScriptLabPanel() {
   }
 
   async function generateScript() {
+    if (!flowGenerationInput.ready || !flowGenerationInput.transcript.trim()) {
+      setError("Complete the flow inputs before generating.");
+      return;
+    }
     setGenerateBusy(true);
     setError(null);
     try {
-      const journal = journalEntries.find((e) => e.id === journalEntryId);
-      const journalPlain = journal?.contentHtml
-        ? journal.contentHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
-        : "";
       const data = await postAdminScriptLab({
         action: "generate-script",
-        flow,
-        meditationStyle,
-        moodFocus,
-        chatText,
-        singlePrompt,
-        journalTitle: journal?.title ?? "Journal entry",
-        journalBody: journalPlain,
+        transcript: flowGenerationInput.transcript,
+        journalMode: flowGenerationInput.journalMode,
+        meditationStyle: flowGenerationInput.meditationStyle,
         meditationTargetMinutes: targetMinutes,
-        modelId: voiceModelId,
       });
       const script = typeof data.script === "string" ? data.script : "";
       setRawScript(script);
@@ -877,7 +893,7 @@ export function AdminScriptLabPanel() {
             </p>
           </div>
 
-          <ul className="mt-3 divide-y divide-border rounded-xl border border-border">
+          <ul className="mt-3 max-h-48 divide-y divide-border overflow-y-auto overscroll-y-contain rounded-xl border border-border">
             {(state?.tags ?? []).length === 0 ? (
               <li className="p-4 text-sm text-muted">No segments yet.</li>
             ) : (
@@ -1039,7 +1055,7 @@ export function AdminScriptLabPanel() {
               </label>
             </div>
 
-            <div className="mt-4 space-y-4">
+            <div className="mt-3 space-y-1">
               {selectedVariants.map((v) => (
                 <VariantEditorRow
                   key={v.variantId}
@@ -1120,77 +1136,13 @@ export function AdminScriptLabPanel() {
           ))}
         </div>
 
-        {flow === "by-type" ? (
-          <>
-            <label className="block">
-              Type
-              <select
-                value={meditationStyle}
-                onChange={(e) => setMeditationStyle(e.target.value)}
-                className="mt-1 block w-full border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-600 dark:bg-neutral-800"
-              >
-                {MEDITATION_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              Mood / focus
-              <input
-                value={moodFocus}
-                onChange={(e) => setMoodFocus(e.target.value)}
-                className="mt-1 block w-full border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-600 dark:bg-neutral-800"
-              />
-            </label>
-          </>
-        ) : null}
-
-        {flow === "guide-chat" ? (
-          <label className="block">
-            Chat message
-            <textarea
-              value={chatText}
-              onChange={(e) => setChatText(e.target.value)}
-              rows={5}
-              className="mt-1 block w-full border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-600 dark:bg-neutral-800"
-            />
-          </label>
-        ) : null}
-
-        {flow === "journal" ? (
-          <label className="block">
-            Journal entry
-            <select
-              value={journalEntryId}
-              onChange={(e) => setJournalEntryId(e.target.value)}
-              className="mt-1 block w-full border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-600 dark:bg-neutral-800"
-            >
-              {journalEntries.length === 0 ? (
-                <option value="">No entries loaded</option>
-              ) : (
-                journalEntries.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.title?.trim() || "Untitled"}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
-        ) : null}
-
-        {flow === "single-prompt" ? (
-          <label className="block">
-            Prompt
-            <textarea
-              value={singlePrompt}
-              onChange={(e) => setSinglePrompt(e.target.value)}
-              rows={4}
-              className="mt-1 block w-full border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-600 dark:bg-neutral-800"
-            />
-          </label>
-        ) : null}
+        <ScriptLabTestFlowPanel
+          flow={flow}
+          targetMinutes={targetMinutes}
+          journalEntries={journalEntries}
+          journalFolders={journalFolders}
+          onInputChange={handleFlowGenerationInputChange}
+        />
 
         <label className="block">
           Length
@@ -1226,7 +1178,7 @@ export function AdminScriptLabPanel() {
 
         <button
           type="button"
-          disabled={generateBusy}
+          disabled={generateBusy || !flowGenerationInput.ready}
           onClick={() => void generateScript()}
           className="w-full cursor-pointer border border-neutral-800 bg-neutral-900 py-2 font-semibold text-white disabled:opacity-50 dark:border-neutral-300 dark:bg-neutral-100 dark:text-neutral-900"
         >
@@ -1290,6 +1242,7 @@ function ConstraintTagPicker({
   listId,
   onChange,
   onCreateTag,
+  compact = false,
 }: {
   label: string;
   tags: string[];
@@ -1297,6 +1250,7 @@ function ConstraintTagPicker({
   listId: string;
   onChange: (tags: string[]) => void;
   onCreateTag: (tag: string) => void;
+  compact?: boolean;
 }) {
   const [draft, setDraft] = useState("");
 
@@ -1306,6 +1260,61 @@ function ConstraintTagPicker({
     if (!vocabulary.includes(tag)) onCreateTag(tag);
     if (!tags.includes(tag)) onChange([...tags, tag]);
     setDraft("");
+  }
+
+  if (compact) {
+    return (
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="shrink-0 text-[10px] font-medium text-muted">{label}</span>
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            list={listId}
+            placeholder="add…"
+            className="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px]"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addTag(draft);
+              }
+            }}
+          />
+          <datalist id={listId}>
+            {vocabulary.map((tag) => (
+              <option key={tag} value={tag} />
+            ))}
+          </datalist>
+          <button
+            type="button"
+            onClick={() => addTag(draft)}
+            className="cursor-pointer shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px]"
+          >
+            Add
+          </button>
+        </div>
+        {tags.length > 0 ? (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {tags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-0.5 rounded-full border border-border bg-background px-1.5 py-0 font-mono text-[10px]"
+              >
+                {tag}
+                <button
+                  type="button"
+                  onClick={() => onChange(tags.filter((t) => t !== tag))}
+                  className="cursor-pointer text-muted hover:text-danger"
+                  aria-label={`Remove ${tag}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -1359,6 +1368,68 @@ function ConstraintTagPicker({
   );
 }
 
+function speakerAudioGenerated(row: ScriptLabVariantAudio | undefined): boolean {
+  return row?.status === "generated" && !!row.s3Key;
+}
+
+function ChevronToggle({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      className={`h-3.5 w-3.5 shrink-0 text-muted transition-transform ${expanded ? "rotate-90" : ""}`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+function SpeakerStatusDots({
+  speakers,
+  audio,
+}: {
+  speakers: Array<{ modelId: string; name: string }>;
+  audio: ScriptLabVariantAudio[];
+}) {
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      {speakers.map((sp) => {
+        const row = audio.find((a) => a.modelId === sp.modelId);
+        const generated = speakerAudioGenerated(row);
+        const generating = row?.status === "generating";
+        const failed = row?.status === "failed";
+        const tooltip = generated
+          ? `${sp.name}${row?.durationSeconds ? ` · ${row.durationSeconds.toFixed(1)}s` : ""}`
+          : failed
+            ? `${sp.name} · failed`
+            : generating
+              ? `${sp.name} · generating…`
+              : `${sp.name} · not generated`;
+        return (
+          <span
+            key={sp.modelId}
+            title={tooltip}
+            className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+              generated
+                ? "bg-gold"
+                : generating
+                  ? "border border-gold/70 bg-gold/30"
+                  : failed
+                    ? "border border-danger/60 bg-danger/10"
+                    : "border border-gold/50 bg-transparent"
+            }`}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
 function VariantEditorRow({
   variant,
   lengthTiered,
@@ -1394,6 +1465,7 @@ function VariantEditorRow({
   onGenerateAll: () => void;
   onPreview: (url: string | null) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const [text, setText] = useState(variant.text);
   useEffect(() => setText(variant.text), [variant.text]);
 
@@ -1408,126 +1480,158 @@ function VariantEditorRow({
   const allBusy = audioBusyKey === `${variant.tagName}:${variant.variantId}:all`;
   const reqListId = `constraint-req-${variant.variantId}`;
   const exListId = `constraint-ex-${variant.variantId}`;
+  const generatedCount = speakers.filter((sp) =>
+    speakerAudioGenerated(audio.find((a) => a.modelId === sp.modelId)),
+  ).length;
 
   return (
-    <div className="rounded-xl border border-border bg-background/60 p-3">
-      <div className="flex flex-wrap items-start gap-2">
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onBlur={() => {
-            if (text.trim() !== variant.text) onSaveText(text.trim());
-          }}
-          rows={2}
-          className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-sm"
-        />
-        {lengthTiered ? (
-          <select
-            value={variant.lengthTier ?? "medium"}
-            onChange={(e) => onSaveLengthTier(e.target.value as ScriptLengthTier)}
-            className="rounded border border-border bg-background px-2 py-1.5 text-xs"
-            aria-label="Length tier"
-          >
-            <option value="short">Short</option>
-            <option value="medium">Medium</option>
-            <option value="long">Long</option>
-          </select>
-        ) : null}
+    <div className="rounded-lg border border-border bg-background/60">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded((open) => !open)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded((open) => !open);
+          }
+        }}
+        className="flex cursor-pointer items-center gap-2 px-2.5 py-2 text-left"
+        aria-expanded={expanded}
+      >
+        <ChevronToggle expanded={expanded} />
+        <span className="min-w-0 flex-1 truncate text-sm text-foreground">{variant.text}</span>
+        <SpeakerStatusDots speakers={speakers} audio={audio} />
+        <span className="shrink-0 tabular-nums text-[10px] text-muted">
+          {generatedCount}/{speakers.length}
+        </span>
       </div>
 
-      <div className="mt-2 space-y-3 rounded-lg border border-border/70 bg-background/40 p-2 text-xs">
-        <p className="font-medium text-muted">Variant constraints (within tag scope)</p>
-        <ConstraintTagPicker
-          label="Required — all must match context"
-          tags={requiredDraft}
-          vocabulary={constraintVocabulary}
-          listId={reqListId}
-          onChange={(next) => {
-            setRequiredDraft(next);
-            onSaveConstraints(next, excludedDraft);
-          }}
-          onCreateTag={onCreateConstraintTag}
-        />
-        <ConstraintTagPicker
-          label="Excluded — none may match context"
-          tags={excludedDraft}
-          vocabulary={constraintVocabulary}
-          listId={exListId}
-          onChange={(next) => {
-            setExcludedDraft(next);
-            onSaveConstraints(requiredDraft, next);
-          }}
-          onCreateTag={onCreateConstraintTag}
-        />
-      </div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onGenerateAll}
-          disabled={allBusy}
-          className="cursor-pointer rounded border border-border px-2 py-1 text-[10px] font-semibold disabled:opacity-50"
+      {expanded ? (
+        <div
+          className="space-y-2 border-t border-border px-2.5 py-2.5"
+          onClick={(e) => e.stopPropagation()}
         >
-          {allBusy ? "Generating all speakers…" : "Generate for all speakers"}
-        </button>
-        <button
-          type="button"
-          onClick={onDelete}
-          className="cursor-pointer rounded border border-danger/40 px-2 py-1 text-[10px] text-danger"
-        >
-          Delete
-        </button>
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-        {speakers.map((sp) => {
-          const row = audio.find((a) => a.modelId === sp.modelId);
-          const url = audioUrl(baseUrl, row);
-          const busy = audioBusyKey === `${variant.tagName}:${variant.variantId}:${sp.modelId}`;
-          const generating = row?.status === "generating" || busy;
-          const failed = row?.status === "failed";
-          const playing = url != null && previewingUrl === url;
-          return (
-            <div
-              key={sp.modelId}
-              className="flex items-center justify-between gap-1 rounded border border-border px-2 py-1.5 text-[10px]"
+          <div className="flex flex-wrap items-start gap-2">
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onBlur={() => {
+                if (text.trim() !== variant.text) onSaveText(text.trim());
+              }}
+              rows={2}
+              className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-sm"
+            />
+            {lengthTiered ? (
+              <select
+                value={variant.lengthTier ?? "medium"}
+                onChange={(e) => onSaveLengthTier(e.target.value as ScriptLengthTier)}
+                className="rounded border border-border bg-background px-2 py-1.5 text-xs"
+                aria-label="Length tier"
+              >
+                <option value="short">Short</option>
+                <option value="medium">Medium</option>
+                <option value="long">Long</option>
+              </select>
+            ) : null}
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <ConstraintTagPicker
+              compact
+              label="Required:"
+              tags={requiredDraft}
+              vocabulary={constraintVocabulary}
+              listId={reqListId}
+              onChange={(next) => {
+                setRequiredDraft(next);
+                onSaveConstraints(next, excludedDraft);
+              }}
+              onCreateTag={onCreateConstraintTag}
+            />
+            <ConstraintTagPicker
+              compact
+              label="Excluded:"
+              tags={excludedDraft}
+              vocabulary={constraintVocabulary}
+              listId={exListId}
+              onChange={(next) => {
+                setExcludedDraft(next);
+                onSaveConstraints(requiredDraft, next);
+              }}
+              onCreateTag={onCreateConstraintTag}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {speakers.map((sp) => {
+              const row = audio.find((a) => a.modelId === sp.modelId);
+              const url = audioUrl(baseUrl, row);
+              const generated = speakerAudioGenerated(row);
+              const busy = audioBusyKey === `${variant.tagName}:${variant.variantId}:${sp.modelId}`;
+              const generating = row?.status === "generating" || busy;
+              const failed = row?.status === "failed";
+              const playing = url != null && previewingUrl === url;
+
+              return (
+                <button
+                  key={sp.modelId}
+                  type="button"
+                  disabled={generating}
+                  onClick={() => {
+                    if (generated && url) {
+                      onPreview(playing ? null : url);
+                      return;
+                    }
+                    if (!generating) onGenerate(sp.modelId);
+                  }}
+                  className={`inline-flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium disabled:cursor-wait disabled:opacity-60 ${
+                    generated
+                      ? "border-gold/50 bg-gold/10 text-foreground"
+                      : failed
+                        ? "border-danger/40 bg-danger/5 text-danger"
+                        : "border-border bg-background text-muted hover:border-gold/40"
+                  }`}
+                  title={
+                    generated && row?.durationSeconds
+                      ? `${sp.name} · ${row.durationSeconds.toFixed(1)}s`
+                      : sp.name
+                  }
+                >
+                  <span className="max-w-[5.5rem] truncate">{sp.name}</span>
+                  {generating ? (
+                    <span className="text-muted">…</span>
+                  ) : generated ? (
+                    <span aria-hidden>{playing ? "⏸" : "✓"}</span>
+                  ) : failed ? (
+                    <span aria-hidden>↻</span>
+                  ) : (
+                    <span aria-hidden>+</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onGenerateAll}
+              disabled={allBusy}
+              className="cursor-pointer rounded border border-border px-2 py-1 text-[10px] font-semibold disabled:opacity-50"
             >
-              <span className="truncate font-medium">{sp.name}</span>
-              <div className="flex shrink-0 items-center gap-1">
-                {row?.durationSeconds ? (
-                  <span className="tabular-nums text-muted">{row.durationSeconds.toFixed(1)}s</span>
-                ) : generating ? (
-                  <span className="text-muted">…</span>
-                ) : failed ? (
-                  <button
-                    type="button"
-                    onClick={() => onGenerate(sp.modelId)}
-                    className="cursor-pointer text-danger underline"
-                  >
-                    retry
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => onGenerate(sp.modelId)}
-                    className="cursor-pointer underline"
-                  >
-                    gen
-                  </button>
-                )}
-                {url ? (
-                  <button
-                    type="button"
-                    onClick={() => onPreview(url)}
-                    className="cursor-pointer rounded-full border border-border px-1.5 py-0.5"
-                    aria-label={`Play ${sp.name}`}
-                  >
-                    {playing ? "⏸" : "▶"}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+              {allBusy ? "Generating all…" : "Generate all"}
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              className="cursor-pointer rounded border border-danger/40 px-2 py-1 text-[10px] text-danger"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

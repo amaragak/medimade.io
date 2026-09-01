@@ -9,9 +9,7 @@ import { coerceClaudeModel, CLAUDE_HAIKU_45_MODEL_ID } from "../lib/anthropic-pr
 import { coerceMeditationTargetMinutes } from "../lib/meditation-target-minutes";
 import { FIXED_SPEECH_PREVIEW_SPEED } from "../lib/speaker-sample-speed";
 import {
-  buildScriptLabTranscript,
   generateScriptLabScript,
-  type ScriptLabFlow,
 } from "../lib/script-lab-generate";
 import {
   deleteScriptSegmentTag,
@@ -82,19 +80,6 @@ async function getClaudeApiKey(): Promise<string> {
 function mediaBaseUrl(): string | undefined {
   const domain = (process.env.MEDIA_CLOUDFRONT_DOMAIN || "").trim();
   return domain ? `https://${domain}` : undefined;
-}
-
-function parseFlow(raw: unknown): ScriptLabFlow {
-  const f = typeof raw === "string" ? raw.trim() : "";
-  if (
-    f === "by-type" ||
-    f === "guide-chat" ||
-    f === "journal" ||
-    f === "single-prompt"
-  ) {
-    return f;
-  }
-  return "single-prompt";
 }
 
 export async function handler(
@@ -266,23 +251,25 @@ async function handlePost(event: APIGatewayProxyEventV2) {
 }
 
 async function handleGenerateScript(body: Record<string, unknown>) {
-  const flow = parseFlow(body.flow);
   const targetMinutes = coerceMeditationTargetMinutes(body.meditationTargetMinutes);
   const speechSpeed =
     typeof body.speechSpeed === "number" && body.speechSpeed > 0
       ? body.speechSpeed
       : FIXED_SPEECH_PREVIEW_SPEED;
-  const claudeModel = coerceClaudeModel(body.claudeModel ?? CLAUDE_HAIKU_45_MODEL_ID);
+  const claudeModel = coerceClaudeModel(
+    body.claudeModel ?? body.modelId ?? CLAUDE_HAIKU_45_MODEL_ID,
+  );
 
-  const { transcript, journalMode, meditationStyle } = buildScriptLabTranscript({
-    flow,
-    meditationStyle: typeof body.meditationStyle === "string" ? body.meditationStyle : undefined,
-    moodFocus: typeof body.moodFocus === "string" ? body.moodFocus : undefined,
-    chatText: typeof body.chatText === "string" ? body.chatText : undefined,
-    journalTitle: typeof body.journalTitle === "string" ? body.journalTitle : undefined,
-    journalBody: typeof body.journalBody === "string" ? body.journalBody : undefined,
-    singlePrompt: typeof body.singlePrompt === "string" ? body.singlePrompt : undefined,
-  });
+  const transcript =
+    typeof body.transcript === "string" ? body.transcript.trim() : "";
+  if (!transcript) {
+    return json(400, { error: "Field `transcript` (non-empty string) is required" });
+  }
+  const journalMode = body.journalMode === true;
+  const meditationStyle =
+    typeof body.meditationStyle === "string" && body.meditationStyle.trim()
+      ? body.meditationStyle.trim()
+      : "General";
 
   const library = await listAllScriptSegmentLibrary();
   const segmentTags = library.tags.map((t) => ({

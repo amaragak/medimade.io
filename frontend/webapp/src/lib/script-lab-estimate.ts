@@ -180,16 +180,14 @@ export function resolvedPreviewMeditationType(params: {
 export function buildPreviewContextTags(params: {
   flow: "by-type" | "guide-chat" | "journal" | "single-prompt";
   meditationStyle: string;
-  moodFocus: string;
-  chatText: string;
-  singlePrompt: string;
+  userTextSample: string;
 }): string[] {
   const meditationType = resolvedPreviewMeditationType({
     flow: params.flow,
     meditationStyle: params.meditationStyle,
   });
-  const userText = [params.moodFocus, params.chatText, params.singlePrompt]
-    .filter(Boolean)
-    .join("\n");
-  return buildScriptLabContextTags({ meditationType, userText });
+  return buildScriptLabContextTags({
+    meditationType,
+    userText: params.userTextSample.trim(),
+  });
 }

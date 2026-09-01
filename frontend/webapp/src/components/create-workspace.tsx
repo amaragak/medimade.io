@@ -84,6 +84,24 @@ import {
   speakerPreviewLoudSampleKey,
 } from "@/lib/speaker-sample-speed";
 import {
+  buildCreateFlowTranscript,
+  createFlowTranscriptLine,
+  JOURNAL_REFLECT_PICK_INTRO,
+  OPENING_JOURNAL,
+  OPENING_STYLE,
+  packageOneShotPrompt,
+  type JournalHandoffSegment,
+} from "@/lib/create-flow-transcript";
+import {
+  emptyStyleQuestionAnswers,
+  intakeQuestionsForStyle,
+  MEDITATION_STYLE_LABELS as meditationStyles,
+  parseStyleQuestionAnswers,
+  revealedCountFromStyleAnswers,
+  STYLE_ANYTHING_ELSE_PROMPT,
+  transcriptFromStyleAnswers,
+} from "@/lib/meditation-style-intake";
+import {
   JOURNAL_CREATE_FIRST_MESSAGE,
   JOURNAL_MEDITATION_PAYLOAD_KEY,
   buildJournalHandoffApiContent,
@@ -414,13 +432,6 @@ type SoundBedMode = "soundscape" | "mixer";
 /** Compositions have no fader; they sit where a music bed would in the render. */
 const SOUNDSCAPE_GAIN = 50;
 
-type JournalHandoffSegment = {
-  entryId: string;
-  title: string;
-  bodyPlain: string;
-  createdAt?: string;
-};
-
 type ChatMessage = {
   role: "assistant" | "user";
   text: string;
@@ -433,21 +444,6 @@ type ChatMessage = {
   /** Pin the proceed-to-audio control under this recap message. */
   audioReadyCta?: boolean;
 };
-
-const meditationStyles = [
-  "Body scan",
-  "Visualization",
-  "Breath-led",
-  "Manifestation",
-  "Affirmation loop",
-  "Story",
-  "Reflection",
-  "Sleep",
-  "Loving-kindness",
-  "Anxiety relief",
-  "Movement meditation",
-  "Open awareness",
-];
 
 const meditationStyleTooltip: Record<(typeof meditationStyles)[number], string> = {
   "Body scan":
@@ -509,100 +505,6 @@ function descriptionForMeditationStyle(label: string): string | null {
     return meditationStyleDescription[label as (typeof meditationStyles)[number]];
   }
   return null;
-}
-
-const STYLE_ANYTHING_ELSE_PROMPT = "Anything else you would like to add?";
-
-/** Three targeted intake questions per preset type (style path; not chat). */
-const STYLE_INTAKE_QUESTIONS: Record<(typeof meditationStyles)[number], [string, string, string]> = {
-  "Body scan": [
-    "Would you like a full head-to-toe scan, or to linger on a few areas?",
-    "Where in your body are you holding the most tension or discomfort right now?",
-    "What would you like to feel in your body by the end?",
-  ],
-  Visualization: [
-    "What do you want to visualise — a place, object, or presence that matters to you? Describe.",
-    "What’s the first vivid detail you notice (sight, sound, touch, or a sense of presence)?",
-    "How do you want to feel as you stay with this image?",
-  ],
-  "Breath-led": [
-    "Do you want counted breaths, or to follow the breath as it is?",
-    "How do you feel right now—wired, tired, scattered, something else?",
-    "Do you want a slow, long breath, or to keep a natural pace?",
-  ],
-  Manifestation: [
-    "What do you want to manifest?",
-    "Is anything getting in the way of this—doubt, fear, a practical obstacle?",
-    "How would you feel if this actually came true?",
-  ],
-  "Affirmation loop": [
-    "What feeling are you trying to generate?",
-    "Is there a goal you’re moving towards?",
-    "Are there any words or phrases you want to use specifically?",
-  ],
-  Story: [
-    "What style should the story be—zen story, kids’ story, fable, something else?",
-    "Are you in the story, or is it about someone else?",
-    "What feeling should it leave you with?",
-  ],
-  Reflection: [
-    "What do you need to process?",
-    "Do you want to look for an answer, or just sit with it?",
-    "What would a helpful insight or shift look like when you’re done?",
-  ],
-  Sleep: [
-    "How are you feeling as you get ready for sleep?",
-    "Do you want a drifting scene, or just body and breath?",
-    "How do you want to feel as you fall asleep?",
-  ],
-  "Loving-kindness": [
-    "Who is this practice for today—yourself, someone else, or both?",
-    "How do you feel toward them—or toward yourself—right now?",
-    "What kind of kindness is most needed (warmth, forgiveness, belonging)?",
-  ],
-  "Anxiety relief": [
-    "What’s the main worry or pressure right now?",
-    "Do you feel it in your body, and if so, where?",
-    "How do you want to feel by the end of this session?",
-  ],
-  "Movement meditation": [
-    "Will you be walking, stretching in place, or something else?",
-    "How does your body feel as you start—restless, stiff, tired?",
-    "Any limits we should work around—injury, tight space, needing to stay quiet?",
-  ],
-  "Open awareness": [
-    "What pulls your attention away most—thoughts, sounds, restlessness?",
-    "What’s your position—sitting, standing, lying down, or walking?",
-    "Where are you right now? Is it quiet or noisy?",
-  ],
-};
-
-function intakeQuestionsForStyle(style: string): [string, string, string] {
-  if ((meditationStyles as readonly string[]).includes(style)) {
-    return STYLE_INTAKE_QUESTIONS[style as (typeof meditationStyles)[number]];
-  }
-  const trimmed = style.trim() || "this";
-  return [
-    `How are you feeling today, and what do you want this “${trimmed}” practice to support?`,
-    "Is there a situation, person, or inner state we should keep in mind?",
-    "How do you want to feel when the meditation ends?",
-  ];
-}
-
-function emptyStyleQuestionAnswers(): [string, string, string, string] {
-  return ["", "", "", ""];
-}
-
-/** How many intake fields to show: 1–4 (3 questions + optional anything else). */
-function revealedCountFromStyleAnswers(
-  answers: [string, string, string, string],
-): number {
-  let n = 1;
-  for (let i = 0; i < 3; i += 1) {
-    if (!answers[i].trim()) break;
-    n = i + 2;
-  }
-  return Math.min(4, n);
 }
 
 function StyleIntakeField({
@@ -780,50 +682,6 @@ function StyleIntakeField({
   );
 }
 
-function parseStyleQuestionAnswers(
-  raw: unknown,
-): [string, string, string, string] | null {
-  if (!Array.isArray(raw) || raw.length < 3) return null;
-  const next = emptyStyleQuestionAnswers();
-  for (let i = 0; i < 4; i += 1) {
-    const v = raw[i];
-    next[i] = typeof v === "string" ? v : "";
-  }
-  return next;
-}
-
-function transcriptFromStyleAnswers(
-  style: string,
-  answers: [string, string, string, string],
-): { messages: ChatMessage[]; claudeThread: MedimadeChatTurn[] } {
-  const questions = intakeQuestionsForStyle(style);
-  const messages: ChatMessage[] = [
-    {
-      role: "assistant",
-      text: `We'll shape a ${style} meditation from your answers.`,
-      variant: "chat",
-    },
-  ];
-  questions.forEach((q, i) => {
-    messages.push({ role: "assistant", text: q, variant: "chat" });
-    messages.push({ role: "user", text: answers[i].trim() });
-  });
-  const extra = answers[3].trim();
-  if (extra) {
-    messages.push({
-      role: "assistant",
-      text: STYLE_ANYTHING_ELSE_PROMPT,
-      variant: "chat",
-    });
-    messages.push({ role: "user", text: extra });
-  }
-  const claudeThread: MedimadeChatTurn[] = messages.map((m) => ({
-    role: m.role,
-    content: m.text,
-  }));
-  return { messages, claudeThread };
-}
-
 type Phase =
   | "stylePick"
   | "styleQuestions"
@@ -847,13 +705,6 @@ function inferCreationPathFromDraft(
   if (st && st !== "General") return "style";
   return "freeflow";
 }
-
-const OPENING_STYLE =
-  "What style of meditation should we build? Pick one below or describe your own.";
-const OPENING_JOURNAL = "What’s on your mind?";
-
-const JOURNAL_REFLECT_PICK_INTRO =
-  "Which journal entry would you like to reflect on?";
 
 const GOAL_PICK_INTRO = "Which goal would you like to move towards?";
 const OPENING_GOAL =
@@ -893,13 +744,6 @@ function coachChatBubbles(text: string): string[] {
     .split(/\n{2,}/g)
     .map((s) => s.replace(/[ \t]*\n+[ \t]*/g, " ").trim())
     .filter(Boolean);
-}
-
-function chatMessageTranscriptLine(m: ChatMessage): string {
-  if (m.role === "user" && m.journalSegments?.length) {
-    return buildJournalHandoffApiContent(m.journalSegments);
-  }
-  return m.text;
 }
 
 type PlanTask = {
@@ -2262,13 +2106,7 @@ export function CreateWorkspace({
   async function generateScript() {
     if (scriptLoading) return;
     // Treat mode switches as a new chat: ignore any muted history + dividers + prior scripts.
-    const transcript = messages
-      .filter((m) => !m.muted && m.kind !== "divider" && m.variant !== "script")
-      .map(
-        (m) =>
-          `${m.role === "user" ? "User" : "Guide"}: ${chatMessageTranscriptLine(m)}`,
-      )
-      .join("\n\n");
+    const transcript = buildCreateFlowTranscript(messages);
     setScriptLoading(true);
     try {
       let acc = "";
@@ -2832,11 +2670,7 @@ export function CreateWorkspace({
   function confirmOneShotPrompt() {
     const prompt = oneShotPrompt.trim();
     if (!prompt) return;
-    const packaged =
-      "Please write a complete guided meditation script from this one-shot request. " +
-      "Use a calm, warm tone suitable for spoken guidance. Interpret the request generously — " +
-      "do not ask clarifying questions.\n\n" +
-      `Request:\n${prompt}`;
+    const packaged = packageOneShotPrompt(prompt);
     setMeditationStyle("General");
     setJournalMode(true);
     setMessages([{ role: "user", text: packaged, variant: "chat" }]);
@@ -3423,7 +3257,7 @@ export function CreateWorkspace({
                       m.journalSegments,
                       journalReflectGuidance.trim() || undefined,
                     )
-                  : chatMessageTranscriptLine(m);
+                  : createFlowTranscriptLine(m);
               return `${m.role === "user" ? "User" : "Guide"}: ${line}`;
             })
             .join("\n\n");
