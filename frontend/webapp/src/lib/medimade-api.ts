@@ -1226,7 +1226,7 @@ export async function createMeditationAudioJob(params: {
   scriptText?: string | null;
   reference_id: string;
   ttsProvider?: TtsProvider;
-  /** Fish Audio model for quality A/B: `s2.1-pro` (uses free) or `s1`. */
+  /** Fish Audio model. New jobs send `s2.1-pro-free`; `s1` remains accepted. */
   fishTtsModel?: "s2.1-pro" | "s2.1-pro-free" | "s1" | string;
   /** Dev-only Claude A/B for worker script + metadata generation. */
   claudeModel?: string;
@@ -1874,6 +1874,156 @@ export async function generateAdminVoiceSample(
   if (!res.ok) {
     throw new Error(data.detail ?? data.error ?? res.statusText);
   }
+  return data;
+}
+
+export type ScriptLabScope = "general" | "types";
+
+export type ScriptLabLengthTier = "short" | "medium" | "long";
+
+export type ScriptLabTag = {
+  name: string;
+  scope: ScriptLabScope;
+  types: string[];
+  lengthTiered: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScriptLabVariant = {
+  tagName: string;
+  variantId: string;
+  text: string;
+  lengthTier: ScriptLabLengthTier | null;
+  requiredConstraints: string[];
+  excludedConstraints: string[];
+  sort: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScriptLabVariantAudio = {
+  tagName: string;
+  variantId: string;
+  modelId: string;
+  status: "not_generated" | "generating" | "generated" | "failed";
+  s3Key: string;
+  durationSeconds: number;
+  updatedAt: string;
+};
+
+export type ScriptLabSpeaker = {
+  modelId: string;
+  name: string;
+};
+
+export type ScriptLabState = {
+  baseUrl?: string;
+  speakers: ScriptLabSpeaker[];
+  constraintVocabulary: string[];
+  tags: ScriptLabTag[];
+  variantsByTag: Record<string, ScriptLabVariant[]>;
+  audioByVariantKey: Record<string, ScriptLabVariantAudio[]>;
+};
+
+export type ScriptLabFlow = "by-type" | "guide-chat" | "journal" | "single-prompt";
+
+export async function listAdminScriptLab(): Promise<ScriptLabState> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/script-lab`, {
+    headers: medimadeApiAuthHeaders(),
+  });
+  const data = (await res.json()) as ScriptLabState & { error?: string; detail?: string };
+  if (!res.ok) throw new Error(data.detail ?? data.error ?? res.statusText);
+  return {
+    baseUrl: data.baseUrl,
+    speakers: data.speakers ?? [],
+    constraintVocabulary: data.constraintVocabulary ?? [],
+    tags: (data.tags ?? []).map((t) => ({
+      ...t,
+      lengthTiered: t.lengthTiered === true,
+    })),
+    variantsByTag: Object.fromEntries(
+      Object.entries(data.variantsByTag ?? {}).map(([tag, variants]) => [
+        tag,
+        (variants ?? []).map((v) => ({
+          ...v,
+          lengthTier: v.lengthTier ?? null,
+          requiredConstraints: v.requiredConstraints ?? [],
+          excludedConstraints: v.excludedConstraints ?? [],
+        })),
+      ]),
+    ),
+    audioByVariantKey: data.audioByVariantKey ?? {},
+  };
+}
+
+export async function patchAdminScriptLab(body: {
+  tag?: {
+    name: string;
+    scope?: ScriptLabScope;
+    types?: string[];
+    lengthTiered?: boolean;
+  };
+  variant?: {
+    tagName: string;
+    variantId?: string;
+    text: string;
+    sort?: number;
+    lengthTier?: ScriptLabLengthTier | null;
+    requiredConstraints?: string[];
+    excludedConstraints?: string[];
+  };
+  constraintTag?: { tag: string };
+}): Promise<{
+  tag?: ScriptLabTag;
+  variant?: ScriptLabVariant;
+  constraintTag?: string;
+}> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/script-lab`, {
+    method: "PATCH",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json()) as {
+    tag?: ScriptLabTag;
+    variant?: ScriptLabVariant;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) throw new Error(data.detail ?? data.error ?? res.statusText);
+  return data;
+}
+
+export async function exportAdminScriptLab(): Promise<{ segments: unknown[] }> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/script-lab?export=segments`, {
+    headers: medimadeApiAuthHeaders(),
+  });
+  const data = (await res.json()) as { segments?: unknown[]; error?: string; detail?: string };
+  if (!res.ok) throw new Error(data.detail ?? data.error ?? res.statusText);
+  return { segments: data.segments ?? [] };
+}
+
+export async function postAdminScriptLab(
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/script-lab`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json()) as Record<string, unknown> & {
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) throw new Error(String(data.detail ?? data.error ?? res.statusText));
   return data;
 }
 

@@ -1252,13 +1252,6 @@ export function CreateWorkspace({
   const speechSpeed = FIXED_SPEECH_PREVIEW_SPEED;
   const [meditationTargetMinutes, setMeditationTargetMinutes] =
     useState<MeditationTargetMinutes>(5);
-  /**
-   * Fish TTS model A/B — UI labels; s2.1-pro maps to s2.1-pro-free on the API.
-   * s1 is the shipped default; the toggle is dev-only.
-   */
-  const [fishTtsModelChoice, setFishTtsModelChoice] = useState<
-    "s2.1-pro" | "s1"
-  >("s1");
   /** Dev-only Claude A/B for coach chat + script generation. */
   const [claudeModelChoice, setClaudeModelChoice] = useState<string>(
     CLAUDE_HAIKU_45_MODEL_ID,
@@ -3443,8 +3436,7 @@ export function CreateWorkspace({
         scriptText: scriptTextForJob,
         reference_id: speakerModelId,
         ttsProvider: "fish",
-        fishTtsModel:
-          fishTtsModelChoice === "s1" ? "s1" : "s2.1-pro-free",
+        fishTtsModel: "s2.1-pro-free",
         claudeModel: claudeModelChoice,
         speed: speechSpeed,
         voiceFxPreset: speakerFxPreviewOn ? "mixer" : null,
@@ -4278,33 +4270,6 @@ export function CreateWorkspace({
                 <span className="rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
                   Dev
                 </span>
-                <div
-                  className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
-                  role="group"
-                  aria-label="Fish TTS model"
-                  title="Dev-only A/B. Production always uses s1."
-                >
-                  {(
-                    [
-                      ["s2.1-pro", "s2.1-pro"],
-                      ["s1", "s1"],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      disabled={audioLoading}
-                      onClick={() => setFishTtsModelChoice(value)}
-                      className={`cursor-pointer px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                        fishTtsModelChoice === value
-                          ? "bg-accent-soft text-foreground"
-                          : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
                 <div
                   className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
                   role="group"

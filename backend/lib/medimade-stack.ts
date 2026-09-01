@@ -966,6 +966,49 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    const adminScriptLab = new lambda_nodejs.NodejsFunction(
+      this,
+      "AdminScriptLabFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/admin-script-lab.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(300),
+        memorySize: 2048,
+        ephemeralStorageSize: cdk.Size.mebibytes(1024),
+        layers: [ffmpegLayer],
+        environment: {
+          MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+          MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
+          VOICE_ADMIN_TABLE_NAME: voiceAdminTable.tableName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+          ADMIN_EMAILS: adminEmails,
+          FISH_AUDIO_SECRET_ARN: fishApiKeySecret.secretArn,
+          CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,
+          FISH_TTS_MODEL: "s2.1-pro-free",
+        },
+      },
+    );
+    mediaBucket.grantReadWrite(adminScriptLab);
+    voiceAdminTable.grantReadWriteData(adminScriptLab);
+    authJwtSecret.grantRead(adminScriptLab);
+    fishApiKeySecret.grantRead(adminScriptLab);
+    claudeApiKeySecret.grantRead(adminScriptLab);
+
+    httpApi.addRoutes({
+      path: "/admin/script-lab",
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.PATCH,
+        apigwv2.HttpMethod.POST,
+        apigwv2.HttpMethod.OPTIONS,
+      ],
+      integration: new integrations.HttpLambdaIntegration(
+        "AdminScriptLabIntegration",
+        adminScriptLab,
+      ),
+    });
+
     httpApi.addRoutes({
       path: "/media/background-audio",
       methods: [apigwv2.HttpMethod.GET],
