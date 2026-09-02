@@ -34,6 +34,8 @@ export type ScriptLabFlowGenerationInput = {
   journalMode: boolean;
   meditationStyle: string;
   userTextSample: string;
+  /** Style-intake "Anything else?" free-text (by-type flow). */
+  additionalContext?: string;
   ready: boolean;
 };
 
@@ -119,6 +121,7 @@ export function ScriptLabTestFlowPanel({
           journalMode: false,
           meditationStyle: style,
           userTextSample: styleAnswers.join("\n"),
+          additionalContext: styleAnswers[3].trim(),
           ready: false,
         };
       }
@@ -129,6 +132,7 @@ export function ScriptLabTestFlowPanel({
         journalMode: false,
         meditationStyle: style,
         userTextSample: styleAnswers.filter(Boolean).join("\n"),
+        additionalContext: styleAnswers[3].trim(),
         ready: true,
       };
     }

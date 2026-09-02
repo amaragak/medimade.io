@@ -1,6 +1,7 @@
 import { normalizePauseBand, SCRIPT_PAUSE_BANDS } from "./script-pause-bands";
 import {
   CONNECTIVE_SEGMENT_TAGS,
+  effectiveSegmentRepeatability,
   inferDefaultSegmentRepeatability,
   normalizeScriptSegmentTag,
   type ScriptSegmentRepeatability,
@@ -135,6 +136,44 @@ export function duplicateBeatTypeIndexSet(
   return dupes;
 }
 
+/** Drop later duplicate singular tag beats — keep first instance (generation pre-verify pass). */
+export function dropDuplicateSingularTagBeats(
+  beats: ScriptLabBeat[],
+  tagRepeatabilityByName?: Record<string, ScriptSegmentRepeatability>,
+): {
+  beats: ScriptLabBeat[];
+  dropped: Array<{ index: number; tag: string }>;
+} {
+  const seen = new Set<string>();
+  const dropped: Array<{ index: number; tag: string }> = [];
+  const out: ScriptLabBeat[] = [];
+
+  beats.forEach((beat, index) => {
+    if (beat.custom || !beat.tag) {
+      out.push(beat);
+      return;
+    }
+    const tag = normalizeScriptSegmentTag(beat.tag);
+    const rep =
+      tagRepeatabilityByName?.[tag] ?? inferDefaultSegmentRepeatability(tag);
+    if (rep !== "singular") {
+      out.push(beat);
+      return;
+    }
+    if (seen.has(tag)) {
+      dropped.push({ index, tag });
+      console.warn(
+        `[script-lab] Dropping duplicate singular tag beat: ${tag} at index ${index}`,
+      );
+      return;
+    }
+    seen.add(tag);
+    out.push(beat);
+  });
+
+  return { beats: out, dropped };
+}
+
 export function scriptLabBeatsToolDefinition(): {
   name: string;
   description: string;
@@ -172,7 +211,7 @@ export function scriptLabBeatsToolDefinition(): {
               text: {
                 type: "string",
                 description:
-                  "Spoken words when custom is true; may include inline [[PAUSE band]] markers.",
+                  "Spoken words when custom is true (may include inline [[PAUSE band]] markers). For custom=false library tags, optional locked variant text when already chosen (e.g. Script Lab V2).",
               },
               pauseBand: {
                 type: "string",
@@ -223,8 +262,10 @@ function normalizeIncomingBeat(raw: unknown, index: number): ScriptLabBeat {
   }
 
   if (!tag) throw new Error(`Beat ${index + 1} (${beatType}) custom=false requires tag`);
-  if (text) throw new Error(`Beat ${index + 1} (${beatType}) custom=false must not include text`);
-  return { beatType, custom: false, tag };
+  // Optional locked variant text (V2 keeps Pass-1 picks on tag beats).
+  return text
+    ? { beatType, custom: false, tag, text }
+    : { beatType, custom: false, tag };
 }
 
 export function parseScriptLabBeatsFromToolInput(input: unknown): ScriptLabBeat[] {
@@ -253,4 +294,59 @@ export function extractBeatsFromAnthropicMessage(content: unknown): ScriptLabBea
     }
   }
   throw new Error("Model did not return submit_meditation_script_beats tool output");
+}
+
+/**
+ * Drop a connective tag beat when the previous non-pause beat is the same
+ * connective tag (pauses between do not count as separation). Keeps the first
+ * instance. Enforces the same invariant as scriptLabConnectiveTagSpacingRules.
+ */
+export function collapseSameConnectiveSeparatedOnlyByPauses(
+  beats: ScriptLabBeat[],
+  tagRepeatabilityByName?: Record<string, ScriptSegmentRepeatability>,
+): ScriptLabBeat[] {
+  const out: ScriptLabBeat[] = [];
+  let lastConnectiveTag: string | null = null;
+
+  for (const beat of beats) {
+    if (beat.beatType === "pause") {
+      out.push(beat);
+      continue;
+    }
+    if (!beat.custom && beat.tag) {
+      const tag = normalizeScriptSegmentTag(beat.tag);
+      const rep =
+        tagRepeatabilityByName?.[tag] ??
+        effectiveSegmentRepeatability({ tag, repeatability: null });
+      if (rep === "connective") {
+        if (lastConnectiveTag === tag) {
+          continue;
+        }
+        lastConnectiveTag = tag;
+        out.push({ ...beat, tag });
+        continue;
+      }
+    }
+    lastConnectiveTag = null;
+    out.push(beat);
+  }
+
+  // Drop trailing/leading pause runs created by removals (keep single pause gaps).
+  const cleaned: ScriptLabBeat[] = [];
+  for (const beat of out) {
+    if (
+      beat.beatType === "pause" &&
+      cleaned.length > 0 &&
+      cleaned[cleaned.length - 1]!.beatType === "pause"
+    ) {
+      cleaned[cleaned.length - 1] = beat;
+      continue;
+    }
+    cleaned.push(beat);
+  }
+  while (cleaned.length > 0 && cleaned[0]!.beatType === "pause") cleaned.shift();
+  while (cleaned.length > 0 && cleaned[cleaned.length - 1]!.beatType === "pause") {
+    cleaned.pop();
+  }
+  return cleaned;
 }

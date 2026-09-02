@@ -12,15 +12,27 @@ import {
   generateScriptLabScript,
 } from "../lib/script-lab-generate";
 import { generateScriptLabScriptV2 } from "../lib/script-lab-generate-v2";
+import { generateScriptLabScriptV3 } from "../lib/script-lab-generate-v3";
+import {
+  listScriptLabV3NoMatchLogs,
+  noMatchLogsToCsv,
+} from "../lib/script-lab-v3-no-match-log";
 import { buildScriptLabContextTags } from "../lib/script-constraint-tags";
+import { invokeEmbedLambdaDiagnostic } from "../lib/script-embed-client";
 import {
   deleteScriptSegmentTag,
   deleteScriptSegmentVariant,
   exportScriptSegmentLibrary,
   listAllScriptSegmentLibrary,
+  listPendingReviewVariants,
   listScriptSegmentVariants,
   putScriptSegmentTag,
   putScriptSegmentVariant,
+  reassignScriptSegmentVariant,
+  refreshVariantEmbedding,
+  enqueueVariantEmbeddings,
+  setScriptSegmentVariantApproved,
+  variantEligibleForV1V2Selection,
   type ScriptSegmentTagRow,
   type ScriptSegmentVariantRow,
 } from "../lib/script-segment-library";
@@ -38,6 +50,13 @@ import {
   SCRIPT_LAB_TTS_CONCURRENCY,
 } from "../lib/script-segment-audio";
 import { seedVoiceSpeakersIfEmpty } from "../lib/voice-admin";
+import {
+  appendScriptLabRecentVariantIds,
+  collectVariantIdsFromBeatPicks,
+  collectVariantIdsFromScriptBeats,
+  loadScriptLabRecentVariantIds,
+} from "../lib/script-lab-recent-variants";
+import { getScriptLabEmbeddingStats } from "../lib/script-lab-embed-queue";
 import {
   coerceScriptLabBeats,
   selectSegmentVariantsIntelligently,
@@ -117,11 +136,34 @@ async function handleGet(event: APIGatewayProxyEventV2) {
     const payload = await exportScriptSegmentLibrary();
     return json(200, payload);
   }
+  if (exportMode === "v3-no-match-csv") {
+    const rows = await listScriptLabV3NoMatchLogs();
+    return {
+      statusCode: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="script-lab-v3-no-match.csv"',
+      },
+      body: noMatchLogsToCsv(rows),
+    };
+  }
+  if (exportMode === "pending-review") {
+    const pending = await listPendingReviewVariants();
+    return json(200, { pending });
+  }
 
-  const [library, speakers, constraintVocabulary] = await Promise.all([
+  if (event.queryStringParameters?.embeddingProgress === "1") {
+    const embeddingStats = await getScriptLabEmbeddingStats();
+    return json(200, { embeddingStats });
+  }
+
+  const [library, speakers, constraintVocabulary, pendingReview, embeddingStats] =
+    await Promise.all([
     listAllScriptSegmentLibrary(),
     seedVoiceSpeakersIfEmpty(),
     listConstraintVocabulary(),
+    listPendingReviewVariants(),
+    getScriptLabEmbeddingStats(),
   ]);
   const activeSpeakers = speakers
     .filter((s) => !s.hidden)
@@ -136,6 +178,8 @@ async function handleGet(event: APIGatewayProxyEventV2) {
     tags: library.tags,
     variantsByTag: library.variantsByTag,
     audioByVariantKey: library.audioByVariantKey,
+    pendingReview,
+    embeddingStats,
   });
 }
 
@@ -276,6 +320,141 @@ async function handlePost(event: APIGatewayProxyEventV2) {
     return json(200, { ok: true, summary: result.result });
   }
 
+  if (action === "approve-variant") {
+    const variant = await setScriptSegmentVariantApproved({
+      tagName: String(body.tagName ?? ""),
+      variantId: String(body.variantId ?? ""),
+      approved: true,
+    });
+    return json(200, { ok: true, variant });
+  }
+
+  if (action === "reject-variant") {
+    await deleteScriptSegmentVariant({
+      tagName: String(body.tagName ?? ""),
+      variantId: String(body.variantId ?? ""),
+    });
+    return json(200, { ok: true });
+  }
+
+  if (action === "reassign-variant") {
+    const variant = await reassignScriptSegmentVariant({
+      fromTag: String(body.fromTag ?? body.tagName ?? ""),
+      toTag: String(body.toTag ?? ""),
+      variantId: String(body.variantId ?? ""),
+    });
+    return json(200, { ok: true, variant });
+  }
+
+  if (action === "backfill-embeddings") {
+    const library = await listAllScriptSegmentLibrary();
+    const missing: Array<{ tagName: string; variantId: string; text: string }> = [];
+    let skipped = 0;
+    for (const [tag, variants] of Object.entries(library.variantsByTag)) {
+      for (const v of variants) {
+        if (v.embedding && v.embedding.length > 0) {
+          skipped += 1;
+          continue;
+        }
+        missing.push({ tagName: tag, variantId: v.variantId, text: v.text });
+      }
+    }
+    const queued = await enqueueVariantEmbeddings(missing);
+    const embeddingStats = await getScriptLabEmbeddingStats();
+    return json(200, { ok: true, queued, skipped, embeddingStats });
+  }
+
+  if (action === "test-embed") {
+    const library = await listAllScriptSegmentLibrary();
+    const pool: Array<{ tagName: string; variantId: string; text: string }> = [];
+    for (const [tag, variants] of Object.entries(library.variantsByTag)) {
+      for (const v of variants) {
+        if (v.text?.trim()) {
+          pool.push({ tagName: tag, variantId: v.variantId, text: v.text });
+        }
+      }
+    }
+    if (pool.length === 0) {
+      return json(400, { error: "No library variants available to test embed" });
+    }
+    const pick = pool[Math.floor(Math.random() * pool.length)]!;
+    const functionConfigured = Boolean(process.env.SCRIPT_EMBED_FUNCTION_NAME?.trim());
+    if (!functionConfigured) {
+      return json(200, {
+        ok: false,
+        step: "config",
+        error: "SCRIPT_EMBED_FUNCTION_NAME is not set on AdminScriptLabFunction",
+        sample: pick,
+      });
+    }
+
+    const embedDiag = await invokeEmbedLambdaDiagnostic({
+      action: "embed",
+      texts: [pick.text],
+    });
+    if (!embedDiag.ok) {
+      return json(200, {
+        ok: false,
+        step: "embed",
+        sample: { tagName: pick.tagName, variantId: pick.variantId, textPreview: pick.text.slice(0, 160) },
+        functionName: embedDiag.functionName,
+        durationMs: embedDiag.durationMs,
+        functionError: embedDiag.functionError ?? null,
+        error: embedDiag.error ?? "embed failed",
+        rawPayload: embedDiag.rawPayload,
+        parsed: embedDiag.parsed,
+      });
+    }
+
+    const embeddings = Array.isArray(embedDiag.parsed?.embeddings)
+      ? (embedDiag.parsed!.embeddings as unknown[])
+      : [];
+    const first = Array.isArray(embeddings[0]) ? (embeddings[0] as unknown[]) : [];
+    const dims = first.length;
+    const sampleValues = first.slice(0, 6).map((n) => Number(n));
+
+    const storeDiag = await invokeEmbedLambdaDiagnostic({
+      action: "embed_store",
+      items: [
+        {
+          tagName: pick.tagName,
+          variantId: pick.variantId,
+          text: pick.text,
+        },
+      ],
+    });
+
+    const embeddingStats = await getScriptLabEmbeddingStats();
+    return json(200, {
+      ok: storeDiag.ok,
+      step: storeDiag.ok ? "embed_store" : "embed_store_failed",
+      sample: {
+        tagName: pick.tagName,
+        variantId: pick.variantId,
+        textPreview: pick.text.slice(0, 160),
+      },
+      embed: {
+        ok: true,
+        functionName: embedDiag.functionName,
+        durationMs: embedDiag.durationMs,
+        model: embedDiag.parsed?.model ?? null,
+        dims,
+        sampleValues,
+      },
+      store: {
+        ok: storeDiag.ok,
+        durationMs: storeDiag.durationMs,
+        functionError: storeDiag.functionError ?? null,
+        error: storeDiag.error ?? null,
+        updated: storeDiag.parsed?.updated ?? null,
+        skipped: storeDiag.parsed?.skipped ?? null,
+        rawPayload: storeDiag.ok ? undefined : storeDiag.rawPayload,
+        parsed: storeDiag.parsed,
+      },
+      embeddingStats,
+    });
+  }
+
   return json(400, { error: `Unknown action ${action}` });
 }
 
@@ -335,7 +514,9 @@ async function handleFillPlaceholders(body: Record<string, unknown>) {
       scope: t.scope,
       types: t.types,
     };
-    variantsByTag[t.name] = (library.variantsByTag[t.name] ?? []).map((v) => ({
+    variantsByTag[t.name] = (library.variantsByTag[t.name] ?? [])
+      .filter((v) => variantEligibleForV1V2Selection(v))
+      .map((v) => ({
       variantId: v.variantId,
       text: v.text,
       lengthTier: v.lengthTier,
@@ -346,6 +527,7 @@ async function handleFillPlaceholders(body: Record<string, unknown>) {
   }
 
   const apiKey = await getClaudeApiKey();
+  const recentVariantIds = await loadScriptLabRecentVariantIds();
   const result = await selectSegmentVariantsIntelligently({
     apiKey,
     model: claudeModel,
@@ -356,7 +538,13 @@ async function handleFillPlaceholders(body: Record<string, unknown>) {
     targetMinutes,
     meditationType,
     contextTags,
+    recentVariantIds,
   });
+
+  const usedVariantIds = collectVariantIdsFromBeatPicks(beats, result.picksByBeatIndex);
+  if (usedVariantIds.length > 0) {
+    await appendScriptLabRecentVariantIds(usedVariantIds);
+  }
 
   return json(200, {
     picksByBeatIndex: result.picksByBeatIndex,
@@ -389,15 +577,21 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       : "General";
 
   const library = await listAllScriptSegmentLibrary();
+  const variantsByTagApproved: Record<string, ScriptSegmentVariantRow[]> = {};
+  for (const [tag, variants] of Object.entries(library.variantsByTag)) {
+    variantsByTagApproved[tag] = variants.filter((v) =>
+      variantEligibleForV1V2Selection(v),
+    );
+  }
   const segmentTags = buildSegmentTagsForGenerationPrompt({
     tags: library.tags,
-    variantsByTag: library.variantsByTag,
+    variantsByTag: variantsByTagApproved,
   });
   const verificationTagVariants = library.tags
     .map((t) => ({
       name: t.name,
       repeatability: t.repeatability,
-      variants: (library.variantsByTag[t.name] ?? []).map((v) => ({
+      variants: (variantsByTagApproved[t.name] ?? []).map((v) => ({
         variantId: v.variantId,
         text: v.text,
         direction: v.direction ?? null,
@@ -407,9 +601,13 @@ async function handleGenerateScript(body: Record<string, unknown>) {
 
   const apiKey = await getClaudeApiKey();
   const generationPath =
-    body.generationPath === "v2" || body.generationVersion === "v2" ? "v2" : "v1";
+    body.generationPath === "v3" || body.generationVersion === "v3"
+      ? "v3"
+      : body.generationPath === "v2" || body.generationVersion === "v2"
+        ? "v2"
+        : "v1";
 
-  if (generationPath === "v2") {
+  const mapVariantsForV1V2 = () => {
     const variantsByTag: Record<
       string,
       Array<{
@@ -437,6 +635,51 @@ async function handleGenerateScript(body: Record<string, unknown>) {
         types: t.types,
         repeatability: t.repeatability,
       };
+      variantsByTag[t.name] = (library.variantsByTag[t.name] ?? [])
+        .filter((v) => variantEligibleForV1V2Selection(v))
+        .map((v) => ({
+          variantId: v.variantId,
+          text: v.text,
+          lengthTier: v.lengthTier,
+          direction: v.direction ?? null,
+          requiredConstraints: v.requiredConstraints,
+          excludedConstraints: v.excludedConstraints,
+        }));
+    }
+    return { variantsByTag, tagMetaByName };
+  };
+
+  if (generationPath === "v3") {
+    const variantsByTag: Record<
+      string,
+      Array<{
+        variantId: string;
+        text: string;
+        lengthTier?: "short" | "medium" | "long" | null;
+        direction?: string | null;
+        requiredConstraints?: string[];
+        excludedConstraints?: string[];
+        embedding?: number[];
+        source?: string;
+        approved?: boolean;
+      }>
+    > = {};
+    const tagMetaByName: Record<
+      string,
+      {
+        lengthTiered: boolean;
+        scope: "general" | "types";
+        types: string[];
+        repeatability?: ScriptSegmentTagRow["repeatability"];
+      }
+    > = {};
+    for (const t of library.tags) {
+      tagMetaByName[t.name] = {
+        lengthTiered: t.lengthTiered,
+        scope: t.scope,
+        types: t.types,
+        repeatability: t.repeatability,
+      };
       variantsByTag[t.name] = (library.variantsByTag[t.name] ?? []).map((v) => ({
         variantId: v.variantId,
         text: v.text,
@@ -444,13 +687,18 @@ async function handleGenerateScript(body: Record<string, unknown>) {
         direction: v.direction ?? null,
         requiredConstraints: v.requiredConstraints,
         excludedConstraints: v.excludedConstraints,
+        embedding: v.embedding,
+        source: v.source,
+        approved: v.approved,
       }));
     }
     const contextTags = buildScriptLabContextTags({
       meditationType: journalMode ? null : meditationStyle,
       userText: transcript,
     });
-    const result = await generateScriptLabScriptV2({
+    const additionalContext =
+      typeof body.additionalContext === "string" ? body.additionalContext.trim() : "";
+    const result = await generateScriptLabScriptV3({
       apiKey,
       model: claudeModel,
       transcript,
@@ -458,11 +706,10 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       journalMode,
       targetMinutes,
       speechSpeed,
-      segmentTags,
+      additionalContext: additionalContext || undefined,
+      contextTags,
       variantsByTag,
       tagMetaByName,
-      generalTagVariants: verificationTagVariants,
-      contextTags,
     });
     return json(200, {
       beats: result.beats,
@@ -475,6 +722,53 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       journalMode,
       targetMinutes,
       usage: result.usage,
+      firstPassUsage: result.firstPassUsage,
+      generationPath: "v3",
+      v3Meta: result.v3Meta,
+    });
+  }
+
+  if (generationPath === "v2") {
+    const { variantsByTag, tagMetaByName } = mapVariantsForV1V2();
+    const contextTags = buildScriptLabContextTags({
+      meditationType: journalMode ? null : meditationStyle,
+      userText: transcript,
+    });
+    const recentVariantIds = await loadScriptLabRecentVariantIds();
+    const additionalContext =
+      typeof body.additionalContext === "string" ? body.additionalContext.trim() : "";
+    const result = await generateScriptLabScriptV2({
+      apiKey,
+      model: claudeModel,
+      transcript,
+      meditationStyle,
+      journalMode,
+      targetMinutes,
+      speechSpeed,
+      additionalContext: additionalContext || undefined,
+      segmentTags,
+      variantsByTag,
+      tagMetaByName,
+      generalTagVariants: verificationTagVariants,
+      contextTags,
+      recentVariantIds,
+    });
+    const usedVariantIds = collectVariantIdsFromScriptBeats(result.beats, variantsByTag);
+    if (usedVariantIds.length > 0) {
+      await appendScriptLabRecentVariantIds(usedVariantIds);
+    }
+    return json(200, {
+      beats: result.beats,
+      beatsBeforeVerification: result.beatsBeforeVerification,
+      verificationNewBeatIndices: result.verificationNewBeatIndices,
+      verificationCorrectionsApplied: result.verificationCorrectionsApplied,
+      beatWarnings: result.beatWarnings,
+      transcript,
+      meditationStyle,
+      journalMode,
+      targetMinutes,
+      usage: result.usage,
+      firstPassUsage: result.firstPassUsage,
       generationPath: "v2",
       v2Meta: result.v2Meta,
     });
@@ -503,6 +797,7 @@ async function handleGenerateScript(body: Record<string, unknown>) {
     journalMode,
     targetMinutes,
     usage: result.usage,
+    firstPassUsage: result.firstPassUsage,
     generationPath: "v1",
   });
 }

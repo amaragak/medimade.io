@@ -14,6 +14,7 @@
     "migrate-meditation-legacy-partition": "tsx scripts/migrate-meditation-legacy-partition.ts",
     "backfill-bg-audio-opus": "tsx scripts/backfill-bg-audio-opus.ts",
     "build-pedalboard-layer": "bash scripts/build-pedalboard-layer",
+    "build-fastembed-layer": "bash scripts/build-fastembed-layer",
     "build-runpod-orpheus": "bash scripts/build-runpod-orpheus",
     "build-orpheus-serverless": "bash scripts/build-orpheus-serverless",
     "deploy-orpheus-serverless": "bash scripts/deploy-orpheus-serverless"

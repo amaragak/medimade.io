@@ -1,15 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import {
   listAdminScriptLab,
   exportAdminScriptLab,
   importAdminScriptLabTagMetadata,
   patchAdminScriptLab,
   postAdminScriptLab,
+  fetchAdminScriptLabEmbeddingProgress,
   fetchJournalStoreRemote,
+  getMedimadeApiBase,
+  medimadeApiAuthHeaders,
   MEDITATION_TARGET_MINUTES,
   type MeditationTargetMinutes,
+  type ScriptLabEmbeddingStats,
   type ScriptLabFlow,
   type ScriptLabState,
   type ScriptLabVariant,
@@ -61,10 +65,28 @@ import {
   ScriptLabBeatsVerificationToggle,
   type BeatsVerificationView,
 } from "@/components/script-lab-beats-preview";
+import {
+  ScriptLabV3PreviewContent,
+  ScriptLabV3PreviewToggle,
+  ScriptLabV3PromoteBanner,
+  ScriptLabV3SubstitutionStatsLine,
+  computeV3SubstitutionStats,
+  v3StatsViewLabel,
+  type ScriptLabV3Meta,
+  type V3PreviewView,
+} from "@/components/script-lab-v3-preview";
 import { ScriptLabSegmentPropertiesPanel } from "@/components/script-lab-segment-properties-panel";
 import { AdminPauseLengthsPanel } from "@/components/admin-pause-lengths-panel";
+import { ScriptLabCostStatsPanel } from "@/components/script-lab-cost-stats-panel";
+import {
+  buildScriptLabCostSummary,
+  characterCountsFromBeats,
+  parseTokenUsage,
+  type TokenUsage,
+} from "@/lib/script-lab-cost";
 
-type LibraryTab = "properties" | "variants";
+type LibraryTab = "properties" | "variants" | "pending";
+type GenerationPath = "v1" | "v2" | "v3";
 type SegmentImportMode = "segments" | "metadata";
 
 const MEDITATION_TYPES = SCRIPT_LAB_MEDITATION_TYPES;
@@ -121,10 +143,17 @@ export function AdminScriptLabPanel() {
   const [verificationCorrectionsApplied, setVerificationCorrectionsApplied] = useState(false);
   const [beatsVerificationView, setBeatsVerificationView] =
     useState<BeatsVerificationView>("after");
-  const [generationPath, setGenerationPath] = useState<"v1" | "v2">("v1");
+  const [v3PreviewView, setV3PreviewView] = useState<V3PreviewView>("substitution");
+  const [pendingReviewFilterIds, setPendingReviewFilterIds] = useState<Set<string> | null>(
+    null,
+  );
+  const [generationPath, setGenerationPath] = useState<GenerationPath>("v1");
   const [v2RemovedTags, setV2RemovedTags] = useState<string[]>([]);
   const [v2FocusAnchorBeats, setV2FocusAnchorBeats] = useState(0);
-  const [lastGenerationPath, setLastGenerationPath] = useState<"v1" | "v2" | null>(null);
+  const [lastGenerationPath, setLastGenerationPath] = useState<GenerationPath | null>(null);
+  const [v3Meta, setV3Meta] = useState<ScriptLabV3Meta | null>(null);
+  const [reassignTagDraft, setReassignTagDraft] = useState<Record<string, string>>({});
+  const [pendingBusyKey, setPendingBusyKey] = useState<string | null>(null);
   const [beatWarnings, setBeatWarnings] = useState<ScriptLabBeatDuplicateWarning[]>([]);
   const [renderedScript, setRenderedScript] = useState("");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("beats");
@@ -151,6 +180,9 @@ export function AdminScriptLabPanel() {
   const [voiceModelId, setVoiceModelId] = useState("");
   const [generateBusy, setGenerateBusy] = useState(false);
   const [fillBusy, setFillBusy] = useState(false);
+  const [generationUsage, setGenerationUsage] = useState<TokenUsage | null>(null);
+  const [firstPassUsage, setFirstPassUsage] = useState<TokenUsage | null>(null);
+  const [fillUsage, setFillUsage] = useState<TokenUsage | null>(null);
 
   const [newVariantText, setNewVariantText] = useState("");
   const [newVariantLengthTier, setNewVariantLengthTier] = useState<ScriptLengthTier>("medium");
@@ -166,6 +198,11 @@ export function AdminScriptLabPanel() {
   const [coverageThreshold, setCoverageThreshold] = useState(DEFAULT_COVERAGE_THRESHOLD);
   const [coverageDetailTag, setCoverageDetailTag] = useState<string | null>(null);
   const [newConstraintTag, setNewConstraintTag] = useState("");
+  const [embeddingStats, setEmbeddingStats] = useState<ScriptLabEmbeddingStats | null>(
+    null,
+  );
+  const [embedTestBusy, setEmbedTestBusy] = useState(false);
+  const [embedTestResult, setEmbedTestResult] = useState<string | null>(null);
 
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const [previewingUrl, setPreviewingUrl] = useState<string | null>(null);
@@ -173,8 +210,28 @@ export function AdminScriptLabPanel() {
   const reload = useCallback(async () => {
     const data = await listAdminScriptLab();
     setState(data);
+    setEmbeddingStats(data.embeddingStats ?? null);
     setVoiceModelId((current) => current || data.speakers[0]?.modelId || "");
     setBulkSpeakerId((current) => current || data.speakers[0]?.modelId || "");
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const stats = await fetchAdminScriptLabEmbeddingProgress();
+        if (!cancelled) setEmbeddingStats(stats);
+      } catch {
+        /* keep last stats visible */
+      }
+    };
+    void poll();
+    const intervalMs = 5000;
+    const id = window.setInterval(() => void poll(), intervalMs);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
   }, []);
 
   useEffect(() => {
@@ -308,22 +365,54 @@ export function AdminScriptLabPanel() {
   }, [state, coverageThreshold]);
 
   const displayedBeats = useMemo(() => {
+    if (lastGenerationPath === "v3" && v3Meta) {
+      if (v3PreviewView === "verification") return beats;
+      if (v3PreviewView === "substitution") {
+        return v3Meta.beatsAfterSubstitution?.length
+          ? v3Meta.beatsAfterSubstitution
+          : beats;
+      }
+      if (previewMode !== "beats") {
+        return beats;
+      }
+      return [];
+    }
     if (beatsVerificationView === "pass1" && beatsPass1Skeleton.length > 0) {
       return beatsPass1Skeleton;
     }
     if (beatsBeforeVerification.length === 0) return beats;
     return beatsVerificationView === "before" ? beatsBeforeVerification : beats;
-  }, [beatsVerificationView, beatsBeforeVerification, beats, beatsPass1Skeleton]);
+  }, [
+    lastGenerationPath,
+    v3Meta,
+    v3PreviewView,
+    previewMode,
+    beatsVerificationView,
+    beatsBeforeVerification,
+    beats,
+    beatsPass1Skeleton,
+  ]);
 
   const displayedRenderedScript = useMemo(() => {
     if (displayedBeats.length === 0) return "";
+    const embedded = renderBeatsToScript(displayedBeats, () => null);
+    const hasEmbeddedSegments = displayedBeats.some(
+      (b) => !b.custom && !!b.tag && !!b.text?.trim(),
+    );
+    if (hasEmbeddedSegments && !embedded.includes("[[SEG:")) {
+      return embedded;
+    }
     const hasFill =
       renderedScript.trim().length > 0 || Object.keys(renderPicks).length > 0;
-    if (!hasFill) return "";
+    if (!hasFill) {
+      return hasEmbeddedSegments ? embedded : "";
+    }
     if (renderedScript.trim() && displayedBeats === beats) {
       return renderedScript;
     }
-    if (Object.keys(variantsByTagForEstimate).length === 0) return "";
+    if (Object.keys(variantsByTagForEstimate).length === 0) {
+      return hasEmbeddedSegments ? embedded : "";
+    }
     const picker = createSegmentVariantPickerForBeats({
       beats: displayedBeats,
       variantsByTag: variantsByTagForEstimate,
@@ -378,17 +467,71 @@ export function AdminScriptLabPanel() {
   const statsBeats = displayedBeats;
 
   const statsVerificationLabel =
-    lastGenerationPath === "v2" && beatsPass1Skeleton.length > 0
-      ? beatsVerificationView === "pass1"
-        ? "Pass 1 skeleton"
-        : beatsVerificationView === "before"
-          ? "Before verification (after pass 2)"
-          : "After verification"
-      : beatsBeforeVerification.length > 0
-        ? beatsVerificationView === "before"
-          ? "Before verification"
-          : "After verification"
-        : null;
+    lastGenerationPath === "v3" && v3Meta
+      ? v3StatsViewLabel(v3PreviewView)
+      : lastGenerationPath === "v2" && beatsPass1Skeleton.length > 0
+        ? beatsVerificationView === "pass1"
+          ? "Pass 1 skeleton"
+          : beatsVerificationView === "before"
+            ? "Before verification (after pass 2)"
+            : "After verification"
+        : beatsBeforeVerification.length > 0
+          ? beatsVerificationView === "before"
+            ? "Before verification"
+            : "After verification"
+          : null;
+
+  const v3SubstitutionStats = useMemo(() => {
+    if (lastGenerationPath !== "v3" || !v3Meta?.decisions?.length) return null;
+    return computeV3SubstitutionStats(v3Meta.decisions);
+  }, [lastGenerationPath, v3Meta]);
+
+  const costSummary = useMemo(() => {
+    if (!generationUsage && !fillUsage) return null;
+    const { customCharCount, segmentCharCount } =
+      statsBeats.length > 0
+        ? characterCountsFromBeats({
+            beats: statsBeats,
+            picksByTag: previewMode === "rendered" ? renderPicks : undefined,
+            variantsByTag: variantsByTagForEstimate,
+            tagMetaByName,
+            targetMinutes,
+            meditationType: previewMeditationType,
+            contextTags: previewContextTags,
+          })
+        : { customCharCount: 0, segmentCharCount: 0 };
+
+    const generationLabel =
+      lastGenerationPath === "v3"
+        ? "Generation (pass 1 + classification + substitution)"
+        : lastGenerationPath === "v2"
+          ? "Generation (pass 1 + pass 2 + verification)"
+          : "Generation (incl. verification)";
+
+    return buildScriptLabCostSummary({
+      generationUsage,
+      fillUsage,
+      firstPassUsage,
+      finalScriptText: displayedRenderedScript,
+      generationLabel,
+      fishCustomChars: customCharCount,
+      fishSegmentChars: segmentCharCount,
+    });
+  }, [
+    generationUsage,
+    fillUsage,
+    firstPassUsage,
+    displayedRenderedScript,
+    statsBeats,
+    previewMode,
+    renderPicks,
+    variantsByTagForEstimate,
+    tagMetaByName,
+    targetMinutes,
+    previewMeditationType,
+    previewContextTags,
+    lastGenerationPath,
+  ]);
 
   const durationEstimate = useMemo(() => {
     if (statsBeats.length === 0 || !voiceModelId) return null;
@@ -519,6 +662,7 @@ export function AdminScriptLabPanel() {
       );
       setRenderedScript(rendered);
       setPreviewMode("rendered");
+      setFillUsage(parseTokenUsage(data.usage));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Fill placeholders failed");
     } finally {
@@ -545,6 +689,8 @@ export function AdminScriptLabPanel() {
     }
     setGenerateBusy(true);
     setError(null);
+    setFillUsage(null);
+    setFirstPassUsage(null);
     try {
       const data = await postAdminScriptLab({
         action: "generate-script",
@@ -553,6 +699,9 @@ export function AdminScriptLabPanel() {
         journalMode: flowGenerationInput.journalMode,
         meditationStyle: flowGenerationInput.meditationStyle,
         meditationTargetMinutes: targetMinutes,
+        ...(flowGenerationInput.additionalContext?.trim()
+          ? { additionalContext: flowGenerationInput.additionalContext.trim() }
+          : {}),
       });
       const nextBeats = Array.isArray(data.beats) ? (data.beats as ScriptLabBeat[]) : [];
       const nextBefore = Array.isArray(data.beatsBeforeVerification)
@@ -566,7 +715,8 @@ export function AdminScriptLabPanel() {
       const nextWarnings = Array.isArray(data.beatWarnings)
         ? (data.beatWarnings as ScriptLabBeatDuplicateWarning[])
         : [];
-      const pathUsed = data.generationPath === "v2" ? "v2" : "v1";
+      const pathUsed: GenerationPath =
+        data.generationPath === "v3" ? "v3" : data.generationPath === "v2" ? "v2" : "v1";
       const v2Meta =
         data.v2Meta && typeof data.v2Meta === "object"
           ? (data.v2Meta as {
@@ -574,6 +724,10 @@ export function AdminScriptLabPanel() {
               removedTags?: string[];
               focusAnchorBeats?: number;
             })
+          : null;
+      const nextV3Meta =
+        pathUsed === "v3" && data.v3Meta && typeof data.v3Meta === "object"
+          ? (data.v3Meta as ScriptLabV3Meta)
           : null;
       const pass1 =
         pathUsed === "v2" && Array.isArray(v2Meta?.passOneRendered)
@@ -590,8 +744,11 @@ export function AdminScriptLabPanel() {
       );
       setVerificationCorrectionsApplied(data.verificationCorrectionsApplied === true);
       setBeatsVerificationView("after");
+      setV3PreviewView("substitution");
+      setPendingReviewFilterIds(null);
       setBeatWarnings(nextWarnings);
       setLastGenerationPath(pathUsed);
+      setV3Meta(nextV3Meta);
       setV2RemovedTags(
         pathUsed === "v2" && Array.isArray(v2Meta?.removedTags)
           ? v2Meta.removedTags.filter((t): t is string => typeof t === "string")
@@ -602,10 +759,19 @@ export function AdminScriptLabPanel() {
           ? v2Meta.focusAnchorBeats
           : 0,
       );
-      setRenderedScript("");
-      setRenderPicks({});
+      setGenerationUsage(parseTokenUsage(data.usage));
+      setFirstPassUsage(parseTokenUsage(data.firstPassUsage));
+      if (pathUsed === "v2" || pathUsed === "v3") {
+        const embedded = renderBeatsToScript(nextBeats, () => null);
+        setRenderedScript(embedded.includes("[[SEG:") ? "" : embedded);
+        setRenderPicks({});
+        setPreviewMode(embedded.includes("[[SEG:") ? "beats" : "rendered");
+      } else {
+        setRenderedScript("");
+        setRenderPicks({});
+        setPreviewMode("beats");
+      }
       setCopyNote(null);
-      setPreviewMode("beats");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Script generation failed");
     } finally {
@@ -981,7 +1147,9 @@ export function AdminScriptLabPanel() {
             </div>
           ) : null}
 
-          {beats.length > 0 && beatsBeforeVerification.length > 0 ? (
+          {beats.length > 0 && lastGenerationPath === "v3" && v3Meta ? (
+            <ScriptLabV3PreviewToggle view={v3PreviewView} onChange={setV3PreviewView} />
+          ) : beats.length > 0 && beatsBeforeVerification.length > 0 ? (
             <ScriptLabBeatsVerificationToggle
               view={beatsVerificationView}
               onChange={setBeatsVerificationView}
@@ -993,9 +1161,31 @@ export function AdminScriptLabPanel() {
             />
           ) : null}
 
+          {lastGenerationPath === "v3" && v3Meta && (v3Meta.promotedVariantIds?.length ?? 0) > 0 ? (
+            <ScriptLabV3PromoteBanner
+              promotedCount={v3Meta.promotedVariantIds?.length ?? 0}
+              onOpenPendingReview={() => {
+                void reload().then(() => {
+                  setPendingReviewFilterIds(new Set(v3Meta.promotedVariantIds ?? []));
+                  setLibraryTab("pending");
+                });
+              }}
+            />
+          ) : null}
+
           <div className="mt-3 min-h-[12rem] max-h-[28rem] overflow-y-auto scroll-styled rounded-xl border border-border bg-background/80 p-4 text-sm leading-relaxed text-foreground">
             {beats.length === 0 ? (
               <p className="text-muted">Generate a test script from the panel on the right.</p>
+            ) : previewMode === "beats" && lastGenerationPath === "v3" && v3Meta ? (
+              <ScriptLabV3PreviewContent
+                view={v3PreviewView}
+                v3Meta={v3Meta}
+                verificationBeats={beats}
+                tagRepeatabilityByName={tagRepeatabilityByName}
+                correctedBeatIndices={
+                  v3PreviewView === "verification" ? correctedBeatIndices : undefined
+                }
+              />
             ) : previewMode === "beats" ? (
               <ScriptLabBeatsPreview
                 beats={displayedBeats}
@@ -1075,6 +1265,10 @@ export function AdminScriptLabPanel() {
               ) : null}
             </p>
           ) : null}
+          <ScriptLabCostStatsPanel summary={costSummary} />
+          {lastGenerationPath === "v3" && v3SubstitutionStats ? (
+            <ScriptLabV3SubstitutionStatsLine stats={v3SubstitutionStats} />
+          ) : null}
           {lastGenerationPath === "v2" &&
           (v2RemovedTags.length > 0 || v2FocusAnchorBeats > 0) ? (
             <p className="mt-1 text-[11px] text-muted">
@@ -1117,6 +1311,20 @@ export function AdminScriptLabPanel() {
             </div>
           </div>
 
+          <ScriptLabEmbeddingProgressBar stats={embeddingStats} />
+
+          {embedTestResult ? (
+            <pre
+              className={`mt-2 max-h-48 overflow-auto scroll-styled rounded-xl border px-3 py-2 font-mono text-[11px] leading-relaxed ${
+                embedTestResult.startsWith("FAIL")
+                  ? "border-danger/40 bg-danger/5 text-danger"
+                  : "border-emerald-500/40 bg-emerald-500/5 text-foreground"
+              }`}
+            >
+              {embedTestResult}
+            </pre>
+          ) : null}
+
           <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-border pt-3">
             <label className="text-xs text-muted">
               Backfill speaker
@@ -1139,6 +1347,101 @@ export function AdminScriptLabPanel() {
               className="cursor-pointer rounded border border-border px-2 py-1 text-xs font-medium disabled:opacity-50"
             >
               {bulkBusy ? "Generating…" : "Generate all variants for speaker"}
+            </button>
+            <button
+              type="button"
+              disabled={embedTestBusy}
+              className="cursor-pointer rounded border border-border px-2 py-1 text-xs font-medium disabled:opacity-50"
+              onClick={() => {
+                void (async () => {
+                  setEmbedTestBusy(true);
+                  setEmbedTestResult(null);
+                  setError(null);
+                  try {
+                    const data = await postAdminScriptLab({ action: "test-embed" });
+                    if (data.embeddingStats) {
+                      setEmbeddingStats(data.embeddingStats as ScriptLabEmbeddingStats);
+                    }
+                    if (data.ok === true) {
+                      const embed = (data.embed ?? {}) as Record<string, unknown>;
+                      const store = (data.store ?? {}) as Record<string, unknown>;
+                      const sample = (data.sample ?? {}) as Record<string, unknown>;
+                      setEmbedTestResult(
+                        [
+                          "OK — embed + store succeeded",
+                          `Sample: ${sample.tagName ?? "?"} / ${sample.variantId ?? "?"}`,
+                          `Text: ${String(sample.textPreview ?? "").slice(0, 120)}`,
+                          `Model: ${embed.model ?? "?"} · dims=${embed.dims ?? "?"} · embed ${embed.durationMs ?? "?"}ms`,
+                          `Sample values: ${JSON.stringify(embed.sampleValues ?? [])}`,
+                          `Store: updated=${store.updated ?? "?"} skipped=${store.skipped ?? "?"} (${store.durationMs ?? "?"}ms)`,
+                        ].join("\n"),
+                      );
+                    } else {
+                      const sample = (data.sample ?? {}) as Record<string, unknown>;
+                      setEmbedTestResult(
+                        [
+                          `FAIL at step=${String(data.step ?? "?")}`,
+                          data.functionName ? `Function: ${data.functionName}` : null,
+                          data.durationMs != null ? `Duration: ${data.durationMs}ms` : null,
+                          sample.tagName
+                            ? `Sample: ${sample.tagName} / ${sample.variantId ?? "?"}`
+                            : null,
+                          data.functionError
+                            ? `FunctionError: ${String(data.functionError)}`
+                            : null,
+                          String(data.error ?? "Unknown embed error"),
+                          data.rawPayload
+                            ? `--- raw payload ---\n${String(data.rawPayload).slice(0, 1500)}`
+                            : null,
+                          data.store && typeof data.store === "object"
+                            ? `--- store ---\n${JSON.stringify(data.store, null, 2).slice(0, 1500)}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join("\n"),
+                      );
+                    }
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : "Test embed failed";
+                    setEmbedTestResult(`FAIL\n${msg}`);
+                    setError(msg);
+                  } finally {
+                    setEmbedTestBusy(false);
+                  }
+                })();
+              }}
+            >
+              {embedTestBusy ? "Testing embed…" : "Test embed"}
+            </button>
+            <button
+              type="button"
+              className="cursor-pointer rounded border border-border px-2 py-1 text-xs font-medium"
+              onClick={() => {
+                void (async () => {
+                  setError(null);
+                  try {
+                    const data = await postAdminScriptLab({ action: "backfill-embeddings" });
+                    const queued = typeof data.queued === "number" ? data.queued : 0;
+                    const skipped = typeof data.skipped === "number" ? data.skipped : 0;
+                    if (data.embeddingStats) {
+                      setEmbeddingStats(data.embeddingStats as ScriptLabEmbeddingStats);
+                    } else {
+                      try {
+                        setEmbeddingStats(await fetchAdminScriptLabEmbeddingProgress());
+                      } catch {
+                        /* ignore */
+                      }
+                    }
+                    setImportSummary(
+                      `Embeddings: queued ${queued} missing; skipped ${skipped} already embedded (async write).`,
+                    );
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : "Embedding backfill failed");
+                  }
+                })();
+              }}
+            >
+              Backfill embeddings
             </button>
           </div>
 
@@ -1313,6 +1616,7 @@ export function AdminScriptLabPanel() {
               [
                 ["properties", "Segment properties"],
                 ["variants", "Variant editor"],
+                ["pending", `Pending review (${state?.pendingReview?.length ?? 0})`],
               ] as const
             ).map(([id, label]) => (
               <button
@@ -1336,6 +1640,23 @@ export function AdminScriptLabPanel() {
               selectedTag={selectedTag}
               onSelectTag={setSelectedTag}
               onSaved={reload}
+              onError={setError}
+            />
+          ) : libraryTab === "pending" ? (
+            <PendingReviewPanel
+              pending={(state?.pendingReview ?? []).filter((v) =>
+                pendingReviewFilterIds
+                  ? pendingReviewFilterIds.has(v.variantId)
+                  : true,
+              )}
+              filterActive={pendingReviewFilterIds != null}
+              onClearFilter={() => setPendingReviewFilterIds(null)}
+              tags={state?.tags ?? []}
+              reassignTagDraft={reassignTagDraft}
+              setReassignTagDraft={setReassignTagDraft}
+              pendingBusyKey={pendingBusyKey}
+              setPendingBusyKey={setPendingBusyKey}
+              onReload={reload}
               onError={setError}
             />
           ) : (
@@ -1594,6 +1915,7 @@ export function AdminScriptLabPanel() {
               [
                 { id: "v1" as const, label: "V1 (current)" },
                 { id: "v2" as const, label: "V2 (experimental)" },
+                { id: "v3" as const, label: "V3 (vector)" },
               ] as const
             ).map(({ id, label }) => (
               <button
@@ -1619,12 +1941,16 @@ export function AdminScriptLabPanel() {
           className="w-full cursor-pointer border border-neutral-800 bg-neutral-900 py-2 font-semibold text-white disabled:opacity-50 dark:border-neutral-300 dark:bg-neutral-100 dark:text-neutral-900"
         >
           {generateBusy
-            ? generationPath === "v2"
-              ? "Generating V2…"
-              : "Generating…"
-            : generationPath === "v2"
-              ? "Generate script V2 →"
-              : "Generate script →"}
+            ? generationPath === "v3"
+              ? "Generating V3…"
+              : generationPath === "v2"
+                ? "Generating V2…"
+                : "Generating…"
+            : generationPath === "v3"
+              ? "Generate script V3 →"
+              : generationPath === "v2"
+                ? "Generate script V2 →"
+                : "Generate script →"}
         </button>
 
         {flow === "journal" ? (
@@ -1646,6 +1972,209 @@ export function AdminScriptLabPanel() {
   );
 }
 
+function PendingReviewPanel({
+  pending,
+  filterActive,
+  onClearFilter,
+  tags,
+  reassignTagDraft,
+  setReassignTagDraft,
+  pendingBusyKey,
+  setPendingBusyKey,
+  onReload,
+  onError,
+}: {
+  pending: ScriptLabVariant[];
+  filterActive?: boolean;
+  onClearFilter?: () => void;
+  tags: Array<{ name: string }>;
+  reassignTagDraft: Record<string, string>;
+  setReassignTagDraft: Dispatch<SetStateAction<Record<string, string>>>;
+  pendingBusyKey: string | null;
+  setPendingBusyKey: (key: string | null) => void;
+  onReload: () => Promise<void>;
+  onError: (msg: string | null) => void;
+}) {
+  return (
+    <div className="mt-3 space-y-3">
+      {filterActive ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs">
+          <span>Showing variants from this generation only</span>
+          <button
+            type="button"
+            onClick={onClearFilter}
+            className="cursor-pointer font-semibold text-accent-link underline hover:no-underline"
+          >
+            Show all pending
+          </button>
+        </div>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          className="cursor-pointer rounded-full border border-border px-3 py-1 text-xs font-semibold"
+          onClick={() => {
+            void (async () => {
+              try {
+                const base = getMedimadeApiBase();
+                if (!base) throw new Error("API URL not set");
+                const res = await fetch(`${base}/admin/script-lab?export=v3-no-match-csv`, {
+                  headers: medimadeApiAuthHeaders(),
+                });
+                if (!res.ok) throw new Error(`CSV download failed (${res.status})`);
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "script-lab-v3-no-match.csv";
+                a.click();
+                URL.revokeObjectURL(url);
+              } catch (e) {
+                onError(e instanceof Error ? e.message : "CSV download failed");
+              }
+            })();
+          }}
+        >
+          Download V3 no-match CSV
+        </button>
+        <button
+          type="button"
+          className="cursor-pointer rounded-full border border-border px-3 py-1 text-xs font-semibold"
+          onClick={() => {
+            void (async () => {
+              try {
+                await postAdminScriptLab({ action: "backfill-embeddings" });
+                await onReload();
+              } catch (e) {
+                onError(e instanceof Error ? e.message : "Backfill failed");
+              }
+            })();
+          }}
+        >
+          Backfill embeddings
+        </button>
+      </div>
+      {pending.length === 0 ? (
+        <p className="text-sm text-muted">No auto-promoted variants awaiting review.</p>
+      ) : (
+        pending.map((v) => {
+          const key = `${v.tagName}#${v.variantId}`;
+          const busy = pendingBusyKey === key;
+          return (
+            <div
+              key={key}
+              className="space-y-2 rounded-xl border border-border bg-background/80 p-3 text-xs"
+            >
+              <p className="font-mono text-[10px] text-accent-link">{v.tagName}</p>
+              <p className="whitespace-pre-wrap text-sm text-foreground">{v.text}</p>
+              <p className="text-muted">
+                Similarity to nearest:{" "}
+                {typeof v.promotionSimilarity === "number"
+                  ? v.promotionSimilarity.toFixed(3)
+                  : "—"}
+                {v.promotionNearestTag ? ` (${v.promotionNearestTag})` : ""}
+              </p>
+              {v.promotionContext ? (
+                <p className="line-clamp-3 text-muted">Context: {v.promotionContext}</p>
+              ) : null}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="cursor-pointer rounded-full bg-accent-soft px-3 py-1 font-semibold text-accent-link disabled:opacity-50"
+                  onClick={() => {
+                    void (async () => {
+                      setPendingBusyKey(key);
+                      try {
+                        await postAdminScriptLab({
+                          action: "approve-variant",
+                          tagName: v.tagName,
+                          variantId: v.variantId,
+                        });
+                        await onReload();
+                      } catch (e) {
+                        onError(e instanceof Error ? e.message : "Approve failed");
+                      } finally {
+                        setPendingBusyKey(null);
+                      }
+                    })();
+                  }}
+                >
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="cursor-pointer rounded-full border border-border px-3 py-1 font-semibold disabled:opacity-50"
+                  onClick={() => {
+                    if (!window.confirm("Reject and delete this promoted variant?")) return;
+                    void (async () => {
+                      setPendingBusyKey(key);
+                      try {
+                        await postAdminScriptLab({
+                          action: "reject-variant",
+                          tagName: v.tagName,
+                          variantId: v.variantId,
+                        });
+                        await onReload();
+                      } catch (e) {
+                        onError(e instanceof Error ? e.message : "Reject failed");
+                      } finally {
+                        setPendingBusyKey(null);
+                      }
+                    })();
+                  }}
+                >
+                  Reject
+                </button>
+                <select
+                  value={reassignTagDraft[key] ?? v.tagName}
+                  onChange={(e) =>
+                    setReassignTagDraft((prev) => ({ ...prev, [key]: e.target.value }))
+                  }
+                  className="rounded border border-border bg-background px-2 py-1"
+                >
+                  {tags.map((t) => (
+                    <option key={t.name} value={t.name}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="cursor-pointer rounded-full border border-border px-3 py-1 font-semibold disabled:opacity-50"
+                  onClick={() => {
+                    const toTag = reassignTagDraft[key] ?? v.tagName;
+                    void (async () => {
+                      setPendingBusyKey(key);
+                      try {
+                        await postAdminScriptLab({
+                          action: "reassign-variant",
+                          fromTag: v.tagName,
+                          toTag,
+                          variantId: v.variantId,
+                        });
+                        await onReload();
+                      } catch (e) {
+                        onError(e instanceof Error ? e.message : "Reassign failed");
+                      } finally {
+                        setPendingBusyKey(null);
+                      }
+                    })();
+                  }}
+                >
+                  Reassign
+                </button>
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
 type ImportSummary = {
   tagsCreated?: number;
   tagsUpdated?: number;
@@ -1655,6 +2184,7 @@ type ImportSummary = {
   variantsUnchanged?: number;
   variantsIdNotFound?: Array<{ tag: string; id: string }>;
   variantsAudioInvalidated?: number;
+  embeddingsQueued?: number;
   constraintTagsAdded?: string[];
 };
 
@@ -1663,6 +2193,11 @@ function formatImportSummary(summary: ImportSummary): string {
     `Tags: ${summary.tagsCreated ?? 0} created, ${summary.tagsUpdated ?? 0} updated.`,
     `Variants: ${summary.variantsAdded ?? 0} created, ${summary.variantsUpdatedById ?? 0} updated by ID, ${summary.variantsUpdatedByTextMatch ?? 0} updated by text match, ${summary.variantsUnchanged ?? 0} unchanged.`,
   ];
+  if ((summary.embeddingsQueued ?? 0) > 0) {
+    parts.push(
+      `${summary.embeddingsQueued} embedding(s) queued async (library updated immediately; vectors write when ready).`,
+    );
+  }
   if ((summary.variantsAudioInvalidated ?? 0) > 0) {
     parts.push(`${summary.variantsAudioInvalidated} variant(s) had audio invalidated (text changed).`);
   }
@@ -2075,6 +2610,88 @@ function VariantEditorRow({
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function formatEmbeddingStatsTime(iso: string | undefined): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+function ScriptLabEmbeddingProgressBar(props: {
+  stats: ScriptLabEmbeddingStats | null;
+}) {
+  const { stats } = props;
+  const total = stats?.total ?? 0;
+  const embedded = stats?.embedded ?? 0;
+  const queued = stats?.queued ?? 0;
+  const missing = stats?.missing ?? 0;
+  const pct = total > 0 ? Math.round((embedded / total) * 100) : 0;
+  const queuedPct = total > 0 ? (queued / total) * 100 : 0;
+  const embeddedPct = total > 0 ? (embedded / total) * 100 : 0;
+  const inProgress = queued > 0;
+
+  return (
+    <div
+      className="mt-3 rounded-xl border border-border bg-background/60 px-3 py-2.5"
+      aria-live="polite"
+      aria-label="Segment library embedding progress"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span className="font-medium text-foreground">Embedding progress</span>
+        <span className="tabular-nums text-muted">
+          {stats ? (
+            <>
+              <span className="text-foreground">{embedded.toLocaleString()}</span>
+              {" / "}
+              {total.toLocaleString()} embedded
+              {" · "}
+              <span className={queued > 0 ? "text-amber-600 dark:text-amber-400" : ""}>
+                {queued.toLocaleString()} queued
+              </span>
+              {" · "}
+              {missing.toLocaleString()} missing
+              {total > 0 ? ` (${pct}%)` : ""}
+            </>
+          ) : (
+            "Loading…"
+          )}
+        </span>
+      </div>
+      <div
+        className="mt-2 flex h-2 overflow-hidden rounded-full bg-muted/25"
+        role="progressbar"
+        aria-valuenow={embedded}
+        aria-valuemin={0}
+        aria-valuemax={total || 100}
+      >
+        <div
+          className="h-full bg-emerald-500/80 transition-[width] duration-500"
+          style={{ width: `${embeddedPct}%` }}
+        />
+        <div
+          className={`h-full bg-amber-400/90 transition-[width] duration-500 ${
+            inProgress ? "animate-pulse" : ""
+          }`}
+          style={{ width: `${queuedPct}%` }}
+        />
+      </div>
+      <p className="mt-1.5 text-[10px] text-muted">
+        Auto-refreshes every 5s
+        {stats?.updatedAt ? (
+          <> · updated {formatEmbeddingStatsTime(stats.updatedAt)}</>
+        ) : null}
+        {inProgress ? <> · async embed Lambda processing queue</> : null}
+      </p>
     </div>
   );
 }

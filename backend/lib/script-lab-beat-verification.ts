@@ -7,6 +7,7 @@ import {
   tagNameToBeatType,
   type ScriptLabBeat,
 } from "./script-lab-beats";
+import { scriptLabBreathReturnDisambiguationVerification } from "./script-lab-shared-prompt-rules";
 import { normalizeScriptSegmentTag, inferDefaultSegmentRepeatability, type ScriptSegmentRepeatability } from "./script-segment-tags";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
@@ -275,8 +276,8 @@ export function buildVerificationPrompt(params: {
       "convert_tag requires confidence high, a matchedTag, and matchedVariantId pointing to the catalog variant that best represents the same meaning (pick the closest semantic fit among that tag's variants).",
       "When a BODY_SCAN_* tag lists direction=up|down|neutral on variants: tour direction is inferred from the script's BODY_SCAN order (what the practice is already doing from the creator conversation — crown→feet = down; feet→crown = up). Prefer matchedVariantId with matching direction; neutral is acceptable; do not pick the opposite direction when a match or neutral exists. Do not invent a tour direction.",
       "When uncertain about personalization → keep_custom. When generic but no tag's purpose fits semantically → no_match. When generic and a tag clearly covers the same function → convert_tag with confidence high, even if wording differs substantially — do not use medium/low merely because the sentence is not a near-quote of a variant.",
-      "Repeated convert_tag to the same tag across multiple sentences is expected and correct — do NOT skip a later sentence because you already converted an earlier one to the same tag.",
-      "This pass is independent of primary-generation beatType de-duplication rules; multiple tag beats with the same beatType are valid here.",
+      "Repeated convert_tag to the same **connective** tag across multiple sentences is expected and correct — do NOT skip a later sentence because you already converted an earlier one to the same connective tag.",
+      "For **singular** tags (Repeatability: singular in the catalog): at most one convert_tag to each singular tag in this pass — if you already assigned convert_tag to a singular matchedTag on an earlier sentenceIndex, use keep_custom or no_match for later sentences that would map to the same singular tag; do not convert them.",
       "Return exactly one verdict per sentenceIndex via submit_sentence_verification_verdicts — no omissions.",
     ].join(" "),
     userContent: [
@@ -302,6 +303,8 @@ export function buildVerificationPrompt(params: {
       "- \"Simply observe with curiosity.\" → convert_tag PACE_REASSURANCE or BODY_SCAN cue tag if one fits semantically",
       "- \"And as you exhale, let yourself arrive fully here.\" → convert_tag BREATH_TRANSITION (arriving-on-the-breath function; pick closest variant even if exhale wording differs)",
       "- Generic but unique: \"Imagine a warm golden light pooling at the base of your spine.\" → no_match (no tag covers this imagery)",
+      "",
+      scriptLabBreathReturnDisambiguationVerification(),
       "",
       "Return exactly one verdict for every sentenceIndex listed above.",
     ].join("\n"),
@@ -598,11 +601,33 @@ export function proximityBlocksTagConversion(
   assembledSoFar: ScriptLabBeat[],
   matchedTag: string,
   catalog: GeneralTagVariantCatalog[],
+  beatsBefore?: ScriptLabBeat[],
 ): boolean {
   const normalized = normalizeScriptSegmentTag(matchedTag);
   const repeatability = tagRepeatabilityFromCatalog(normalized, catalog);
   if (repeatability === "connective") return false;
-  return assembledSoFar.some((b) => !b.custom && b.tag === normalized);
+
+  const isSameSingularTag = (b: ScriptLabBeat) =>
+    !b.custom && normalizeScriptSegmentTag(b.tag ?? "") === normalized;
+
+  if (assembledSoFar.some(isSameSingularTag)) return true;
+  if (beatsBefore?.some(isSameSingularTag)) return true;
+  return false;
+}
+
+function shouldDropPassthroughSingularTagBeat(
+  beat: ScriptLabBeat,
+  assembled: ScriptLabBeat[],
+  catalog: GeneralTagVariantCatalog[],
+): boolean {
+  if (beat.custom || !beat.tag) return false;
+  const normalized = normalizeScriptSegmentTag(beat.tag);
+  if (tagRepeatabilityFromCatalog(normalized, catalog) === "connective") {
+    return false;
+  }
+  return assembled.some(
+    (b) => !b.custom && normalizeScriptSegmentTag(b.tag ?? "") === normalized,
+  );
 }
 
 /** Non-pause beats before/after to scan for conflicting body-region topical anchors. */
@@ -773,6 +798,11 @@ export function assembleBeatsFromSentenceVerdicts(params: {
 
   params.beatsBefore.forEach((beat, beatIndex) => {
     if (!beat.custom || !beat.text?.trim()) {
+      if (
+        shouldDropPassthroughSingularTagBeat(beat, out, params.generalTags)
+      ) {
+        return;
+      }
       out.push(beat);
       return;
     }
@@ -816,7 +846,12 @@ export function assembleBeatsFromSentenceVerdicts(params: {
           pendingCustomText: customBuffer,
         };
         if (
-          proximityBlocksTagConversion(out, rawVerdict.matchedTag, params.generalTags) ||
+          proximityBlocksTagConversion(
+            out,
+            rawVerdict.matchedTag,
+            params.generalTags,
+            params.beatsBefore,
+          ) ||
           adjacencyBlocksTagConversion({
             matchedTag: rawVerdict.matchedTag,
             assembled: out,

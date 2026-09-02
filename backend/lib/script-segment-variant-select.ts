@@ -138,6 +138,47 @@ function pickWeightedRandom<T>(items: T[], weightOf: (item: T) => number): T {
   return items[items.length - 1]!;
 }
 
+/**
+ * After eligibility filters: prefer unheard variants, else least-recently-used
+ * (furthest toward the end of recentVariantIds, which is most-recent-first).
+ */
+export function applyCrossSessionRecencyPreference(
+  pool: SegmentVariantCandidate[],
+  recentVariantIds: readonly string[],
+): SegmentVariantCandidate[] {
+  if (pool.length === 0 || recentVariantIds.length === 0) return pool;
+
+  const recentSet = new Set(recentVariantIds);
+  const unheard = pool.filter((v) => !recentSet.has(v.variantId));
+  if (unheard.length > 0) return unheard;
+
+  let oldestIndex = -1;
+  for (const v of pool) {
+    const idx = recentVariantIds.indexOf(v.variantId);
+    if (idx > oldestIndex) oldestIndex = idx;
+  }
+  if (oldestIndex < 0) return pool;
+
+  const lru = pool.filter((v) => recentVariantIds.indexOf(v.variantId) === oldestIndex);
+  return lru.length > 0 ? lru : pool;
+}
+
+/** Sort options for intelligent selection prompts (unheard first, then LRU). */
+export function sortVariantsByCrossSessionRecency(
+  variants: SegmentVariantCandidate[],
+  recentVariantIds: readonly string[],
+): SegmentVariantCandidate[] {
+  if (recentVariantIds.length === 0) return variants;
+  const recentSet = new Set(recentVariantIds);
+  return [...variants].sort((a, b) => {
+    const aRecent = recentSet.has(a.variantId);
+    const bRecent = recentSet.has(b.variantId);
+    if (aRecent !== bRecent) return aRecent ? 1 : -1;
+    if (!aRecent) return 0;
+    return recentVariantIds.indexOf(b.variantId) - recentVariantIds.indexOf(a.variantId);
+  });
+}
+
 function pickFromVariantPool(
   pool: SegmentVariantCandidate[],
   options: {
@@ -231,11 +272,14 @@ export function selectSegmentVariant(params: {
   /** Hard preference: keep matching direction (plus neutral); falls back if empty. */
   preferredDirection?: "up" | "down" | "neutral" | null;
   alreadyUsedVariantIds?: readonly string[];
+  /** Cross-session Script Lab recency (most recent first). */
+  recentVariantIds?: readonly string[];
   preferredVariantId?: string | null;
   /** When false, picks are stable (for duration/byte estimates). Default true. */
   random?: boolean;
 }): SegmentVariantCandidate | null {
   const random = params.random !== false;
+  const recentVariantIds = params.recentVariantIds ?? [];
 
   const preferredId = params.preferredVariantId?.trim();
   if (preferredId) {
@@ -246,19 +290,31 @@ export function selectSegmentVariant(params: {
     const preferred = eligibleAll.find((v) => v.variantId === preferredId);
     if (preferred) {
       const used = new Set(params.alreadyUsedVariantIds ?? []);
-      if (!used.has(preferred.variantId)) return preferred;
+      if (!used.has(preferred.variantId)) {
+        const unheardPreferred = applyCrossSessionRecencyPreference(
+          eligibleAll.filter((v) => !used.has(v.variantId)),
+          recentVariantIds,
+        );
+        const preferredIsStale =
+          recentVariantIds.length > 0 &&
+          recentVariantIds.includes(preferred.variantId) &&
+          unheardPreferred.some((v) => v.variantId !== preferred.variantId);
+        if (!preferredIsStale) return preferred;
+      }
     }
   }
 
   const pool = listSelectableSegmentVariants(params);
   if (pool.length === 0) return null;
 
+  const pickPool = applyCrossSessionRecencyPreference(pool, recentVariantIds);
+
   const applyLengthBias =
     !params.preferredLengthTier &&
     (params.tagMeta?.lengthTiered ?? false) &&
     segmentTagPrefersLengthTierBias(params.tagName ?? "", params.beatType);
 
-  return pickFromVariantPool(pool, {
+  return pickFromVariantPool(pickPool, {
     random,
     targetMinutes: params.targetMinutes,
     applyLengthBias,
@@ -279,6 +335,7 @@ export function createSegmentVariantPickerForBeats(params: {
   targetMinutes: number;
   meditationType?: string | null;
   contextTags?: string[];
+  recentVariantIds?: readonly string[];
   preferredVariantIdByTag?: Record<string, string>;
   /** Per-beat preferred variant (wins over by-tag when set). */
   preferredVariantIdByBeatIndex?: Record<number, string>;
@@ -316,6 +373,7 @@ export function createSegmentVariantPickerForBeats(params: {
       contextTags: params.contextTags,
       tourDirection,
       alreadyUsedVariantIds: alreadyUsed,
+      recentVariantIds: params.recentVariantIds,
       preferredVariantId: preferredId,
       random: params.random,
     });

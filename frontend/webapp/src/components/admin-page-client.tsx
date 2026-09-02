@@ -10,6 +10,7 @@ const SECTIONS = [
   { href: "/admin/voice", label: "Voice" },
   { href: "/admin/analytics", label: "Analytics" },
   { href: "/admin/script-lab", label: "Script Lab" },
+  { href: "/admin/stress-test", label: "Stress Test" },
 ] as const;
 
 export function AdminPageClient({ children }: { children: ReactNode }) {
@@ -28,7 +29,8 @@ export function AdminPageClient({ children }: { children: ReactNode }) {
       <p className="mt-1 max-w-2xl shrink-0 text-sm text-muted">
         Internal tools. Sounds: import and categorise beds. Sound mixes: factory mixer
         presets. Voice: Fish speakers and pauses. Analytics: meditation cost and duration
-        stats. Script Lab: reusable script segments and test generation.
+        stats. Analytics: meditation cost and duration stats. Script Lab: reusable script
+        segments and test generation. Stress Test: batch script comparison across types and paths.
       </p>
 
       <div className="mt-6 flex shrink-0 flex-wrap gap-2">

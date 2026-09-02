@@ -97,6 +97,10 @@ export function renderBeatsToScript(
       continue;
     }
     if (!beat.custom && beat.tag) {
+      if (beat.text?.trim()) {
+        parts.push(beat.text.trim());
+        continue;
+      }
       const text = pickVariant(beat.tag, i);
       parts.push(text?.trim() ? text.trim() : `[[SEG:${beat.tag}]]`);
       continue;

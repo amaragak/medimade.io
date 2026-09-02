@@ -3,6 +3,8 @@ import { parseAnthropicMessageUsage } from "./anthropic-pricing";
 import { verifyScriptLabBeats } from "./script-lab-beat-verification";
 import {
   buildTagRepeatabilityMap,
+  collapseSameConnectiveSeparatedOnlyByPauses,
+  dropDuplicateSingularTagBeats,
   extractBeatsFromAnthropicMessage,
   findDuplicateBeatTypeWarnings,
   scriptLabBeatsToolDefinition,
@@ -56,6 +58,8 @@ export async function generateScriptLabScript(params: {
   verificationCorrectionsApplied: boolean;
   beatWarnings: ScriptLabBeatDuplicateWarning[];
   usage: { input_tokens: number; output_tokens: number } | null;
+  /** First generation call only (before verification) — for single-shot cost simulation. */
+  firstPassUsage: { input_tokens: number; output_tokens: number } | null;
 }> {
   const { system, userContent } = buildMeditationScriptGenerationPrompt({
     transcript: params.transcript,
@@ -100,7 +104,17 @@ export async function generateScriptLabScript(params: {
     throw new Error("Invalid response from Anthropic");
   }
 
-  const beatsBeforeVerification = extractBeatsFromAnthropicMessage(parsed.content);
+  const repMap =
+    params.tagRepeatabilityByName ??
+    buildTagRepeatabilityMap(params.generalTagVariants);
+  const collapsed = collapseSameConnectiveSeparatedOnlyByPauses(
+    extractBeatsFromAnthropicMessage(parsed.content),
+    repMap,
+  );
+  const { beats: beatsBeforeVerification } = dropDuplicateSingularTagBeats(
+    collapsed,
+    repMap,
+  );
   const primaryUsage = parseAnthropicMessageUsage(responseText);
 
   const verified = await verifyScriptLabBeats({
@@ -111,18 +125,20 @@ export async function generateScriptLabScript(params: {
     generalTags: params.generalTagVariants,
   });
 
-  const beatWarnings = findDuplicateBeatTypeWarnings(
+  const finalBeats = collapseSameConnectiveSeparatedOnlyByPauses(
     verified.beats,
-    params.tagRepeatabilityByName ??
-      buildTagRepeatabilityMap(params.generalTagVariants),
+    repMap,
   );
 
+  const beatWarnings = findDuplicateBeatTypeWarnings(finalBeats, repMap);
+
   return {
-    beats: verified.beats,
+    beats: finalBeats,
     beatsBeforeVerification: verified.beatsBeforeVerification,
     verificationNewBeatIndices: verified.newBeatIndices,
     verificationCorrectionsApplied: verified.correctionsApplied,
     beatWarnings,
     usage: mergeUsage(primaryUsage, verified.usage),
+    firstPassUsage: primaryUsage,
   };
 }

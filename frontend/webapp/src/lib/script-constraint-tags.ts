@@ -5,8 +5,15 @@ import type { ScriptSegmentScope } from "@/lib/script-segment-tags";
 export const DEFAULT_SEATED_CONSTRAINT = "seated_or_lying";
 export const STANDING_CONSTRAINT = "standing";
 
-const STANDING_SIGNAL_RE =
-  /\b(standing|stand up|on your feet|upright|while standing|if you're standing)\b/i;
+const UPRIGHT_MOVEMENT_SIGNAL_RE =
+  /\b(standing|stand up|on your feet|upright|while standing|if you're standing|walking|walk(?:ing)?|running|run(?:ning)?|jogging|jog(?:ging)?|pacing|on the move|while you walk|while you run|take a walk|go for a run|office movement)\b/i;
+
+const SEATED_OR_FLOOR_SIGNAL_RE =
+  /\b(sitting|seated|sit(?:ting)? down|lying(?: down)?|lie(?: down)?|on the floor|floor-based|yoga on the floor|seated stretching|on your back|supine|prone|on the ground|on a mat|mat work)\b/i;
+
+function normalizeMeditationTypeKey(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+}
 
 export function normalizeConstraintTag(raw: string): string {
   return raw
@@ -46,8 +53,19 @@ export function coerceConstraintTagList(raw: unknown): string[] {
   return out;
 }
 
+export function isMovementMeditationType(
+  meditationType: string | null | undefined,
+): boolean {
+  if (!meditationType?.trim()) return false;
+  return normalizeMeditationTypeKey(meditationType) === "movement meditation";
+}
+
 export function userTextSignalsStanding(text: string): boolean {
-  return STANDING_SIGNAL_RE.test(text.trim());
+  return UPRIGHT_MOVEMENT_SIGNAL_RE.test(text.trim());
+}
+
+export function userTextSignalsSeatedOrFloor(text: string): boolean {
+  return SEATED_OR_FLOOR_SIGNAL_RE.test(text.trim());
 }
 
 export function buildScriptLabContextTags(params: {
@@ -56,10 +74,19 @@ export function buildScriptLabContextTags(params: {
   extraContextTags?: string[];
 }): string[] {
   const tags = new Set<string>();
-  tags.add(DEFAULT_SEATED_CONSTRAINT);
+  const userText = params.userText ?? "";
 
-  if (userTextSignalsStanding(params.userText ?? "")) {
-    tags.add(STANDING_CONSTRAINT);
+  if (isMovementMeditationType(params.meditationType)) {
+    if (userTextSignalsSeatedOrFloor(userText)) {
+      tags.add(DEFAULT_SEATED_CONSTRAINT);
+    } else {
+      tags.add(STANDING_CONSTRAINT);
+    }
+  } else {
+    tags.add(DEFAULT_SEATED_CONSTRAINT);
+    if (userTextSignalsStanding(userText)) {
+      tags.add(STANDING_CONSTRAINT);
+    }
   }
 
   for (const extra of params.extraContextTags ?? []) {

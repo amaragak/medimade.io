@@ -1904,6 +1904,14 @@ export type ScriptLabTag = {
   updatedAt: string;
 };
 
+export type ScriptLabEmbeddingStats = {
+  total: number;
+  embedded: number;
+  queued: number;
+  missing: number;
+  updatedAt: string;
+};
+
 export type ScriptLabVariant = {
   tagName: string;
   variantId: string;
@@ -1912,6 +1920,11 @@ export type ScriptLabVariant = {
   direction?: string | null;
   requiredConstraints: string[];
   excludedConstraints: string[];
+  source?: "authored" | "auto";
+  approved?: boolean;
+  promotionSimilarity?: number | null;
+  promotionNearestTag?: string | null;
+  promotionContext?: string | null;
   sort: number;
   createdAt: string;
   updatedAt: string;
@@ -1939,6 +1952,8 @@ export type ScriptLabState = {
   tags: ScriptLabTag[];
   variantsByTag: Record<string, ScriptLabVariant[]>;
   audioByVariantKey: Record<string, ScriptLabVariantAudio[]>;
+  pendingReview?: ScriptLabVariant[];
+  embeddingStats?: ScriptLabEmbeddingStats;
 };
 
 export type ScriptLabFlow = "by-type" | "guide-chat" | "journal" | "single-prompt";
@@ -1978,7 +1993,29 @@ export async function listAdminScriptLab(): Promise<ScriptLabState> {
       ]),
     ),
     audioByVariantKey: data.audioByVariantKey ?? {},
+    pendingReview: Array.isArray(data.pendingReview)
+      ? (data.pendingReview as ScriptLabVariant[])
+      : [],
+    embeddingStats: data.embeddingStats,
   };
+}
+
+export async function fetchAdminScriptLabEmbeddingProgress(): Promise<ScriptLabEmbeddingStats> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/script-lab?embeddingProgress=1`, {
+    headers: medimadeApiAuthHeaders(),
+  });
+  const data = (await res.json()) as {
+    embeddingStats?: ScriptLabEmbeddingStats;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) throw new Error(data.detail ?? data.error ?? res.statusText);
+  if (!data.embeddingStats) {
+    throw new Error("Embedding progress response missing stats");
+  }
+  return data.embeddingStats;
 }
 
 export async function patchAdminScriptLab(body: {

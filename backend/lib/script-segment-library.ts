@@ -38,6 +38,8 @@ export type ScriptSegmentAudioState = {
   updatedAt: string;
 };
 
+export type ScriptSegmentVariantSource = "authored" | "auto";
+
 export type ScriptSegmentVariant = {
   id: string;
   text: string;
@@ -46,6 +48,16 @@ export type ScriptSegmentVariant = {
   excludedConstraints: string[];
   /** Body-tour / scan ordering hint (e.g. ascending, descending). */
   direction?: string | null;
+  /** authored = human/import; auto = V3 promotion pending/approved. */
+  source: ScriptSegmentVariantSource;
+  /** false = pending review (excluded from V1/V2 selection). Default true. */
+  approved: boolean;
+  /** bge-small-en-v1.5 embedding (384-d), stored at create/update. */
+  embedding?: number[];
+  /** V3 auto-promotion metadata (pending review UI). */
+  promotionSimilarity?: number | null;
+  promotionNearestTag?: string | null;
+  promotionContext?: string | null;
   sort: number;
   createdAt: string;
   updatedAt: string;
@@ -69,7 +81,20 @@ const VARIANT_KNOWN_KEYS = new Set([
   "requiredConstraints",
   "excludedConstraints",
   "direction",
+  "source",
+  "approved",
+  "embedding",
+  "promotionSimilarity",
+  "promotionNearestTag",
+  "promotionContext",
 ]);
+
+/** V1/V2 selection: approved variants only (auto/unapproved stay in V3 search). */
+export function variantEligibleForV1V2Selection(v: {
+  approved?: boolean | null;
+}): boolean {
+  return v.approved !== false;
+}
 
 export type ScriptSegmentDocument = {
   tag: string;
@@ -106,6 +131,12 @@ export type ScriptSegmentVariantRow = {
   requiredConstraints: string[];
   excludedConstraints: string[];
   direction?: string | null;
+  source: ScriptSegmentVariantSource;
+  approved: boolean;
+  embedding?: number[];
+  promotionSimilarity?: number | null;
+  promotionNearestTag?: string | null;
+  promotionContext?: string | null;
   sort: number;
   createdAt: string;
   updatedAt: string;
@@ -140,6 +171,47 @@ function coerceScope(raw: unknown): ScriptSegmentScope {
 function coerceLengthTier(raw: unknown): ScriptLengthTier | null {
   if (raw === "short" || raw === "medium" || raw === "long") return raw;
   return null;
+}
+
+function coerceVariantSource(raw: unknown): ScriptSegmentVariantSource {
+  return raw === "auto" ? "auto" : "authored";
+}
+
+function coerceVariantApproved(raw: unknown): boolean {
+  return raw === false ? false : true;
+}
+
+function coerceEmbeddingNumber(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  // DynamoDB DocumentClient / boto3 may leave floats as Decimal-like objects.
+  if (raw != null && typeof raw === "object" && "toString" in (raw as object)) {
+    const n = Number(String(raw));
+    if (Number.isFinite(n)) return n;
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function coerceEmbedding(raw: unknown): number[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const out: number[] = [];
+  for (const n of raw) {
+    const num = coerceEmbeddingNumber(n);
+    if (num == null) return undefined;
+    out.push(num);
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** Infer length tier from word count for auto-promoted variants. */
+export function inferLengthTierFromWordCount(text: string): ScriptLengthTier {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  if (words <= 25) return "short";
+  if (words <= 60) return "medium";
+  return "long";
 }
 
 function coerceTypes(raw: unknown): string[] {
@@ -308,7 +380,10 @@ function applyVariantImportFields(
   }
   const textChanged =
     typeof incoming.text === "string" && variant.text !== incoming.text;
-  if (textChanged) resetVariantAudio(variant, now);
+  if (textChanged) {
+    resetVariantAudio(variant, now);
+    delete variant.embedding;
+  }
   for (const [key, val] of Object.entries(incoming)) {
     (variant as Record<string, unknown>)[key] = val;
   }
@@ -349,6 +424,15 @@ function coerceVariant(raw: unknown, tagName: string): ScriptSegmentVariant | nu
     requiredConstraints,
     excludedConstraints,
     direction: coerceVariantDirection(o.direction),
+    source: coerceVariantSource(o.source),
+    approved: coerceVariantApproved(o.approved),
+    embedding: coerceEmbedding(o.embedding),
+    promotionSimilarity:
+      typeof o.promotionSimilarity === "number" ? o.promotionSimilarity : null,
+    promotionNearestTag:
+      typeof o.promotionNearestTag === "string" ? o.promotionNearestTag : null,
+    promotionContext:
+      typeof o.promotionContext === "string" ? o.promotionContext : null,
     sort: typeof o.sort === "number" ? o.sort : Date.now(),
     createdAt: typeof o.createdAt === "string" ? o.createdAt : now,
     updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : now,
@@ -448,6 +532,12 @@ function flattenDocument(doc: ScriptSegmentDocument): {
       requiredConstraints: v.requiredConstraints,
       excludedConstraints: v.excludedConstraints,
       direction: v.direction ?? null,
+      source: v.source ?? "authored",
+      approved: v.approved !== false,
+      embedding: v.embedding,
+      promotionSimilarity: v.promotionSimilarity ?? null,
+      promotionNearestTag: v.promotionNearestTag ?? null,
+      promotionContext: v.promotionContext ?? null,
       sort: v.sort,
       createdAt: v.createdAt,
       updatedAt: v.updatedAt,
@@ -536,6 +626,8 @@ async function migrateLegacySegmentsIfNeeded(): Promise<void> {
       lengthTier: null,
       requiredConstraints: [],
       excludedConstraints: [],
+      source: "authored",
+      approved: true,
       sort: typeof item.sort === "number" ? item.sort : Date.now(),
       createdAt: now,
       updatedAt: String(item.updatedAt ?? now),
@@ -752,6 +844,14 @@ export async function putScriptSegmentVariant(params: {
   requiredConstraints?: string[];
   excludedConstraints?: string[];
   sort?: number;
+  source?: ScriptSegmentVariantSource;
+  approved?: boolean;
+  embedding?: number[];
+  promotionSimilarity?: number | null;
+  promotionNearestTag?: string | null;
+  promotionContext?: string | null;
+  /** When true, skip async embedding refresh (caller already computed). */
+  skipEmbed?: boolean;
 }): Promise<ScriptSegmentVariantRow> {
   const tagName = normalizeScriptSegmentTag(params.tagName);
   const doc = await getScriptSegmentDocument(tagName);
@@ -778,12 +878,39 @@ export async function putScriptSegmentVariant(params: {
     params.excludedConstraints ?? existing?.excludedConstraints,
   );
 
+  const textChanged = !existing || existing.text !== text;
+  const embedding =
+    params.embedding !== undefined
+      ? params.embedding
+      : textChanged
+        ? undefined
+        : existing?.embedding;
+
   const variant: ScriptSegmentVariant = {
     id: variantId,
     text,
     lengthTier: doc.lengthTiered ? lengthTier : null,
     requiredConstraints,
     excludedConstraints,
+    direction: existing?.direction ?? null,
+    source: params.source ?? existing?.source ?? "authored",
+    approved:
+      params.approved !== undefined
+        ? params.approved
+        : existing?.approved !== false,
+    embedding,
+    promotionSimilarity:
+      params.promotionSimilarity !== undefined
+        ? params.promotionSimilarity
+        : existing?.promotionSimilarity ?? null,
+    promotionNearestTag:
+      params.promotionNearestTag !== undefined
+        ? params.promotionNearestTag
+        : existing?.promotionNearestTag ?? null,
+    promotionContext:
+      params.promotionContext !== undefined
+        ? params.promotionContext
+        : existing?.promotionContext ?? null,
     sort: typeof params.sort === "number" ? params.sort : existing?.sort ?? Date.now(),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -794,7 +921,130 @@ export async function putScriptSegmentVariant(params: {
   else doc.variants.push(variant);
   doc.updatedAt = now;
   await putScriptSegmentDocument(doc);
+
+  if (!params.skipEmbed && (textChanged || !variant.embedding?.length)) {
+    scheduleVariantEmbeddingRefresh({ tagName, variantId });
+  }
+
   return flattenDocument(doc).variants.find((v) => v.variantId === variantId)!;
+}
+
+/** Compute and persist embedding for one variant (sync; used by V3 promote + backfill). */
+export async function refreshVariantEmbedding(params: {
+  tagName: string;
+  variantId: string;
+}): Promise<number[] | null> {
+  if (!process.env.SCRIPT_EMBED_FUNCTION_NAME?.trim()) return null;
+  const doc = await getScriptSegmentDocument(params.tagName);
+  if (!doc) return null;
+  const variant = doc.variants.find((v) => v.id === params.variantId);
+  if (!variant) return null;
+  const { embedText } = await import("./script-embed-client");
+  const embedding = await embedText(variant.text);
+  if (!embedding.length) return null;
+  variant.embedding = embedding;
+  variant.updatedAt = new Date().toISOString();
+  doc.updatedAt = variant.updatedAt;
+  await putScriptSegmentDocument(doc);
+  return embedding;
+}
+
+/**
+ * Fire-and-forget embedding refresh via async Lambda Event invoke.
+ * Variant is already in the library; the vector lands when embed_store finishes.
+ */
+export function scheduleVariantEmbeddingRefresh(params: {
+  tagName: string;
+  variantId: string;
+  text?: string;
+}): void {
+  if (!process.env.SCRIPT_EMBED_FUNCTION_NAME?.trim()) return;
+  void (async () => {
+    let text = params.text?.trim();
+    if (!text) {
+      const doc = await getScriptSegmentDocument(params.tagName);
+      text = doc?.variants.find((v) => v.id === params.variantId)?.text;
+    }
+    if (!text) return;
+    const { enqueueVariantEmbeddingStore } = await import("./script-embed-client");
+    await enqueueVariantEmbeddingStore([
+      { tagName: params.tagName, variantId: params.variantId, text },
+    ]);
+  })().catch((err) => {
+    console.error("scheduleVariantEmbeddingRefresh", params.tagName, params.variantId, err);
+  });
+}
+
+/** Batch-queue async embeds (import / backfill). Returns count enqueued. */
+export async function enqueueVariantEmbeddings(
+  items: Array<{ tagName: string; variantId: string; text: string }>,
+): Promise<number> {
+  if (!process.env.SCRIPT_EMBED_FUNCTION_NAME?.trim() || items.length === 0) return 0;
+  const { enqueueVariantEmbeddingStore } = await import("./script-embed-client");
+  return enqueueVariantEmbeddingStore(items);
+}
+
+export async function setScriptSegmentVariantApproved(params: {
+  tagName: string;
+  variantId: string;
+  approved: boolean;
+}): Promise<ScriptSegmentVariantRow> {
+  const doc = await getScriptSegmentDocument(params.tagName);
+  if (!doc) throw new Error(`Unknown tag ${params.tagName}`);
+  const variant = doc.variants.find((v) => v.id === params.variantId);
+  if (!variant) throw new Error("Variant not found");
+  variant.approved = params.approved;
+  variant.updatedAt = new Date().toISOString();
+  doc.updatedAt = variant.updatedAt;
+  await putScriptSegmentDocument(doc);
+  return flattenDocument(doc).variants.find((v) => v.variantId === params.variantId)!;
+}
+
+export async function reassignScriptSegmentVariant(params: {
+  fromTag: string;
+  toTag: string;
+  variantId: string;
+}): Promise<ScriptSegmentVariantRow> {
+  const fromName = normalizeScriptSegmentTag(params.fromTag);
+  const toName = normalizeScriptSegmentTag(params.toTag);
+  if (fromName === toName) {
+    const rows = await listScriptSegmentVariants(fromName);
+    const row = rows.find((v) => v.variantId === params.variantId);
+    if (!row) throw new Error("Variant not found");
+    return row;
+  }
+  const fromDoc = await getScriptSegmentDocument(fromName);
+  const toDoc = await getScriptSegmentDocument(toName);
+  if (!fromDoc) throw new Error(`Unknown tag ${fromName}`);
+  if (!toDoc) throw new Error(`Unknown tag ${toName}`);
+  const idx = fromDoc.variants.findIndex((v) => v.id === params.variantId);
+  if (idx < 0) throw new Error("Variant not found");
+  const [variant] = fromDoc.variants.splice(idx, 1);
+  if (!variant) throw new Error("Variant not found");
+  if (toDoc.lengthTiered && !variant.lengthTier) {
+    variant.lengthTier = inferLengthTierFromWordCount(variant.text);
+  }
+  if (!toDoc.lengthTiered) variant.lengthTier = null;
+  variant.updatedAt = new Date().toISOString();
+  toDoc.variants.push(variant);
+  fromDoc.updatedAt = variant.updatedAt;
+  toDoc.updatedAt = variant.updatedAt;
+  await putScriptSegmentDocument(fromDoc);
+  await putScriptSegmentDocument(toDoc);
+  return flattenDocument(toDoc).variants.find((v) => v.variantId === params.variantId)!;
+}
+
+export async function listPendingReviewVariants(): Promise<ScriptSegmentVariantRow[]> {
+  const docs = await listScriptSegmentDocuments();
+  const out: ScriptSegmentVariantRow[] = [];
+  for (const doc of docs) {
+    const flat = flattenDocument(doc);
+    for (const v of flat.variants) {
+      if (v.source === "auto" && v.approved === false) out.push(v);
+    }
+  }
+  out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return out;
 }
 
 export async function setScriptSegmentVariantAudioStatus(params: {
@@ -870,6 +1120,8 @@ export type ScriptSegmentImportResult = {
   variantsUnchanged: number;
   variantsIdNotFound: Array<{ tag: string; id: string }>;
   variantsAudioInvalidated: number;
+  /** Variants queued for async embedding after import (library already updated). */
+  embeddingsQueued: number;
   /** Present when `fresh` import cleared the library before loading variants. */
   variantsRemoved?: number;
   freshImport?: boolean;
@@ -930,6 +1182,8 @@ function buildImportedVariant(
     lengthTier: null,
     requiredConstraints: [],
     excludedConstraints: [],
+    source: "authored",
+    approved: true,
     sort: Date.now(),
     createdAt: now,
     updatedAt: now,
@@ -963,6 +1217,7 @@ export async function importScriptSegments(
   let variantsUnchanged = 0;
   let variantsAudioInvalidated = 0;
   let variantsRemoved = 0;
+  const embeddingsToQueue: Array<{ tagName: string; variantId: string; text: string }> = [];
   const variantsIdNotFound: Array<{ tag: string; id: string }> = [];
   const allConstraintTags: string[] = [];
 
@@ -1027,6 +1282,11 @@ export async function importScriptSegments(
         allConstraintTags.push(...built.requiredConstraints, ...built.excludedConstraints);
         nextVariants.push(built.variant);
         variantsAdded += 1;
+        embeddingsToQueue.push({
+          tagName,
+          variantId: built.variant.id,
+          text: built.variant.text,
+        });
       }
 
       doc.variants = nextVariants;
@@ -1111,6 +1371,8 @@ export async function importScriptSegments(
             lengthTier: null,
             requiredConstraints: [],
             excludedConstraints: [],
+            source: "authored",
+            approved: true,
             sort: Date.now(),
             createdAt: now,
             updatedAt: now,
@@ -1119,6 +1381,11 @@ export async function importScriptSegments(
           applyVariantImportFields(newVariant, incoming, now);
           doc.variants.push(newVariant);
           variantsAdded += 1;
+          embeddingsToQueue.push({
+            tagName,
+            variantId: newVariant.id,
+            text: newVariant.text,
+          });
           docChanged = true;
           continue;
         }
@@ -1128,7 +1395,14 @@ export async function importScriptSegments(
           variantsUnchanged += 1;
           continue;
         }
-        if (applied.textChanged) variantsAudioInvalidated += 1;
+        if (applied.textChanged) {
+          variantsAudioInvalidated += 1;
+          embeddingsToQueue.push({
+            tagName,
+            variantId: variant.id,
+            text: variant.text,
+          });
+        }
         variantsUpdatedById += 1;
         docChanged = true;
         continue;
@@ -1142,6 +1416,13 @@ export async function importScriptSegments(
           variantsUnchanged += 1;
           continue;
         }
+        if (applied.textChanged) {
+          embeddingsToQueue.push({
+            tagName,
+            variantId: variant.id,
+            text: variant.text,
+          });
+        }
         variantsUpdatedByTextMatch += 1;
         docChanged = true;
         continue;
@@ -1153,6 +1434,8 @@ export async function importScriptSegments(
         lengthTier: null,
         requiredConstraints: [],
         excludedConstraints: [],
+        source: "authored",
+        approved: true,
         sort: Date.now(),
         createdAt: now,
         updatedAt: now,
@@ -1161,6 +1444,11 @@ export async function importScriptSegments(
       applyVariantImportFields(newVariant, incoming, now);
       doc.variants.push(newVariant);
       variantsAdded += 1;
+      embeddingsToQueue.push({
+        tagName,
+        variantId: newVariant.id,
+        text: newVariant.text,
+      });
       docChanged = true;
     }
 
@@ -1176,6 +1464,8 @@ export async function importScriptSegments(
 
   const constraintTagsAdded = await ensureConstraintVocabularyTags(allConstraintTags);
 
+  const embeddingsQueued = await enqueueVariantEmbeddings(embeddingsToQueue);
+
   return {
     tagsCreated,
     tagsUpdated,
@@ -1185,6 +1475,7 @@ export async function importScriptSegments(
     variantsUnchanged,
     variantsIdNotFound,
     variantsAudioInvalidated,
+    embeddingsQueued,
     ...(fresh ? { variantsRemoved, freshImport: true } : {}),
     constraintTagsAdded,
   };

@@ -15,6 +15,7 @@ import {
 } from "../lib/script-lab-beat-verification";
 import {
   findDuplicateBeatTypeWarnings,
+  dropDuplicateSingularTagBeats,
   type ScriptLabBeat,
 } from "../lib/script-lab-beats";
 
@@ -224,6 +225,75 @@ function testRedundantAdjacentCustomDropped() {
   console.log("PASS: redundant adjacent generic custom dropped; personalized kept\n");
 }
 
+function testPassthroughDropsDuplicateSingularTag() {
+  const beatsBefore: ScriptLabBeat[] = [
+    { beatType: "settle_opener", custom: false, tag: "SETTLE_OPENER" },
+    { beatType: "pause", custom: false, pauseBand: "short" },
+    { beatType: "content", custom: true, text: "Some custom content." },
+    { beatType: "pause", custom: false, pauseBand: "medium" },
+    { beatType: "settle_opener", custom: false, tag: "SETTLE_OPENER" },
+  ];
+  const sentences = buildVerificationSentenceList(beatsBefore);
+  const verdicts = sentences.map((s) => ({
+    sentenceIndex: s.globalIndex,
+    verdict: "keep_custom" as const,
+    confidence: "low" as const,
+  }));
+  const beats = assembleBeatsFromSentenceVerdicts({
+    beatsBefore,
+    sentences,
+    verdicts,
+    generalTags: CATALOG,
+  });
+  const count = beats.filter((b) => !b.custom && b.tag === "SETTLE_OPENER").length;
+  if (count !== 1) {
+    throw new Error(`FAIL: expected 1 SETTLE_OPENER after passthrough dedupe, got ${count}`);
+  }
+  console.log("PASS: passthrough drops duplicate singular tag beats\n");
+}
+
+function testProximityLookAheadBlocksConversion() {
+  const beatsBefore: ScriptLabBeat[] = [
+    {
+      beatType: "content",
+      custom: true,
+      text: "Arrive here now. There is nowhere else you need to be.",
+    },
+    ...Array.from({ length: 4 }, (_, i) => ({
+      beatType: "content" as const,
+      custom: true as const,
+      text: `Filler ${i}.`,
+    })),
+    { beatType: "settle_opener", custom: false, tag: "SETTLE_OPENER" },
+  ];
+  const blocked = proximityBlocksTagConversion(
+    [],
+    "SETTLE_OPENER",
+    CATALOG,
+    beatsBefore,
+  );
+  if (!blocked) {
+    throw new Error("FAIL: look-ahead should block conversion when tag exists later in beatsBefore");
+  }
+  console.log("PASS: proximity look-ahead blocks singular conversion\n");
+}
+
+function testDropDuplicateSingularTagBeatsHelper() {
+  const beats: ScriptLabBeat[] = [
+    { beatType: "settle_opener", custom: false, tag: "SETTLE_OPENER" },
+    { beatType: "pause", custom: false, pauseBand: "short" },
+    { beatType: "settle_opener", custom: false, tag: "SETTLE_OPENER" },
+  ];
+  const { beats: out, dropped } = dropDuplicateSingularTagBeats(beats, {
+    SETTLE_OPENER: "singular",
+  });
+  if (dropped.length !== 1) throw new Error("FAIL: expected one dropped beat");
+  if (out.filter((b) => b.tag === "SETTLE_OPENER").length !== 1) {
+    throw new Error("FAIL: expected one SETTLE_OPENER in output");
+  }
+  console.log("PASS: dropDuplicateSingularTagBeats keeps first instance\n");
+}
+
 function main() {
   testDuplicateWarnings();
   testVerificationSingularGlobalBlock();
@@ -231,6 +301,9 @@ function main() {
   testVerificationAssemblyNeckOnce();
   testAdjacencyBlocksDuplicateConversion();
   testRedundantAdjacentCustomDropped();
+  testPassthroughDropsDuplicateSingularTag();
+  testProximityLookAheadBlocksConversion();
+  testDropDuplicateSingularTagBeatsHelper();
   console.log("All repeatability tests passed.");
 }
 

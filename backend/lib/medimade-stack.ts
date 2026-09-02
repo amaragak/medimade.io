@@ -966,6 +966,45 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    // --- Python: script embeddings (fastembed + BGE-small ONNX) — shared layer
+    const fastembedLayerRoot = path.join(__dirname, "../layers/fastembed");
+    const fastembedPackageInit = path.join(
+      fastembedLayerRoot,
+      "python/lib/python3.12/site-packages/fastembed/__init__.py",
+    );
+    if (!fs.existsSync(fastembedPackageInit)) {
+      throw new Error(
+        "Fastembed Lambda layer missing. From backend/ run: ./scripts/build-fastembed-layer " +
+          "(Docker preferred; manylinux wheel fallback), then commit layers/fastembed/python/. " +
+          "See layers/fastembed/README.md.",
+      );
+    }
+
+    const fastembedLayer = new lambda.LayerVersion(this, "FastembedLayer", {
+      code: lambda.Code.fromAsset(fastembedLayerRoot),
+      compatibleRuntimes: [lambda.Runtime.PYTHON_3_12],
+      description:
+        "fastembed + BGE-small-en-v1.5 ONNX (rebuild: scripts/build-fastembed-layer)",
+    });
+
+    const scriptEmbed = new lambda.Function(this, "ScriptEmbedFunction", {
+      runtime: lambda.Runtime.PYTHON_3_12,
+      handler: "handler.handler",
+      code: lambda.Code.fromAsset(
+        path.join(__dirname, "../lambdas-python/script-embed"),
+      ),
+      layers: [fastembedLayer],
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 3008,
+      ephemeralStorageSize: cdk.Size.mebibytes(1024),
+      description: "Embed text / NN search / async store for Script Lab V3 (fastembed)",
+      environment: {
+        FASTEMBED_CACHE_PATH: "/opt/python/model_cache",
+        VOICE_ADMIN_TABLE_NAME: voiceAdminTable.tableName,
+      },
+    });
+    voiceAdminTable.grantReadWriteData(scriptEmbed);
+
     const adminScriptLab = new lambda_nodejs.NodejsFunction(
       this,
       "AdminScriptLabFunction",
@@ -986,6 +1025,7 @@ export class MedimadeStack extends cdk.Stack {
           FISH_AUDIO_SECRET_ARN: fishApiKeySecret.secretArn,
           CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,
           FISH_TTS_MODEL: "s2.1-pro-free",
+          SCRIPT_EMBED_FUNCTION_NAME: scriptEmbed.functionName,
         },
       },
     );
@@ -994,6 +1034,7 @@ export class MedimadeStack extends cdk.Stack {
     authJwtSecret.grantRead(adminScriptLab);
     fishApiKeySecret.grantRead(adminScriptLab);
     claudeApiKeySecret.grantRead(adminScriptLab);
+    scriptEmbed.grantInvoke(adminScriptLab);
 
     const adminScriptLabUrl = adminScriptLab.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.NONE,

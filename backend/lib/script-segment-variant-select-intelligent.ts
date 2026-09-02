@@ -5,6 +5,7 @@ import {
   createSegmentVariantPickerForBeats,
   inferBodyTourDirectionFromBeats,
   listSelectableSegmentVariants,
+  sortVariantsByCrossSessionRecency,
   type SegmentTagMeta,
   type SegmentVariantCandidate,
 } from "./script-segment-variant-select";
@@ -51,6 +52,7 @@ export function buildEligibleOptionsByTagBeat(params: {
   targetMinutes: number;
   meditationType?: string | null;
   contextTags?: string[];
+  recentVariantIds?: readonly string[];
 }): TagBeatSlot[] {
   const tourDirection = inferBodyTourDirectionFromBeats(params.beats);
   const slots: TagBeatSlot[] = [];
@@ -59,16 +61,19 @@ export function buildEligibleOptionsByTagBeat(params: {
     const beat = params.beats[beatIndex]!;
     if (!isTagBeat(beat)) continue;
     const tag = normalizeScriptSegmentTag(beat.tag!);
-    const options = listSelectableSegmentVariants({
-      variants: params.variantsByTag[tag] ?? params.variantsByTag[beat.tag!] ?? [],
-      tagMeta: params.tagMetaByName?.[tag] ?? params.tagMetaByName?.[beat.tag!],
-      tagName: tag,
-      beatType: beat.beatType,
-      targetMinutes: params.targetMinutes,
-      meditationType: params.meditationType,
-      contextTags: params.contextTags,
-      tourDirection,
-    });
+    const options = sortVariantsByCrossSessionRecency(
+      listSelectableSegmentVariants({
+        variants: params.variantsByTag[tag] ?? params.variantsByTag[beat.tag!] ?? [],
+        tagMeta: params.tagMetaByName?.[tag] ?? params.tagMetaByName?.[beat.tag!],
+        tagName: tag,
+        beatType: beat.beatType,
+        targetMinutes: params.targetMinutes,
+        meditationType: params.meditationType,
+        contextTags: params.contextTags,
+        tourDirection,
+      }),
+      params.recentVariantIds ?? [],
+    );
     slots.push({ beatIndex, tag, options });
   }
 
@@ -196,6 +201,7 @@ export async function selectSegmentVariantsIntelligently(params: {
   targetMinutes: number;
   meditationType?: string | null;
   contextTags?: string[];
+  recentVariantIds?: readonly string[];
 }): Promise<IntelligentVariantSelection> {
   const slots = buildEligibleOptionsByTagBeat(params).filter((s) => s.options.length > 0);
   const slotsByIndex = new Map(slots.map((s) => [s.beatIndex, s]));
@@ -214,6 +220,7 @@ export async function selectSegmentVariantsIntelligently(params: {
       "2. Avoid repeating phrasing, sentence openings, or imagery already present in nearby custom text.",
       "3. Prefer a variant that reads naturally as a continuation of what precedes it and a lead-in to what follows.",
       "4. Among equally good fits, prefer variants not already chosen for the same tag earlier in this script (no-repeat tiebreaker).",
+      "5. Prefer variantIds listed earlier under each TAG beat when they fit equally well — options are ordered with less-recently-used Script Lab variants first.",
       "",
       "Do not invent variantIds. Only use ids listed under each TAG beat.",
       "Return selections via the tool as a flat map: { \"<beatIndex>\": \"<variantId>\", ... } covering every TAG beat that has options.",
@@ -277,6 +284,7 @@ export async function selectSegmentVariantsIntelligently(params: {
     targetMinutes: params.targetMinutes,
     meditationType: params.meditationType,
     contextTags: params.contextTags,
+    recentVariantIds: params.recentVariantIds,
     preferredVariantIdByBeatIndex: modelPicksByBeatIndex,
     random: true,
   });

@@ -5,9 +5,15 @@ export type ScriptSegmentScope = "general" | "types";
 
 export type ScriptSegmentRepeatability = "connective" | "singular";
 
-/** Tags expected to repeat for pacing/transitions — not subject to singular duplicate rules. */
+/**
+ * Seed / fallback connective tags when a segment has no explicit repeatability.
+ * Prefer library-stored repeatability via {@link effectiveSegmentRepeatability}.
+ */
 export const CONNECTIVE_SEGMENT_TAGS = new Set<string>([
   "BREATH_TRANSITION",
+  "BREATH_GATHER",
+  "BREATH_SENSORY_NOTICE",
+  "BREATH_WITNESS",
   "PACE_REASSURANCE",
   "PRE_PAUSE_BRIDGE",
   "POST_PAUSE_CONTINUE",
@@ -15,6 +21,20 @@ export const CONNECTIVE_SEGMENT_TAGS = new Set<string>([
   "SOFT_AFFIRMATION",
   "BODY_RELAX",
   "BODY_SOFTEN_CUE",
+  "SENSORY_EXPAND",
+  "EMOTIONAL_NOTICE",
+  "DETAIL_FOCUS",
+  "LINGER",
+  "ARRIVE",
+  "IMAGE_SOFTEN",
+  "REENTRY_BRIDGE",
+  "MANIFESTATION_REALITY_BRIDGE",
+  "MANIFESTATION_WORTHINESS",
+  "MANIFESTATION_RESISTANCE",
+  "MANIFESTATION_GRATITUDE",
+  "AFFIRMATION_REPEAT_CUE",
+  "AFFIRMATION_COMPLEXITY",
+  "AFFIRMATION_EMBODIMENT",
 ]);
 
 export type ScriptLengthTier = "short" | "medium" | "long";
@@ -82,6 +102,18 @@ export function effectiveSegmentRepeatability(params: {
     return params.repeatability;
   }
   return inferDefaultSegmentRepeatability(params.tag);
+}
+
+export function isConnectiveSegmentTag(
+  tagName: string,
+  libraryRepeatability?: ScriptSegmentRepeatability | null,
+): boolean {
+  return (
+    effectiveSegmentRepeatability({
+      tag: tagName,
+      repeatability: libraryRepeatability,
+    }) === "connective"
+  );
 }
 
 export function coerceSegmentRepeatability(

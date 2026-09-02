@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# Build the fastembed + BGE-small ONNX Lambda layer (linux/amd64, Python 3.12).
+# Prefers Docker (matches Pedalboard). Falls back to manylinux wheel unzip when Docker is unavailable.
+# Run from backend/: ./scripts/build-fastembed-layer
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OUT="$ROOT/layers/fastembed"
+MODEL_NAME="BAAI/bge-small-en-v1.5"
+CACHE_ENV_NAME="FASTEMBED_CACHE_PATH"
+
+echo "==> Building fastembed layer into $OUT"
+
+USE_DOCKER=0
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  USE_DOCKER=1
+fi
+
+if ((USE_DOCKER)); then
+  DOCKER_DIR="$ROOT/docker/fastembed-layer"
+  IMAGE_TAG="medimade-fastembed-layer:build"
+  echo "==> Docker build ($IMAGE_TAG)..."
+  docker build --platform linux/amd64 -t "$IMAGE_TAG" "$DOCKER_DIR"
+  rm -rf "$OUT/python"
+  mkdir -p "$OUT"
+  CID="$(docker create --platform linux/amd64 "$IMAGE_TAG")"
+  cleanup() { docker rm -f "$CID" >/dev/null 2>&1 || true; }
+  trap cleanup EXIT
+  docker cp "$CID:/asset/python" "$OUT/python"
+  trap - EXIT
+  cleanup
+else
+  if command -v docker >/dev/null 2>&1; then
+    echo "==> Docker daemon unavailable — unpacking manylinux wheels"
+  else
+    echo "==> Docker missing — unpacking manylinux wheels"
+  fi
+  WHEELS="$(mktemp -d)/wheels"
+  mkdir -p "$WHEELS" "$OUT/python/lib/python3.12/site-packages" "$OUT/python/model_cache"
+  SITE="$OUT/python/lib/python3.12/site-packages"
+
+  python3 -m pip download \
+    'fastembed==0.7.0' 'huggingface-hub>=0.20,<1.0' 'loguru>=0.7.2,<0.8.0' \
+    'mmh3>=4.1.0,<6.0.0' 'pillow>=10.3.0,<12.0.0' 'py-rust-stemmers>=0.1.0,<0.2.0' \
+    'requests>=2.31,<3.0' 'tokenizers>=0.15,<1.0' 'tqdm>=4.66,<5.0' \
+    'filelock' 'fsspec' 'packaging' 'typing-extensions' 'idna' 'urllib3' 'certifi' \
+    'coloredlogs' 'humanfriendly' 'flatbuffers' 'sympy' 'mpmath' 'protobuf' \
+    -d "$WHEELS"
+
+  python3 -m pip download \
+    'onnxruntime==1.20.1' 'numpy>=1.26' \
+    'tokenizers>=0.15,<1.0' 'pillow>=10.3.0,<12.0.0' 'mmh3>=4.1.0,<6.0.0' \
+    'py-rust-stemmers>=0.1.0,<0.2.0' 'charset-normalizer' 'hf-xet' 'PyYAML' \
+    -d "$WHEELS" --platform manylinux_2_27_x86_64 --python-version 312 --only-binary=:all: \
+    || python3 -m pip download \
+      'onnxruntime==1.20.1' 'numpy>=1.26' \
+      'tokenizers>=0.15,<1.0' 'pillow>=10.3.0,<12.0.0' 'mmh3>=4.1.0,<6.0.0' \
+      'py-rust-stemmers>=0.1.0,<0.2.0' 'charset-normalizer' 'hf-xet' 'PyYAML' \
+      -d "$WHEELS" --platform manylinux2014_x86_64 --python-version 312 --only-binary=:all:
+
+  rm -f "$WHEELS"/*macosx* "$WHEELS"/*cp313* "$WHEELS"/huggingface_hub-1.* "$WHEELS"/pillow-12.* || true
+
+  python3 - "$WHEELS" "$SITE" <<'PY'
+import re, sys, zipfile
+from pathlib import Path
+wheels, site = Path(sys.argv[1]), Path(sys.argv[2])
+by_name = {}
+for w in wheels.glob("*.whl"):
+    if "macosx" in w.name or "cp313" in w.name:
+        continue
+    name = re.split(r"-\d", w.name, maxsplit=1)[0].lower()
+    by_name.setdefault(name, []).append(w)
+for name, files in list(by_name.items()):
+    if name == "huggingface_hub":
+        by_name[name] = [f for f in files if f.name.startswith("huggingface_hub-0.")]
+    if name == "pillow":
+        by_name[name] = [f for f in files if "pillow-11." in f.name]
+for name, files in sorted(by_name.items()):
+    if not files:
+        continue
+    files.sort(key=lambda f: (0 if "manylinux" in f.name else 1, f.name))
+    with zipfile.ZipFile(files[0]) as z:
+        z.extractall(site)
+    print("unzip", files[0].name)
+PY
+
+  find "$SITE" -type d \( -name tests -o -name test -o -name __pycache__ \) -exec rm -rf {} + 2>/dev/null || true
+
+  VENV="$(mktemp -d)/venv"
+  python3 -m venv "$VENV"
+  "$VENV/bin/pip" install -q 'fastembed==0.7.0'
+  FASTEMBED_CACHE_PATH="$OUT/python/model_cache" "$VENV/bin/python" -c "
+import os
+os.environ['FASTEMBED_CACHE_PATH'] = '$OUT/python/model_cache'
+from fastembed import TextEmbedding
+list(TextEmbedding(model_name='$MODEL_NAME').embed(['warmup']))
+print('model cached')
+"
+  rm -rf "$OUT/python/model_cache/.locks"
+  # Materialize HF cache symlinks so zip/CDK does not double-count blobs+snapshots
+  python3 - <<PY
+import shutil
+from pathlib import Path
+root = Path("$OUT/python/model_cache")
+for p in root.rglob("*"):
+    if p.is_symlink() and p.is_file():
+        target = p.resolve()
+        p.unlink()
+        shutil.copy2(target, p)
+for blobs in root.glob("models--*/blobs"):
+    shutil.rmtree(blobs, ignore_errors=True)
+PY
+  # Drop unused heavy deps (text embed path only). Keep Pillow — fastembed.common.types imports PIL at import time.
+  SITE="$OUT/python/lib/python3.12/site-packages"
+  rm -rf "$SITE/sympy" "$SITE/mpmath" "$SITE/hf_xet" \
+    "$SITE/httpx" "$SITE/httpcore" "$SITE/anyio" "$SITE/h11" "$SITE/click" || true
+  rm -rf "$SITE"/sympy-*.dist-info "$SITE"/mpmath-*.dist-info \
+    "$SITE"/hf_xet-*.dist-info "$SITE"/httpx-*.dist-info "$SITE"/httpcore-*.dist-info \
+    "$SITE"/anyio-*.dist-info "$SITE"/h11-*.dist-info "$SITE"/click-*.dist-info || true
+fi
+
+MARKER="$OUT/python/lib/python3.12/site-packages/fastembed/__init__.py"
+if [[ ! -f "$MARKER" ]]; then
+  echo "ERROR: fastembed package missing at $MARKER" >&2
+  exit 1
+fi
+
+if [[ ! -d "$OUT/python/lib/python3.12/site-packages/PIL" ]]; then
+  echo "ERROR: Pillow (PIL) missing — fastembed imports PIL at module load" >&2
+  exit 1
+fi
+
+python3 - "$OUT/python/lib/python3.12/site-packages" <<'PY'
+import sys
+from pathlib import Path
+site = Path(sys.argv[1])
+sys.path.insert(0, str(site))
+from PIL import Image  # noqa: F401
+print("Pillow import OK", Image.__module__)
+PY
+
+du -sh "$OUT/python"
+echo "Done. Commit layers/fastembed/python/ so deploys work without rebuilding."
+echo "Handler must set $CACHE_ENV_NAME=/opt/python/model_cache"

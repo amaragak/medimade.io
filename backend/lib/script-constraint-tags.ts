@@ -1,15 +1,17 @@
 /** Generic constraint tags for variant eligibility (posture, eyes, movement, etc.). */
 
+import { normalizeMeditationType } from "./meditation-types";
+
 export const DEFAULT_SEATED_CONSTRAINT = "seated_or_lying";
 export const STANDING_CONSTRAINT = "standing";
 
-/** Types where standing is plausible when the user signals it — not auto-added. */
-export const STANDING_PLAUSIBLE_MEDITATION_TYPES = new Set(
-  ["movement meditation"].map((t) => t.toLowerCase()),
-);
+/** Upright / on-feet movement cues (Movement default + explicit standing elsewhere). */
+const UPRIGHT_MOVEMENT_SIGNAL_RE =
+  /\b(standing|stand up|on your feet|upright|while standing|if you're standing|walking|walk(?:ing)?|running|run(?:ning)?|jogging|jog(?:ging)?|pacing|on the move|while you walk|while you run|take a walk|go for a run|office movement)\b/i;
 
-const STANDING_SIGNAL_RE =
-  /\b(standing|stand up|on your feet|upright|while standing|if you're standing)\b/i;
+/** Floor-based or seated practice — overrides Movement default to seated_or_lying. */
+const SEATED_OR_FLOOR_SIGNAL_RE =
+  /\b(sitting|seated|sit(?:ting)? down|lying(?: down)?|lie(?: down)?|on the floor|floor-based|yoga on the floor|seated stretching|on your back|supine|prone|on the ground|on a mat|mat work)\b/i;
 
 export function normalizeConstraintTag(raw: string): string {
   return raw
@@ -49,27 +51,48 @@ export function coerceConstraintTagList(raw: unknown): string[] {
   return out;
 }
 
-/** Detect explicit standing signals in free-text user input. */
+export function isMovementMeditationType(
+  meditationType: string | null | undefined,
+): boolean {
+  if (!meditationType?.trim()) return false;
+  return normalizeMeditationType(meditationType) === "Movement meditation";
+}
+
+/** Detect explicit upright / walking / running signals in free-text user input. */
 export function userTextSignalsStanding(text: string): boolean {
-  return STANDING_SIGNAL_RE.test(text.trim());
+  return UPRIGHT_MOVEMENT_SIGNAL_RE.test(text.trim());
+}
+
+/** Detect floor-based or seated practice signals in free-text user input. */
+export function userTextSignalsSeatedOrFloor(text: string): boolean {
+  return SEATED_OR_FLOOR_SIGNAL_RE.test(text.trim());
 }
 
 /**
  * Assemble flat context tags for variant eligibility.
- * Default posture is seated/lying; standing is added only when user input signals it.
+ * Non-Movement: default seated/lying; add standing when user signals upright movement.
+ * Movement: default standing unless user signals floor-based or seated practice.
  */
 export function buildScriptLabContextTags(params: {
   meditationType?: string | null;
-  /** Mood, chat, prompt, journal — scanned for standing signals. */
+  /** Mood, chat, prompt, journal — scanned for posture / movement signals. */
   userText?: string;
   extraContextTags?: string[];
 }): string[] {
   const tags = new Set<string>();
-  tags.add(DEFAULT_SEATED_CONSTRAINT);
-
   const userText = params.userText ?? "";
-  if (userTextSignalsStanding(userText)) {
-    tags.add(STANDING_CONSTRAINT);
+
+  if (isMovementMeditationType(params.meditationType)) {
+    if (userTextSignalsSeatedOrFloor(userText)) {
+      tags.add(DEFAULT_SEATED_CONSTRAINT);
+    } else {
+      tags.add(STANDING_CONSTRAINT);
+    }
+  } else {
+    tags.add(DEFAULT_SEATED_CONSTRAINT);
+    if (userTextSignalsStanding(userText)) {
+      tags.add(STANDING_CONSTRAINT);
+    }
   }
 
   for (const extra of params.extraContextTags ?? []) {

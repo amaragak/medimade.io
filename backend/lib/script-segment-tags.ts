@@ -35,9 +35,18 @@ export type ScriptSegmentScope = "general" | "types";
 
 export type ScriptSegmentRepeatability = "connective" | "singular";
 
-/** Tags expected to repeat for pacing/transitions — not subject to singular duplicate rules. */
+/**
+ * Seed / fallback connective tags when a segment document has no explicit
+ * `repeatability` field. Prefer library-stored repeatability via
+ * {@link effectiveSegmentRepeatability} / {@link isConnectiveSegmentTag} so
+ * imports stay authoritative; keep this set aligned with connective tags in
+ * the segment library.
+ */
 export const CONNECTIVE_SEGMENT_TAGS = new Set<string>([
   "BREATH_TRANSITION",
+  "BREATH_GATHER",
+  "BREATH_SENSORY_NOTICE",
+  "BREATH_WITNESS",
   "PACE_REASSURANCE",
   "PRE_PAUSE_BRIDGE",
   "POST_PAUSE_CONTINUE",
@@ -45,8 +54,21 @@ export const CONNECTIVE_SEGMENT_TAGS = new Set<string>([
   "SOFT_AFFIRMATION",
   "BODY_RELAX",
   "BODY_SOFTEN_CUE",
+  "SENSORY_EXPAND",
+  "EMOTIONAL_NOTICE",
+  "DETAIL_FOCUS",
+  "LINGER",
+  "ARRIVE",
+  "IMAGE_SOFTEN",
+  "REENTRY_BRIDGE",
+  "MANIFESTATION_REALITY_BRIDGE",
+  "MANIFESTATION_WORTHINESS",
+  "MANIFESTATION_RESISTANCE",
+  "MANIFESTATION_GRATITUDE",
+  "AFFIRMATION_REPEAT_CUE",
+  "AFFIRMATION_COMPLEXITY",
+  "AFFIRMATION_EMBODIMENT",
 ]);
-
 export type ScriptLengthTier = "short" | "medium" | "long";
 
 /** Eligible variant length tiers for a target meditation length. */
@@ -116,6 +138,24 @@ export function effectiveSegmentRepeatability(params: {
   return inferDefaultSegmentRepeatability(params.tag);
 }
 
+/**
+ * Prefer library-stored repeatability when provided; otherwise fall back to
+ * {@link CONNECTIVE_SEGMENT_TAGS} / singular defaults. Use this (or
+ * {@link effectiveSegmentRepeatability}) instead of checking the hardcoded set
+ * alone so imports that mark new tags connective stay authoritative.
+ */
+export function isConnectiveSegmentTag(
+  tagName: string,
+  libraryRepeatability?: ScriptSegmentRepeatability | null,
+): boolean {
+  return (
+    effectiveSegmentRepeatability({
+      tag: tagName,
+      repeatability: libraryRepeatability,
+    }) === "connective"
+  );
+}
+
 export function coerceSegmentRepeatability(
   raw: unknown,
   tagName: string,
@@ -139,7 +179,7 @@ export function repeatabilityPromptLine(
   repeatability: ScriptSegmentRepeatability,
 ): string {
   return repeatability === "connective"
-    ? "connective — may repeat freely wherever pacing needs it"
+    ? "connective — may repeat, but never with only pauses between two consecutive instances of the same tag; separate uses with a substantive custom beat or a different tag"
     : "singular — use at most once per script";
 }
 
@@ -152,13 +192,24 @@ export function segmentTagPhaseHint(tagName: string): "opening" | "body_tour" | 
   return null;
 }
 
-export function scriptSegmentSelectionRulesBlock(): string {
+export function scriptSegmentSelectionRulesBlock(params?: {
+  /** When provided, list connective tags from the live catalog rather than a static example list. */
+  connectiveTagNames?: string[];
+}): string {
+  const fromLibrary = (params?.connectiveTagNames ?? [])
+    .map((t) => normalizeScriptSegmentTag(t))
+    .filter(Boolean);
+  const unique = [...new Set(fromLibrary.length ? fromLibrary : [...CONNECTIVE_SEGMENT_TAGS])].sort();
+  const examples =
+    unique.length <= 12
+      ? unique.join(", ")
+      : `${unique.slice(0, 10).join(", ")}, … (${unique.length} connective tags)`;
   return [
     "### Segment library — selection rules",
     "",
     "**Repeatability**",
     "- **Singular tags:** select and use **at most once** per script, regardless of how many variants exist. If the same subject area needs coverage again (e.g. a closing callback to a personalized body region), write that second mention as **custom text**, not a second use of the same tag.",
-    "- **Connective tags** (BREATH_TRANSITION, PACE_REASSURANCE, PRE_PAUSE_BRIDGE, POST_PAUSE_CONTINUE, BODY_RELAX, SOFT_AFFIRMATION, WANDERING_ACK, BODY_SOFTEN_CUE, etc.): may repeat freely wherever they serve pacing naturally.",
+    `- **Connective tags** (${examples}): may repeat, but **never** with only pauses between two consecutive instances of the **same** tag. At least one **substantive custom beat** or a **different tag** must separate any two uses of the same connective tag. Pauses do not count as separation.`,
     "",
     "**Description / boundaries**",
     "- Before selecting a tag, read its **Description** in the catalog below.",
@@ -304,6 +355,16 @@ export function scriptSegmentLibraryPromptBlock(params: {
     ].join("\n");
   }
 
+  const connectiveFromLibrary = sortedTags
+    .filter(
+      (t) =>
+        effectiveSegmentRepeatability({
+          tag: t.name,
+          repeatability: t.repeatability,
+        }) === "connective",
+    )
+    .map((t) => t.name);
+
   const lines = structuredBeats
     ? [
         "### Reusable script segments (library)",
@@ -312,7 +373,9 @@ export function scriptSegmentLibraryPromptBlock(params: {
         "Before writing `custom: true` generic wording, scan **every tag in the catalog below** — not only tags with an obvious topical link.",
         "When custom prose embeds a generic aside with no personalization, split that aside into its own tag beat; keep personalized remainder custom. Do not over-fragment personalized lines.",
         "",
-        scriptSegmentSelectionRulesBlock(),
+        scriptSegmentSelectionRulesBlock({
+          connectiveTagNames: connectiveFromLibrary,
+        }),
         "",
         "### Segment tag catalog",
         "",
@@ -336,7 +399,9 @@ export function scriptSegmentLibraryPromptBlock(params: {
       const rep =
         t.repeatability ?? inferDefaultSegmentRepeatability(t.name);
       const repHint =
-        rep === "connective" ? "connective — may repeat" : "singular — at most once";
+        rep === "connective"
+          ? "connective — may repeat with content/different-tag between same-tag uses"
+          : "singular — at most once";
       const scopeLabel =
         t.scope === "general"
           ? "General"
