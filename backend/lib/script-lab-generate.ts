@@ -2,12 +2,14 @@ import { buildMeditationScriptGenerationPrompt } from "./meditation-script-gener
 import { parseAnthropicMessageUsage } from "./anthropic-pricing";
 import { verifyScriptLabBeats } from "./script-lab-beat-verification";
 import {
+  buildTagRepeatabilityMap,
   extractBeatsFromAnthropicMessage,
   findDuplicateBeatTypeWarnings,
   scriptLabBeatsToolDefinition,
   type ScriptLabBeat,
   type ScriptLabBeatDuplicateWarning,
 } from "./script-lab-beats";
+import type { ScriptSegmentRepeatability } from "./script-segment-tags";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
@@ -36,12 +38,17 @@ export async function generateScriptLabScript(params: {
     name: string;
     scope: import("./script-segment-tags").ScriptSegmentScope;
     types: string[];
+    description?: string;
+    repeatability?: ScriptSegmentRepeatability;
     sampleVariants: string[];
+    tierAverages: import("./script-segment-tag-metrics").SegmentTagTierAverage[];
   }>;
   generalTagVariants: Array<{
     name: string;
+    repeatability?: ScriptSegmentRepeatability;
     variants: Array<{ variantId: string; text: string }>;
   }>;
+  tagRepeatabilityByName?: Record<string, ScriptSegmentRepeatability>;
 }): Promise<{
   beats: ScriptLabBeat[];
   beatsBeforeVerification: ScriptLabBeat[];
@@ -103,7 +110,11 @@ export async function generateScriptLabScript(params: {
     generalTags: params.generalTagVariants,
   });
 
-  const beatWarnings = findDuplicateBeatTypeWarnings(verified.beats);
+  const beatWarnings = findDuplicateBeatTypeWarnings(
+    verified.beats,
+    params.tagRepeatabilityByName ??
+      buildTagRepeatabilityMap(params.generalTagVariants),
+  );
 
   return {
     beats: verified.beats,

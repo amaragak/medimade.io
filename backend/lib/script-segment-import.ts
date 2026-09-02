@@ -2,6 +2,7 @@ import {
   isValidScriptSegmentTag,
   normalizeScriptSegmentTag,
   type ScriptLengthTier,
+  type ScriptSegmentRepeatability,
   type ScriptSegmentScope,
 } from "./script-segment-tags";
 import { coerceConstraintTagList } from "./script-constraint-tags";
@@ -16,6 +17,8 @@ export type ScriptSegmentImportPayload = {
     scope: ScriptSegmentScope;
     types: string[];
     lengthTiered: boolean;
+    repeatability?: ScriptSegmentRepeatability;
+    description?: string;
     variants: Array<{
       id?: string;
       text: string;
@@ -151,6 +154,33 @@ export function validateScriptSegmentImportJson(
     }
     const lengthTiered = seg.lengthTiered;
 
+    if (
+      seg.repeatability != null &&
+      seg.repeatability !== "connective" &&
+      seg.repeatability !== "singular"
+    ) {
+      errors.push({
+        path: `${base}.repeatability`,
+        message: 'repeatability must be "connective" or "singular" when set.',
+      });
+    }
+    const repeatability =
+      seg.repeatability === "connective" || seg.repeatability === "singular"
+        ? seg.repeatability
+        : undefined;
+
+    let description: string | undefined;
+    if (seg.description != null) {
+      if (typeof seg.description !== "string") {
+        errors.push({
+          path: `${base}.description`,
+          message: "description must be a string when set.",
+        });
+        return;
+      }
+      description = seg.description.trim().slice(0, 4000);
+    }
+
     if (!Array.isArray(seg.variants)) {
       errors.push({ path: `${base}.variants`, message: "variants must be an array." });
       return;
@@ -214,7 +244,7 @@ export function validateScriptSegmentImportJson(
       });
     });
 
-    segments.push({ tag, scope, types, lengthTiered, variants });
+    segments.push({ tag, scope, types, lengthTiered, repeatability, description, variants });
   });
 
   if (errors.length > 0) return { ok: false, errors };

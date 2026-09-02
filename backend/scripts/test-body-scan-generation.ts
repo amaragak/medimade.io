@@ -6,6 +6,7 @@
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { generateScriptLabScript } from "../lib/script-lab-generate";
 import { listAllScriptSegmentLibrary } from "../lib/script-segment-library";
+import { buildSegmentTagsForGenerationPrompt } from "../lib/script-segment-tag-metrics";
 import {
   scriptSegmentLibraryPromptBlock,
   typesMatchMeditationType,
@@ -51,21 +52,22 @@ async function main() {
     process.exit(1);
   }
 
-  const segmentTags = library.tags.map((t) => ({
-    name: t.name,
-    scope: t.scope,
-    types: t.types,
-    sampleVariants: (library.variantsByTag[t.name] ?? []).slice(0, 2).map((v) => v.text),
-  }));
+  const segmentTags = buildSegmentTagsForGenerationPrompt({
+    tags: library.tags,
+    variantsByTag: library.variantsByTag,
+  });
 
   const promptBlock = scriptSegmentLibraryPromptBlock({
     tags: segmentTags,
     meditationType: MEDITATION_STYLE,
     structuredBeats: true,
   });
-  const bodyScanInPrompt = bodyScanTags.every((t) => promptBlock.includes(`**${t.name}**`));
+  const bodyScanInPrompt = bodyScanTags.every((t) =>
+    promptBlock.includes(`### ${t.name}`),
+  );
   const preferredLabel = bodyScanTags.some((t) =>
-    promptBlock.includes(`**${t.name}** (Preferred for:`),
+    promptBlock.includes(`### ${t.name}`) &&
+    promptBlock.includes(`Scope: type-restricted — preferred for body_scan`),
   );
   console.log(`(a) All BODY_SCAN tags in generation prompt: ${bodyScanInPrompt}`);
   console.log(`(a) At least one labeled Preferred for: ${preferredLabel}`);

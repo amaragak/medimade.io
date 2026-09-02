@@ -3,6 +3,20 @@ export const SCRIPT_SEGMENT_TAG_RE = /\[\[SEG:([A-Z][A-Z0-9_]*)\]\]/g;
 
 export type ScriptSegmentScope = "general" | "types";
 
+export type ScriptSegmentRepeatability = "connective" | "singular";
+
+/** Tags expected to repeat for pacing/transitions — not subject to singular duplicate rules. */
+export const CONNECTIVE_SEGMENT_TAGS = new Set<string>([
+  "BREATH_TRANSITION",
+  "PACE_REASSURANCE",
+  "PRE_PAUSE_BRIDGE",
+  "POST_PAUSE_CONTINUE",
+  "WANDERING_ACK",
+  "SOFT_AFFIRMATION",
+  "BODY_RELAX",
+  "BODY_SOFTEN_CUE",
+]);
+
 export type ScriptLengthTier = "short" | "medium" | "long";
 
 export function eligibleLengthTiers(targetMinutes: number): ScriptLengthTier[] {
@@ -46,6 +60,38 @@ export function segmentTagPrefersLengthTierBias(
     .toLowerCase()
     .replace(/[^a-z0-9_]/g, "_");
   return bt.startsWith("body_scan_");
+}
+
+/** Default repeatability when not stored on the segment document. */
+export function inferDefaultSegmentRepeatability(tagName: string): ScriptSegmentRepeatability {
+  const tag = normalizeScriptSegmentTag(tagName);
+  if (CONNECTIVE_SEGMENT_TAGS.has(tag)) return "connective";
+  if (tag.startsWith("BODY_SCAN_") || tag.startsWith("CLOSE_") || tag === "SETTLE_OPENER") {
+    return "singular";
+  }
+  return "singular";
+}
+
+export function effectiveSegmentRepeatability(params: {
+  tag: string;
+  repeatability: ScriptSegmentRepeatability | null | undefined;
+}): ScriptSegmentRepeatability {
+  if (params.repeatability === "connective" || params.repeatability === "singular") {
+    return params.repeatability;
+  }
+  return inferDefaultSegmentRepeatability(params.tag);
+}
+
+export function coerceSegmentRepeatability(
+  raw: unknown,
+  tagName: string,
+): ScriptSegmentRepeatability {
+  if (raw === "connective" || raw === "singular") return raw;
+  return inferDefaultSegmentRepeatability(tagName);
+}
+
+export function repeatabilityLabel(repeatability: ScriptSegmentRepeatability): string {
+  return repeatability === "connective" ? "connective" : "singular";
 }
 
 export function normalizeMeditationTypeKey(raw: string): string {

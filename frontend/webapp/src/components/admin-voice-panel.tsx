@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  type AdminPauseBands,
   type AdminVoiceSpeaker,
   deleteAdminVoiceSpeaker,
   generateAdminVoiceSample,
@@ -10,14 +9,6 @@ import {
   patchAdminVoice,
   type VoiceGender,
 } from "@/lib/medimade-api";
-
-const PAUSE_FIELDS: Array<{ id: keyof AdminPauseBands; label: string }> = [
-  { id: "extra-short", label: "Extra short" },
-  { id: "short", label: "Short" },
-  { id: "medium", label: "Medium" },
-  { id: "long", label: "Long" },
-  { id: "extra-long", label: "Extra long" },
-];
 
 const ICON_BTN =
   "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border text-foreground hover:bg-card disabled:cursor-not-allowed disabled:opacity-40";
@@ -63,8 +54,6 @@ export function AdminVoicePanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [speakers, setSpeakers] = useState<AdminVoiceSpeaker[]>([]);
-  const [pauses, setPauses] = useState<AdminPauseBands | null>(null);
-  const [pauseBusy, setPauseBusy] = useState(false);
   const [newName, setNewName] = useState("");
   const [newModelId, setNewModelId] = useState("");
   const [addBusy, setAddBusy] = useState(false);
@@ -75,7 +64,6 @@ export function AdminVoicePanel() {
     setError(null);
     const data = await listAdminVoice();
     setSpeakers(data.speakers);
-    setPauses(data.pauses);
   }
 
   useEffect(() => {
@@ -83,20 +71,6 @@ export function AdminVoicePanel() {
       .catch((e) => setError(e instanceof Error ? e.message : "Could not load voice admin"))
       .finally(() => setLoading(false));
   }, []);
-
-  async function savePauses() {
-    if (!pauses) return;
-    setPauseBusy(true);
-    setError(null);
-    try {
-      const res = await patchAdminVoice({ pauses });
-      if (res.pauses) setPauses(res.pauses);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save pauses");
-    } finally {
-      setPauseBusy(false);
-    }
-  }
 
   async function addSpeaker() {
     const name = newName.trim();
@@ -149,43 +123,6 @@ export function AdminVoicePanel() {
         </div>
       ) : null}
       {loading ? <p className="text-sm text-muted">Loading…</p> : null}
-
-      <section className="rounded-2xl border border-border bg-card p-4 sm:p-5">
-        <h2 className="text-sm font-semibold">Pause lengths</h2>
-        <p className="mt-1 text-xs text-muted">
-          Seconds of silence for each <code>[[PAUSE …]]</code> band in generated scripts.
-        </p>
-        {pauses ? (
-          <div className="mt-4 grid gap-3 sm:grid-cols-5">
-            {PAUSE_FIELDS.map((f) => (
-              <label key={f.id} className="block text-xs font-medium text-muted">
-                {f.label}
-                <input
-                  type="number"
-                  min={0.2}
-                  max={120}
-                  step={0.1}
-                  value={pauses[f.id]}
-                  onChange={(e) =>
-                    setPauses((p) =>
-                      p ? { ...p, [f.id]: Number(e.target.value) } : p,
-                    )
-                  }
-                  className="mt-1 w-full rounded-xl border border-border bg-background px-3 py-2 text-sm text-foreground"
-                />
-              </label>
-            ))}
-          </div>
-        ) : null}
-        <button
-          type="button"
-          disabled={!pauses || pauseBusy}
-          onClick={() => void savePauses()}
-          className="mt-4 rounded-xl accent-fill-gradient px-4 py-2 text-sm font-medium text-on-accent disabled:opacity-60"
-        >
-          {pauseBusy ? "Saving…" : "Save pause lengths"}
-        </button>
-      </section>
 
       <section className="rounded-2xl border border-border bg-card p-4 sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

@@ -7,7 +7,7 @@ import {
   tagNameToBeatType,
   type ScriptLabBeat,
 } from "./script-lab-beats";
-import { normalizeScriptSegmentTag } from "./script-segment-tags";
+import { normalizeScriptSegmentTag, inferDefaultSegmentRepeatability, type ScriptSegmentRepeatability } from "./script-segment-tags";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
@@ -19,6 +19,7 @@ export type GeneralTagVariantEntry = {
 export type GeneralTagVariantCatalog = {
   name: string;
   variants: GeneralTagVariantEntry[];
+  repeatability?: ScriptSegmentRepeatability;
 };
 
 export type VerificationSentence = {
@@ -48,11 +49,21 @@ export function prepareGeneralTagsForVerification(
 ): GeneralTagVariantCatalog[] {
   return tags.map((t) => ({
     name: normalizeScriptSegmentTag(t.name),
+    repeatability: t.repeatability ?? inferDefaultSegmentRepeatability(t.name),
     variants: t.variants.map((v, i) => ({
       variantId: v.variantId?.trim() || `${t.name}#${i}`,
       text: v.text.replace(/\s+/g, " ").trim(),
     })),
   }));
+}
+
+function tagRepeatabilityFromCatalog(
+  tag: string,
+  catalog: GeneralTagVariantCatalog[],
+): ScriptSegmentRepeatability {
+  const normalized = normalizeScriptSegmentTag(tag);
+  const entry = catalog.find((t) => t.name === normalized);
+  return entry?.repeatability ?? inferDefaultSegmentRepeatability(normalized);
 }
 
 /** @deprecated Use prepareGeneralTagsForVerification — kept for imports that referenced the old name. */
@@ -406,37 +417,19 @@ function effectiveVerdict(
   return "convert_tag";
 }
 
-/** Non-pause beats to look back when blocking near-duplicate tag conversions. */
+/** Historical proximity window — singular tags now dedupe across the full script; connective tags are exempt. */
 export const VERIFICATION_TAG_PROXIMITY_WINDOW = 4;
 
-function recentTagRolesInWindow(
-  assembled: ScriptLabBeat[],
-  windowNonPauseBeats: number,
-): { tags: Set<string>; beatTypes: Set<string> } {
-  const tags = new Set<string>();
-  const beatTypes = new Set<string>();
-  let seen = 0;
-  for (let i = assembled.length - 1; i >= 0 && seen < windowNonPauseBeats; i--) {
-    const beat = assembled[i]!;
-    if (beat.beatType === "pause") continue;
-    seen += 1;
-    if (!beat.custom && beat.tag) {
-      tags.add(beat.tag);
-      beatTypes.add(beat.beatType);
-    }
-  }
-  return { tags, beatTypes };
-}
-
-/** True when converting to matchedTag would stack the same tag/role too close to a recent one. */
+/** True when converting to matchedTag would duplicate a singular tag already used in the script. */
 export function proximityBlocksTagConversion(
   assembledSoFar: ScriptLabBeat[],
   matchedTag: string,
-  windowNonPauseBeats = VERIFICATION_TAG_PROXIMITY_WINDOW,
+  catalog: GeneralTagVariantCatalog[],
 ): boolean {
-  const role = tagNameToBeatType(matchedTag);
-  const recent = recentTagRolesInWindow(assembledSoFar, windowNonPauseBeats);
-  return recent.tags.has(matchedTag) || recent.beatTypes.has(role);
+  const normalized = normalizeScriptSegmentTag(matchedTag);
+  const repeatability = tagRepeatabilityFromCatalog(normalized, catalog);
+  if (repeatability === "connective") return false;
+  return assembledSoFar.some((b) => !b.custom && b.tag === normalized);
 }
 
 /** Non-pause beats before/after to scan for conflicting body-region topical anchors. */
@@ -456,6 +449,7 @@ function bodyRegionsForTag(tag: string): Set<BodyRegion> {
   const u = tag.toUpperCase();
   if (u.includes("FACE_JAW")) return new Set(["face_jaw"]);
   if (u.includes("NECK_SHOULDERS")) return new Set(["neck_shoulders"]);
+  if (u.includes("LOWER_BODY")) return new Set(["lower_back"]);
   if (u.includes("SPINE_BACK")) return new Set(["spine_back"]);
   if (u.includes("HIPS_BELLY_CHEST")) return new Set(["hips_belly_chest"]);
   if (u.includes("LOWER_BODY")) return new Set(["lower_body"]);
@@ -647,7 +641,7 @@ export function assembleBeatsFromSentenceVerdicts(params: {
           pendingCustomText: customBuffer,
         };
         if (
-          proximityBlocksTagConversion(out, rawVerdict.matchedTag) ||
+          proximityBlocksTagConversion(out, rawVerdict.matchedTag, params.generalTags) ||
           topicalCoherenceBlocksTagConversion(gateParams)
         ) {
           customBuffer.push(customSentenceText(s));

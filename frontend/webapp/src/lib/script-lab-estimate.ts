@@ -19,6 +19,12 @@ import {
   selectSegmentVariant,
   type SegmentTagMeta,
 } from "@/lib/script-segment-variant-select";
+import {
+  buildSegmentTagMetricsIndex,
+  budgetMetricsForTagAtTarget,
+  estimateTagBeatSpeechSeconds,
+} from "@/lib/script-segment-tag-metrics";
+import { countWords } from "@/lib/script-text-metrics";
 
 const DEFAULT_WPM = 140;
 
@@ -37,6 +43,28 @@ export type ScriptLabVariant = {
 };
 
 export type ScriptLabTagMeta = SegmentTagMeta;
+
+function buildMetricsIndexForEstimate(params: {
+  variantsByTag: Record<string, ScriptLabVariant[]>;
+  tagMetaByName?: Record<string, ScriptLabTagMeta>;
+}) {
+  const tagNames = new Set([
+    ...Object.keys(params.variantsByTag),
+    ...Object.keys(params.tagMetaByName ?? {}),
+  ]);
+  const tags = [...tagNames].map((name) => ({
+    name,
+    lengthTiered: params.tagMetaByName?.[name]?.lengthTiered ?? false,
+  }));
+  return buildSegmentTagMetricsIndex({
+    tags,
+    variantsByTag: params.variantsByTag,
+  });
+}
+
+function speechSpeedForEstimate(): number {
+  return FIXED_SPEECH_PREVIEW_SPEED;
+}
 
 function selectVariantForBeatTag(
   tag: string,
@@ -102,10 +130,15 @@ export function estimateScriptLabDurationSeconds(params: {
   segmentSeconds: number;
   customSpeechSeconds: number;
   customWordCount: number;
+  segmentWordCount: number;
+  totalSpokenWordCount: number;
 } {
   const pauseSeconds = sumPauseSecondsFromScript(params.rawScript);
   const contextTags = params.contextTags ?? [];
+  const metricsIndex = buildMetricsIndexForEstimate(params);
+  const speechSpeed = speechSpeedForEstimate();
   let segmentSeconds = 0;
+  let segmentWordCount = 0;
   const usedByTag = new Map<string, string[]>();
   const tagRe = new RegExp(SCRIPT_SEGMENT_TAG_RE.source, "g");
 
@@ -124,18 +157,25 @@ export function estimateScriptLabDurationSeconds(params: {
       },
       usedByTag,
     );
-    if (!variant) continue;
-
-    const audio = variant.audio?.find((a) => a.modelId === params.modelId);
-    if (audio && audio.durationSeconds > 0) {
-      segmentSeconds += audio.durationSeconds;
-    } else {
-      segmentSeconds += estimateWordsDurationSeconds(variant.text.split(/\s+/).length);
-    }
+    const audio = variant?.audio?.find((a) => a.modelId === params.modelId);
+    segmentSeconds += estimateTagBeatSpeechSeconds({
+      tag,
+      targetMinutes: params.targetMinutes,
+      metricsIndex,
+      speechSpeed,
+      wpmActive: DEFAULT_WPM,
+      audioDurationSeconds: audio?.durationSeconds,
+    });
+    const tierBudget = budgetMetricsForTagAtTarget(
+      tag,
+      params.targetMinutes,
+      metricsIndex,
+    );
+    if (tierBudget) segmentWordCount += tierBudget.wordCount;
   }
 
   const customText = stripScriptSegmentTags(params.rawScript);
-  const customWordCount = customText.split(/\s+/).filter(Boolean).length;
+  const customWordCount = countWords(customText);
   const customSpeechSeconds = estimateWordsDurationSeconds(customWordCount);
 
   return {
@@ -144,6 +184,8 @@ export function estimateScriptLabDurationSeconds(params: {
     segmentSeconds,
     customSpeechSeconds,
     customWordCount,
+    segmentWordCount,
+    totalSpokenWordCount: customWordCount + segmentWordCount,
   };
 }
 
@@ -162,10 +204,15 @@ export function estimateScriptLabBeatsDurationSeconds(params: {
   segmentSeconds: number;
   customSpeechSeconds: number;
   customWordCount: number;
+  segmentWordCount: number;
+  totalSpokenWordCount: number;
 } {
   const pauseSeconds = pauseSecondsFromBeats(params.beats);
   const contextTags = params.contextTags ?? [];
+  const metricsIndex = buildMetricsIndexForEstimate(params);
+  const speechSpeed = speechSpeedForEstimate();
   let segmentSeconds = 0;
+  let segmentWordCount = 0;
   const usedByTag = new Map<string, string[]>();
 
   for (const beat of params.beats) {
@@ -183,18 +230,25 @@ export function estimateScriptLabBeatsDurationSeconds(params: {
       },
       usedByTag,
     );
-    if (!variant) continue;
-
-    const audio = variant.audio?.find((a) => a.modelId === params.modelId);
-    if (audio && audio.durationSeconds > 0) {
-      segmentSeconds += audio.durationSeconds;
-    } else {
-      segmentSeconds += estimateWordsDurationSeconds(variant.text.split(/\s+/).length);
-    }
+    const audio = variant?.audio?.find((a) => a.modelId === params.modelId);
+    segmentSeconds += estimateTagBeatSpeechSeconds({
+      tag: beat.tag,
+      targetMinutes: params.targetMinutes,
+      metricsIndex,
+      speechSpeed,
+      wpmActive: DEFAULT_WPM,
+      audioDurationSeconds: audio?.durationSeconds,
+    });
+    const tierBudget = budgetMetricsForTagAtTarget(
+      beat.tag,
+      params.targetMinutes,
+      metricsIndex,
+    );
+    if (tierBudget) segmentWordCount += tierBudget.wordCount;
   }
 
   const customPlain = customTextFromBeats(params.beats);
-  const customWordCount = customPlain.split(/\s+/).filter(Boolean).length;
+  const customWordCount = countWords(customPlain);
   const customSpeechSeconds = estimateWordsDurationSeconds(customWordCount);
 
   return {
@@ -203,6 +257,8 @@ export function estimateScriptLabBeatsDurationSeconds(params: {
     segmentSeconds,
     customSpeechSeconds,
     customWordCount,
+    segmentWordCount,
+    totalSpokenWordCount: customWordCount + segmentWordCount,
   };
 }
 

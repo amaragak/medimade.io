@@ -9,15 +9,13 @@ import {
 import { SCRIPT_PAUSE_PROMPT_RULES } from "./script-pause-bands";
 import {
   scriptSegmentLibraryPromptBlock,
-  type ScriptSegmentScope,
 } from "./script-segment-tags";
+import {
+  scriptLabSegmentDurationBudgetAppendix,
+  type SegmentTagForPrompt,
+} from "./script-segment-tag-metrics";
 
-export type SegmentTagForPrompt = {
-  name: string;
-  scope: ScriptSegmentScope;
-  types: string[];
-  sampleVariants: string[];
-};
+export type { SegmentTagForPrompt, SegmentTagTierAverage } from "./script-segment-tag-metrics";
 
 /**
  * Shared meditation script generation prompt used by the real create flow
@@ -107,7 +105,10 @@ export function buildMeditationScriptGenerationPrompt(params: {
       "Before writing `custom: true` generic text, check the **full eligible tag library** above — any tag that covers the same idea, not only tags with an obvious topical match to the current beat.",
       "If a custom passage mixes personalized content with a generic aside (reassurance, pacing, transition) that carries no personalization, split the aside into its own tag beat and keep the personalized remainder as a separate `content` beat. Example: a body-scan intro ending with \"There's no rush—just notice what's there\" → custom `content` for \"Now I'm going to invite your attention to slowly move through your body…\" then `{ beatType: \"pace_reassurance\", custom: false, tag: \"PACE_REASSURANCE\" }` for the aside — not embedded inside the custom text.",
       "Do not over-fragment. Never split personalized phrases or load-bearing lines that would not make sense on their own. One blended custom beat is valid — e.g. for \"sitting under a tree\", `{ beatType: \"settle_opener\", custom: true, text: \"Notice you're sitting beneath a tree — let that place hold you for these next few minutes.\" }` needs no separate SETTLE_OPENER tag beat afterward.",
-      "Never produce two beats with the same functional beatType (except `content` and `pause`, which may repeat).",
+      "Follow the **Segment library — selection rules** and per-tag **Repeatability**, **Description**, and **Phase** lines in the catalog above.",
+      "Singular tags: at most once — a second mention of the same subject area must be custom text, not the same tag again. Connective tags may repeat for pacing.",
+      "Before selecting any tag, read its Description; skip tags whose stated boundary conditions apply to this script (e.g. defer BODY_SCAN_SPINE_BACK when lower-back personalization already dominates).",
+      "Respect phase rules: SETTLE_OPENER and BREATH_OPENER only in opening; BODY_SCAN_* only after a body-tour intro beat; CLOSE_* only in closing.",
       "Use `{ beatType: \"content\", custom: true, text: \"…\" }` for main personalized practice material (may repeat).",
       "Use `{ beatType: \"pause\", pauseBand: \"medium\" }` for standalone structural silences between beats; use inline `[[PAUSE …]]` inside a custom beat's text only for shorter pauses within one flowing narration.",
       "Pause bands: extra-short, short, medium, long, extra-long (same vocabulary as [[PAUSE …]] rules above).",
@@ -142,6 +143,16 @@ export function buildMeditationScriptGenerationPrompt(params: {
     }),
   );
 
+  if (params.includeSegmentPlaceholders && params.segmentTags?.length) {
+    userParts.push(
+      scriptLabSegmentDurationBudgetAppendix({
+        targetMinutes: params.targetMinutes,
+        speechSpeed: params.speechSpeed,
+        wordTargets: words,
+      }),
+    );
+  }
+
   const systemParts = [
     "You are an expert meditation scriptwriter for medimade.io.",
     "You write speakable, production-ready guided meditation scripts.",
@@ -155,7 +166,7 @@ export function buildMeditationScriptGenerationPrompt(params: {
 
   if (params.includeSegmentPlaceholders) {
     systemParts.push(
-      "For Script Lab you output structured beats (not inline [[SEG:…]] prose). Personalization wins: keep user-specific wording custom. For generic wording only, prefer library tags after checking the full eligible list; split swappable asides into tag beats without over-fragmenting personalized passages. Never duplicate functional beatTypes (except content and pause).",
+      "For Script Lab you output structured beats (not inline [[SEG:…]] prose). Personalization wins: keep user-specific wording custom. For generic wording, prefer library tags after reading each tag's Description, Repeatability, and Phase in the catalog. Singular tags at most once; connective tags may repeat. Respect opening / body-tour / closing phase rules.",
     );
   }
 

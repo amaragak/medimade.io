@@ -93,12 +93,17 @@ function rowClassName(isDuplicate: boolean, isCorrected: boolean): string {
 
 export function ScriptLabBeatsPreview({
   beats,
+  tagRepeatabilityByName,
   correctedBeatIndices,
 }: {
   beats: ScriptLabBeat[];
+  tagRepeatabilityByName?: Record<string, import("@/lib/script-segment-tags").ScriptSegmentRepeatability>;
   correctedBeatIndices?: Set<number>;
 }) {
-  const duplicateIndices = useMemo(() => duplicateBeatTypeIndexSet(beats), [beats]);
+  const duplicateIndices = useMemo(
+    () => duplicateBeatTypeIndexSet(beats, tagRepeatabilityByName),
+    [beats, tagRepeatabilityByName],
+  );
 
   return (
     <ol className="space-y-2">

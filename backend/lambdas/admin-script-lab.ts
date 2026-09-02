@@ -22,7 +22,9 @@ import {
   type ScriptSegmentTagRow,
   type ScriptSegmentVariantRow,
 } from "../lib/script-segment-library";
+import { buildSegmentTagsForGenerationPrompt } from "../lib/script-segment-tag-metrics";
 import { runScriptSegmentImport } from "../lib/script-segment-import";
+import { runSegmentMetadataImport } from "../lib/script-segment-metadata-import";
 import {
   deleteConstraintVocabularyTag,
   listConstraintVocabulary,
@@ -152,6 +154,12 @@ async function handlePatch(event: APIGatewayProxyEventV2) {
             : undefined,
       types: t.types as string[] | undefined,
       lengthTiered: typeof t.lengthTiered === "boolean" ? t.lengthTiered : undefined,
+      repeatability:
+        t.repeatability === "connective" || t.repeatability === "singular"
+          ? t.repeatability
+          : undefined,
+      description:
+        typeof t.description === "string" ? t.description.trim().slice(0, 4000) : undefined,
     });
   }
 
@@ -247,6 +255,16 @@ async function handlePost(event: APIGatewayProxyEventV2) {
     return json(200, { ok: true, summary: result.result });
   }
 
+  if (action === "import-tag-metadata") {
+    const importPayload =
+      body.payload !== undefined ? body.payload : body.metadata !== undefined ? body.metadata : body;
+    const result = await runSegmentMetadataImport(importPayload);
+    if (!result.ok) {
+      return json(400, { error: "Metadata import validation failed", errors: result.errors });
+    }
+    return json(200, { ok: true, summary: result.result });
+  }
+
   return json(400, { error: `Unknown action ${action}` });
 }
 
@@ -272,17 +290,14 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       : "General";
 
   const library = await listAllScriptSegmentLibrary();
-  const segmentTags = library.tags.map((t) => ({
-    name: t.name,
-    scope: t.scope,
-    types: t.types,
-    sampleVariants: (library.variantsByTag[t.name] ?? [])
-      .slice(0, 2)
-      .map((v) => v.text),
-  }));
+  const segmentTags = buildSegmentTagsForGenerationPrompt({
+    tags: library.tags,
+    variantsByTag: library.variantsByTag,
+  });
   const verificationTagVariants = library.tags
     .map((t) => ({
       name: t.name,
+      repeatability: t.repeatability,
       variants: (library.variantsByTag[t.name] ?? []).map((v) => ({
         variantId: v.variantId,
         text: v.text,

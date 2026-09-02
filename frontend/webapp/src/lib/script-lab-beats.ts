@@ -1,5 +1,12 @@
 /** Client mirror of backend/lib/script-lab-beats.ts */
 
+import {
+  CONNECTIVE_SEGMENT_TAGS,
+  inferDefaultSegmentRepeatability,
+  normalizeScriptSegmentTag,
+  type ScriptSegmentRepeatability,
+} from "@/lib/script-segment-tags";
+
 export type ScriptLabBeat = {
   beatType: string;
   custom: boolean;
@@ -10,6 +17,8 @@ export type ScriptLabBeat = {
 
 export type ScriptLabBeatDuplicateWarning = {
   beatType: string;
+  tag?: string;
+  reason: "tag" | "beatType";
   instances: Array<{
     index: number;
     custom: boolean;
@@ -164,51 +173,112 @@ export function formatBeatWarning(w: ScriptLabBeatDuplicateWarning): string {
     }
     return `${prefix} (tag): ${inst.tag ?? "?"}`;
   });
-  return `Duplicate beatType "${w.beatType}" — ${lines.join(" · ")}`;
+  if (w.reason === "tag" && w.tag) {
+    return `Duplicate singular tag "${w.tag}" — ${lines.join(" · ")}`;
+  }
+  return `Duplicate singular beatType "${w.beatType}" — ${lines.join(" · ")}`;
 }
 
-const BEAT_TYPE_EXEMPT_FROM_DUPLICATE_CHECK = new Set(["content", "pause"]);
+const EXEMPT_BEAT_TYPES = new Set(["content", "pause"]);
+
+function normalizeBeatType(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "");
+}
+
+const CONNECTIVE_BEAT_TYPES = new Set(
+  [...CONNECTIVE_SEGMENT_TAGS].map((t) => normalizeBeatType(t)),
+);
+
+export function buildTagRepeatabilityMap(
+  tags: Array<{ name: string; repeatability?: ScriptSegmentRepeatability }>,
+): Record<string, ScriptSegmentRepeatability> {
+  const out: Record<string, ScriptSegmentRepeatability> = {};
+  for (const t of tags) {
+    const name = normalizeScriptSegmentTag(t.name);
+    out[name] = t.repeatability ?? inferDefaultSegmentRepeatability(name);
+  }
+  return out;
+}
+
+function repeatabilityForBeat(
+  beat: ScriptLabBeat,
+  tagRepeatabilityByName?: Record<string, ScriptSegmentRepeatability>,
+): ScriptSegmentRepeatability | "exempt" {
+  if (EXEMPT_BEAT_TYPES.has(beat.beatType)) return "exempt";
+  if (!beat.custom && beat.tag) {
+    const tag = normalizeScriptSegmentTag(beat.tag);
+    return tagRepeatabilityByName?.[tag] ?? inferDefaultSegmentRepeatability(tag);
+  }
+  const bt = normalizeBeatType(beat.beatType);
+  if (CONNECTIVE_BEAT_TYPES.has(bt)) return "connective";
+  return "singular";
+}
 
 export function findDuplicateBeatTypeWarnings(
   beats: ScriptLabBeat[],
+  tagRepeatabilityByName?: Record<string, ScriptSegmentRepeatability>,
 ): ScriptLabBeatDuplicateWarning[] {
-  const byType = new Map<string, ScriptLabBeatDuplicateWarning["instances"]>();
+  const warnings: ScriptLabBeatDuplicateWarning[] = [];
+
+  const byTag = new Map<string, ScriptLabBeatDuplicateWarning["instances"]>();
   beats.forEach((beat, index) => {
-    if (BEAT_TYPE_EXEMPT_FROM_DUPLICATE_CHECK.has(beat.beatType)) return;
-    const list = byType.get(beat.beatType) ?? [];
+    if (beat.custom || !beat.tag) return;
+    const tag = normalizeScriptSegmentTag(beat.tag);
+    if (repeatabilityForBeat(beat, tagRepeatabilityByName) !== "singular") return;
+    const list = byTag.get(tag) ?? [];
+    list.push({ index, custom: beat.custom, tag });
+    byTag.set(tag, list);
+  });
+
+  for (const [tag, instances] of byTag) {
+    if (instances.length > 1) {
+      warnings.push({
+        beatType: normalizeBeatType(tag),
+        tag,
+        reason: "tag",
+        instances,
+      });
+    }
+  }
+
+  const byBeatType = new Map<string, ScriptLabBeatDuplicateWarning["instances"]>();
+  beats.forEach((beat, index) => {
+    if (repeatabilityForBeat(beat, tagRepeatabilityByName) !== "singular") return;
+    const list = byBeatType.get(beat.beatType) ?? [];
     list.push({
       index,
       custom: beat.custom,
       ...(beat.tag ? { tag: beat.tag } : {}),
       ...(beat.text ? { text: beat.text } : {}),
     });
-    byType.set(beat.beatType, list);
+    byBeatType.set(beat.beatType, list);
   });
 
-  const warnings: ScriptLabBeatDuplicateWarning[] = [];
-  for (const [beatType, instances] of byType) {
-    if (instances.length > 1) {
-      warnings.push({ beatType, instances });
-    }
+  for (const [beatType, instances] of byBeatType) {
+    if (instances.length <= 1) continue;
+    const tagIndices = new Set(
+      warnings.filter((w) => w.reason === "tag").flatMap((w) => w.instances.map((x) => x.index)),
+    );
+    if (instances.every((inst) => tagIndices.has(inst.index))) continue;
+    warnings.push({ beatType, reason: "beatType", instances });
   }
-  warnings.sort((a, b) => a.beatType.localeCompare(b.beatType));
+
+  warnings.sort((a, b) => (a.tag ?? a.beatType).localeCompare(b.tag ?? b.beatType));
   return warnings;
 }
 
-/** Beat indices whose functional beatType appears more than once (excluding content/pause). */
-export function duplicateBeatTypeIndexSet(beats: ScriptLabBeat[]): Set<number> {
-  const byType = new Map<string, number[]>();
-  beats.forEach((beat, index) => {
-    if (BEAT_TYPE_EXEMPT_FROM_DUPLICATE_CHECK.has(beat.beatType)) return;
-    const list = byType.get(beat.beatType) ?? [];
-    list.push(index);
-    byType.set(beat.beatType, list);
-  });
+export function duplicateBeatTypeIndexSet(
+  beats: ScriptLabBeat[],
+  tagRepeatabilityByName?: Record<string, ScriptSegmentRepeatability>,
+): Set<number> {
   const dupes = new Set<number>();
-  for (const indices of byType.values()) {
-    if (indices.length > 1) {
-      for (const i of indices) dupes.add(i);
-    }
+  for (const w of findDuplicateBeatTypeWarnings(beats, tagRepeatabilityByName)) {
+    for (const inst of w.instances) dupes.add(inst.index);
   }
   return dupes;
 }

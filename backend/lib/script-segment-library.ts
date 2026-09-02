@@ -10,7 +10,10 @@ import {
 import {
   isValidScriptSegmentTag,
   normalizeScriptSegmentTag,
+  coerceStoredSegmentRepeatability,
+  effectiveSegmentRepeatability,
   type ScriptLengthTier,
+  type ScriptSegmentRepeatability,
   type ScriptSegmentScope,
 } from "./script-segment-tags";
 import { coerceConstraintTagList } from "./script-constraint-tags";
@@ -52,6 +55,9 @@ export type ScriptSegmentDocument = {
   scope: ScriptSegmentScope;
   types: string[];
   lengthTiered: boolean;
+  /** Null until explicitly set via admin or import. */
+  repeatability: ScriptSegmentRepeatability | null;
+  description: string;
   variants: ScriptSegmentVariant[];
   createdAt: string;
   updatedAt: string;
@@ -63,6 +69,10 @@ export type ScriptSegmentTagRow = {
   scope: ScriptSegmentScope;
   types: string[];
   lengthTiered: boolean;
+  /** Effective repeatability (stored value or inferred default). */
+  repeatability: ScriptSegmentRepeatability;
+  repeatabilityExplicit: boolean;
+  description: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -228,6 +238,9 @@ function documentFromItem(item: Record<string, unknown>): ScriptSegmentDocument 
     scope: coerceScope(item.scope),
     types: coerceTypes(item.types),
     lengthTiered: item.lengthTiered === true,
+    repeatability: coerceStoredSegmentRepeatability(item.repeatability),
+    description:
+      typeof item.description === "string" ? item.description.trim().slice(0, 4000) : "",
     variants,
     createdAt: String(item.createdAt ?? new Date().toISOString()),
     updatedAt: String(item.updatedAt ?? new Date().toISOString()),
@@ -242,6 +255,8 @@ function documentToItem(doc: ScriptSegmentDocument): Record<string, unknown> {
     scope: doc.scope,
     types: doc.types,
     lengthTiered: doc.lengthTiered,
+    repeatability: doc.repeatability,
+    description: doc.description,
     variants: doc.variants,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
@@ -266,6 +281,12 @@ function flattenDocument(doc: ScriptSegmentDocument): {
     scope: doc.scope,
     types: doc.types,
     lengthTiered: doc.lengthTiered,
+    repeatability: effectiveSegmentRepeatability({
+      tag: doc.tag,
+      repeatability: doc.repeatability,
+    }),
+    repeatabilityExplicit: doc.repeatability !== null,
+    description: doc.description,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -297,7 +318,7 @@ function flattenDocument(doc: ScriptSegmentDocument): {
   return { tag, variants, audioByVariantKey };
 }
 
-async function getScriptSegmentDocument(tagName: string): Promise<ScriptSegmentDocument | null> {
+export async function getScriptSegmentDocument(tagName: string): Promise<ScriptSegmentDocument | null> {
   const TableName = requireTable();
   const name = normalizeScriptSegmentTag(tagName);
   const res = await ddb.send(
@@ -403,6 +424,9 @@ async function migrateLegacySegmentsIfNeeded(): Promise<void> {
       scope: coerceScope(item.scope),
       types: coerceTypes(item.types),
       lengthTiered: false,
+      repeatability: coerceStoredSegmentRepeatability(item.repeatability),
+      description:
+        typeof item.description === "string" ? item.description.trim().slice(0, 4000) : "",
       variants: (variantsByTag.get(name) ?? []).sort(
         (a, b) => a.sort - b.sort || a.createdAt.localeCompare(b.createdAt),
       ),
@@ -473,6 +497,14 @@ async function backfillVariantConstraintFieldsIfNeeded(
   }
 }
 
+/** One-time backfill: persist repeatability on segment documents missing the field. */
+async function backfillRepeatabilityIfNeeded(
+  _items: Record<string, unknown>[],
+  _docs: ScriptSegmentDocument[],
+): Promise<void> {
+  // Intentionally no-op: repeatability stays unset until authored in Script Lab properties.
+}
+
 export async function listScriptSegmentDocuments(): Promise<ScriptSegmentDocument[]> {
   await migrateLegacySegmentsIfNeeded();
   const items = await queryAllPk(SCRIPT_SEGMENT_PK);
@@ -483,6 +515,7 @@ export async function listScriptSegmentDocuments(): Promise<ScriptSegmentDocumen
   }
   out.sort((a, b) => a.tag.localeCompare(b.tag));
   await backfillVariantConstraintFieldsIfNeeded(items, out);
+  await backfillRepeatabilityIfNeeded(items, out);
   return out;
 }
 
@@ -522,6 +555,8 @@ export async function putScriptSegmentTag(params: {
   scope?: ScriptSegmentScope;
   types?: string[];
   lengthTiered?: boolean;
+  repeatability?: ScriptSegmentRepeatability;
+  description?: string;
 }): Promise<ScriptSegmentTagRow> {
   const name = normalizeScriptSegmentTag(params.name);
   if (!isValidScriptSegmentTag(name)) {
@@ -535,11 +570,21 @@ export async function putScriptSegmentTag(params: {
   if (scope === "types" && types.length === 0) {
     throw new Error("Type-restricted tags need at least one meditation type.");
   }
+  const repeatability =
+    params.repeatability === "connective" || params.repeatability === "singular"
+      ? params.repeatability
+      : (existing?.repeatability ?? null);
+  const description =
+    params.description !== undefined
+      ? params.description.trim().slice(0, 4000)
+      : (existing?.description ?? "");
   const doc: ScriptSegmentDocument = {
     tag: name,
     scope,
     types,
     lengthTiered: params.lengthTiered ?? existing?.lengthTiered ?? false,
+    repeatability,
+    description,
     variants: existing?.variants ?? [],
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -686,6 +731,8 @@ export type ScriptSegmentExportPayload = {
     scope: "general" | "restricted";
     types: string[];
     lengthTiered: boolean;
+    repeatability?: ScriptSegmentRepeatability;
+    description?: string;
     variants: Array<{
       id: string;
       text: string;
@@ -704,6 +751,8 @@ export async function exportScriptSegmentLibrary(): Promise<ScriptSegmentExportP
       scope: doc.scope === "types" ? "restricted" : "general",
       types: doc.types,
       lengthTiered: doc.lengthTiered,
+      ...(doc.repeatability ? { repeatability: doc.repeatability } : {}),
+      ...(doc.description.trim() ? { description: doc.description } : {}),
       variants: doc.variants.map((v) => ({
         id: v.id,
         text: v.text,
@@ -739,6 +788,8 @@ export async function importScriptSegments(
     scope: ScriptSegmentScope;
     types: string[];
     lengthTiered: boolean;
+    repeatability?: ScriptSegmentRepeatability;
+    description?: string;
     variants: Array<{
       id?: string;
       text: string;
@@ -771,11 +822,22 @@ export async function importScriptSegments(
       throw new Error(`Tag ${tagName}: restricted scope requires at least one type.`);
     }
 
+    const repeatability =
+      seg.repeatability === "connective" || seg.repeatability === "singular"
+        ? seg.repeatability
+        : (existing?.repeatability ?? null);
+    const description =
+      typeof seg.description === "string"
+        ? seg.description.trim().slice(0, 4000)
+        : (existing?.description ?? "");
+
     const doc: ScriptSegmentDocument = existing ?? {
       tag: tagName,
       scope,
       types,
       lengthTiered: seg.lengthTiered,
+      repeatability,
+      description,
       variants: [],
       createdAt: now,
       updatedAt: now,
@@ -786,12 +848,16 @@ export async function importScriptSegments(
       if (
         doc.scope !== scope ||
         !arraysEqual(doc.types, types) ||
-        doc.lengthTiered !== seg.lengthTiered
+        doc.lengthTiered !== seg.lengthTiered ||
+        doc.repeatability !== repeatability ||
+        doc.description !== description
       ) {
         tagMetaChanged = true;
         doc.scope = scope;
         doc.types = types;
         doc.lengthTiered = seg.lengthTiered;
+        doc.repeatability = repeatability;
+        doc.description = description;
       }
     } else {
       tagsCreated += 1;

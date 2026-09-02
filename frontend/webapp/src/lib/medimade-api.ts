@@ -1890,11 +1890,16 @@ export type ScriptLabScope = "general" | "types";
 
 export type ScriptLabLengthTier = "short" | "medium" | "long";
 
+export type ScriptLabRepeatability = "connective" | "singular";
+
 export type ScriptLabTag = {
   name: string;
   scope: ScriptLabScope;
   types: string[];
   lengthTiered: boolean;
+  repeatability: ScriptLabRepeatability;
+  repeatabilityExplicit: boolean;
+  description: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -1952,6 +1957,12 @@ export async function listAdminScriptLab(): Promise<ScriptLabState> {
     tags: (data.tags ?? []).map((t) => ({
       ...t,
       lengthTiered: t.lengthTiered === true,
+      repeatability:
+        t.repeatability === "connective" || t.repeatability === "singular"
+          ? t.repeatability
+          : "singular",
+      repeatabilityExplicit: t.repeatabilityExplicit === true,
+      description: typeof t.description === "string" ? t.description : "",
     })),
     variantsByTag: Object.fromEntries(
       Object.entries(data.variantsByTag ?? {}).map(([tag, variants]) => [
@@ -1974,6 +1985,8 @@ export async function patchAdminScriptLab(body: {
     scope?: ScriptLabScope;
     types?: string[];
     lengthTiered?: boolean;
+    repeatability?: ScriptLabRepeatability;
+    description?: string;
   };
   variant?: {
     tagName: string;
@@ -2016,6 +2029,38 @@ export async function exportAdminScriptLab(): Promise<{ segments: unknown[] }> {
   const data = (await res.json()) as { segments?: unknown[]; error?: string; detail?: string };
   if (!res.ok) throw new Error(data.detail ?? data.error ?? res.statusText);
   return { segments: data.segments ?? [] };
+}
+
+export async function importAdminScriptLabTagMetadata(
+  payload: unknown,
+): Promise<{
+  summary: { tagsCreated: number; tagsUpdated: number; tagNames: string[] };
+}> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/script-lab`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ action: "import-tag-metadata", payload }),
+  });
+  const data = (await res.json()) as {
+    summary?: { tagsCreated: number; tagsUpdated: number; tagNames: string[] };
+    errors?: Array<{ path: string; message: string }>;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    if (Array.isArray(data.errors) && data.errors.length > 0) {
+      const err = new Error("Metadata import validation failed") as Error & {
+        importErrors?: Array<{ path: string; message: string }>;
+      };
+      err.importErrors = data.errors;
+      throw err;
+    }
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  if (!data.summary) throw new Error("Metadata import returned no summary");
+  return { summary: data.summary };
 }
 
 export async function postAdminScriptLab(

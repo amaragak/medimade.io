@@ -1,4 +1,6 @@
 /** Placeholder the script writer inserts; rendered from the segment library. */
+import { formatSegmentTagMetricsForPrompt } from "./script-segment-tag-metrics";
+
 export const SCRIPT_SEGMENT_TAG_RE = /\[\[SEG:([A-Z][A-Z0-9_]*)\]\]/g;
 
 export function normalizeScriptSegmentTag(raw: string): string {
@@ -30,6 +32,20 @@ export function listScriptSegmentTagsInText(script: string): string[] {
 }
 
 export type ScriptSegmentScope = "general" | "types";
+
+export type ScriptSegmentRepeatability = "connective" | "singular";
+
+/** Tags expected to repeat for pacing/transitions — not subject to singular duplicate rules. */
+export const CONNECTIVE_SEGMENT_TAGS = new Set<string>([
+  "BREATH_TRANSITION",
+  "PACE_REASSURANCE",
+  "PRE_PAUSE_BRIDGE",
+  "POST_PAUSE_CONTINUE",
+  "WANDERING_ACK",
+  "SOFT_AFFIRMATION",
+  "BODY_RELAX",
+  "BODY_SOFTEN_CUE",
+]);
 
 export type ScriptLengthTier = "short" | "medium" | "long";
 
@@ -77,6 +93,139 @@ export function segmentTagPrefersLengthTierBias(
   return bt.startsWith("body_scan_");
 }
 
+/** Default repeatability when not stored on the segment document. */
+export function inferDefaultSegmentRepeatability(tagName: string): ScriptSegmentRepeatability {
+  const tag = normalizeScriptSegmentTag(tagName);
+  if (CONNECTIVE_SEGMENT_TAGS.has(tag)) return "connective";
+  if (tag.startsWith("BODY_SCAN_") || tag.startsWith("CLOSE_") || tag === "SETTLE_OPENER") {
+    return "singular";
+  }
+  return "singular";
+}
+
+/** Stored repeatability when set; otherwise inferred default for generation/verification. */
+export function effectiveSegmentRepeatability(params: {
+  tag: string;
+  repeatability: ScriptSegmentRepeatability | null | undefined;
+}): ScriptSegmentRepeatability {
+  if (params.repeatability === "connective" || params.repeatability === "singular") {
+    return params.repeatability;
+  }
+  return inferDefaultSegmentRepeatability(params.tag);
+}
+
+export function coerceSegmentRepeatability(
+  raw: unknown,
+  tagName: string,
+): ScriptSegmentRepeatability {
+  if (raw === "connective" || raw === "singular") return raw;
+  return inferDefaultSegmentRepeatability(tagName);
+}
+
+export function coerceStoredSegmentRepeatability(
+  raw: unknown,
+): ScriptSegmentRepeatability | null {
+  if (raw === "connective" || raw === "singular") return raw;
+  return null;
+}
+
+export function repeatabilityLabel(repeatability: ScriptSegmentRepeatability): string {
+  return repeatability === "connective" ? "connective" : "singular";
+}
+
+export function repeatabilityPromptLine(
+  repeatability: ScriptSegmentRepeatability,
+): string {
+  return repeatability === "connective"
+    ? "connective — may repeat freely wherever pacing needs it"
+    : "singular — use at most once per script";
+}
+
+/** Opening / closing / body-tour phase hints for generation prompt ordering rules. */
+export function segmentTagPhaseHint(tagName: string): "opening" | "body_tour" | "closing" | null {
+  const tag = normalizeScriptSegmentTag(tagName);
+  if (tag === "SETTLE_OPENER" || tag === "BREATH_OPENER") return "opening";
+  if (tag.startsWith("CLOSE_")) return "closing";
+  if (tag.startsWith("BODY_SCAN_")) return "body_tour";
+  return null;
+}
+
+export function scriptSegmentSelectionRulesBlock(): string {
+  return [
+    "### Segment library — selection rules",
+    "",
+    "**Repeatability**",
+    "- **Singular tags:** select and use **at most once** per script, regardless of how many variants exist. If the same subject area needs coverage again (e.g. a closing callback to a personalized body region), write that second mention as **custom text**, not a second use of the same tag.",
+    "- **Connective tags** (BREATH_TRANSITION, PACE_REASSURANCE, PRE_PAUSE_BRIDGE, POST_PAUSE_CONTINUE, BODY_RELAX, SOFT_AFFIRMATION, WANDERING_ACK, BODY_SOFTEN_CUE, etc.): may repeat freely wherever they serve pacing naturally.",
+    "",
+    "**Description / boundaries**",
+    "- Before selecting a tag, read its **Description** in the catalog below.",
+    "- If the description states a skip or defer condition (e.g. BODY_SCAN_SPINE_BACK when personalized focus is already a specific back sub-region), **do not select that tag** when the condition applies — prefer the more specific tag or custom personalized text instead.",
+    "- Do not infer boundaries from variant wording alone; the Description field is authoritative.",
+    "",
+    "**Phase / ordering**",
+    "- **Opening / settling only:** SETTLE_OPENER, BREATH_OPENER — never mid-script or in closing.",
+    "- **Body tour only:** BODY_SCAN_* tags — only within the body-tour section, **after** an explicit custom beat that introduces the body tour (e.g. inviting attention to move through the body). Never in settling or closing.",
+    "- **Closing only:** CLOSE_DEEPEN_BREATH, CLOSE_SENSORY_RETURN, CLOSE_EYES_OPEN, CLOSE_SENDOFF — only in the closing section, never mid-script.",
+  ].join("\n");
+}
+
+function formatStructuredTagCatalogEntry(params: {
+  tag: {
+    name: string;
+    scope: ScriptSegmentScope;
+    types: string[];
+    description?: string;
+    repeatability?: ScriptSegmentRepeatability;
+    sampleVariants: string[];
+    tierAverages?: Array<{
+      tier: ScriptLengthTier | "all";
+      avgWordCount: number;
+      avgSyllableCount: number;
+      variantCount: number;
+    }>;
+  };
+  meditationType?: string | null;
+}): string[] {
+  const { tag: t, meditationType } = params;
+  const rep = t.repeatability ?? inferDefaultSegmentRepeatability(t.name);
+  const typeMatch = typesMatchMeditationType(t.types, meditationType);
+  const scopeLine =
+    t.scope === "general"
+      ? "Scope: general (any meditation type)"
+      : typeMatch
+        ? `Scope: type-restricted — preferred for ${t.types.join(", ")}`
+        : t.types.length > 0
+          ? `Scope: type-restricted — ${t.types.join(", ")} (still available when appropriate)`
+          : "Scope: type-restricted";
+  const phase = segmentTagPhaseHint(t.name);
+  const phaseLine = phase
+    ? `Phase: ${phase === "opening" ? "opening / settling only" : phase === "closing" ? "closing section only" : "body-tour section only (after tour intro)"}`
+    : null;
+
+  const lines = [`### ${t.name}`, scopeLine];
+  if (phaseLine) lines.push(phaseLine);
+  lines.push(`Repeatability: ${repeatabilityPromptLine(rep)}`);
+  const desc = t.description?.trim();
+  if (desc) {
+    lines.push(`Description: ${desc}`);
+  }
+  if (t.sampleVariants.length > 0) {
+    const variantPreviews = t.sampleVariants.slice(0, 2).map((v) => {
+      const preview = v.trim().slice(0, 100);
+      return `"${preview}${v.length > 100 ? "…" : ""}"`;
+    });
+    lines.push(`Variants: ${variantPreviews.join(" / ")}`);
+  }
+  const metricsLine = formatSegmentTagMetricsForPrompt({
+    name: t.name,
+    tierAverages: t.tierAverages ?? [],
+  });
+  if (metricsLine) lines.push(metricsLine.trim());
+  lines.push("");
+  return lines;
+}
+
 /** Normalize meditation type labels for comparison (case, space, underscore insensitive). */
 export function normalizeMeditationTypeKey(raw: string): string {
   return raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
@@ -116,7 +265,15 @@ export function scriptSegmentLibraryPromptBlock(params: {
     name: string;
     scope: ScriptSegmentScope;
     types: string[];
+    description?: string;
+    repeatability?: ScriptSegmentRepeatability;
     sampleVariants: string[];
+    tierAverages?: Array<{
+      tier: ScriptLengthTier | "all";
+      avgWordCount: number;
+      avgSyllableCount: number;
+      variantCount: number;
+    }>;
   }>;
   meditationType?: string | null;
   /** When true, describe tags for structured beat output (custom: false) instead of [[SEG:…]] markers. */
@@ -143,14 +300,15 @@ export function scriptSegmentLibraryPromptBlock(params: {
   const lines = structuredBeats
     ? [
         "### Reusable script segments (library)",
-        "**Personalization wins by default.** These rules are not about maximizing tag usage — they catch genuinely generic custom text with no personalization signal. Test: does the text reference anything specific to this user's input (their situation, words, journal details)? If yes, keep it custom — do not replace or split it even if it resembles a tag. If no — it would read identically for any user — it may belong in a tag.",
+        "**Personalization wins by default.** Keep text custom when it references this user's specific input. Only use library tags for wording that would read identically for any user.",
         "Fulfill a beat with `{ custom: false, tag: \"TAG_NAME\", beatType: \"…\" }`. Match beatType to the tag's functional role (e.g. SETTLE_OPENER → settle_opener).",
-        "Before writing `custom: true` generic wording, scan **every tag below** — not only tags with an obvious topical link to the current moment. A body-scan passage may match BREATH_TRANSITION, BODY_RELAX, or PACE_REASSURANCE even when the requested style differs. Tags labeled with meditation types are **preferred** when that type matches — they are still available for any script.",
-        "When custom prose embeds a generic aside (reassurance, pacing, transition language) with no personalization of its own, split that aside into its own tag beat; leave the personalized remainder as custom content. Do not over-fragment — never split phrases referencing this user's input, or load-bearing lines that would not make sense standalone.",
-        "One blended custom beat is fine when personalization and a functional role belong together (e.g. settle_opener weaving \"sitting under a tree\" into settling language) — as long as you do not also add a second beat of that same beatType later.",
-        "Never duplicate the same functional beatType (except content and pause). Do not fulfill one beatType with both custom and tag.",
+        "Before writing `custom: true` generic wording, scan **every tag in the catalog below** — not only tags with an obvious topical link.",
+        "When custom prose embeds a generic aside with no personalization, split that aside into its own tag beat; keep personalized remainder custom. Do not over-fragment personalized lines.",
         "",
-        "Eligible tags for this run (all library tags — type labels are preference hints, not restrictions):",
+        scriptSegmentSelectionRulesBlock(),
+        "",
+        "### Segment tag catalog",
+        "",
       ]
     : [
         "### Reusable script segments (library)",
@@ -160,21 +318,41 @@ export function scriptSegmentLibraryPromptBlock(params: {
         "Eligible tags for this run (all library tags — type labels are preference hints, not restrictions):",
       ];
 
-  for (const t of sortedTags) {
-    const typeMatch = typesMatchMeditationType(t.types, meditationType);
-    const scopeLabel =
-      t.scope === "general"
-        ? "General"
-        : typeMatch
-          ? `Preferred for: ${t.types.join(", ")}`
-          : t.types.length > 0
-            ? `Types: ${t.types.join(", ")} (available for any meditation)`
-            : "Types (none set)";
-    lines.push(`- **${t.name}** (${scopeLabel})`);
-    if (t.sampleVariants.length > 0) {
-      lines.push(
-        `  Example variant: "${t.sampleVariants[0].slice(0, 120)}${t.sampleVariants[0].length > 120 ? "…" : ""}"`,
-      );
+  if (structuredBeats) {
+    for (const t of sortedTags) {
+      lines.push(...formatStructuredTagCatalogEntry({ tag: t, meditationType }));
+    }
+    if (lines[lines.length - 1] === "") lines.pop();
+  } else {
+    for (const t of sortedTags) {
+      const typeMatch = typesMatchMeditationType(t.types, meditationType);
+      const rep =
+        t.repeatability ?? inferDefaultSegmentRepeatability(t.name);
+      const repHint =
+        rep === "connective" ? "connective — may repeat" : "singular — at most once";
+      const scopeLabel =
+        t.scope === "general"
+          ? "General"
+          : typeMatch
+            ? `Preferred for: ${t.types.join(", ")}`
+            : t.types.length > 0
+              ? `Types: ${t.types.join(", ")} (available for any meditation)`
+              : "Types (none set)";
+      lines.push(`- **${t.name}** (${scopeLabel}; ${repHint})`);
+      const desc = t.description?.trim();
+      if (desc) {
+        lines.push(`  Description / boundaries: ${desc}`);
+      }
+      const metricsLine = formatSegmentTagMetricsForPrompt({
+        name: t.name,
+        tierAverages: t.tierAverages ?? [],
+      });
+      if (metricsLine) lines.push(metricsLine);
+      if (t.sampleVariants.length > 0) {
+        lines.push(
+          `  Example variant: "${t.sampleVariants[0].slice(0, 120)}${t.sampleVariants[0].length > 120 ? "…" : ""}"`,
+        );
+      }
     }
   }
 

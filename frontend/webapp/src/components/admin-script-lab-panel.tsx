@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   listAdminScriptLab,
   exportAdminScriptLab,
+  importAdminScriptLabTagMetadata,
   patchAdminScriptLab,
   postAdminScriptLab,
   fetchJournalStoreRemote,
@@ -29,6 +30,7 @@ import {
   createSegmentVariantPickerForBeats,
 } from "@/lib/script-segment-variant-select";
 import {
+  buildTagRepeatabilityMap,
   flattenBeatsToPreviewTokens,
   flattenBeatsToCopyText,
   findDuplicateBeatTypeWarnings,
@@ -48,6 +50,7 @@ import {
 import {
   normalizeScriptSegmentTag,
   type ScriptLengthTier,
+  type ScriptSegmentRepeatability,
 } from "@/lib/script-segment-tags";
 import {
   ScriptLabTestFlowPanel,
@@ -58,6 +61,11 @@ import {
   ScriptLabBeatsVerificationToggle,
   type BeatsVerificationView,
 } from "@/components/script-lab-beats-preview";
+import { ScriptLabSegmentPropertiesPanel } from "@/components/script-lab-segment-properties-panel";
+import { AdminPauseLengthsPanel } from "@/components/admin-pause-lengths-panel";
+
+type LibraryTab = "properties" | "variants";
+type SegmentImportMode = "segments" | "metadata";
 
 const MEDITATION_TYPES = SCRIPT_LAB_MEDITATION_TYPES;
 
@@ -101,6 +109,7 @@ export function AdminScriptLabPanel() {
   const [copyNote, setCopyNote] = useState<string | null>(null);
 
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [libraryTab, setLibraryTab] = useState<LibraryTab>("properties");
   const [newTagName, setNewTagName] = useState("");
 
   const [flow, setFlow] = useState<ScriptLabFlow>("by-type");
@@ -119,16 +128,13 @@ export function AdminScriptLabPanel() {
   const [voiceModelId, setVoiceModelId] = useState("");
   const [generateBusy, setGenerateBusy] = useState(false);
 
-  const [scopeDraft, setScopeDraft] = useState<"general" | "types">("general");
-  const [typesDraft, setTypesDraft] = useState<string[]>([]);
-  const [lengthTieredDraft, setLengthTieredDraft] = useState(false);
   const [newVariantText, setNewVariantText] = useState("");
   const [newVariantLengthTier, setNewVariantLengthTier] = useState<ScriptLengthTier>("medium");
-  const [saveTagBusy, setSaveTagBusy] = useState(false);
   const [audioBusyKey, setAudioBusyKey] = useState<string | null>(null);
   const [bulkSpeakerId, setBulkSpeakerId] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [importJson, setImportJson] = useState("");
+  const [importMode, setImportMode] = useState<SegmentImportMode>("metadata");
   const [importBusy, setImportBusy] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
@@ -227,17 +233,28 @@ export function AdminScriptLabPanel() {
     return out;
   }, [state]);
 
+  const tagRepeatabilityByName = useMemo(
+    () => (state ? buildTagRepeatabilityMap(state.tags) : {}),
+    [state],
+  );
+
   const tagMetaByName = useMemo(() => {
     if (!state) return {};
     const out: Record<
       string,
-      { lengthTiered: boolean; scope: "general" | "types"; types: string[] }
+      {
+        lengthTiered: boolean;
+        scope: "general" | "types";
+        types: string[];
+        repeatability: ScriptSegmentRepeatability;
+      }
     > = {};
     for (const tag of state.tags) {
       out[tag.name] = {
         lengthTiered: tag.lengthTiered,
         scope: tag.scope,
         types: tag.types,
+        repeatability: tag.repeatability,
       };
     }
     return out;
@@ -314,10 +331,10 @@ export function AdminScriptLabPanel() {
 
   const activeBeatWarnings = useMemo(() => {
     if (previewMode === "beats" && displayedBeats.length > 0) {
-      return findDuplicateBeatTypeWarnings(displayedBeats);
+      return findDuplicateBeatTypeWarnings(displayedBeats, tagRepeatabilityByName);
     }
     return beatWarnings;
-  }, [previewMode, displayedBeats, beatWarnings]);
+  }, [previewMode, displayedBeats, beatWarnings, tagRepeatabilityByName]);
 
   const correctedBeatIndices = useMemo(
     () => new Set(verificationNewBeatIndices),
@@ -491,40 +508,16 @@ export function AdminScriptLabPanel() {
       setNewTagName("");
       await reload();
       setSelectedTag(name);
+      setLibraryTab("properties");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create tag");
     }
   }
 
-  useEffect(() => {
-    if (!selectedTag || !state) return;
-    const tag = state.tags.find((t) => t.name === selectedTag);
-    if (!tag) return;
-    setScopeDraft(tag.scope);
-    setTypesDraft(tag.types);
-    setLengthTieredDraft(tag.lengthTiered);
-  }, [selectedTag, state]);
-
-  async function saveTagScope() {
-    if (!selectedTag) return;
-    setSaveTagBusy(true);
-    setError(null);
-    try {
-      await patchAdminScriptLab({
-        tag: {
-          name: selectedTag,
-          scope: scopeDraft,
-          types: scopeDraft === "types" ? typesDraft : [],
-          lengthTiered: lengthTieredDraft,
-        },
-      });
-      await reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save tag scope");
-    } finally {
-      setSaveTagBusy(false);
-    }
-  }
+  const selectedTagMeta = useMemo(
+    () => state?.tags.find((t) => t.name === selectedTag) ?? null,
+    [state, selectedTag],
+  );
 
   async function addVariant() {
     if (!selectedTag || !newVariantText.trim()) return;
@@ -694,7 +687,7 @@ export function AdminScriptLabPanel() {
     }
   }
 
-  async function importSegments() {
+  async function runJsonImport() {
     setImportBusy(true);
     setError(null);
     setImportSummary(null);
@@ -705,6 +698,15 @@ export function AdminScriptLabPanel() {
         payload = JSON.parse(importJson);
       } catch {
         throw new Error("Invalid JSON — check syntax and try again.");
+      }
+      if (importMode === "metadata") {
+        const { summary } = await importAdminScriptLabTagMetadata(payload);
+        setImportSummary(
+          `Metadata: ${summary.tagsUpdated} updated, ${summary.tagsCreated} created (${summary.tagNames.length} tags). Variants untouched.`,
+        );
+        setImportJson("");
+        await reload();
+        return;
       }
       const data = await postAdminScriptLab({
         action: "import-segments",
@@ -722,7 +724,20 @@ export function AdminScriptLabPanel() {
       }
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Import failed");
+      const importErrors =
+        e &&
+        typeof e === "object" &&
+        "importErrors" in e &&
+        Array.isArray((e as { importErrors: unknown }).importErrors)
+          ? ((e as { importErrors: Array<{ path: string; message: string }> })
+              .importErrors)
+          : null;
+      if (importErrors?.length) {
+        setImportErrors(importErrors);
+        setError("Import validation failed — see errors below.");
+      } else {
+        setError(e instanceof Error ? e.message : "Import failed");
+      }
     } finally {
       setImportBusy(false);
     }
@@ -792,7 +807,10 @@ export function AdminScriptLabPanel() {
   const selectedVariants = selectedTag ? state?.variantsByTag[selectedTag] ?? [] : [];
 
   return (
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+    <div className="space-y-6">
+      <AdminPauseLengthsPanel />
+
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
       <audio
         ref={previewAudioRef}
         className="hidden"
@@ -842,9 +860,9 @@ export function AdminScriptLabPanel() {
 
           {activeBeatWarnings.length > 0 ? (
             <div className="mt-3 space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-950 dark:text-amber-100">
-              <p className="font-semibold">Duplicate functional beatType detected</p>
+              <p className="font-semibold">Duplicate singular segment detected</p>
               {activeBeatWarnings.map((w) => (
-                <p key={w.beatType}>{formatBeatWarning(w)}</p>
+                <p key={w.tag ?? w.beatType}>{formatBeatWarning(w)}</p>
               ))}
             </div>
           ) : null}
@@ -863,6 +881,7 @@ export function AdminScriptLabPanel() {
             ) : previewMode === "beats" ? (
               <ScriptLabBeatsPreview
                 beats={displayedBeats}
+                tagRepeatabilityByName={tagRepeatabilityByName}
                 correctedBeatIndices={
                   beatsVerificationView === "after" ? correctedBeatIndices : undefined
                 }
@@ -1003,16 +1022,42 @@ export function AdminScriptLabPanel() {
                 Copy export to clipboard
               </button>
             </div>
+            <div className="mt-3 inline-flex rounded-full border border-border bg-background p-0.5 text-xs">
+              {(
+                [
+                  ["metadata", "Tag metadata"],
+                  ["segments", "Segments + variants"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setImportMode(id)}
+                  className={`cursor-pointer rounded-full px-3 py-1 font-medium ${
+                    importMode === id
+                      ? "bg-accent-soft text-accent-link"
+                      : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <p className="mt-2 text-xs text-muted">
-              Export includes variant IDs for edit-in-place re-import. Audio is not included.
-              Import upserts tags by name; variants with an id update in place, variants without id
-              match by exact text or are created fresh.
+              {importMode === "metadata"
+                ? "Metadata only — [{ \"tag\": { \"name\": …, \"description\": … } }]. Updates scope, types, description, repeatability, length-tiered. Never touches variants."
+                : "Full segment import — { \"segments\": [{ \"tag\": \"NAME\", variants: [...] }] }. Upserts tags and variants; audio invalidated when variant text changes."}
             </p>
             <textarea
               value={importJson}
               onChange={(e) => setImportJson(e.target.value)}
               rows={6}
-              placeholder='{"segments":[{"tag":"SETTLE_OPENER","scope":"general","types":[],"lengthTiered":true,"variants":[{"text":"…","lengthTier":"short","requiredConstraints":[],"excludedConstraints":[]}]}]}'
+              spellCheck={false}
+              placeholder={
+                importMode === "metadata"
+                  ? '[{"tag":{"name":"BODY_RELAX","scope":"general","types":[],"lengthTiered":false,"repeatability":"connective","description":"…"}}]'
+                  : '{"segments":[{"tag":"SETTLE_OPENER","scope":"general","types":[],"lengthTiered":true,"variants":[{"text":"…","lengthTier":"short","requiredConstraints":[],"excludedConstraints":[]}]}]}'
+              }
               className="mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 font-mono text-[11px]"
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1028,10 +1073,14 @@ export function AdminScriptLabPanel() {
               <button
                 type="button"
                 disabled={importBusy || !importJson.trim()}
-                onClick={() => void importSegments()}
+                onClick={() => void runJsonImport()}
                 className="cursor-pointer rounded-full bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent-link disabled:opacity-50"
               >
-                {importBusy ? "Importing…" : "Import JSON"}
+                {importBusy
+                  ? "Importing…"
+                  : importMode === "metadata"
+                    ? "Import metadata"
+                    : "Import segments"}
               </button>
             </div>
             {importSummary ? (
@@ -1117,226 +1166,222 @@ export function AdminScriptLabPanel() {
             </p>
           </div>
 
-          <ul className="mt-3 max-h-48 divide-y divide-border overflow-y-auto overscroll-y-contain rounded-xl border border-border">
-            {(state?.tags ?? []).length === 0 ? (
-              <li className="p-4 text-sm text-muted">No segments yet.</li>
-            ) : (
-              (state?.tags ?? []).map((tag) => {
-                const count = state?.variantsByTag[tag.name]?.length ?? 0;
-                const active = selectedTag === tag.name;
-                const coverage = coverageByTag[tag.name];
-                const lowCoverage =
-                  coverage != null && coverage.underThresholdContexts.length > 0;
-                return (
-                  <li key={tag.name}>
-                    <div
-                      className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-sm ${
-                        active ? "bg-accent-soft/40" : "hover:bg-accent-soft/20"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedTag(tag.name);
-                          setCoverageDetailTag(null);
-                        }}
-                        className="min-w-0 flex-1 cursor-pointer text-left"
-                      >
-                        <span className="font-mono text-xs font-semibold">{tag.name}</span>
-                      </button>
-                      <span className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                        {lowCoverage ? (
+          <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3">
+            {(
+              [
+                ["properties", "Segment properties"],
+                ["variants", "Variant editor"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setLibraryTab(id)}
+                className={`cursor-pointer rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                  libraryTab === id
+                    ? "border-accent/50 bg-accent-soft/60 text-accent-link"
+                    : "border-border bg-background text-muted"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {libraryTab === "properties" ? (
+            <ScriptLabSegmentPropertiesPanel
+              tags={state?.tags ?? []}
+              selectedTag={selectedTag}
+              onSelectTag={setSelectedTag}
+              onSaved={reload}
+              onError={setError}
+            />
+          ) : (
+            <>
+              <ul className="mt-3 max-h-48 divide-y divide-border overflow-y-auto overscroll-y-contain rounded-xl border border-border">
+                {(state?.tags ?? []).length === 0 ? (
+                  <li className="p-4 text-sm text-muted">No segments yet.</li>
+                ) : (
+                  (state?.tags ?? []).map((tag) => {
+                    const count = state?.variantsByTag[tag.name]?.length ?? 0;
+                    const active = selectedTag === tag.name;
+                    const coverage = coverageByTag[tag.name];
+                    const lowCoverage =
+                      coverage != null && coverage.underThresholdContexts.length > 0;
+                    return (
+                      <li key={tag.name}>
+                        <div
+                          className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-sm ${
+                            active ? "bg-accent-soft/40" : "hover:bg-accent-soft/20"
+                          }`}
+                        >
                           <button
                             type="button"
                             onClick={() => {
                               setSelectedTag(tag.name);
-                              setCoverageDetailTag(tag.name);
+                              setCoverageDetailTag(null);
                             }}
-                            className="cursor-pointer rounded-full border border-amber-400/60 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
-                            title={`Min eligible: ${coverage?.minEligibleCount ?? 0} (threshold ${coverageThreshold})`}
+                            className="min-w-0 flex-1 cursor-pointer text-left"
                           >
-                            Coverage {coverage?.minEligibleCount ?? 0}/{coverageThreshold}
+                            <span className="font-mono text-xs font-semibold">{tag.name}</span>
                           </button>
-                        ) : coverage != null && count > 0 ? (
-                          <span className="text-[10px] text-muted">
-                            min {coverage.minEligibleCount}
-                          </span>
-                        ) : null}
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                            tag.scope === "general"
-                              ? "border border-accent/30 bg-accent-soft/50 text-accent-link"
-                              : "border border-border bg-background text-muted"
-                          }`}
-                        >
-                          {scopeLabel(tag.scope, tag.types)}
-                        </span>
-                        {tag.lengthTiered ? (
-                          <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted">
-                            Length tiers
-                          </span>
-                        ) : null}
-                        <span className="text-xs text-muted">{count} variants</span>
-                      </span>
-                    </div>
-                    {coverageDetailTag === tag.name && coverage ? (
-                      <div className="border-t border-border bg-background/60 px-4 py-3 text-xs">
-                        <p className="font-medium text-foreground">Coverage by type (default context)</p>
-                        {coverage.underThresholdContexts.length > 0 ? (
-                          <p className="mt-1 text-amber-800 dark:text-amber-200">
-                            Under threshold ({coverageThreshold}):{" "}
-                            {coverage.underThresholdContexts
-                              .map((row) => `${row.label} (${row.eligibleCount})`)
-                              .join(", ")}
-                          </p>
-                        ) : (
-                          <p className="mt-1 text-muted">
-                            All applicable types meet the threshold (min{" "}
-                            {coverage.minEligibleCount}).
-                          </p>
-                        )}
-                        <ul className="mt-2 grid gap-1 sm:grid-cols-2">
-                          {coverage.countsByContext.map((row) => (
-                            <li
-                              key={row.label}
-                              className={
-                                row.eligibleCount < coverageThreshold
-                                  ? "text-amber-800 dark:text-amber-200"
-                                  : "text-muted"
-                              }
-                            >
-                              {row.label}: {row.eligibleCount} eligible
-                              <span className="block font-mono text-[10px] opacity-70">
-                                [{row.contextTags.join(", ")}]
+                          <span className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                            {lowCoverage ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedTag(tag.name);
+                                  setCoverageDetailTag(tag.name);
+                                }}
+                                className="cursor-pointer rounded-full border border-amber-400/60 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                                title={`Min eligible: ${coverage?.minEligibleCount ?? 0} (threshold ${coverageThreshold})`}
+                              >
+                                Coverage {coverage?.minEligibleCount ?? 0}/{coverageThreshold}
+                              </button>
+                            ) : coverage != null && count > 0 ? (
+                              <span className="text-[10px] text-muted">
+                                min {coverage.minEligibleCount}
                               </span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
+                            ) : null}
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                tag.scope === "general"
+                                  ? "border border-accent/30 bg-accent-soft/50 text-accent-link"
+                                  : "border border-border bg-background text-muted"
+                              }`}
+                            >
+                              {scopeLabel(tag.scope, tag.types)}
+                            </span>
+                            {tag.lengthTiered ? (
+                              <span className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted">
+                                Length tiers
+                              </span>
+                            ) : null}
+                            <span className="text-xs text-muted">{count} variants</span>
+                          </span>
+                        </div>
+                        {coverageDetailTag === tag.name && coverage ? (
+                          <div className="border-t border-border bg-background/60 px-4 py-3 text-xs">
+                            <p className="font-medium text-foreground">
+                              Coverage by type (default context)
+                            </p>
+                            {coverage.underThresholdContexts.length > 0 ? (
+                              <p className="mt-1 text-amber-800 dark:text-amber-200">
+                                Under threshold ({coverageThreshold}):{" "}
+                                {coverage.underThresholdContexts
+                                  .map((row) => `${row.label} (${row.eligibleCount})`)
+                                  .join(", ")}
+                              </p>
+                            ) : (
+                              <p className="mt-1 text-muted">
+                                All applicable types meet the threshold (min{" "}
+                                {coverage.minEligibleCount}).
+                              </p>
+                            )}
+                            <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+                              {coverage.countsByContext.map((row) => (
+                                <li
+                                  key={row.label}
+                                  className={
+                                    row.eligibleCount < coverageThreshold
+                                      ? "text-amber-800 dark:text-amber-200"
+                                      : "text-muted"
+                                  }
+                                >
+                                  {row.label}: {row.eligibleCount} eligible
+                                  <span className="block font-mono text-[10px] opacity-70">
+                                    [{row.contextTags.join(", ")}]
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </li>
+                    );
+                  })
+                )}
+              </ul>
+
+              {selectedTag && selectedTagMeta ? (
+                <section className="mt-3 rounded-2xl border border-border bg-card p-4 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="font-display text-lg font-medium">{selectedTag}</h2>
+                    <button
+                      type="button"
+                      onClick={() => setLibraryTab("properties")}
+                      className="cursor-pointer text-xs text-accent-link underline-offset-2 hover:underline"
+                    >
+                      Edit metadata in properties →
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted">
+                    Variant text and TTS only — tag metadata is edited in Segment properties.
+                  </p>
+
+                  <div className="mt-3 space-y-1">
+                    {selectedVariants.map((v) => (
+                      <VariantEditorRow
+                        key={v.variantId}
+                        variant={v}
+                        lengthTiered={selectedTagMeta.lengthTiered}
+                        constraintVocabulary={state?.constraintVocabulary ?? []}
+                        onCreateConstraintTag={(tag) => void addConstraintTag(tag)}
+                        speakers={state?.speakers ?? []}
+                        baseUrl={state?.baseUrl}
+                        audio={state?.audioByVariantKey[`${v.tagName}#${v.variantId}`] ?? []}
+                        audioBusyKey={audioBusyKey}
+                        previewingUrl={previewingUrl}
+                        onSaveText={(text) => void updateVariantText(v, text)}
+                        onSaveLengthTier={(tier) => void updateVariantLengthTier(v, tier)}
+                        onSaveConstraints={(required, excluded) =>
+                          void updateVariantConstraints(v, required, excluded)
+                        }
+                        onDelete={() => void deleteVariant(v)}
+                        onGenerate={(modelId) => void generateAudio(v.tagName, v.variantId, modelId)}
+                        onGenerateAll={() => void generateAllSpeakers(v.tagName, v.variantId)}
+                        onPreview={togglePreview}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <textarea
+                      value={newVariantText}
+                      onChange={(e) => setNewVariantText(e.target.value)}
+                      rows={2}
+                      placeholder="New variant text…"
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                    />
+                    {selectedTagMeta.lengthTiered ? (
+                      <select
+                        value={newVariantLengthTier}
+                        onChange={(e) =>
+                          setNewVariantLengthTier(e.target.value as ScriptLengthTier)
+                        }
+                        className="self-end rounded border border-border bg-background px-2 py-2 text-xs"
+                        aria-label="Length tier for new variant"
+                      >
+                        <option value="short">Short</option>
+                        <option value="medium">Medium</option>
+                        <option value="long">Long</option>
+                      </select>
                     ) : null}
-                  </li>
-                );
-              })
-            )}
-          </ul>
+                    <button
+                      type="button"
+                      onClick={() => void addVariant()}
+                      className="shrink-0 cursor-pointer self-end rounded-full bg-accent-soft px-4 py-2 text-xs font-semibold text-accent-link"
+                    >
+                      + Add variant
+                    </button>
+                  </div>
+                </section>
+              ) : libraryTab === "variants" ? (
+                <p className="mt-3 text-sm text-muted">Select a segment to edit variants.</p>
+              ) : null}
+            </>
+          )}
         </section>
-
-        {selectedTag ? (
-          <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
-            <h2 className="font-display text-lg font-medium">{selectedTag}</h2>
-            <p className="mt-1 text-xs text-muted">Variant editor — scope applies to the whole tag.</p>
-
-            <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
-              <label className="flex items-center gap-1.5">
-                <input
-                  type="radio"
-                  checked={scopeDraft === "general"}
-                  onChange={() => setScopeDraft("general")}
-                />
-                General
-              </label>
-              <label className="flex items-center gap-1.5">
-                <input
-                  type="radio"
-                  checked={scopeDraft === "types"}
-                  onChange={() => setScopeDraft("types")}
-                />
-                Type-restricted
-              </label>
-              {scopeDraft === "types" ? (
-                <select
-                  multiple
-                  value={typesDraft}
-                  onChange={(e) =>
-                    setTypesDraft(
-                      Array.from(e.target.selectedOptions).map((o) => o.value),
-                    )
-                  }
-                  className="min-h-[4.5rem] rounded border border-border bg-background px-2 py-1 text-xs"
-                >
-                  {MEDITATION_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
-              <button
-                type="button"
-                disabled={saveTagBusy}
-                onClick={() => void saveTagScope()}
-                className="cursor-pointer rounded-full border border-border px-3 py-1 text-xs font-semibold disabled:opacity-50"
-              >
-                Save scope
-              </button>
-              <label className="flex items-center gap-1.5 text-xs">
-                <input
-                  type="checkbox"
-                  checked={lengthTieredDraft}
-                  onChange={(e) => setLengthTieredDraft(e.target.checked)}
-                />
-                Length-tiered variants
-              </label>
-            </div>
-
-            <div className="mt-3 space-y-1">
-              {selectedVariants.map((v) => (
-                <VariantEditorRow
-                  key={v.variantId}
-                  variant={v}
-                  lengthTiered={lengthTieredDraft}
-                  constraintVocabulary={state?.constraintVocabulary ?? []}
-                  onCreateConstraintTag={(tag) => void addConstraintTag(tag)}
-                  speakers={state?.speakers ?? []}
-                  baseUrl={state?.baseUrl}
-                  audio={state?.audioByVariantKey[`${v.tagName}#${v.variantId}`] ?? []}
-                  audioBusyKey={audioBusyKey}
-                  previewingUrl={previewingUrl}
-                  onSaveText={(text) => void updateVariantText(v, text)}
-                  onSaveLengthTier={(tier) => void updateVariantLengthTier(v, tier)}
-                  onSaveConstraints={(required, excluded) =>
-                    void updateVariantConstraints(v, required, excluded)
-                  }
-                  onDelete={() => void deleteVariant(v)}
-                  onGenerate={(modelId) => void generateAudio(v.tagName, v.variantId, modelId)}
-                  onGenerateAll={() => void generateAllSpeakers(v.tagName, v.variantId)}
-                  onPreview={togglePreview}
-                />
-              ))}
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <textarea
-                value={newVariantText}
-                onChange={(e) => setNewVariantText(e.target.value)}
-                rows={2}
-                placeholder="New variant text…"
-                className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm"
-              />
-              {lengthTieredDraft ? (
-                <select
-                  value={newVariantLengthTier}
-                  onChange={(e) =>
-                    setNewVariantLengthTier(e.target.value as ScriptLengthTier)
-                  }
-                  className="self-end rounded border border-border bg-background px-2 py-2 text-xs"
-                  aria-label="Length tier for new variant"
-                >
-                  <option value="short">Short</option>
-                  <option value="medium">Medium</option>
-                  <option value="long">Long</option>
-                </select>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => void addVariant()}
-                className="shrink-0 cursor-pointer self-end rounded-full bg-accent-soft px-4 py-2 text-xs font-semibold text-accent-link"
-              >
-                + Add variant
-              </button>
-            </div>
-          </section>
-        ) : null}
       </div>
 
       {/* Right — plain test panel */}
@@ -1423,6 +1468,7 @@ export function AdminScriptLabPanel() {
           </p>
         ) : null}
       </aside>
+      </div>
     </div>
   );
 }
