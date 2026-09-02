@@ -38,28 +38,36 @@ function pauseBudgetTierForTarget(targetMinutes: number): PauseBudgetTier {
     return {
       label: "5 minute",
       silenceShare: "40–50%",
-      density: "Pauses moderate — **short**, **medium**, and **long** in mix; **extra-long** sparingly.",
+      density:
+        "Pauses moderate — **short**, **medium**, and **long** in mix; **extra-long** sparingly at genuine peak moments only (~2–3 total).",
       bandMix:
-        "Use **medium** as default between beats; **long** after regional invitations; **extra-long** once or twice in the core section at most.",
+        "Use **medium** as default between lighter beats; **long** for general core spacing and after regional invitations; **extra-long** at most ~2–3 times — only at the focus linger or a significant emotional landing, never as routine spacing.",
     };
   }
   if (targetMinutes <= 14) {
     return {
       label: "10 minute",
       silenceShare: "50–60%",
-      density: "Pauses generous — frequent **long** and regular **extra-long** in the core practice.",
+      density:
+        "Pauses generous — **long** is the workhorse in the core; **extra-long** is punctuation at deliberate peaks only (~4–6 total).",
       bandMix:
-        "**Medium** and **long** between most beats; **extra-long** after each major body region or open practice block; **short** mainly within breath pairs.",
+        "**Long** between most core beats; **medium** between lighter connective beats; **extra-long** only after personalized focus or a significant emotional/narrative landing — not after every region.",
     };
   }
   return {
     label: "20 minute",
     silenceShare: "60–70%",
     density:
-      "Pauses **dominant** — **extra-long** used freely in core and body-tour sections; the script should feel **spacious**, not filled with speech.",
+      "Pauses **dominant** via many **long** beats (and medium where lighter) — the script should feel spacious. **Extra-long** is reserved punctuation (~8–12 total), not the default gap.",
     bandMix:
-      "**Extra-long** should appear **frequently** (often after every regional body beat and every personalized focus passage); **long** as the typical gap elsewhere; **short**/**medium** mainly in opening breath cues and light transitions — not as the default in the body tour.",
+      "**Long** is the default between core beats on a 20-minute script; **medium** between lighter connective beats; **extra-long** only at the personalized focus linger and a few significant emotional landings — never every 2–3 beats throughout the core.",
   };
+}
+
+/** Cap on extra-long pause beats: ~2–3 per 5 minutes of target. */
+function maxExtraLongPausesForTarget(targetMinutes: number): { lo: number; hi: number } {
+  const units = Math.max(1, Math.ceil(targetMinutes / 5));
+  return { lo: units * 2, hi: units * 3 };
 }
 
 /** Pause-budget guidance scaled to target duration (generation prompt only). */
@@ -71,6 +79,7 @@ function scriptPauseBudgetGuidanceAppendix(targetMinutes: number): string {
     parseInt(tier.silenceShare.split("–")[1]?.replace("%", "") ?? "40", 10) / 100;
   const targetPauseLo = Math.round(stemSeconds * tierLo);
   const targetPauseHi = Math.round(stemSeconds * tierHi);
+  const xlCap = maxExtraLongPausesForTarget(targetMinutes);
 
   return [
     "",
@@ -79,29 +88,40 @@ function scriptPauseBudgetGuidanceAppendix(targetMinutes: number): string {
     "",
     "**Duration tiers (starting points — match your target):**",
     "- **2 min:** pauses light, mostly short/medium — silence ~**30–40%** of total duration",
-    "- **5 min:** pauses moderate, short/medium/long mix — silence ~**40–50%**",
-    "- **10 min:** pauses generous, more long/extra-long — silence ~**50–60%**",
-    "- **20 min:** pauses dominant, extra-long freely in core/body sections — silence ~**60–70%** — the script should feel **spacious**, not filled",
+    "- **5 min:** pauses moderate, short/medium/long mix — silence ~**40–50%**; extra-long sparse (~2–3)",
+    "- **10 min:** pauses generous, **long** as the core default — silence ~**50–60%**; extra-long as punctuation (~4–6)",
+    "- **20 min:** pauses dominant via many **long** beats — silence ~**60–70%**; extra-long reserved (~8–12), not sprayed through the core",
     "",
     `**Your tier (${tier.label}):** aim for **~${tier.silenceShare}** of the ~**${stemSeconds}** s stem in pause markers / pause beats — roughly **${targetPauseLo}–${targetPauseHi}** s of silence total. ${tier.density}`,
     "",
     "**Band mix for this target:**",
     tier.bandMix,
     "",
+    "**Extra-long is punctuation — long is the workhorse (critical):**",
+    "- **Do not** place `extra-long` every 2–3 beats through the core. That over-accumulates silence and hits duration with pause padding instead of proportionate content.",
+    "- **Default core spacing** on long scripts: **`long`** (7s) between substantive beats; **`medium`** between lighter connective beats.",
+    "- Reserve **`extra-long`** (12s) for deliberate moments only:",
+    "  - The personalized focus-region linger point",
+    "  - Immediately after a significant emotional or narrative beat that genuinely needs extended space to land",
+    `- Hard cap: roughly **${xlCap.lo}–${xlCap.hi}** \`extra-long\` pauses for this **${targetMinutes}-minute** target (~2–3 per 5 minutes). Prefer the low end unless several genuine peaks clearly warrant more.`,
+    "- Hitting the silence budget: add **more `long` pause beats** (and medium where appropriate), **not** more `extra-long`.",
+    "",
     "**Body tour & core practice (longer scripts):**",
-    "- After each **regional body beat** (crown, jaw, shoulders, hips, etc.), follow with a pause **long enough to actually inhabit that region** — on a 10–20 minute script that usually means **long** or **extra-long**, not a brief **short** before moving on.",
-    "- After **personalized focus** passages (lower back, the user's stated tension, imagery like sitting beneath their tree), **extra-long** pauses are **expected and correct** — often two or more in a row if the listener needs sustained open time. This is not excessive.",
+    "- After each **regional body beat** (crown, jaw, shoulders, hips, etc.), follow with a pause long enough to inhabit that region — on a 10–20 minute script that usually means **`long`**, not `extra-long` every time.",
+    "- After the **personalized focus** passage (stated tension, linger region, key imagery), **`extra-long`** is expected and correct — that is the primary use of the band. One or two back-to-back `extra-long` at that linger is fine; do not then continue `extra-long` for every subsequent region.",
     "",
     "**Proportional band vocabulary:**",
-    "- Scale pause **bands** to target length: on a **20-minute** script, **extra-long** should appear **frequently** throughout the body tour and core; on a **2-minute** script, **extra-long** should appear **rarely or not at all**.",
-    "- Do **not** use the same pause density as a 5-minute script and expect a 20-minute result — longer targets need **more pause beats** and **heavier bands**, not longer speeches.",
+    "- Scale pause **count** and prefer **`long` over `medium`** as targets get longer — that is how 20-minute scripts stay spacious.",
+    "- Do **not** interpret “heavier pauses on long scripts” as “use `extra-long` as the default gap.” Extra-long stays rare and intentional at every duration.",
+    "- Do **not** use the same pause density as a 5-minute script and expect a 20-minute result — longer targets need **more pause beats** and a heavier mix dominated by **`long`**, not longer speeches and not wall-to-wall `extra-long`.",
     "",
     "**Do not pad with words:**",
-    "- If duration is short, add **silence** (more pause beats, heavier bands) — **not** more spoken content.",
+    "- If duration is short, add **silence** (more pause beats, especially **`long`**) — **not** more spoken content, and **not** by converting every gap to `extra-long`.",
     "- A 20-minute script may have a **similar word count** to a 10-minute script once pause budget is right; that is **correct and expected**.",
     "- Never increase narration length to compensate for a duration shortfall when the fix is more silence (silence also costs zero TTS).",
     "",
-    `Planning check: if your estimated pause total is well below **${targetPauseLo}** s for this ${targetMinutes}-minute target, you have not budgeted enough silence yet.`,
+    `Planning check: if your estimated pause total is well below **${targetPauseLo}** s for this ${targetMinutes}-minute target, you have not budgeted enough silence yet — add **\`long\`** pauses, not a spray of \`extra-long\`.`,
+    `Planning check: if you have more than **~${xlCap.hi}** \`extra-long\` pauses, convert routine ones to **\`long\`** and keep \`extra-long\` only at focus/emotional peaks.`,
   ].join("\n");
 }
 
@@ -216,14 +236,22 @@ export function buildMeditationScriptGenerationPrompt(params: {
       "- After placing a singular tag, **stop** — do not add a follow-up custom beat unless you have user-specific content the tag cannot carry. When in doubt, omit the custom beat and use a pause beat instead.",
       "",
       "Follow the **Segment library — selection rules** and per-tag **Repeatability**, **Description**, and **Phase** lines in the catalog above.",
-      "Singular tags: at most once — a second mention of the same subject area must be custom text, not the same tag again. Connective tags may repeat for pacing; this adjacent-custom rule applies to **singular** tags only.",
+      "Singular tags: at most once — a second mention of the same subject area must be custom text, not the same tag again. The adjacent-custom rule above applies to **singular** tags only.",
+      "",
+      "### Connective tag spacing (generation)",
+      "Connective tags (BREATH_TRANSITION, PACE_REASSURANCE, PRE_PAUSE_BRIDGE, POST_PAUSE_CONTINUE, BODY_RELAX, SOFT_AFFIRMATION, WANDERING_ACK, BODY_SOFTEN_CUE, SENSORY_EXPAND, etc.) **may** appear more than once in a script — but **never** with only pauses between two instances of the **same** connective tag.",
+      "**Hard rule:** the same connective tag must not appear within **1 non-pause beat** of itself. At least one **substantive custom beat** or a **different tag** must separate any two uses of the same connective tag. Pauses do not count as separation.",
+      "**Never correct:** `BREATH_TRANSITION` → pause → `BREATH_TRANSITION` (or three in a row with only pauses). Same for `SENSORY_EXPAND` → pause → `SENSORY_EXPAND`.",
+      "**Fine:** `BREATH_TRANSITION` → pause → custom content beat → pause → `BREATH_TRANSITION` — a substantive custom beat between them is enough, even if that custom beat is short. Content between them matters, not raw distance.",
+      "Before placing a connective tag, scan the previous non-pause beat: if it is the same connective tag, do **not** place it again — insert a custom bridge or a different tag first, or skip the second placement.",
+      "",
       "Before selecting any tag, read its Description; skip tags whose stated boundary conditions apply to this script (e.g. defer BODY_SCAN_SPINE_BACK when lower-back personalization already dominates).",
       "Respect phase rules: SETTLE_OPENER and BREATH_OPENER only in opening; BODY_SCAN_* only after a body-tour intro beat; CLOSE_* only in closing.",
       "Use `{ beatType: \"content\", custom: true, text: \"…\" }` for main personalized practice material (may repeat).",
       "Use `{ beatType: \"pause\", pauseBand: \"medium\" }` for standalone structural silences between beats; use inline `[[PAUSE …]]` inside a custom beat's text only for shorter pauses within one flowing narration.",
       "Pause bands: extra-short, short, medium, long, extra-long (same vocabulary as [[PAUSE …]] rules above).",
-      "For long targets, **standalone pause beats** are the main duration lever — insert many `{ beatType: \"pause\", pauseBand: \"long\" }` and `{ beatType: \"pause\", pauseBand: \"extra-long\" }` beats between body regions and after personalized focus; do not rely on inline short pauses alone.",
-      "The **Pause budget (scales with target duration)** section above overrides generic pause-share hints when they conflict — longer scripts need proportionally **more** and **heavier** pause beats.",
+      "For long targets, **standalone pause beats** are the main duration lever — insert many `{ beatType: \"pause\", pauseBand: \"long\" }` beats between body regions; use `{ beatType: \"pause\", pauseBand: \"extra-long\" }` only at the personalized focus linger and genuine emotional peaks (see Pause budget — Extra-long is punctuation). Do not rely on inline short pauses alone, and do not spray `extra-long` every few beats.",
+      "The **Pause budget (scales with target duration)** section above overrides generic pause-share hints when they conflict — longer scripts need proportionally **more** pause beats with **`long` as the workhorse**, not wall-to-wall `extra-long`.",
       "",
       "### Worked examples (segment vs custom)",
       "",
@@ -281,12 +309,12 @@ export function buildMeditationScriptGenerationPrompt(params: {
     "Never generate hate/harassment, sexual content involving minors, non-consensual sexual content, graphic sexual content, instructions for wrongdoing, or glorification of self-harm. If the user asks for something socially unacceptable, refuse briefly and offer a safe alternative topic.",
     "You use gender-neutral language and never assume anyone's gender.",
     "You phrase lines for natural TTS: avoid isolated one-word sentences; use multi-word phrases where possible.",
-    `You scale pause density and band weight to the target duration (${params.targetMinutes} min): longer scripts need substantially more silence than shorter ones — reach duration with pauses, not extra speech.`,
+    `You scale pause density and band weight to the target duration (${params.targetMinutes} min): longer scripts need substantially more silence than shorter ones — reach duration with more pause beats dominated by **long**, not by spraying **extra-long** throughout the core, and not with extra speech.`,
   ];
 
   if (params.includeSegmentPlaceholders) {
     systemParts.push(
-      "For Script Lab you output structured beats (not inline [[SEG:…]] prose). Personalization wins: keep user-specific wording custom. For generic wording, prefer library tags after reading each tag's Description, Repeatability, and Phase in the catalog. Singular tags at most once; connective tags may repeat. Respect opening / body-tour / closing phase rules. **Never output generic custom beats within 1–2 non-pause beats of a singular tag that restate the tag's function** — omit them at generation time; verification trim is only a safety net.",
+      "For Script Lab you output structured beats (not inline [[SEG:…]] prose). Personalization wins: keep user-specific wording custom. For generic wording, prefer library tags after reading each tag's Description, Repeatability, and Phase in the catalog. Singular tags at most once; connective tags may repeat only when separated by at least one non-pause beat that is a substantive custom beat or a different tag — never the same connective tag with only pauses between instances. Respect opening / body-tour / closing phase rules. **Never output generic custom beats within 1–2 non-pause beats of a singular tag that restate the tag's function** — omit them at generation time; verification trim is only a safety net.",
     );
   }
 

@@ -86,6 +86,23 @@ const PREVIEW_MODES: Array<{ id: PreviewMode; label: string }> = [
   { id: "rendered", label: "Rendered" },
 ];
 
+/** Indices in `after` that have no exact match in `before` (same idea as verification new beats). */
+function computeBeatsDiffIndices(before: ScriptLabBeat[], after: ScriptLabBeat[]): number[] {
+  const indices: number[] = [];
+  after.forEach((beat, i) => {
+    const match = before.some(
+      (b) =>
+        b.beatType === beat.beatType &&
+        b.custom === beat.custom &&
+        (b.tag ?? "") === (beat.tag ?? "") &&
+        (b.text ?? "").trim() === (beat.text ?? "").trim() &&
+        (b.pauseBand ?? "") === (beat.pauseBand ?? ""),
+    );
+    if (!match) indices.push(i);
+  });
+  return indices;
+}
+
 function audioUrl(baseUrl: string | undefined, row: ScriptLabVariantAudio | undefined): string | null {
   if (!baseUrl || !row?.s3Key) return null;
   return `${baseUrl.replace(/\/$/, "")}/${row.s3Key}?v=${encodeURIComponent(row.updatedAt)}`;
@@ -98,10 +115,16 @@ export function AdminScriptLabPanel() {
 
   const [beats, setBeats] = useState<ScriptLabBeat[]>([]);
   const [beatsBeforeVerification, setBeatsBeforeVerification] = useState<ScriptLabBeat[]>([]);
+  const [beatsPass1Skeleton, setBeatsPass1Skeleton] = useState<ScriptLabBeat[]>([]);
   const [verificationNewBeatIndices, setVerificationNewBeatIndices] = useState<number[]>([]);
+  const [pass2NewBeatIndices, setPass2NewBeatIndices] = useState<number[]>([]);
   const [verificationCorrectionsApplied, setVerificationCorrectionsApplied] = useState(false);
   const [beatsVerificationView, setBeatsVerificationView] =
     useState<BeatsVerificationView>("after");
+  const [generationPath, setGenerationPath] = useState<"v1" | "v2">("v1");
+  const [v2RemovedTags, setV2RemovedTags] = useState<string[]>([]);
+  const [v2FocusAnchorBeats, setV2FocusAnchorBeats] = useState(0);
+  const [lastGenerationPath, setLastGenerationPath] = useState<"v1" | "v2" | null>(null);
   const [beatWarnings, setBeatWarnings] = useState<ScriptLabBeatDuplicateWarning[]>([]);
   const [renderedScript, setRenderedScript] = useState("");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("beats");
@@ -127,6 +150,7 @@ export function AdminScriptLabPanel() {
   const [targetMinutes, setTargetMinutes] = useState<MeditationTargetMinutes>(5);
   const [voiceModelId, setVoiceModelId] = useState("");
   const [generateBusy, setGenerateBusy] = useState(false);
+  const [fillBusy, setFillBusy] = useState(false);
 
   const [newVariantText, setNewVariantText] = useState("");
   const [newVariantLengthTier, setNewVariantLengthTier] = useState<ScriptLengthTier>("medium");
@@ -284,9 +308,12 @@ export function AdminScriptLabPanel() {
   }, [state, coverageThreshold]);
 
   const displayedBeats = useMemo(() => {
+    if (beatsVerificationView === "pass1" && beatsPass1Skeleton.length > 0) {
+      return beatsPass1Skeleton;
+    }
     if (beatsBeforeVerification.length === 0) return beats;
     return beatsVerificationView === "before" ? beatsBeforeVerification : beats;
-  }, [beatsVerificationView, beatsBeforeVerification, beats]);
+  }, [beatsVerificationView, beatsBeforeVerification, beats, beatsPass1Skeleton]);
 
   const displayedRenderedScript = useMemo(() => {
     if (displayedBeats.length === 0) return "";
@@ -343,7 +370,25 @@ export function AdminScriptLabPanel() {
     [verificationNewBeatIndices],
   );
 
+  const pass2HighlightIndices = useMemo(
+    () => new Set(pass2NewBeatIndices),
+    [pass2NewBeatIndices],
+  );
+
   const statsBeats = displayedBeats;
+
+  const statsVerificationLabel =
+    lastGenerationPath === "v2" && beatsPass1Skeleton.length > 0
+      ? beatsVerificationView === "pass1"
+        ? "Pass 1 skeleton"
+        : beatsVerificationView === "before"
+          ? "Before verification (after pass 2)"
+          : "After verification"
+      : beatsBeforeVerification.length > 0
+        ? beatsVerificationView === "before"
+          ? "Before verification"
+          : "After verification"
+        : null;
 
   const durationEstimate = useMemo(() => {
     if (statsBeats.length === 0 || !voiceModelId) return null;
@@ -391,60 +436,94 @@ export function AdminScriptLabPanel() {
     renderPicks,
   ]);
 
-  const statsVerificationLabel =
-    beatsBeforeVerification.length > 0
-      ? beatsVerificationView === "before"
-        ? "Before verification"
-        : "After verification"
-      : null;
+  async function fillPlaceholders() {
+    if (beats.length === 0) return;
+    setFillBusy(true);
+    setError(null);
+    try {
+      const data = await postAdminScriptLab({
+        action: "fill-placeholders",
+        beats,
+        transcript: flowGenerationInput.transcript,
+        journalMode: flowGenerationInput.journalMode,
+        meditationStyle: flowGenerationInput.meditationStyle,
+        meditationType: previewMeditationType,
+        meditationTargetMinutes: targetMinutes,
+        contextTags: previewContextTags,
+      });
 
-  function fillPlaceholdersRandom() {
-    const tagMetaByName: Record<
-      string,
-      { lengthTiered: boolean; scope: "general" | "types"; types: string[] }
-    > = {};
-    for (const tag of state?.tags ?? []) {
-      tagMetaByName[tag.name] = {
-        lengthTiered: tag.lengthTiered,
-        scope: tag.scope,
-        types: tag.types,
-      };
+      const picksByBeatIndex =
+        data.picksByBeatIndex && typeof data.picksByBeatIndex === "object"
+          ? (data.picksByBeatIndex as Record<string, string>)
+          : {};
+      const picksByTag =
+        data.picksByTag && typeof data.picksByTag === "object"
+          ? (data.picksByTag as Record<string, string>)
+          : {};
+
+      const preferredByBeat: Record<number, string> = {};
+      for (const [k, v] of Object.entries(picksByBeatIndex)) {
+        const idx = Number(k);
+        if (Number.isInteger(idx) && typeof v === "string" && v.trim()) {
+          preferredByBeat[idx] = v.trim();
+        }
+      }
+
+      const tagMeta: Record<
+        string,
+        { lengthTiered: boolean; scope: "general" | "types"; types: string[] }
+      > = {};
+      for (const tag of state?.tags ?? []) {
+        tagMeta[tag.name] = {
+          lengthTiered: tag.lengthTiered,
+          scope: tag.scope,
+          types: tag.types,
+        };
+      }
+
+      const variantsByTag: Record<
+        string,
+        Array<{
+          variantId: string;
+          text: string;
+          lengthTier?: ScriptLengthTier | null;
+          direction?: string | null;
+          requiredConstraints?: string[];
+          excludedConstraints?: string[];
+        }>
+      > = {};
+      for (const [tag, variants] of Object.entries(state?.variantsByTag ?? {})) {
+        variantsByTag[tag] = variants.map((v) => ({
+          variantId: v.variantId,
+          text: v.text,
+          lengthTier: v.lengthTier,
+          direction: v.direction,
+          requiredConstraints: v.requiredConstraints,
+          excludedConstraints: v.excludedConstraints,
+        }));
+      }
+
+      const picker = createSegmentVariantPickerForBeats({
+        beats,
+        variantsByTag,
+        tagMetaByName: tagMeta,
+        targetMinutes,
+        meditationType: previewMeditationType,
+        contextTags: previewContextTags,
+        preferredVariantIdByBeatIndex: preferredByBeat,
+        random: false,
+      });
+      const rendered = renderBeatsToScript(beats, picker.pickVariantText);
+      setRenderPicks(
+        Object.keys(picksByTag).length > 0 ? picksByTag : picker.picksByTag,
+      );
+      setRenderedScript(rendered);
+      setPreviewMode("rendered");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Fill placeholders failed");
+    } finally {
+      setFillBusy(false);
     }
-
-    const variantsByTag: Record<
-      string,
-      Array<{
-        variantId: string;
-        text: string;
-        lengthTier?: ScriptLengthTier | null;
-        direction?: string | null;
-        requiredConstraints?: string[];
-        excludedConstraints?: string[];
-      }>
-    > = {};
-    for (const [tag, variants] of Object.entries(state?.variantsByTag ?? {})) {
-      variantsByTag[tag] = variants.map((v) => ({
-        variantId: v.variantId,
-        text: v.text,
-        lengthTier: v.lengthTier,
-        direction: v.direction,
-        requiredConstraints: v.requiredConstraints,
-        excludedConstraints: v.excludedConstraints,
-      }));
-    }
-
-    const picker = createSegmentVariantPickerForBeats({
-      beats,
-      variantsByTag,
-      tagMetaByName,
-      targetMinutes,
-      meditationType: previewMeditationType,
-      contextTags: previewContextTags,
-    });
-    const rendered = renderBeatsToScript(beats, picker.pickVariantText);
-    setRenderPicks(picker.picksByTag);
-    setRenderedScript(rendered);
-    setPreviewMode("rendered");
   }
 
   async function copyPreviewToClipboard() {
@@ -469,6 +548,7 @@ export function AdminScriptLabPanel() {
     try {
       const data = await postAdminScriptLab({
         action: "generate-script",
+        generationPath,
         transcript: flowGenerationInput.transcript,
         journalMode: flowGenerationInput.journalMode,
         meditationStyle: flowGenerationInput.meditationStyle,
@@ -486,12 +566,42 @@ export function AdminScriptLabPanel() {
       const nextWarnings = Array.isArray(data.beatWarnings)
         ? (data.beatWarnings as ScriptLabBeatDuplicateWarning[])
         : [];
+      const pathUsed = data.generationPath === "v2" ? "v2" : "v1";
+      const v2Meta =
+        data.v2Meta && typeof data.v2Meta === "object"
+          ? (data.v2Meta as {
+              passOneRendered?: ScriptLabBeat[];
+              removedTags?: string[];
+              focusAnchorBeats?: number;
+            })
+          : null;
+      const pass1 =
+        pathUsed === "v2" && Array.isArray(v2Meta?.passOneRendered)
+          ? (v2Meta.passOneRendered as ScriptLabBeat[])
+          : [];
       setBeats(nextBeats);
       setBeatsBeforeVerification(nextBefore);
+      setBeatsPass1Skeleton(pass1);
       setVerificationNewBeatIndices(nextNewIndices);
+      setPass2NewBeatIndices(
+        pathUsed === "v2" && pass1.length > 0
+          ? computeBeatsDiffIndices(pass1, nextBefore)
+          : [],
+      );
       setVerificationCorrectionsApplied(data.verificationCorrectionsApplied === true);
       setBeatsVerificationView("after");
       setBeatWarnings(nextWarnings);
+      setLastGenerationPath(pathUsed);
+      setV2RemovedTags(
+        pathUsed === "v2" && Array.isArray(v2Meta?.removedTags)
+          ? v2Meta.removedTags.filter((t): t is string => typeof t === "string")
+          : [],
+      );
+      setV2FocusAnchorBeats(
+        pathUsed === "v2" && typeof v2Meta?.focusAnchorBeats === "number"
+          ? v2Meta.focusAnchorBeats
+          : 0,
+      );
       setRenderedScript("");
       setRenderPicks({});
       setCopyNote(null);
@@ -853,11 +963,11 @@ export function AdminScriptLabPanel() {
               </button>
               <button
                 type="button"
-                disabled={beats.length === 0}
-                onClick={fillPlaceholdersRandom}
+                disabled={beats.length === 0 || fillBusy}
+                onClick={() => void fillPlaceholders()}
                 className="cursor-pointer rounded-full border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-accent-soft/40 disabled:opacity-50"
               >
-                Fill placeholders (random)
+                {fillBusy ? "Filling…" : "Fill placeholders"}
               </button>
             </div>
           </div>
@@ -876,6 +986,10 @@ export function AdminScriptLabPanel() {
               view={beatsVerificationView}
               onChange={setBeatsVerificationView}
               correctionsApplied={verificationCorrectionsApplied}
+              showPass1={lastGenerationPath === "v2" && beatsPass1Skeleton.length > 0}
+              pass2HighlightNote={
+                lastGenerationPath === "v2" && beatsPass1Skeleton.length > 0
+              }
             />
           ) : null}
 
@@ -887,14 +1001,18 @@ export function AdminScriptLabPanel() {
                 beats={displayedBeats}
                 tagRepeatabilityByName={tagRepeatabilityByName}
                 correctedBeatIndices={
-                  beatsVerificationView === "after" ? correctedBeatIndices : undefined
+                  beatsVerificationView === "after"
+                    ? correctedBeatIndices
+                    : beatsVerificationView === "before" && lastGenerationPath === "v2"
+                      ? pass2HighlightIndices
+                      : undefined
                 }
               />
             ) : previewMode === "rendered" ? (
               displayedRenderedScript.trim() ? (
                 <pre className="whitespace-pre-wrap font-sans">{displayedRenderedScript}</pre>
               ) : (
-                <p className="text-muted">Click “Fill placeholders (random)” to render tags.</p>
+                <p className="text-muted">Click “Fill placeholders” to render tags.</p>
               )
             ) : (
               <div className="whitespace-pre-wrap font-sans">
@@ -955,6 +1073,26 @@ export function AdminScriptLabPanel() {
                   with segments ({formatCustomTextRatio(textByteStats.customRatio)})
                 </>
               ) : null}
+            </p>
+          ) : null}
+          {lastGenerationPath === "v2" &&
+          (v2RemovedTags.length > 0 || v2FocusAnchorBeats > 0) ? (
+            <p className="mt-1 text-[11px] text-muted">
+              {v2RemovedTags.length > 0 ? (
+                <>
+                  Pass 2 removed:{" "}
+                  <span className="font-medium text-foreground">
+                    {v2RemovedTags.join(", ")}
+                  </span>
+                </>
+              ) : (
+                "Pass 2 removed: (none)"
+              )}
+              {"  ·  "}
+              Focus anchor:{" "}
+              <span className="font-medium text-foreground">
+                {v2FocusAnchorBeats} beat{v2FocusAnchorBeats === 1 ? "" : "s"}
+              </span>
             </p>
           ) : null}
         </section>
@@ -1449,13 +1587,44 @@ export function AdminScriptLabPanel() {
           </select>
         </label>
 
+        <fieldset className="space-y-1">
+          <legend className="text-xs font-medium text-foreground">Generation</legend>
+          <div className="inline-flex rounded-full border border-border bg-background p-0.5 text-xs">
+            {(
+              [
+                { id: "v1" as const, label: "V1 (current)" },
+                { id: "v2" as const, label: "V2 (experimental)" },
+              ] as const
+            ).map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setGenerationPath(id)}
+                className={`cursor-pointer rounded-full px-3 py-1 font-medium ${
+                  generationPath === id
+                    ? "bg-accent-soft text-accent-link"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
         <button
           type="button"
           disabled={generateBusy || !flowGenerationInput.ready}
           onClick={() => void generateScript()}
           className="w-full cursor-pointer border border-neutral-800 bg-neutral-900 py-2 font-semibold text-white disabled:opacity-50 dark:border-neutral-300 dark:bg-neutral-100 dark:text-neutral-900"
         >
-          {generateBusy ? "Generating…" : "Generate script →"}
+          {generateBusy
+            ? generationPath === "v2"
+              ? "Generating V2…"
+              : "Generating…"
+            : generationPath === "v2"
+              ? "Generate script V2 →"
+              : "Generate script →"}
         </button>
 
         {flow === "journal" ? (

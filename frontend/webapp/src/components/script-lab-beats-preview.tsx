@@ -50,9 +50,18 @@ function BeatContentPreview({ beat }: { beat: ScriptLabBeat }) {
 
   if (source === "segment") {
     return (
-      <span className="font-mono text-xs font-semibold uppercase tracking-wide text-accent-link">
-        {beat.tag ?? "—"}
-      </span>
+      <div className="min-w-0">
+        <span className="font-mono text-xs font-semibold uppercase tracking-wide text-accent-link">
+          {beat.tag ?? "—"}
+        </span>
+        {beat.text?.trim() ? (
+          <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-muted">
+            {beat.text.trim().length > TEXT_PREVIEW_CHARS
+              ? `${beat.text.trim().slice(0, TEXT_PREVIEW_CHARS)}…`
+              : beat.text.trim()}
+          </p>
+        ) : null}
+      </div>
     );
   }
 
@@ -151,26 +160,36 @@ export function ScriptLabBeatsPreview({
   );
 }
 
-export type BeatsVerificationView = "after" | "before";
+export type BeatsVerificationView = "after" | "before" | "pass1";
 
 export function ScriptLabBeatsVerificationToggle({
   view,
   onChange,
   correctionsApplied,
+  showPass1,
+  pass2HighlightNote,
 }: {
   view: BeatsVerificationView;
   onChange: (view: BeatsVerificationView) => void;
   correctionsApplied: boolean;
+  /** When true, show Pass 1 skeleton option (V2 runs). */
+  showPass1?: boolean;
+  /** Optional note for green-row meaning when viewing before-verification on V2. */
+  pass2HighlightNote?: boolean;
 }) {
+  const options: Array<{ id: BeatsVerificationView; label: string }> = [];
+  if (showPass1) {
+    options.push({ id: "pass1", label: "Pass 1 skeleton" });
+  }
+  options.push(
+    { id: "before", label: "Before verification" },
+    { id: "after", label: "After verification" },
+  );
+
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
       <div className="inline-flex rounded-full border border-border bg-background p-0.5 text-xs">
-        {(
-          [
-            { id: "after" as const, label: "After verification" },
-            { id: "before" as const, label: "Before verification" },
-          ] as const
-        ).map(({ id, label }) => (
+        {options.map(({ id, label }) => (
           <button
             key={id}
             type="button"
@@ -185,9 +204,14 @@ export function ScriptLabBeatsVerificationToggle({
           </button>
         ))}
       </div>
-      {correctionsApplied ? (
+      {view === "after" && correctionsApplied ? (
         <span className="text-[11px] text-muted">
           Green rows = beats added by verification (split or conversion)
+        </span>
+      ) : null}
+      {view === "before" && pass2HighlightNote ? (
+        <span className="text-[11px] text-muted">
+          Green rows = beats that differ from Pass 1 skeleton
         </span>
       ) : null}
     </div>

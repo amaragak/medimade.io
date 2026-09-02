@@ -168,6 +168,55 @@ function pickFromVariantPool(
   return [...best].sort((a, b) => a.variantId.localeCompare(b.variantId))[0]!;
 }
 
+/** Eligible pool after tier/direction/constraint filters (+ unused preference). */
+export function listSelectableSegmentVariants(params: {
+  variants: SegmentVariantCandidate[];
+  tagMeta?: SegmentTagMeta;
+  tagName?: string;
+  beatType?: string | null;
+  targetMinutes: number;
+  meditationType?: string | null;
+  contextTags?: string[];
+  tourDirection?: ScriptBodyTourDirection | null;
+  preferredLengthTier?: ScriptLengthTier | null;
+  preferredDirection?: "up" | "down" | "neutral" | null;
+  alreadyUsedVariantIds?: readonly string[];
+}): SegmentVariantCandidate[] {
+  let poolIn = params.variants;
+
+  if (params.preferredLengthTier) {
+    const tiered = poolIn.filter(
+      (v) => (v.lengthTier ?? null) === params.preferredLengthTier,
+    );
+    if (tiered.length > 0) poolIn = tiered;
+  }
+
+  if (params.preferredDirection === "up" || params.preferredDirection === "down") {
+    poolIn = filterVariantsByDirection(poolIn, params.preferredDirection);
+  } else if (params.preferredDirection === "neutral") {
+    const neutrals = poolIn.filter((v) => {
+      const d = normalizeVariantDirection(v.direction);
+      return d == null || d === "neutral";
+    });
+    if (neutrals.length > 0) poolIn = neutrals;
+  } else {
+    poolIn = filterVariantsByDirection(poolIn, params.tourDirection);
+  }
+
+  const eligible = listEligibleSegmentVariants(
+    poolIn,
+    params.tagMeta,
+    params.targetMinutes,
+    params.meditationType ?? null,
+    params.contextTags ?? [],
+  );
+  if (eligible.length === 0) return [];
+
+  const used = new Set(params.alreadyUsedVariantIds ?? []);
+  const unused = eligible.filter((v) => !used.has(v.variantId));
+  return unused.length > 0 ? unused : eligible;
+}
+
 export function selectSegmentVariant(params: {
   variants: SegmentVariantCandidate[];
   tagMeta?: SegmentTagMeta;
@@ -178,36 +227,35 @@ export function selectSegmentVariant(params: {
   contextTags?: string[];
   /** Known body-tour travel; filters directional variants when present. */
   tourDirection?: ScriptBodyTourDirection | null;
+  /** Hard preference: keep only this length tier when variants carry lengthTier. */
+  preferredLengthTier?: ScriptLengthTier | null;
+  /** Hard preference: keep matching direction (plus neutral); falls back if empty. */
+  preferredDirection?: "up" | "down" | "neutral" | null;
   alreadyUsedVariantIds?: readonly string[];
   preferredVariantId?: string | null;
   /** When false, picks are stable (for duration/byte estimates). Default true. */
   random?: boolean;
 }): SegmentVariantCandidate | null {
   const random = params.random !== false;
-  const directionFiltered = filterVariantsByDirection(
-    params.variants,
-    params.tourDirection,
-  );
-  const eligible = listEligibleSegmentVariants(
-    directionFiltered,
-    params.tagMeta,
-    params.targetMinutes,
-    params.meditationType ?? null,
-    params.contextTags ?? [],
-  );
-  if (eligible.length === 0) return null;
 
   const preferredId = params.preferredVariantId?.trim();
   if (preferredId) {
-    const preferred = eligible.find((v) => v.variantId === preferredId);
-    if (preferred) return preferred;
+    const eligibleAll = listSelectableSegmentVariants({
+      ...params,
+      alreadyUsedVariantIds: [],
+    });
+    const preferred = eligibleAll.find((v) => v.variantId === preferredId);
+    if (preferred) {
+      const used = new Set(params.alreadyUsedVariantIds ?? []);
+      if (!used.has(preferred.variantId)) return preferred;
+    }
   }
 
-  const used = new Set(params.alreadyUsedVariantIds ?? []);
-  const unused = eligible.filter((v) => !used.has(v.variantId));
-  const pool = unused.length > 0 ? unused : eligible;
+  const pool = listSelectableSegmentVariants(params);
+  if (pool.length === 0) return null;
 
   const applyLengthBias =
+    !params.preferredLengthTier &&
     (params.tagMeta?.lengthTiered ?? false) &&
     segmentTagPrefersLengthTierBias(params.tagName ?? "", params.beatType);
 
@@ -233,6 +281,8 @@ export function createSegmentVariantPickerForBeats(params: {
   meditationType?: string | null;
   contextTags?: string[];
   preferredVariantIdByTag?: Record<string, string>;
+  /** Per-beat preferred variant (wins over by-tag when set). */
+  preferredVariantIdByBeatIndex?: Record<number, string>;
   /** When false, picks are stable (for duration/byte estimates). Default true. */
   random?: boolean;
 }): {
@@ -253,9 +303,9 @@ export function createSegmentVariantPickerForBeats(params: {
     }
 
     const alreadyUsed = usedByTag.get(tag) ?? [];
-    const preferredId = params.preferredVariantIdByTag?.[tag];
-    const preferredAlreadyUsed =
-      preferredId != null && alreadyUsed.includes(preferredId);
+    const preferredId =
+      params.preferredVariantIdByBeatIndex?.[beatIndex] ??
+      params.preferredVariantIdByTag?.[tag];
 
     const picked = selectSegmentVariant({
       variants: params.variantsByTag[tag] ?? [],
@@ -267,7 +317,7 @@ export function createSegmentVariantPickerForBeats(params: {
       contextTags: params.contextTags,
       tourDirection,
       alreadyUsedVariantIds: alreadyUsed,
-      preferredVariantId: preferredAlreadyUsed ? null : preferredId,
+      preferredVariantId: preferredId,
       random: params.random,
     });
     if (!picked) return null;

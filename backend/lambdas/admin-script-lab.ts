@@ -11,6 +11,8 @@ import { FIXED_SPEECH_PREVIEW_SPEED } from "../lib/speaker-sample-speed";
 import {
   generateScriptLabScript,
 } from "../lib/script-lab-generate";
+import { generateScriptLabScriptV2 } from "../lib/script-lab-generate-v2";
+import { buildScriptLabContextTags } from "../lib/script-constraint-tags";
 import {
   deleteScriptSegmentTag,
   deleteScriptSegmentVariant,
@@ -36,6 +38,10 @@ import {
   SCRIPT_LAB_TTS_CONCURRENCY,
 } from "../lib/script-segment-audio";
 import { seedVoiceSpeakersIfEmpty } from "../lib/voice-admin";
+import {
+  coerceScriptLabBeats,
+  selectSegmentVariantsIntelligently,
+} from "../lib/script-segment-variant-select-intelligent";
 import {
   normalizeScriptSegmentTag,
   type ScriptLengthTier,
@@ -233,6 +239,10 @@ async function handlePost(event: APIGatewayProxyEventV2) {
     return await handleGenerateScript(body);
   }
 
+  if (action === "fill-placeholders") {
+    return await handleFillPlaceholders(body);
+  }
+
   if (action === "generate-variant-audio") {
     return await handleGenerateVariantAudio(body);
   }
@@ -267,6 +277,94 @@ async function handlePost(event: APIGatewayProxyEventV2) {
   }
 
   return json(400, { error: `Unknown action ${action}` });
+}
+
+async function handleFillPlaceholders(body: Record<string, unknown>) {
+  const beats = coerceScriptLabBeats(body.beats);
+  if (beats.length === 0) {
+    return json(400, { error: "Field `beats` (non-empty array) is required" });
+  }
+
+  const targetMinutes = coerceMeditationTargetMinutes(body.meditationTargetMinutes);
+  const transcript =
+    typeof body.transcript === "string" ? body.transcript.trim() : "";
+  const journalMode = body.journalMode === true;
+  const meditationStyle =
+    typeof body.meditationStyle === "string" && body.meditationStyle.trim()
+      ? body.meditationStyle.trim()
+      : "General";
+  const meditationType = journalMode
+    ? null
+    : typeof body.meditationType === "string"
+      ? body.meditationType.trim() || meditationStyle
+      : meditationStyle;
+  const contextTags = Array.isArray(body.contextTags)
+    ? body.contextTags.filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+    : buildScriptLabContextTags({
+        meditationType,
+        userText: transcript,
+      });
+
+  const claudeModel = coerceClaudeModel(
+    body.claudeModel ?? body.modelId ?? CLAUDE_SONNET_45_MODEL_ID,
+  );
+
+  const library = await listAllScriptSegmentLibrary();
+  const variantsByTag: Record<
+    string,
+    Array<{
+      variantId: string;
+      text: string;
+      lengthTier?: ScriptLengthTier | null;
+      direction?: string | null;
+      requiredConstraints?: string[];
+      excludedConstraints?: string[];
+    }>
+  > = {};
+  const tagMetaByName: Record<
+    string,
+    {
+      lengthTiered: boolean;
+      scope: "general" | "types";
+      types: string[];
+    }
+  > = {};
+  for (const t of library.tags) {
+    tagMetaByName[t.name] = {
+      lengthTiered: t.lengthTiered,
+      scope: t.scope,
+      types: t.types,
+    };
+    variantsByTag[t.name] = (library.variantsByTag[t.name] ?? []).map((v) => ({
+      variantId: v.variantId,
+      text: v.text,
+      lengthTier: v.lengthTier,
+      direction: v.direction ?? null,
+      requiredConstraints: v.requiredConstraints,
+      excludedConstraints: v.excludedConstraints,
+    }));
+  }
+
+  const apiKey = await getClaudeApiKey();
+  const result = await selectSegmentVariantsIntelligently({
+    apiKey,
+    model: claudeModel,
+    beats,
+    transcript,
+    variantsByTag,
+    tagMetaByName,
+    targetMinutes,
+    meditationType,
+    contextTags,
+  });
+
+  return json(200, {
+    picksByBeatIndex: result.picksByBeatIndex,
+    picksByTag: result.picksByTag,
+    modelPicksByBeatIndex: result.modelPicksByBeatIndex,
+    fallbackBeatIndices: result.fallbackBeatIndices,
+    usage: result.usage,
+  });
 }
 
 async function handleGenerateScript(body: Record<string, unknown>) {
@@ -308,6 +406,80 @@ async function handleGenerateScript(body: Record<string, unknown>) {
     .filter((t) => t.variants.length > 0);
 
   const apiKey = await getClaudeApiKey();
+  const generationPath =
+    body.generationPath === "v2" || body.generationVersion === "v2" ? "v2" : "v1";
+
+  if (generationPath === "v2") {
+    const variantsByTag: Record<
+      string,
+      Array<{
+        variantId: string;
+        text: string;
+        lengthTier?: "short" | "medium" | "long" | null;
+        direction?: string | null;
+        requiredConstraints?: string[];
+        excludedConstraints?: string[];
+      }>
+    > = {};
+    const tagMetaByName: Record<
+      string,
+      {
+        lengthTiered: boolean;
+        scope: "general" | "types";
+        types: string[];
+        repeatability?: ScriptSegmentTagRow["repeatability"];
+      }
+    > = {};
+    for (const t of library.tags) {
+      tagMetaByName[t.name] = {
+        lengthTiered: t.lengthTiered,
+        scope: t.scope,
+        types: t.types,
+        repeatability: t.repeatability,
+      };
+      variantsByTag[t.name] = (library.variantsByTag[t.name] ?? []).map((v) => ({
+        variantId: v.variantId,
+        text: v.text,
+        lengthTier: v.lengthTier,
+        direction: v.direction ?? null,
+        requiredConstraints: v.requiredConstraints,
+        excludedConstraints: v.excludedConstraints,
+      }));
+    }
+    const contextTags = buildScriptLabContextTags({
+      meditationType: journalMode ? null : meditationStyle,
+      userText: transcript,
+    });
+    const result = await generateScriptLabScriptV2({
+      apiKey,
+      model: claudeModel,
+      transcript,
+      meditationStyle,
+      journalMode,
+      targetMinutes,
+      speechSpeed,
+      segmentTags,
+      variantsByTag,
+      tagMetaByName,
+      generalTagVariants: verificationTagVariants,
+      contextTags,
+    });
+    return json(200, {
+      beats: result.beats,
+      beatsBeforeVerification: result.beatsBeforeVerification,
+      verificationNewBeatIndices: result.verificationNewBeatIndices,
+      verificationCorrectionsApplied: result.verificationCorrectionsApplied,
+      beatWarnings: result.beatWarnings,
+      transcript,
+      meditationStyle,
+      journalMode,
+      targetMinutes,
+      usage: result.usage,
+      generationPath: "v2",
+      v2Meta: result.v2Meta,
+    });
+  }
+
   const result = await generateScriptLabScript({
     apiKey,
     model: claudeModel,
@@ -331,6 +503,7 @@ async function handleGenerateScript(body: Record<string, unknown>) {
     journalMode,
     targetMinutes,
     usage: result.usage,
+    generationPath: "v1",
   });
 }
 

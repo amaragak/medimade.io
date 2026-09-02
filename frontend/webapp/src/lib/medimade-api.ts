@@ -2068,12 +2068,13 @@ export async function importAdminScriptLabTagMetadata(
 export async function postAdminScriptLab(
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const isGenerate = body.action === "generate-script";
-  const scriptLabUrl = isGenerate ? getMedimadeScriptLabUrl() : null;
+  const usesScriptLabUrl =
+    body.action === "generate-script" || body.action === "fill-placeholders";
+  const scriptLabUrl = usesScriptLabUrl ? getMedimadeScriptLabUrl() : null;
   const base = scriptLabUrl ?? getMedimadeApiBase();
   if (!base) {
     throw new Error(
-      isGenerate
+      usesScriptLabUrl
         ? "NEXT_PUBLIC_MEDIMADE_SCRIPT_LAB_URL or NEXT_PUBLIC_MEDIMADE_API_URL is not set"
         : "NEXT_PUBLIC_MEDIMADE_API_URL is not set",
     );
