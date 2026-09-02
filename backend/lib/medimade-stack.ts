@@ -995,6 +995,29 @@ export class MedimadeStack extends cdk.Stack {
     fishApiKeySecret.grantRead(adminScriptLab);
     claudeApiKeySecret.grantRead(adminScriptLab);
 
+    const adminScriptLabUrl = adminScriptLab.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE,
+      cors: {
+        allowedOrigins: ["*"],
+        allowedMethods: [lambda.HttpMethod.POST],
+        allowedHeaders: [
+          "content-type",
+          "authorization",
+          "x-medimade-authorization",
+        ],
+      },
+    });
+    const scriptLabUrlInvokeFn = new lambda.CfnPermission(
+      this,
+      "AdminScriptLabPublicInvokeFunction",
+      {
+        action: "lambda:InvokeFunction",
+        functionName: adminScriptLab.functionName,
+        principal: "*",
+      },
+    );
+    scriptLabUrlInvokeFn.addPropertyOverride("InvokedViaFunctionUrl", true);
+
     httpApi.addRoutes({
       path: "/admin/script-lab",
       methods: [
@@ -1309,6 +1332,11 @@ export class MedimadeStack extends cdk.Stack {
       description:
         "Lambda Function URL (response streaming) for POST chat — set NEXT_PUBLIC_MEDIMADE_CHAT_URL",
       value: claudeChatUrl.url,
+    });
+    new cdk.CfnOutput(this, "AdminScriptLabUrl", {
+      description:
+        "Lambda Function URL for Script Lab generate-script — set NEXT_PUBLIC_MEDIMADE_SCRIPT_LAB_URL",
+      value: adminScriptLabUrl.url,
     });
     new cdk.CfnOutput(this, "FishAudioSecretName", {
       description: "Put your Fish Audio API key as the secret string value",

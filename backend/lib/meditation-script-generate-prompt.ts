@@ -61,6 +61,7 @@ export function buildMeditationScriptGenerationPrompt(params: {
       ? scriptSegmentLibraryPromptBlock({
           tags: params.segmentTags,
           meditationType: params.journalMode ? null : styleForScript,
+          structuredBeats: true,
         })
       : "";
 
@@ -95,8 +96,39 @@ export function buildMeditationScriptGenerationPrompt(params: {
 
   if (params.includeSegmentPlaceholders) {
     userParts.push(
-      "When you use a reusable segment, output the exact placeholder `[[SEG:TAG_NAME]]` — do not paraphrase the library line inline.",
-      "Output **only** the words the guide speaks, `[[SEG:…]]` placeholders, and `[[PAUSE …]]` markers; do not output other markdown or commentary.",
+      "### Output format (Script Lab — structured beats)",
+      "Return the script ONLY by calling the `submit_meditation_script_beats` tool with an ordered `beats` array. Do not output free-form prose or [[SEG:…]] markers in chat text.",
+      "Each beat needs an accurate `beatType` (functional category), whether custom or library-based.",
+      "",
+      "**Personalization wins by default.** Prefer `custom: true` whenever text references this user's specific input — their situation, words, or journal details — even if it resembles a library line. Only consider tags for text with **no personalization signal**: wording that would read the same for any user.",
+      "Must stay custom (personalized): e.g. \"Find a comfortable position, sitting beneath your tree\"; \"This is where you've been feeling that tension.\" May belong in a tag if a fit exists (generic, no user signal): e.g. \"Let that breath settle, and notice the natural rhythm that lives in your body\"; \"There's no rush—just notice what's there.\"",
+      "",
+      "For non-pause beats: set `custom: false` with a library `tag` when a segment covers generic wording; set `custom: true` with `text` when personalization needs bespoke phrasing.",
+      "Before writing `custom: true` generic text, check the **full eligible tag library** above — any tag that covers the same idea, not only tags with an obvious topical match to the current beat.",
+      "If a custom passage mixes personalized content with a generic aside (reassurance, pacing, transition) that carries no personalization, split the aside into its own tag beat and keep the personalized remainder as a separate `content` beat. Example: a body-scan intro ending with \"There's no rush—just notice what's there\" → custom `content` for \"Now I'm going to invite your attention to slowly move through your body…\" then `{ beatType: \"pace_reassurance\", custom: false, tag: \"PACE_REASSURANCE\" }` for the aside — not embedded inside the custom text.",
+      "Do not over-fragment. Never split personalized phrases or load-bearing lines that would not make sense on their own. One blended custom beat is valid — e.g. for \"sitting under a tree\", `{ beatType: \"settle_opener\", custom: true, text: \"Notice you're sitting beneath a tree — let that place hold you for these next few minutes.\" }` needs no separate SETTLE_OPENER tag beat afterward.",
+      "Never produce two beats with the same functional beatType (except `content` and `pause`, which may repeat).",
+      "Use `{ beatType: \"content\", custom: true, text: \"…\" }` for main personalized practice material (may repeat).",
+      "Use `{ beatType: \"pause\", pauseBand: \"medium\" }` for standalone structural silences between beats; use inline `[[PAUSE …]]` inside a custom beat's text only for shorter pauses within one flowing narration.",
+      "Pause bands: extra-short, short, medium, long, extra-long (same vocabulary as [[PAUSE …]] rules above).",
+      "",
+      "### Worked examples (segment vs custom)",
+      "",
+      "**Fully generic → all tags**",
+      "Before:",
+      "`{ beatType: \"content\", custom: true, text: \"And as you exhale, let yourself arrive fully here. [[PAUSE short]] There's nowhere to rush, nowhere to be except right now.\" }`",
+      "After:",
+      "`{ beatType: \"breath_transition\", custom: false, tag: \"BREATH_TRANSITION\" }`, `{ beatType: \"pause\", pauseBand: \"short\" }`, `{ beatType: \"pace_reassurance\", custom: false, tag: \"PACE_REASSURANCE\" }`",
+      "",
+      "**Partial split (generic aside only)**",
+      "Before:",
+      "`{ beatType: \"content\", custom: true, text: \"Now I'm going to invite your attention to slowly move through your body, noticing where you hold tension, and gently asking it to soften and release. There's no rush—just notice what's there.\" }`",
+      "After:",
+      "`{ beatType: \"content\", custom: true, text: \"Now I'm going to invite your attention to slowly move through your body, noticing where you hold tension, and gently asking it to soften and release.\" }`, `{ beatType: \"pace_reassurance\", custom: false, tag: \"PACE_REASSURANCE\" }`",
+      "",
+      "**Do not change this (personalized — keep custom):**",
+      "`{ beatType: \"settle_opener\", custom: true, text: \"Find a comfortable position, sitting beneath your tree\" }`",
+      "`{ beatType: \"content\", custom: true, text: \"This is where you've been feeling that tension\" }`",
     );
   } else {
     userParts.push(
@@ -123,7 +155,7 @@ export function buildMeditationScriptGenerationPrompt(params: {
 
   if (params.includeSegmentPlaceholders) {
     systemParts.push(
-      "Reusable segments are optional tools — insert only tags that fit; fill the rest with original narration.",
+      "For Script Lab you output structured beats (not inline [[SEG:…]] prose). Personalization wins: keep user-specific wording custom. For generic wording only, prefer library tags after checking the full eligible list; split swappable asides into tag beats without over-fragmenting personalized passages. Never duplicate functional beatTypes (except content and pause).",
     );
   }
 

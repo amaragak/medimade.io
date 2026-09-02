@@ -2,7 +2,6 @@ import {
   buildScriptLabContextTags,
   variantEligibleForRequest,
 } from "@/lib/script-constraint-tags";
-import { segmentEligibleForType } from "@/lib/script-segment-tags";
 
 /** Known meditation types — keep in sync with Script Lab test panel dropdown. */
 export const SCRIPT_LAB_MEDITATION_TYPES = [
@@ -38,9 +37,8 @@ export type ScriptLabTagCoverage = {
   countsByContext: Array<{ label: string; eligibleCount: number; contextTags: string[] }>;
 };
 
-function applicableTypesForTag(tag: ScriptLabCoverageTag): readonly string[] {
-  if (tag.scope === "general") return SCRIPT_LAB_MEDITATION_TYPES;
-  return tag.types.length > 0 ? tag.types : [];
+function applicableTypesForTag(_tag: ScriptLabCoverageTag): readonly string[] {
+  return SCRIPT_LAB_MEDITATION_TYPES;
 }
 
 /** Default seated context per meditation type (no standing unless user signals). */
@@ -54,9 +52,6 @@ export function countEligibleVariantsForContext(params: {
   meditationType: string;
   contextTags: string[];
 }): number {
-  if (!segmentEligibleForType(params.tag.scope, params.tag.types, params.meditationType)) {
-    return 0;
-  }
   return params.variants.filter((v) =>
     variantEligibleForRequest({
       tagScope: params.tag.scope,

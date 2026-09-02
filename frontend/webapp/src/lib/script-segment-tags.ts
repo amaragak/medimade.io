@@ -22,15 +22,52 @@ export function variantEligibleForTargetLength(params: {
   return eligibleLengthTiers(params.targetMinutes).includes(tier);
 }
 
-export function segmentEligibleForType(
-  scope: ScriptSegmentScope,
+/**
+ * Relative selection weights per length tier for a target script duration.
+ * Eligibility is unchanged — this only affects preference within the eligible set.
+ */
+export function lengthTierSelectionWeights(
+  targetMinutes: number,
+): Record<ScriptLengthTier, number> {
+  if (targetMinutes <= 2) return { short: 1, medium: 0, long: 0 };
+  if (targetMinutes <= 5) return { short: 1, medium: 3, long: 0 };
+  return { short: 1, medium: 3, long: 4 };
+}
+
+/** Body-region segments where depth should scale with script length (not pacing/transition tags). */
+export function segmentTagPrefersLengthTierBias(
+  tagName: string,
+  beatType?: string | null,
+): boolean {
+  const tag = normalizeScriptSegmentTag(tagName);
+  if (tag.startsWith("BODY_SCAN_")) return true;
+  const bt = (beatType ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, "_");
+  return bt.startsWith("body_scan_");
+}
+
+export function normalizeMeditationTypeKey(raw: string): string {
+  return raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+}
+
+export function typesMatchMeditationType(
   types: string[],
   meditationType: string | null | undefined,
 ): boolean {
-  if (scope === "general") return true;
-  const t = (meditationType ?? "").trim().toLowerCase();
+  const t = normalizeMeditationTypeKey(meditationType ?? "");
   if (!t || t === "general") return false;
-  return types.some((x) => x.trim().toLowerCase() === t);
+  return types.some((x) => normalizeMeditationTypeKey(x) === t);
+}
+
+/** @deprecated types[] no longer gates eligibility — always true. Use typesMatchMeditationType for soft preference only. */
+export function segmentEligibleForType(
+  _scope: ScriptSegmentScope,
+  _types: string[],
+  _meditationType: string | null | undefined,
+): boolean {
+  return true;
 }
 
 export function normalizeScriptSegmentTag(raw: string): string {

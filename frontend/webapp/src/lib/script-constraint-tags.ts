@@ -1,6 +1,6 @@
 /** Client mirror of backend/lib/script-constraint-tags.ts */
 
-import { segmentEligibleForType, type ScriptSegmentScope } from "@/lib/script-segment-tags";
+import type { ScriptSegmentScope } from "@/lib/script-segment-tags";
 
 export const DEFAULT_SEATED_CONSTRAINT = "seated_or_lying";
 export const STANDING_CONSTRAINT = "standing";
@@ -88,6 +88,7 @@ export function variantEligibleForContext(params: {
   return true;
 }
 
+/** Variant-level constraint filter. Tag types[] does not gate eligibility — only soft preference at pick time. */
 export function variantEligibleForRequest(params: {
   tagScope: ScriptSegmentScope;
   tagTypes: string[];
@@ -96,9 +97,9 @@ export function variantEligibleForRequest(params: {
   excludedConstraints: string[];
   contextTags: string[];
 }): boolean {
-  if (!segmentEligibleForType(params.tagScope, params.tagTypes, params.meditationType)) {
-    return false;
-  }
+  void params.tagScope;
+  void params.tagTypes;
+  void params.meditationType;
   return variantEligibleForContext({
     requiredConstraints: params.requiredConstraints,
     excludedConstraints: params.excludedConstraints,

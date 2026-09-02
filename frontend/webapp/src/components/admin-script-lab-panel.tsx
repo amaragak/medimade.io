@@ -16,13 +16,27 @@ import {
 } from "@/lib/medimade-api";
 import type { JournalEntry, JournalFolder } from "@/lib/journal-storage";
 import {
-  estimateScriptLabDurationSeconds,
+  estimateScriptLabBeatsDurationSeconds,
+  estimateScriptLabBeatsTextUtf8Bytes,
+  formatCustomTextRatio,
   formatDurationClock,
-  pickRandomEligibleVariant,
+  formatUtf8ByteCount,
   buildPreviewContextTags,
   resolvedPreviewMeditationType,
   scopeLabel,
 } from "@/lib/script-lab-estimate";
+import {
+  createSegmentVariantPickerForBeats,
+} from "@/lib/script-segment-variant-select";
+import {
+  flattenBeatsToPreviewTokens,
+  flattenBeatsToCopyText,
+  findDuplicateBeatTypeWarnings,
+  formatBeatWarning,
+  renderBeatsToScript,
+  type ScriptLabBeat,
+  type ScriptLabBeatDuplicateWarning,
+} from "@/lib/script-lab-beats";
 import {
   computeLibraryCoverage,
   SCRIPT_LAB_MEDITATION_TYPES,
@@ -33,14 +47,17 @@ import {
 } from "@/lib/script-constraint-tags";
 import {
   normalizeScriptSegmentTag,
-  renderScriptWithSegmentVariants,
-  tokenizeScriptSegmentTags,
   type ScriptLengthTier,
 } from "@/lib/script-segment-tags";
 import {
   ScriptLabTestFlowPanel,
   type ScriptLabFlowGenerationInput,
 } from "@/components/script-lab-test-flow-panel";
+import {
+  ScriptLabBeatsPreview,
+  ScriptLabBeatsVerificationToggle,
+  type BeatsVerificationView,
+} from "@/components/script-lab-beats-preview";
 
 const MEDITATION_TYPES = SCRIPT_LAB_MEDITATION_TYPES;
 
@@ -53,7 +70,13 @@ const FLOWS: Array<{ id: ScriptLabFlow; label: string }> = [
   { id: "single-prompt", label: "Single prompt" },
 ];
 
-type PreviewMode = "raw" | "rendered";
+type PreviewMode = "beats" | "tags" | "rendered";
+
+const PREVIEW_MODES: Array<{ id: PreviewMode; label: string }> = [
+  { id: "beats", label: "Beats" },
+  { id: "tags", label: "Tags" },
+  { id: "rendered", label: "Rendered" },
+];
 
 function audioUrl(baseUrl: string | undefined, row: ScriptLabVariantAudio | undefined): string | null {
   if (!baseUrl || !row?.s3Key) return null;
@@ -65,10 +88,17 @@ export function AdminScriptLabPanel() {
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<ScriptLabState | null>(null);
 
-  const [rawScript, setRawScript] = useState("");
+  const [beats, setBeats] = useState<ScriptLabBeat[]>([]);
+  const [beatsBeforeVerification, setBeatsBeforeVerification] = useState<ScriptLabBeat[]>([]);
+  const [verificationNewBeatIndices, setVerificationNewBeatIndices] = useState<number[]>([]);
+  const [verificationCorrectionsApplied, setVerificationCorrectionsApplied] = useState(false);
+  const [beatsVerificationView, setBeatsVerificationView] =
+    useState<BeatsVerificationView>("after");
+  const [beatWarnings, setBeatWarnings] = useState<ScriptLabBeatDuplicateWarning[]>([]);
   const [renderedScript, setRenderedScript] = useState("");
-  const [previewMode, setPreviewMode] = useState<PreviewMode>("raw");
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("beats");
   const [renderPicks, setRenderPicks] = useState<Record<string, string>>({});
+  const [copyNote, setCopyNote] = useState<string | null>(null);
 
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [newTagName, setNewTagName] = useState("");
@@ -234,10 +264,72 @@ export function AdminScriptLabPanel() {
     });
   }, [state, coverageThreshold]);
 
+  const displayedBeats = useMemo(() => {
+    if (beatsBeforeVerification.length === 0) return beats;
+    return beatsVerificationView === "before" ? beatsBeforeVerification : beats;
+  }, [beatsVerificationView, beatsBeforeVerification, beats]);
+
+  const displayedRenderedScript = useMemo(() => {
+    if (displayedBeats.length === 0) return "";
+    const hasFill =
+      renderedScript.trim().length > 0 || Object.keys(renderPicks).length > 0;
+    if (!hasFill) return "";
+    if (renderedScript.trim() && displayedBeats === beats) {
+      return renderedScript;
+    }
+    if (Object.keys(variantsByTagForEstimate).length === 0) return "";
+    const picker = createSegmentVariantPickerForBeats({
+      beats: displayedBeats,
+      variantsByTag: variantsByTagForEstimate,
+      tagMetaByName,
+      targetMinutes,
+      meditationType: previewMeditationType,
+      contextTags: previewContextTags,
+      preferredVariantIdByTag: renderPicks,
+      random: false,
+    });
+    return renderBeatsToScript(displayedBeats, picker.pickVariantText);
+  }, [
+    displayedBeats,
+    renderedScript,
+    beats,
+    variantsByTagForEstimate,
+    tagMetaByName,
+    targetMinutes,
+    previewMeditationType,
+    previewContextTags,
+    renderPicks,
+  ]);
+
+  const previewCopyText = useMemo((): string => {
+    if (displayedBeats.length === 0) return "";
+    if (previewMode === "beats") {
+      return JSON.stringify(displayedBeats, null, 2);
+    }
+    if (previewMode === "tags") {
+      return flattenBeatsToCopyText(displayedBeats);
+    }
+    return displayedRenderedScript.trim();
+  }, [displayedBeats, previewMode, displayedRenderedScript]);
+
+  const activeBeatWarnings = useMemo(() => {
+    if (previewMode === "beats" && displayedBeats.length > 0) {
+      return findDuplicateBeatTypeWarnings(displayedBeats);
+    }
+    return beatWarnings;
+  }, [previewMode, displayedBeats, beatWarnings]);
+
+  const correctedBeatIndices = useMemo(
+    () => new Set(verificationNewBeatIndices),
+    [verificationNewBeatIndices],
+  );
+
+  const statsBeats = displayedBeats;
+
   const durationEstimate = useMemo(() => {
-    if (!rawScript.trim() || !voiceModelId) return null;
-    return estimateScriptLabDurationSeconds({
-      rawScript,
+    if (statsBeats.length === 0 || !voiceModelId) return null;
+    return estimateScriptLabBeatsDurationSeconds({
+      beats: statsBeats,
       targetMinutes,
       modelId: voiceModelId,
       meditationType: previewMeditationType,
@@ -247,7 +339,7 @@ export function AdminScriptLabPanel() {
       picksByTag: previewMode === "rendered" ? renderPicks : undefined,
     });
   }, [
-    rawScript,
+    statsBeats,
     voiceModelId,
     targetMinutes,
     previewMeditationType,
@@ -258,40 +350,92 @@ export function AdminScriptLabPanel() {
     renderPicks,
   ]);
 
-  function fillPlaceholdersRandom() {
-    const picks: Record<string, string> = {};
-    const rendered = renderScriptWithSegmentVariants(rawScript, (tag) => {
-      const variants = state?.variantsByTag[tag] ?? [];
-      const tagMeta = state?.tags.find((t) => t.name === tag);
-      const picked =
-        picks[tag] != null
-          ? variants.find((v) => v.variantId === picks[tag])
-          : pickRandomEligibleVariant(
-              variants.map((v) => ({
-                variantId: v.variantId,
-                text: v.text,
-                lengthTier: v.lengthTier,
-                requiredConstraints: v.requiredConstraints,
-                excludedConstraints: v.excludedConstraints,
-              })),
-              tagMeta
-                ? {
-                    lengthTiered: tagMeta.lengthTiered,
-                    scope: tagMeta.scope,
-                    types: tagMeta.types,
-                  }
-                : undefined,
-              targetMinutes,
-              previewMeditationType,
-              previewContextTags,
-            );
-      if (!picked) return null;
-      picks[tag] = picked.variantId;
-      return picked.text;
+  const textByteStats = useMemo(() => {
+    if (statsBeats.length === 0) return null;
+    return estimateScriptLabBeatsTextUtf8Bytes({
+      beats: statsBeats,
+      targetMinutes,
+      meditationType: previewMeditationType,
+      contextTags: previewContextTags,
+      variantsByTag: variantsByTagForEstimate,
+      tagMetaByName,
+      picksByTag: previewMode === "rendered" ? renderPicks : undefined,
     });
-    setRenderPicks(picks);
+  }, [
+    statsBeats,
+    targetMinutes,
+    previewMeditationType,
+    previewContextTags,
+    variantsByTagForEstimate,
+    tagMetaByName,
+    previewMode,
+    renderPicks,
+  ]);
+
+  const statsVerificationLabel =
+    beatsBeforeVerification.length > 0
+      ? beatsVerificationView === "before"
+        ? "Before verification"
+        : "After verification"
+      : null;
+
+  function fillPlaceholdersRandom() {
+    const tagMetaByName: Record<
+      string,
+      { lengthTiered: boolean; scope: "general" | "types"; types: string[] }
+    > = {};
+    for (const tag of state?.tags ?? []) {
+      tagMetaByName[tag.name] = {
+        lengthTiered: tag.lengthTiered,
+        scope: tag.scope,
+        types: tag.types,
+      };
+    }
+
+    const variantsByTag: Record<
+      string,
+      Array<{
+        variantId: string;
+        text: string;
+        lengthTier?: ScriptLengthTier | null;
+        requiredConstraints?: string[];
+        excludedConstraints?: string[];
+      }>
+    > = {};
+    for (const [tag, variants] of Object.entries(state?.variantsByTag ?? {})) {
+      variantsByTag[tag] = variants.map((v) => ({
+        variantId: v.variantId,
+        text: v.text,
+        lengthTier: v.lengthTier,
+        requiredConstraints: v.requiredConstraints,
+        excludedConstraints: v.excludedConstraints,
+      }));
+    }
+
+    const picker = createSegmentVariantPickerForBeats({
+      beats,
+      variantsByTag,
+      tagMetaByName,
+      targetMinutes,
+      meditationType: previewMeditationType,
+      contextTags: previewContextTags,
+    });
+    const rendered = renderBeatsToScript(beats, picker.pickVariantText);
+    setRenderPicks(picker.picksByTag);
     setRenderedScript(rendered);
     setPreviewMode("rendered");
+  }
+
+  async function copyPreviewToClipboard() {
+    if (!previewCopyText) return;
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(previewCopyText);
+      setCopyNote("Copied!");
+      window.setTimeout(() => setCopyNote(null), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not copy");
+    }
   }
 
   async function generateScript() {
@@ -309,11 +453,28 @@ export function AdminScriptLabPanel() {
         meditationStyle: flowGenerationInput.meditationStyle,
         meditationTargetMinutes: targetMinutes,
       });
-      const script = typeof data.script === "string" ? data.script : "";
-      setRawScript(script);
+      const nextBeats = Array.isArray(data.beats) ? (data.beats as ScriptLabBeat[]) : [];
+      const nextBefore = Array.isArray(data.beatsBeforeVerification)
+        ? (data.beatsBeforeVerification as ScriptLabBeat[])
+        : nextBeats;
+      const nextNewIndices = Array.isArray(data.verificationNewBeatIndices)
+        ? (data.verificationNewBeatIndices as number[]).filter(
+            (x) => typeof x === "number" && Number.isInteger(x) && x >= 0,
+          )
+        : [];
+      const nextWarnings = Array.isArray(data.beatWarnings)
+        ? (data.beatWarnings as ScriptLabBeatDuplicateWarning[])
+        : [];
+      setBeats(nextBeats);
+      setBeatsBeforeVerification(nextBefore);
+      setVerificationNewBeatIndices(nextNewIndices);
+      setVerificationCorrectionsApplied(data.verificationCorrectionsApplied === true);
+      setBeatsVerificationView("after");
+      setBeatWarnings(nextWarnings);
       setRenderedScript("");
       setRenderPicks({});
-      setPreviewMode("raw");
+      setCopyNote(null);
+      setPreviewMode("beats");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Script generation failed");
     } finally {
@@ -645,24 +806,32 @@ export function AdminScriptLabPanel() {
             <h2 className="font-display text-lg font-medium">Script preview</h2>
             <div className="flex flex-wrap items-center gap-2">
               <div className="inline-flex rounded-full border border-border bg-background p-0.5 text-xs">
-                {(["raw", "rendered"] as const).map((mode) => (
+                {PREVIEW_MODES.map(({ id, label }) => (
                   <button
-                    key={mode}
+                    key={id}
                     type="button"
-                    onClick={() => setPreviewMode(mode)}
-                    className={`cursor-pointer rounded-full px-3 py-1 font-medium capitalize ${
-                      previewMode === mode
+                    onClick={() => setPreviewMode(id)}
+                    className={`cursor-pointer rounded-full px-3 py-1 font-medium ${
+                      previewMode === id
                         ? "bg-accent-soft text-accent-link"
                         : "text-muted hover:text-foreground"
                     }`}
                   >
-                    {mode === "raw" ? "Raw (tags)" : "Rendered"}
+                    {label}
                   </button>
                 ))}
               </div>
               <button
                 type="button"
-                disabled={!rawScript.trim()}
+                disabled={!previewCopyText}
+                onClick={() => void copyPreviewToClipboard()}
+                className="cursor-pointer rounded-full border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-accent-soft/40 disabled:opacity-50"
+              >
+                {copyNote ?? "Copy"}
+              </button>
+              <button
+                type="button"
+                disabled={beats.length === 0}
                 onClick={fillPlaceholdersRandom}
                 className="cursor-pointer rounded-full border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-accent-soft/40 disabled:opacity-50"
               >
@@ -671,18 +840,42 @@ export function AdminScriptLabPanel() {
             </div>
           </div>
 
+          {activeBeatWarnings.length > 0 ? (
+            <div className="mt-3 space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-950 dark:text-amber-100">
+              <p className="font-semibold">Duplicate functional beatType detected</p>
+              {activeBeatWarnings.map((w) => (
+                <p key={w.beatType}>{formatBeatWarning(w)}</p>
+              ))}
+            </div>
+          ) : null}
+
+          {beats.length > 0 && beatsBeforeVerification.length > 0 ? (
+            <ScriptLabBeatsVerificationToggle
+              view={beatsVerificationView}
+              onChange={setBeatsVerificationView}
+              correctionsApplied={verificationCorrectionsApplied}
+            />
+          ) : null}
+
           <div className="mt-3 min-h-[12rem] max-h-[28rem] overflow-y-auto scroll-styled rounded-xl border border-border bg-background/80 p-4 text-sm leading-relaxed text-foreground">
-            {!rawScript.trim() ? (
+            {beats.length === 0 ? (
               <p className="text-muted">Generate a test script from the panel on the right.</p>
+            ) : previewMode === "beats" ? (
+              <ScriptLabBeatsPreview
+                beats={displayedBeats}
+                correctedBeatIndices={
+                  beatsVerificationView === "after" ? correctedBeatIndices : undefined
+                }
+              />
             ) : previewMode === "rendered" ? (
-              renderedScript.trim() ? (
-                <pre className="whitespace-pre-wrap font-sans">{renderedScript}</pre>
+              displayedRenderedScript.trim() ? (
+                <pre className="whitespace-pre-wrap font-sans">{displayedRenderedScript}</pre>
               ) : (
                 <p className="text-muted">Click “Fill placeholders (random)” to render tags.</p>
               )
             ) : (
               <div className="whitespace-pre-wrap font-sans">
-                {tokenizeScriptSegmentTags(rawScript).map((tok, i) =>
+                {flattenBeatsToPreviewTokens(displayedBeats).map((tok, i) =>
                   tok.type === "tag" ? (
                     <span
                       key={`${tok.name}-${i}`}
@@ -690,6 +883,13 @@ export function AdminScriptLabPanel() {
                     >
                       {tok.name}
                     </span>
+                  ) : tok.type === "pause" ? (
+                    <em
+                      key={`pause-${tok.band}-${i}`}
+                      className="mx-0.5 inline not-italic text-[11px] font-medium text-muted"
+                    >
+                      {`[[PAUSE ${tok.band}]]`}
+                    </em>
                   ) : (
                     <span key={`t-${i}`}>{tok.value}</span>
                   ),
@@ -698,16 +898,40 @@ export function AdminScriptLabPanel() {
             )}
           </div>
 
-          {durationEstimate ? (
+          {durationEstimate || textByteStats ? (
             <p className="mt-2 text-xs text-muted">
-              Est. duration:{" "}
-              <span className="font-semibold text-foreground">
-                {formatDurationClock(durationEstimate.totalSeconds)}
-              </span>{" "}
-              (target: {targetMinutes} min) — context: {previewContextTags.join(", ")} — pauses{" "}
-              {formatDurationClock(durationEstimate.pauseSeconds)}, segments{" "}
-              {formatDurationClock(durationEstimate.segmentSeconds)}, custom ~{" "}
-              {durationEstimate.customWordCount} words
+              {statsVerificationLabel ? (
+                <>
+                  <span className="font-medium text-foreground">{statsVerificationLabel}</span>
+                  {" — "}
+                </>
+              ) : null}
+              {durationEstimate ? (
+                <>
+                  Est. duration:{" "}
+                  <span className="font-semibold text-foreground">
+                    {formatDurationClock(durationEstimate.totalSeconds)}
+                  </span>{" "}
+                  (target: {targetMinutes} min) — context: {previewContextTags.join(", ")} — pauses{" "}
+                  {formatDurationClock(durationEstimate.pauseSeconds)}, segments{" "}
+                  {formatDurationClock(durationEstimate.segmentSeconds)}, custom ~{" "}
+                  {durationEstimate.customWordCount} words
+                </>
+              ) : null}
+              {durationEstimate && textByteStats ? " — " : null}
+              {textByteStats ? (
+                <>
+                  text:{" "}
+                  <span className="font-semibold text-foreground">
+                    {formatUtf8ByteCount(textByteStats.customUtf8Bytes)}
+                  </span>{" "}
+                  custom ·{" "}
+                  <span className="font-semibold text-foreground">
+                    {formatUtf8ByteCount(textByteStats.totalUtf8Bytes)}
+                  </span>{" "}
+                  with segments ({formatCustomTextRatio(textByteStats.customRatio)})
+                </>
+              ) : null}
             </p>
           ) : null}
         </section>

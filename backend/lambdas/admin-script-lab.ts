@@ -280,6 +280,15 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       .slice(0, 2)
       .map((v) => v.text),
   }));
+  const verificationTagVariants = library.tags
+    .map((t) => ({
+      name: t.name,
+      variants: (library.variantsByTag[t.name] ?? []).map((v) => ({
+        variantId: v.variantId,
+        text: v.text,
+      })),
+    }))
+    .filter((t) => t.variants.length > 0);
 
   const apiKey = await getClaudeApiKey();
   const result = await generateScriptLabScript({
@@ -291,10 +300,15 @@ async function handleGenerateScript(body: Record<string, unknown>) {
     targetMinutes,
     speechSpeed,
     segmentTags,
+    generalTagVariants: verificationTagVariants,
   });
 
   return json(200, {
-    script: result.script,
+    beats: result.beats,
+    beatsBeforeVerification: result.beatsBeforeVerification,
+    verificationNewBeatIndices: result.verificationNewBeatIndices,
+    verificationCorrectionsApplied: result.verificationCorrectionsApplied,
+    beatWarnings: result.beatWarnings,
     transcript,
     meditationStyle,
     journalMode,

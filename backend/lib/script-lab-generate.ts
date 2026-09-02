@@ -1,9 +1,28 @@
 import { buildMeditationScriptGenerationPrompt } from "./meditation-script-generate-prompt";
 import { parseAnthropicMessageUsage } from "./anthropic-pricing";
+import { verifyScriptLabBeats } from "./script-lab-beat-verification";
+import {
+  extractBeatsFromAnthropicMessage,
+  findDuplicateBeatTypeWarnings,
+  scriptLabBeatsToolDefinition,
+  type ScriptLabBeat,
+  type ScriptLabBeatDuplicateWarning,
+} from "./script-lab-beats";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 
 export type ScriptLabFlow = "by-type" | "guide-chat" | "journal" | "single-prompt";
+
+function mergeUsage(
+  primary: { input_tokens: number; output_tokens: number } | null,
+  secondary: { input_tokens: number; output_tokens: number } | null,
+): { input_tokens: number; output_tokens: number } | null {
+  if (!primary && !secondary) return null;
+  return {
+    input_tokens: (primary?.input_tokens ?? 0) + (secondary?.input_tokens ?? 0),
+    output_tokens: (primary?.output_tokens ?? 0) + (secondary?.output_tokens ?? 0),
+  };
+}
 
 export async function generateScriptLabScript(params: {
   apiKey: string;
@@ -19,8 +38,16 @@ export async function generateScriptLabScript(params: {
     types: string[];
     sampleVariants: string[];
   }>;
+  generalTagVariants: Array<{
+    name: string;
+    variants: Array<{ variantId: string; text: string }>;
+  }>;
 }): Promise<{
-  script: string;
+  beats: ScriptLabBeat[];
+  beatsBeforeVerification: ScriptLabBeat[];
+  verificationNewBeatIndices: number[];
+  verificationCorrectionsApplied: boolean;
+  beatWarnings: ScriptLabBeatDuplicateWarning[];
   usage: { input_tokens: number; output_tokens: number } | null;
 }> {
   const { system, userContent } = buildMeditationScriptGenerationPrompt({
@@ -33,6 +60,8 @@ export async function generateScriptLabScript(params: {
     segmentTags: params.segmentTags,
   });
 
+  const tool = scriptLabBeatsToolDefinition();
+
   const upstream = await fetch(ANTHROPIC_URL, {
     method: "POST",
     headers: {
@@ -44,6 +73,8 @@ export async function generateScriptLabScript(params: {
       model: params.model,
       max_tokens: 8192,
       system,
+      tools: [tool],
+      tool_choice: { type: "tool", name: tool.name },
       messages: [{ role: "user", content: userContent }],
     }),
   });
@@ -55,15 +86,31 @@ export async function generateScriptLabScript(params: {
     );
   }
 
-  let parsed: { content?: Array<{ type?: string; text?: string }> };
+  let parsed: { content?: unknown };
   try {
     parsed = JSON.parse(responseText);
   } catch {
     throw new Error("Invalid response from Anthropic");
   }
 
-  const text =
-    parsed.content?.find((c) => c?.type === "text")?.text?.trim() ?? "";
-  if (!text) throw new Error("Empty script returned by Anthropic");
-  return { script: text, usage: parseAnthropicMessageUsage(responseText) };
+  const beatsBeforeVerification = extractBeatsFromAnthropicMessage(parsed.content);
+  const primaryUsage = parseAnthropicMessageUsage(responseText);
+
+  const verified = await verifyScriptLabBeats({
+    apiKey: params.apiKey,
+    transcript: params.transcript,
+    beatsBefore: beatsBeforeVerification,
+    generalTags: params.generalTagVariants,
+  });
+
+  const beatWarnings = findDuplicateBeatTypeWarnings(verified.beats);
+
+  return {
+    beats: verified.beats,
+    beatsBeforeVerification: verified.beatsBeforeVerification,
+    verificationNewBeatIndices: verified.newBeatIndices,
+    verificationCorrectionsApplied: verified.correctionsApplied,
+    beatWarnings,
+    usage: mergeUsage(primaryUsage, verified.usage),
+  };
 }

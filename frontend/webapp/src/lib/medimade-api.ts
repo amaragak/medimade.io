@@ -68,6 +68,15 @@ export function getMedimadeApiBase(): string | null {
   return t.endsWith("/") ? t.slice(0, -1) : t;
 }
 
+/** Lambda Function URL for Script Lab generate-script (avoids API Gateway 30s timeout). */
+export function getMedimadeScriptLabUrl(): string | null {
+  const u = process.env.NEXT_PUBLIC_MEDIMADE_SCRIPT_LAB_URL;
+  if (!u || typeof u !== "string") return null;
+  const t = u.trim();
+  if (!t) return null;
+  return t.endsWith("/") ? t.slice(0, -1) : t;
+}
+
 /** Sends a one-time sign-in link to the given email (no auth required). */
 export async function requestMedimadeMagicLink(email: string): Promise<void> {
   const base = getMedimadeApiBase();
@@ -2012,9 +2021,18 @@ export async function exportAdminScriptLab(): Promise<{ segments: unknown[] }> {
 export async function postAdminScriptLab(
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  const base = getMedimadeApiBase();
-  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/script-lab`, {
+  const isGenerate = body.action === "generate-script";
+  const scriptLabUrl = isGenerate ? getMedimadeScriptLabUrl() : null;
+  const base = scriptLabUrl ?? getMedimadeApiBase();
+  if (!base) {
+    throw new Error(
+      isGenerate
+        ? "NEXT_PUBLIC_MEDIMADE_SCRIPT_LAB_URL or NEXT_PUBLIC_MEDIMADE_API_URL is not set"
+        : "NEXT_PUBLIC_MEDIMADE_API_URL is not set",
+    );
+  }
+  const path = scriptLabUrl ? "" : "/admin/script-lab";
+  const res = await fetch(`${base}${path}`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify(body),
