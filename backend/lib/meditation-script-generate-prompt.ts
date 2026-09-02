@@ -17,6 +17,94 @@ import {
 
 export type { SegmentTagForPrompt, SegmentTagTierAverage } from "./script-segment-tag-metrics";
 
+type PauseBudgetTier = {
+  label: string;
+  silenceShare: string;
+  density: string;
+  bandMix: string;
+};
+
+function pauseBudgetTierForTarget(targetMinutes: number): PauseBudgetTier {
+  if (targetMinutes <= 3) {
+    return {
+      label: "2–3 minute",
+      silenceShare: "30–40%",
+      density: "Pauses light — mostly **short** and **medium**; **extra-long** rare or absent.",
+      bandMix:
+        "Favor **short** between lines; **medium** at transitions; **long** only after the heaviest invitation; skip **extra-long** unless one brief open moment is essential.",
+    };
+  }
+  if (targetMinutes <= 7) {
+    return {
+      label: "5 minute",
+      silenceShare: "40–50%",
+      density: "Pauses moderate — **short**, **medium**, and **long** in mix; **extra-long** sparingly.",
+      bandMix:
+        "Use **medium** as default between beats; **long** after regional invitations; **extra-long** once or twice in the core section at most.",
+    };
+  }
+  if (targetMinutes <= 14) {
+    return {
+      label: "10 minute",
+      silenceShare: "50–60%",
+      density: "Pauses generous — frequent **long** and regular **extra-long** in the core practice.",
+      bandMix:
+        "**Medium** and **long** between most beats; **extra-long** after each major body region or open practice block; **short** mainly within breath pairs.",
+    };
+  }
+  return {
+    label: "20 minute",
+    silenceShare: "60–70%",
+    density:
+      "Pauses **dominant** — **extra-long** used freely in core and body-tour sections; the script should feel **spacious**, not filled with speech.",
+    bandMix:
+      "**Extra-long** should appear **frequently** (often after every regional body beat and every personalized focus passage); **long** as the typical gap elsewhere; **short**/**medium** mainly in opening breath cues and light transitions — not as the default in the body tour.",
+  };
+}
+
+/** Pause-budget guidance scaled to target duration (generation prompt only). */
+function scriptPauseBudgetGuidanceAppendix(targetMinutes: number): string {
+  const tier = pauseBudgetTierForTarget(targetMinutes);
+  const stemSeconds = Math.round(targetMinutes * 60);
+  const tierLo = parseInt(tier.silenceShare.split("–")[0] ?? "30", 10) / 100;
+  const tierHi =
+    parseInt(tier.silenceShare.split("–")[1]?.replace("%", "") ?? "40", 10) / 100;
+  const targetPauseLo = Math.round(stemSeconds * tierLo);
+  const targetPauseHi = Math.round(stemSeconds * tierHi);
+
+  return [
+    "",
+    "### Pause budget (scales with target duration)",
+    `This is a **${targetMinutes}-minute** script (${tier.label} tier). Silence is the **primary lever** for hitting the target — not spoken word count.`,
+    "",
+    "**Duration tiers (starting points — match your target):**",
+    "- **2 min:** pauses light, mostly short/medium — silence ~**30–40%** of total duration",
+    "- **5 min:** pauses moderate, short/medium/long mix — silence ~**40–50%**",
+    "- **10 min:** pauses generous, more long/extra-long — silence ~**50–60%**",
+    "- **20 min:** pauses dominant, extra-long freely in core/body sections — silence ~**60–70%** — the script should feel **spacious**, not filled",
+    "",
+    `**Your tier (${tier.label}):** aim for **~${tier.silenceShare}** of the ~**${stemSeconds}** s stem in pause markers / pause beats — roughly **${targetPauseLo}–${targetPauseHi}** s of silence total. ${tier.density}`,
+    "",
+    "**Band mix for this target:**",
+    tier.bandMix,
+    "",
+    "**Body tour & core practice (longer scripts):**",
+    "- After each **regional body beat** (crown, jaw, shoulders, hips, etc.), follow with a pause **long enough to actually inhabit that region** — on a 10–20 minute script that usually means **long** or **extra-long**, not a brief **short** before moving on.",
+    "- After **personalized focus** passages (lower back, the user's stated tension, imagery like sitting beneath their tree), **extra-long** pauses are **expected and correct** — often two or more in a row if the listener needs sustained open time. This is not excessive.",
+    "",
+    "**Proportional band vocabulary:**",
+    "- Scale pause **bands** to target length: on a **20-minute** script, **extra-long** should appear **frequently** throughout the body tour and core; on a **2-minute** script, **extra-long** should appear **rarely or not at all**.",
+    "- Do **not** use the same pause density as a 5-minute script and expect a 20-minute result — longer targets need **more pause beats** and **heavier bands**, not longer speeches.",
+    "",
+    "**Do not pad with words:**",
+    "- If duration is short, add **silence** (more pause beats, heavier bands) — **not** more spoken content.",
+    "- A 20-minute script may have a **similar word count** to a 10-minute script once pause budget is right; that is **correct and expected**.",
+    "- Never increase narration length to compensate for a duration shortfall when the fix is more silence (silence also costs zero TTS).",
+    "",
+    `Planning check: if your estimated pause total is well below **${targetPauseLo}** s for this ${targetMinutes}-minute target, you have not budgeted enough silence yet.`,
+  ].join("\n");
+}
+
 /**
  * Shared meditation script generation prompt used by the real create flow
  * (includeSegmentPlaceholders: false) and Script Lab admin (true).
@@ -86,6 +174,7 @@ export function buildMeditationScriptGenerationPrompt(params: {
     "Use gender-neutral language throughout; never assume anyone's gender. Avoid he/she/his/her—prefer 'you' or singular 'they' where needed.",
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
     SCRIPT_PAUSE_PROMPT_RULES,
+    scriptPauseBudgetGuidanceAppendix(params.targetMinutes),
     "Important formatting constraints:",
     "1) Do NOT output any title, heading, or preamble of any kind.",
     "2) The very first spoken content must start immediately (first non-whitespace characters must be the guide's words).",
@@ -112,6 +201,8 @@ export function buildMeditationScriptGenerationPrompt(params: {
       "Use `{ beatType: \"content\", custom: true, text: \"…\" }` for main personalized practice material (may repeat).",
       "Use `{ beatType: \"pause\", pauseBand: \"medium\" }` for standalone structural silences between beats; use inline `[[PAUSE …]]` inside a custom beat's text only for shorter pauses within one flowing narration.",
       "Pause bands: extra-short, short, medium, long, extra-long (same vocabulary as [[PAUSE …]] rules above).",
+      "For long targets, **standalone pause beats** are the main duration lever — insert many `{ beatType: \"pause\", pauseBand: \"long\" }` and `{ beatType: \"pause\", pauseBand: \"extra-long\" }` beats between body regions and after personalized focus; do not rely on inline short pauses alone.",
+      "The **Pause budget (scales with target duration)** section above overrides generic pause-share hints when they conflict — longer scripts need proportionally **more** and **heavier** pause beats.",
       "",
       "### Worked examples (segment vs custom)",
       "",
@@ -150,6 +241,8 @@ export function buildMeditationScriptGenerationPrompt(params: {
         speechSpeed: params.speechSpeed,
         wordTargets: words,
       }),
+      "",
+      `**Pause budget precedence:** for this **${params.targetMinutes}-minute** target, follow the tiered silence share in **Pause budget (scales with target duration)** above — not a fixed ~${(words.pauseShare * 100).toFixed(0)}% pause share. Reach duration with **more pause beats and heavier bands**, not by inflating spoken word count.`,
     );
   }
 
@@ -161,7 +254,7 @@ export function buildMeditationScriptGenerationPrompt(params: {
     "Never generate hate/harassment, sexual content involving minors, non-consensual sexual content, graphic sexual content, instructions for wrongdoing, or glorification of self-harm. If the user asks for something socially unacceptable, refuse briefly and offer a safe alternative topic.",
     "You use gender-neutral language and never assume anyone's gender.",
     "You phrase lines for natural TTS: avoid isolated one-word sentences; use multi-word phrases where possible.",
-    "You place pauses **generously and often** for clarity and pacing—especially spacious where self-paced work needs room—while keeping each silence **motivated** (never mechanical fillers).",
+    `You scale pause density and band weight to the target duration (${params.targetMinutes} min): longer scripts need substantially more silence than shorter ones — reach duration with pauses, not extra speech.`,
   ];
 
   if (params.includeSegmentPlaceholders) {

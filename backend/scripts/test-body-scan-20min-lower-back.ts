@@ -19,9 +19,10 @@ import { countWords, speechSecondsFromWordCount } from "../lib/script-text-metri
 import { SCRIPT_PAUSE_BAND_SECONDS } from "../lib/script-pause-bands";
 import { CLAUDE_HAIKU_45_MODEL_ID } from "../lib/anthropic-pricing";
 import type { ScriptLabBeat } from "../lib/script-lab-beats";
+import type { ScriptPauseBand } from "../lib/script-pause-bands";
 
 const TRANSCRIPT = [
-  "User: My lower back has been really tight — I want a long body scan that spends real time there.",
+  "User: My lower back has been really tight — I'm sitting under my oak tree and want a long body scan that spends real time there.",
   "Guide: Let's build a 20-minute body scan with extra attention through your lower back and the rest of the body.",
 ].join("\n");
 
@@ -80,6 +81,30 @@ function firstBodyTourIntroIndex(beats: ScriptLabBeat[]): number {
   );
 }
 
+function countPauseBands(beats: ScriptLabBeat[]): Record<ScriptPauseBand, number> {
+  const counts: Record<ScriptPauseBand, number> = {
+    "extra-short": 0,
+    short: 0,
+    medium: 0,
+    long: 0,
+    "extra-long": 0,
+  };
+  for (const b of beats) {
+    if (b.beatType === "pause" && b.pauseBand && b.pauseBand in counts) {
+      counts[b.pauseBand as ScriptPauseBand] += 1;
+    }
+  }
+  return counts;
+}
+
+function pauseSecondsFromBands(counts: Record<ScriptPauseBand, number>): number {
+  let total = 0;
+  for (const [band, n] of Object.entries(counts) as Array<[ScriptPauseBand, number]>) {
+    total += n * SCRIPT_PAUSE_BAND_SECONDS[band];
+  }
+  return total;
+}
+
 async function main() {
   const library = await listAllScriptSegmentLibrary();
   const segmentTags = buildSegmentTagsForGenerationPrompt({
@@ -107,6 +132,9 @@ async function main() {
   }
   if (!userContent.includes("Segment library — selection rules")) {
     throw new Error("FAIL: missing selection rules");
+  }
+  if (!userContent.includes("Pause budget (scales with target duration)")) {
+    throw new Error("FAIL: missing scaled pause budget guidance");
   }
 
   const tagRepeatability = Object.fromEntries(
@@ -184,6 +212,18 @@ async function main() {
   });
   const estSeconds = estimateBeatsSeconds(beats, index);
   const estMin = (estSeconds / 60).toFixed(1);
+  const pauseBands = countPauseBands(beats);
+  const pauseSeconds = pauseSecondsFromBands(pauseBands);
+  const pauseShare = ((pauseSeconds / estSeconds) * 100).toFixed(0);
+
+  console.log("\n--- Pause band distribution ---");
+  for (const band of ["extra-short", "short", "medium", "long", "extra-long"] as const) {
+    const n = pauseBands[band];
+    if (n > 0) {
+      console.log(`  ${band}: ${n} (${(n * SCRIPT_PAUSE_BAND_SECONDS[band]).toFixed(0)}s)`);
+    }
+  }
+  console.log(`  Total pause time: ${pauseSeconds.toFixed(0)}s (~${pauseShare}% of est. stem)`);
 
   console.log("\n--- Checks ---");
   console.log(`Est. duration: ${estMin} min (target ${TARGET_MINUTES})`);
