@@ -76,6 +76,7 @@ async function loadGeneralTags(useLiveLibrary: boolean): Promise<GeneralTagVaria
         variants: (lib.variantsByTag[t.name] ?? []).map((v) => ({
           variantId: v.variantId,
           text: v.text,
+          direction: v.direction ?? null,
         })),
       }))
       .filter((t) => t.variants.length > 0);

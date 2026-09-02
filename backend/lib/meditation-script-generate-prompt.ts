@@ -194,8 +194,29 @@ export function buildMeditationScriptGenerationPrompt(params: {
       "Before writing `custom: true` generic text, check the **full eligible tag library** above — any tag that covers the same idea, not only tags with an obvious topical match to the current beat.",
       "If a custom passage mixes personalized content with a generic aside (reassurance, pacing, transition) that carries no personalization, split the aside into its own tag beat and keep the personalized remainder as a separate `content` beat. Example: a body-scan intro ending with \"There's no rush—just notice what's there\" → custom `content` for \"Now I'm going to invite your attention to slowly move through your body…\" then `{ beatType: \"pace_reassurance\", custom: false, tag: \"PACE_REASSURANCE\" }` for the aside — not embedded inside the custom text.",
       "Do not over-fragment. Never split personalized phrases or load-bearing lines that would not make sense on their own. One blended custom beat is valid — e.g. for \"sitting under a tree\", `{ beatType: \"settle_opener\", custom: true, text: \"Notice you're sitting beneath a tree — let that place hold you for these next few minutes.\" }` needs no separate SETTLE_OPENER tag beat afterward.",
+      "",
+      "### Singular tags + adjacent custom beats (generation — first line of defence)",
+      "When you place a **singular** tag beat (see catalog Repeatability: singular), scan **immediately adjacent** beats within **1–2 non-pause beats** on either side (pauses do not count toward the window). **Do not write generic custom beats that restate the tag's function.** A post-generation verification pass may **trim** redundant adjacent customs — your job is to produce a beat list that needs little or no trimming.",
+      "",
+      "**Rule (whole script — openers, body tour, closing; all singular tags equally):**",
+      "- If an adjacent custom beat would contain **only generic content already covered by the tag**, **omit that custom beat entirely** — do not output it.",
+      "- If an adjacent custom beat contains **personalized content** from this user's input (stated tension, visualisation, goal, context), **keep it** — but scope the text to the personalized part only; remove any generic restatement of the tag's function from the same beat.",
+      "- **Test:** does this custom beat say something the tag **cannot** say for **this specific user**? If yes → keep only that part. If no → omit the beat.",
+      "",
+      "**Examples — omit generic adjacent custom:**",
+      "- `CLOSE_DEEPEN_BREATH` tag → do **not** add adjacent custom \"breathe a little fuller\" / \"let each breath become fuller\" (same function, zero personalization).",
+      "- `CLOSE_SENSORY_RETURN` tag → do **not** add adjacent custom \"notice the sounds around you\" / \"feel the room around you\" (generic sensory return the tag already covers).",
+      "- `BODY_SCAN_NECK_SHOULDERS` tag → do **not** add adjacent custom shoulder-release / dropping-shoulders language (tag covers it); keep only user-specific tension pattern if present.",
+      "- `SETTLE_OPENER` or `BREATH_OPENER` tag → do **not** add adjacent generic arrival/breath opener custom text; personalized settling (e.g. \"sitting beneath your oak tree\") may stay as custom **or** as a tag — never both with generic overlap.",
+      "",
+      "**Examples — keep scoped personalized adjacent custom:**",
+      "- `CLOSE_SENSORY_RETURN` tag → adjacent custom **may** be only: \"Notice the rustling of leaves from your oak tree.\" (personalized sensory detail the tag cannot provide).",
+      "- `BODY_SCAN_*` tag → adjacent custom **may** reference this user's lower-back tension — generic body-region wording belongs in the tag, not the custom beat.",
+      "- **Important:** `{ beatType: \"content\", custom: true }` does **not** exempt a beat from this rule. Generic breath-deepening, sensory-return, shoulder-release, or other tag-covered language must not appear in **any** custom beat within 1–2 non-pause beats of the matching singular tag.",
+      "- After placing a singular tag, **stop** — do not add a follow-up custom beat unless you have user-specific content the tag cannot carry. When in doubt, omit the custom beat and use a pause beat instead.",
+      "",
       "Follow the **Segment library — selection rules** and per-tag **Repeatability**, **Description**, and **Phase** lines in the catalog above.",
-      "Singular tags: at most once — a second mention of the same subject area must be custom text, not the same tag again. Connective tags may repeat for pacing.",
+      "Singular tags: at most once — a second mention of the same subject area must be custom text, not the same tag again. Connective tags may repeat for pacing; this adjacent-custom rule applies to **singular** tags only.",
       "Before selecting any tag, read its Description; skip tags whose stated boundary conditions apply to this script (e.g. defer BODY_SCAN_SPINE_BACK when lower-back personalization already dominates).",
       "Respect phase rules: SETTLE_OPENER and BREATH_OPENER only in opening; BODY_SCAN_* only after a body-tour intro beat; CLOSE_* only in closing.",
       "Use `{ beatType: \"content\", custom: true, text: \"…\" }` for main personalized practice material (may repeat).",
@@ -221,6 +242,12 @@ export function buildMeditationScriptGenerationPrompt(params: {
       "**Do not change this (personalized — keep custom):**",
       "`{ beatType: \"settle_opener\", custom: true, text: \"Find a comfortable position, sitting beneath your tree\" }`",
       "`{ beatType: \"content\", custom: true, text: \"This is where you've been feeling that tension\" }`",
+      "",
+      "**Singular tag + adjacent custom (complement only):**",
+      "Before: `{ beatType: \"close_deepen_breath\", custom: false, tag: \"CLOSE_DEEPEN_BREATH\" }`, `{ beatType: \"close_deepen_breath\", custom: true, text: \"Let each breath become a little fuller.\" }`",
+      "After: `{ beatType: \"close_deepen_breath\", custom: false, tag: \"CLOSE_DEEPEN_BREATH\" }` only — generic duplicate omitted.",
+      "Before: `{ beatType: \"close_sensory_return\", custom: false, tag: \"CLOSE_SENSORY_RETURN\" }`, `{ beatType: \"close_sensory_return\", custom: true, text: \"Notice the room around you and the rustling of leaves from your oak tree.\" }`",
+      "After: tag beat, then `{ beatType: \"close_sensory_return\", custom: true, text: \"Notice the rustling of leaves from your oak tree.\" }` — personalized detail only.",
     );
   } else {
     userParts.push(
@@ -259,7 +286,7 @@ export function buildMeditationScriptGenerationPrompt(params: {
 
   if (params.includeSegmentPlaceholders) {
     systemParts.push(
-      "For Script Lab you output structured beats (not inline [[SEG:…]] prose). Personalization wins: keep user-specific wording custom. For generic wording, prefer library tags after reading each tag's Description, Repeatability, and Phase in the catalog. Singular tags at most once; connective tags may repeat. Respect opening / body-tour / closing phase rules.",
+      "For Script Lab you output structured beats (not inline [[SEG:…]] prose). Personalization wins: keep user-specific wording custom. For generic wording, prefer library tags after reading each tag's Description, Repeatability, and Phase in the catalog. Singular tags at most once; connective tags may repeat. Respect opening / body-tour / closing phase rules. **Never output generic custom beats within 1–2 non-pause beats of a singular tag that restate the tag's function** — omit them at generation time; verification trim is only a safety net.",
     );
   }
 

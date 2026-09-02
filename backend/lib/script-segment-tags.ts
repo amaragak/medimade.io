@@ -53,7 +53,8 @@ export type ScriptLengthTier = "short" | "medium" | "long";
 export function eligibleLengthTiers(targetMinutes: number): ScriptLengthTier[] {
   if (targetMinutes <= 2) return ["short"];
   if (targetMinutes <= 5) return ["short", "medium"];
-  return ["short", "medium", "long"];
+  if (targetMinutes <= 10) return ["medium"];
+  return ["long"];
 }
 
 export function variantEligibleForTargetLength(params: {
@@ -76,7 +77,8 @@ export function lengthTierSelectionWeights(
 ): Record<ScriptLengthTier, number> {
   if (targetMinutes <= 2) return { short: 1, medium: 0, long: 0 };
   if (targetMinutes <= 5) return { short: 1, medium: 3, long: 0 };
-  return { short: 1, medium: 3, long: 4 };
+  if (targetMinutes <= 10) return { short: 0, medium: 1, long: 0 };
+  return { short: 0, medium: 0, long: 1 };
 }
 
 /** Body-region segments where depth should scale with script length (not pacing/transition tags). */
@@ -167,6 +169,11 @@ export function scriptSegmentSelectionRulesBlock(): string {
     "- **Opening / settling only:** SETTLE_OPENER, BREATH_OPENER — never mid-script or in closing.",
     "- **Body tour only:** BODY_SCAN_* tags — only within the body-tour section, **after** an explicit custom beat that introduces the body tour (e.g. inviting attention to move through the body). Never in settling or closing.",
     "- **Closing only:** CLOSE_DEEPEN_BREATH, CLOSE_SENSORY_RETURN, CLOSE_EYES_OPEN, CLOSE_SENDOFF — only in the closing section, never mid-script.",
+    "",
+    "**Directional BODY_SCAN variants**",
+    "- Some BODY_SCAN_* variants include a `direction` field: **up**, **down**, or **neutral**.",
+    "- Do **not** invent or force a tour direction. Direction follows the practice already implied by the creator conversation / script (e.g. feet→head vs crown→feet).",
+    "- At fill time, tour direction is **inferred from the BODY_SCAN tag order in the script**; random variant selection is then filtered to matching `direction` (plus **neutral**). Opposite-direction variants are excluded when direction is known.",
   ].join("\n");
 }
 

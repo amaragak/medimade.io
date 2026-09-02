@@ -11,7 +11,7 @@ import {
   scriptSegmentLibraryPromptBlock,
   typesMatchMeditationType,
 } from "../lib/script-segment-tags";
-import { CLAUDE_HAIKU_45_MODEL_ID } from "../lib/anthropic-pricing";
+import { CLAUDE_SONNET_45_MODEL_ID } from "../lib/anthropic-pricing";
 import type { ScriptLabBeat } from "../lib/script-lab-beats";
 
 const TRANSCRIPT = [
@@ -82,6 +82,7 @@ async function main() {
       variants: (library.variantsByTag[t.name] ?? []).map((v) => ({
         variantId: v.variantId,
         text: v.text,
+        direction: v.direction ?? null,
       })),
     }))
     .filter((t) => t.variants.length > 0);
@@ -98,7 +99,7 @@ async function main() {
   console.log("\nRunning live generation (Haiku)…");
   const result = await generateScriptLabScript({
     apiKey,
-    model: CLAUDE_HAIKU_45_MODEL_ID,
+    model: CLAUDE_SONNET_45_MODEL_ID,
     transcript: TRANSCRIPT,
     meditationStyle: MEDITATION_STYLE,
     journalMode: false,

@@ -5,8 +5,10 @@
  *   npx tsx scripts/test-repeatability.ts
  */
 import {
+  adjacencyBlocksTagConversion,
   assembleBeatsFromSentenceVerdicts,
   buildVerificationSentenceList,
+  customTextHasPersonalizationSignal,
   proximityBlocksTagConversion,
   prepareGeneralTagsForVerification,
   type GeneralTagVariantCatalog,
@@ -34,6 +36,16 @@ const CATALOG: GeneralTagVariantCatalog[] = prepareGeneralTagsForVerification([
     name: "SETTLE_OPENER",
     repeatability: "singular",
     variants: [{ variantId: "so-1", text: "Arrive here." }],
+  },
+  {
+    name: "CLOSE_DEEPEN_BREATH",
+    repeatability: "singular",
+    variants: [{ variantId: "cdb-1", text: "Take a deeper breath." }],
+  },
+  {
+    name: "CLOSE_SENSORY_RETURN",
+    repeatability: "singular",
+    variants: [{ variantId: "csr-1", text: "Notice the room around you." }],
   },
 ]);
 
@@ -138,11 +150,87 @@ function testVerificationAssemblyNeckOnce() {
   console.log("PASS: verification assembly respects singular vs connective\n");
 }
 
+function testAdjacencyBlocksDuplicateConversion() {
+  const beatsBefore: ScriptLabBeat[] = [
+    { beatType: "close_deepen_breath", custom: false, tag: "CLOSE_DEEPEN_BREATH" },
+    { beatType: "pause", custom: false, pauseBand: "short" },
+    {
+      beatType: "close_deepen_breath",
+      custom: true,
+      text: "Let each breath become a little fuller, a little more present.",
+    },
+  ];
+  const blocked = adjacencyBlocksTagConversion({
+    matchedTag: "CLOSE_DEEPEN_BREATH",
+    assembled: beatsBefore.slice(0, 1),
+    beatsBefore,
+    beatIndex: 2,
+    catalog: CATALOG,
+  });
+  if (!blocked) throw new Error("FAIL: adjacent CLOSE_DEEPEN_BREATH should block conversion");
+  console.log("PASS: adjacency blocks duplicate singular tag conversion\n");
+}
+
+function testRedundantAdjacentCustomDropped() {
+  const beatsBefore: ScriptLabBeat[] = [
+    { beatType: "close_deepen_breath", custom: false, tag: "CLOSE_DEEPEN_BREATH" },
+    { beatType: "pause", custom: false, pauseBand: "short" },
+    {
+      beatType: "close_deepen_breath",
+      custom: true,
+      text: "Let each breath become a little fuller, a little more present.",
+    },
+    { beatType: "close_sensory_return", custom: false, tag: "CLOSE_SENSORY_RETURN" },
+    {
+      beatType: "close_sensory_return",
+      custom: true,
+      text: "Perhaps feel the rustling of leaves from your oak tree above you.",
+    },
+  ];
+  const sentences = buildVerificationSentenceList(beatsBefore);
+  const verdicts = sentences.map((s) => ({
+    sentenceIndex: s.globalIndex,
+    verdict: "keep_custom" as const,
+    confidence: "low" as const,
+  }));
+
+  const beats = assembleBeatsFromSentenceVerdicts({
+    beatsBefore,
+    sentences,
+    verdicts,
+    generalTags: CATALOG,
+    transcript:
+      "User: My lower back is tight — I'm under my oak tree.\nGuide: 20-minute body scan.",
+  });
+
+  const genericBreath = beats.some(
+    (b) =>
+      b.custom &&
+      /breath become a little fuller/i.test(b.text ?? ""),
+  );
+  const oakSensory = beats.some(
+    (b) => b.custom && /rustling of leaves from your oak tree/i.test(b.text ?? ""),
+  );
+
+  if (genericBreath) {
+    throw new Error("FAIL: generic breath-deepening custom beat should be dropped");
+  }
+  if (!oakSensory) {
+    throw new Error("FAIL: personalized oak-tree sensory custom beat should remain");
+  }
+  if (!customTextHasPersonalizationSignal("Notice the rustling of leaves from your oak tree", "User: under my oak tree")) {
+    throw new Error("FAIL: oak tree line should detect personalization");
+  }
+  console.log("PASS: redundant adjacent generic custom dropped; personalized kept\n");
+}
+
 function main() {
   testDuplicateWarnings();
   testVerificationSingularGlobalBlock();
   testVerificationConnectiveExempt();
   testVerificationAssemblyNeckOnce();
+  testAdjacencyBlocksDuplicateConversion();
+  testRedundantAdjacentCustomDropped();
   console.log("All repeatability tests passed.");
 }
 

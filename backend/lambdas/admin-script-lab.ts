@@ -5,7 +5,7 @@ import type {
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { S3Client } from "@aws-sdk/client-s3";
 import { requireAdminJson } from "../lib/admin-auth";
-import { coerceClaudeModel, CLAUDE_HAIKU_45_MODEL_ID } from "../lib/anthropic-pricing";
+import { coerceClaudeModel, CLAUDE_SONNET_45_MODEL_ID } from "../lib/anthropic-pricing";
 import { coerceMeditationTargetMinutes } from "../lib/meditation-target-minutes";
 import { FIXED_SPEECH_PREVIEW_SPEED } from "../lib/speaker-sample-speed";
 import {
@@ -248,7 +248,8 @@ async function handlePost(event: APIGatewayProxyEventV2) {
   if (action === "import-segments") {
     const importPayload =
       body.payload && typeof body.payload === "object" ? body.payload : body;
-    const result = await runScriptSegmentImport(importPayload);
+    const fresh = body.fresh === true;
+    const result = await runScriptSegmentImport(importPayload, { fresh });
     if (!result.ok) {
       return json(400, { error: "Import validation failed", errors: result.errors });
     }
@@ -275,7 +276,7 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       ? body.speechSpeed
       : FIXED_SPEECH_PREVIEW_SPEED;
   const claudeModel = coerceClaudeModel(
-    body.claudeModel ?? body.modelId ?? CLAUDE_HAIKU_45_MODEL_ID,
+    body.claudeModel ?? body.modelId ?? CLAUDE_SONNET_45_MODEL_ID,
   );
 
   const transcript =
@@ -301,6 +302,7 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       variants: (library.variantsByTag[t.name] ?? []).map((v) => ({
         variantId: v.variantId,
         text: v.text,
+        direction: v.direction ?? null,
       })),
     }))
     .filter((t) => t.variants.length > 0);

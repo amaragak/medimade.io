@@ -1909,6 +1909,7 @@ export type ScriptLabVariant = {
   variantId: string;
   text: string;
   lengthTier: ScriptLabLengthTier | null;
+  direction?: string | null;
   requiredConstraints: string[];
   excludedConstraints: string[];
   sort: number;
@@ -1970,6 +1971,7 @@ export async function listAdminScriptLab(): Promise<ScriptLabState> {
         (variants ?? []).map((v) => ({
           ...v,
           lengthTier: v.lengthTier ?? null,
+          direction: v.direction ?? null,
           requiredConstraints: v.requiredConstraints ?? [],
           excludedConstraints: v.excludedConstraints ?? [],
         })),

@@ -212,6 +212,7 @@ export function AdminScriptLabPanel() {
         variantId: string;
         text: string;
         lengthTier?: ScriptLengthTier | null;
+        direction?: string | null;
         excludedConstraints?: string[];
         requiredConstraints?: string[];
         audio?: { modelId: string; durationSeconds: number }[];
@@ -222,6 +223,7 @@ export function AdminScriptLabPanel() {
         variantId: v.variantId,
         text: v.text,
         lengthTier: v.lengthTier,
+        direction: v.direction,
         requiredConstraints: v.requiredConstraints,
         excludedConstraints: v.excludedConstraints,
         audio: (state.audioByVariantKey[`${tag.name}#${v.variantId}`] ?? []).map((a) => ({
@@ -415,6 +417,7 @@ export function AdminScriptLabPanel() {
         variantId: string;
         text: string;
         lengthTier?: ScriptLengthTier | null;
+        direction?: string | null;
         requiredConstraints?: string[];
         excludedConstraints?: string[];
       }>
@@ -424,6 +427,7 @@ export function AdminScriptLabPanel() {
         variantId: v.variantId,
         text: v.text,
         lengthTier: v.lengthTier,
+        direction: v.direction,
         requiredConstraints: v.requiredConstraints,
         excludedConstraints: v.excludedConstraints,
       }));

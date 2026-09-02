@@ -266,7 +266,7 @@ export function scriptLabSegmentDurationBudgetAppendix(params: {
     "",
     "For each `{ custom: false, tag: \"TAG_NAME\" }` beat, add that tag's **average word count** from the library listing above:",
     "- Length-tiered tags: use the tier row that matches how long that moment should be at this target duration (eligible tiers at "
-      + `**${targetMinutes}** min: **${eligibleLengthTiers(targetMinutes).join(" / ")}**; body-region tags on long scripts usually budget **medium** or **long**).`,
+      + `**${targetMinutes}** min: **${eligibleLengthTiers(targetMinutes).join(" / ")}** — 2 min short only; 5 min short or medium; 10 min medium; 20 min long).`,
     "- Non-tiered tags: use the **all variants** average.",
     "",
     "For each `{ custom: true, text: \"…\" }` beat, count the words in `text` directly (ignore `[[PAUSE …]]` markers inside custom text — those add silence separately).",

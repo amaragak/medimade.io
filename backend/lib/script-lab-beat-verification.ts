@@ -14,6 +14,8 @@ const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 export type GeneralTagVariantEntry = {
   variantId: string;
   text: string;
+  /** Imported variant metadata: up | down | neutral */
+  direction?: string | null;
 };
 
 export type GeneralTagVariantCatalog = {
@@ -237,7 +239,15 @@ export function buildVerificationPrompt(params: {
     .map((t) => {
       const lines = [`### ${t.name} (beatType: ${tagNameToBeatType(t.name)})`];
       for (const v of t.variants) {
-        lines.push(`- [${v.variantId}] "${v.text}"`);
+        const dir =
+          typeof v.direction === "string" && v.direction.trim()
+            ? v.direction.trim().toLowerCase()
+            : null;
+        const dirLabel =
+          dir === "up" || dir === "down" || dir === "neutral"
+            ? ` direction=${dir}`
+            : "";
+        lines.push(`- [${v.variantId}]${dirLabel} "${v.text}"`);
       }
       return lines.join("\n");
     })
@@ -263,6 +273,7 @@ export function buildVerificationPrompt(params: {
       "Personalization test: does this sentence reference anything specific to this user's actual input? If yes → keep_custom. If no — it would read identically for any user — it may be convert_tag when it serves the same semantic function as a library tag.",
       "Tag matching is SEMANTIC, not verbatim. Do NOT require the sentence to quote or closely paraphrase a variant's exact wording. Ask: would this line be interchangeable with a variant under that tag for any user? Same pacing cue, breath transition, body-scan invitation, reassurance, etc.",
       "convert_tag requires confidence high, a matchedTag, and matchedVariantId pointing to the catalog variant that best represents the same meaning (pick the closest semantic fit among that tag's variants).",
+      "When a BODY_SCAN_* tag lists direction=up|down|neutral on variants: tour direction is inferred from the script's BODY_SCAN order (what the practice is already doing from the creator conversation — crown→feet = down; feet→crown = up). Prefer matchedVariantId with matching direction; neutral is acceptable; do not pick the opposite direction when a match or neutral exists. Do not invent a tour direction.",
       "When uncertain about personalization → keep_custom. When generic but no tag's purpose fits semantically → no_match. When generic and a tag clearly covers the same function → convert_tag with confidence high, even if wording differs substantially — do not use medium/low merely because the sentence is not a near-quote of a variant.",
       "Repeated convert_tag to the same tag across multiple sentences is expected and correct — do NOT skip a later sentence because you already converted an earlier one to the same tag.",
       "This pass is independent of primary-generation beatType de-duplication rules; multiple tag beats with the same beatType are valid here.",
@@ -281,7 +292,7 @@ export function buildVerificationPrompt(params: {
       "",
       "### Verdict rules",
       "- keep_custom: personalized or must stay bespoke",
-      "- convert_tag: zero personalization AND the sentence serves the same semantic function as a tag (pick matchedTag + the variantId whose meaning is closest — wording may differ greatly)",
+      "- convert_tag: zero personalization AND the sentence serves the same semantic function as a tag (pick matchedTag + the variantId whose meaning is closest — wording may differ greatly; for directional BODY_SCAN variants, match the direction already implied by the script)",
       "- no_match: generic but no tag's purpose applies semantically — stays in custom text",
       "",
       "### Semantic match examples (wording need NOT match variants)",
@@ -415,6 +426,168 @@ function effectiveVerdict(
     return "no_match";
   }
   return "convert_tag";
+}
+
+/** Non-pause beats within this window (each direction) gate adjacency duplicate suppression. */
+export const VERIFICATION_ADJACENCY_WINDOW = 2;
+
+/** Collect up to N non-pause beats immediately before/after a custom beat being assembled. */
+export function collectAdjacentNonPauseBeats(params: {
+  assembled: ScriptLabBeat[];
+  beatsBefore: ScriptLabBeat[];
+  beatIndex: number;
+  windowNonPauseBeats?: number;
+}): ScriptLabBeat[] {
+  const window = params.windowNonPauseBeats ?? VERIFICATION_ADJACENCY_WINDOW;
+  const found: ScriptLabBeat[] = [];
+
+  let seen = 0;
+  for (let i = params.assembled.length - 1; i >= 0 && seen < window; i--) {
+    const beat = params.assembled[i]!;
+    if (beat.beatType === "pause") continue;
+    found.push(beat);
+    seen += 1;
+  }
+
+  seen = 0;
+  for (
+    let i = params.beatIndex + 1;
+    i < params.beatsBefore.length && seen < window;
+    i++
+  ) {
+    const beat = params.beatsBefore[i]!;
+    if (beat.beatType === "pause") continue;
+    found.push(beat);
+    seen += 1;
+  }
+
+  return found;
+}
+
+/** True when converting to matchedTag would duplicate a singular tag already adjacent (same tag or beatType). */
+export function adjacencyBlocksTagConversion(params: {
+  matchedTag: string;
+  assembled: ScriptLabBeat[];
+  beatsBefore: ScriptLabBeat[];
+  beatIndex: number;
+  catalog: GeneralTagVariantCatalog[];
+  windowNonPauseBeats?: number;
+}): boolean {
+  const normalized = normalizeScriptSegmentTag(params.matchedTag);
+  if (tagRepeatabilityFromCatalog(normalized, params.catalog) === "connective") {
+    return false;
+  }
+
+  const targetBeatType = tagNameToBeatType(normalized);
+  const adjacent = collectAdjacentNonPauseBeats(params);
+
+  return adjacent.some((b) => {
+    if (b.custom || !b.tag) return false;
+    const tagNorm = normalizeScriptSegmentTag(b.tag);
+    if (tagRepeatabilityFromCatalog(tagNorm, params.catalog) === "connective") {
+      return false;
+    }
+    return tagNorm === normalized || b.beatType === targetBeatType;
+  });
+}
+
+function extractUserContentFromTranscript(transcript: string): string {
+  return transcript
+    .split("\n")
+    .filter((line) => /^User:\s*/i.test(line.trim()))
+    .map((line) => line.replace(/^User:\s*/i, "").trim())
+    .join(" ");
+}
+
+/** Heuristic: would this custom prose read identically for any user? */
+export function customTextHasPersonalizationSignal(
+  text: string,
+  transcript = "",
+): boolean {
+  const prose = text.replace(/\[\[PAUSE[^\]]+\]\]/gi, " ").replace(/\s+/g, " ").trim();
+  if (!prose) return false;
+
+  const personalizationPatterns = [
+    /\b(you('ve| have) been|you mentioned|you said|you shared|you told|you described)\b/i,
+    /\b(this is where|that place where|the tension you|your (specific|particular))\b/i,
+    /\b(beneath your|under your|sitting beneath|your oak|oak tree)\b/i,
+    /\b(your lower back|where you've been feeling|you've been feeling|that tightness)\b/i,
+    /\b(from your toes|toes to head|head and back)\b/i,
+  ];
+  if (personalizationPatterns.some((p) => p.test(prose))) return true;
+
+  const userContent = extractUserContentFromTranscript(transcript);
+  if (!userContent) return false;
+
+  const stop = new Set([
+    "been",
+    "really",
+    "want",
+    "that",
+    "with",
+    "your",
+    "have",
+    "this",
+    "from",
+    "through",
+    "body",
+    "scan",
+    "long",
+    "time",
+    "there",
+    "where",
+    "about",
+    "into",
+    "just",
+    "like",
+    "under",
+    "sitting",
+    "build",
+    "extra",
+    "attention",
+    "rest",
+    "minutes",
+  ]);
+  const words = userContent.toLowerCase().match(/\b[a-z]{4,}\b/g) ?? [];
+  const distinctive = [...new Set(words.filter((w) => !stop.has(w)))];
+  const proseLower = prose.toLowerCase();
+  return distinctive.some((w) => proseLower.includes(w));
+}
+
+function adjacentSingularTagForBeatType(params: {
+  beatType: string;
+  assembled: ScriptLabBeat[];
+  beatsBefore: ScriptLabBeat[];
+  beatIndex: number;
+  catalog: GeneralTagVariantCatalog[];
+  windowNonPauseBeats?: number;
+}): ScriptLabBeat | null {
+  for (const b of collectAdjacentNonPauseBeats(params)) {
+    if (b.custom || !b.tag) continue;
+    if (tagRepeatabilityFromCatalog(b.tag, params.catalog) === "connective") continue;
+    if (b.beatType === params.beatType || tagNameToBeatType(b.tag) === params.beatType) {
+      return b;
+    }
+  }
+  return null;
+}
+
+/**
+ * True when a generic custom sentence should be dropped — a singular tag already covers
+ * the same function immediately adjacent (redundant_adjacent suppression).
+ */
+function isRedundantAdjacentCustomSentence(params: {
+  prose: string;
+  beatType: string;
+  assembled: ScriptLabBeat[];
+  beatsBefore: ScriptLabBeat[];
+  beatIndex: number;
+  catalog: GeneralTagVariantCatalog[];
+  transcript: string;
+}): boolean {
+  const adjacentTag = adjacentSingularTagForBeatType(params);
+  if (!adjacentTag) return false;
+  return !customTextHasPersonalizationSignal(params.prose, params.transcript);
 }
 
 /** Historical proximity window — singular tags now dedupe across the full script; connective tags are exempt. */
@@ -581,7 +754,9 @@ export function assembleBeatsFromSentenceVerdicts(params: {
   sentences: VerificationSentence[];
   verdicts: SentenceVerdict[];
   generalTags: GeneralTagVariantCatalog[];
+  transcript?: string;
 }): ScriptLabBeat[] {
+  const transcript = params.transcript ?? "";
   const verdictByIndex = new Map<number, SentenceVerdict>();
   for (const v of params.verdicts) {
     verdictByIndex.set(v.sentenceIndex, v);
@@ -642,8 +817,20 @@ export function assembleBeatsFromSentenceVerdicts(params: {
         };
         if (
           proximityBlocksTagConversion(out, rawVerdict.matchedTag, params.generalTags) ||
+          adjacencyBlocksTagConversion({
+            matchedTag: rawVerdict.matchedTag,
+            assembled: out,
+            beatsBefore: params.beatsBefore,
+            beatIndex,
+            catalog: params.generalTags,
+          }) ||
           topicalCoherenceBlocksTagConversion(gateParams)
         ) {
+          if (
+            !customTextHasPersonalizationSignal(s.prose, transcript)
+          ) {
+            continue;
+          }
           customBuffer.push(customSentenceText(s));
           continue;
         }
@@ -657,6 +844,19 @@ export function assembleBeatsFromSentenceVerdicts(params: {
           out.push({ beatType: "pause", custom: false, pauseBand: band });
         }
       } else {
+        if (
+          isRedundantAdjacentCustomSentence({
+            prose: s.prose,
+            beatType,
+            assembled: out,
+            beatsBefore: params.beatsBefore,
+            beatIndex,
+            catalog: params.generalTags,
+            transcript,
+          })
+        ) {
+          continue;
+        }
         customBuffer.push(customSentenceText(s));
       }
     }
@@ -867,6 +1067,7 @@ export async function verifyScriptLabBeats(params: {
       sentences,
       verdicts,
       generalTags,
+      transcript: params.transcript,
     });
 
     const newBeatIndices = computeVerificationNewBeatIndices(

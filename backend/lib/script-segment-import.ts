@@ -7,6 +7,7 @@ import {
 } from "./script-segment-tags";
 import { coerceConstraintTagList } from "./script-constraint-tags";
 import {
+  buildVariantImportFieldsFromJson,
   importScriptSegments,
   type ScriptSegmentImportResult,
 } from "./script-segment-library";
@@ -21,10 +22,7 @@ export type ScriptSegmentImportPayload = {
     description?: string;
     variants: Array<{
       id?: string;
-      text: string;
-      lengthTier: ScriptLengthTier | null;
-      requiredConstraints: string[];
-      excludedConstraints: string[];
+      importFields: Record<string, unknown>;
     }>;
   }>;
 };
@@ -235,12 +233,26 @@ export function validateScriptSegmentImportJson(
         errors,
       );
 
-      variants.push({
-        id: importId || undefined,
+      if (v.direction != null && typeof v.direction !== "string") {
+        errors.push({
+          path: `${vPath}.direction`,
+          message: "direction must be a string or null when set.",
+        });
+        return;
+      }
+
+      const importFields = buildVariantImportFieldsFromJson({
+        raw: v,
+        lengthTiered,
         text,
         lengthTier: lengthTiered ? lengthTier : null,
         requiredConstraints,
         excludedConstraints,
+      });
+
+      variants.push({
+        id: importId || undefined,
+        importFields,
       });
     });
 
@@ -253,12 +265,19 @@ export function validateScriptSegmentImportJson(
 
 export async function runScriptSegmentImport(
   raw: unknown,
+  options?: { fresh?: boolean },
 ): Promise<
   | { ok: true; result: ScriptSegmentImportResult }
   | { ok: false; errors: ScriptSegmentImportValidationError[] }
 > {
   const validated = validateScriptSegmentImportJson(raw);
   if (!validated.ok) return validated;
-  const result = await importScriptSegments(validated.payload.segments);
+  const freshFromPayload =
+    raw &&
+    typeof raw === "object" &&
+    !Array.isArray(raw) &&
+    (raw as Record<string, unknown>).fresh === true;
+  const fresh = options?.fresh === true || freshFromPayload;
+  const result = await importScriptSegments(validated.payload.segments, fresh ? { fresh: true } : undefined);
   return { ok: true, result };
 }

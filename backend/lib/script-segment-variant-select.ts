@@ -1,6 +1,7 @@
 import { variantEligibleForRequest } from "./script-constraint-tags";
 import {
   lengthTierSelectionWeights,
+  normalizeScriptSegmentTag,
   segmentTagPrefersLengthTierBias,
   variantEligibleForTargetLength,
   type ScriptLengthTier,
@@ -11,6 +12,8 @@ export type SegmentVariantCandidate = {
   variantId: string;
   text: string;
   lengthTier?: ScriptLengthTier | null;
+  /** Imported variant field: "up" | "down" | "neutral". */
+  direction?: string | null;
   requiredConstraints?: string[];
   excludedConstraints?: string[];
 };
@@ -20,6 +23,78 @@ export type SegmentTagMeta = {
   scope: ScriptSegmentScope;
   types: string[];
 };
+
+export type ScriptBodyTourDirection = "up" | "down";
+
+/** Anatomical top→bottom rank for BODY_SCAN region tags. */
+const BODY_SCAN_ANATOMY_ORDER: Record<string, number> = {
+  BODY_SCAN_CROWN: 0,
+  BODY_SCAN_FACE_JAW: 1,
+  BODY_SCAN_NECK_SHOULDERS: 2,
+  BODY_SCAN_SPINE_BACK: 3,
+  BODY_SCAN_HIPS_BELLY_CHEST: 4,
+  BODY_SCAN_LOWER_BODY: 5,
+};
+
+export function normalizeVariantDirection(
+  raw: string | null | undefined,
+): "up" | "down" | "neutral" | null {
+  if (raw == null) return null;
+  const d = raw.trim().toLowerCase();
+  if (d === "up" || d === "down" || d === "neutral") return d;
+  return null;
+}
+
+/** True when any variant carries a non-empty direction field. */
+export function variantsHaveDirectionMetadata(
+  variants: ReadonlyArray<SegmentVariantCandidate>,
+): boolean {
+  return variants.some((v) => normalizeVariantDirection(v.direction) != null);
+}
+
+/**
+ * Infer body-tour travel from BODY_SCAN tag order.
+ * Crown→feet ⇒ down; feet→crown ⇒ up; unclear ⇒ null.
+ */
+export function inferBodyTourDirectionFromBeats(
+  beats: ReadonlyArray<{ tag?: string; custom?: boolean; beatType?: string }>,
+): ScriptBodyTourDirection | null {
+  const ranks: number[] = [];
+  for (const beat of beats) {
+    if (beat.custom || beat.beatType === "pause") continue;
+    const tag = normalizeScriptSegmentTag(beat.tag ?? "");
+    const rank = BODY_SCAN_ANATOMY_ORDER[tag];
+    if (rank == null) continue;
+    ranks.push(rank);
+  }
+  if (ranks.length < 2) return null;
+  let delta = 0;
+  for (let i = 1; i < ranks.length; i++) {
+    delta += ranks[i]! - ranks[i - 1]!;
+  }
+  if (delta > 0) return "down";
+  if (delta < 0) return "up";
+  return null;
+}
+
+/**
+ * When tour direction is known and variants have direction metadata:
+ * keep matching + neutral; drop the opposite. If that empties the pool, keep original.
+ */
+export function filterVariantsByDirection(
+  variants: SegmentVariantCandidate[],
+  tourDirection: ScriptBodyTourDirection | null | undefined,
+): SegmentVariantCandidate[] {
+  if (!tourDirection || !variantsHaveDirectionMetadata(variants)) {
+    return variants;
+  }
+  const filtered = variants.filter((v) => {
+    const d = normalizeVariantDirection(v.direction);
+    if (d == null || d === "neutral") return true;
+    return d === tourDirection;
+  });
+  return filtered.length > 0 ? filtered : variants;
+}
 
 export function listEligibleSegmentVariants(
   variants: SegmentVariantCandidate[],
@@ -51,10 +126,6 @@ export function listEligibleSegmentVariants(
   });
 }
 
-/**
- * Pick one eligible segment variant, preferring ids not in `alreadyUsedVariantIds`
- * when alternatives exist. Falls back to reuse when the pool is exhausted.
- */
 function pickWeightedRandom<T>(items: T[], weightOf: (item: T) => number): T {
   const weights = items.map(weightOf);
   const total = weights.reduce((sum, w) => sum + w, 0);
@@ -104,14 +175,20 @@ export function selectSegmentVariant(params: {
   targetMinutes: number;
   meditationType?: string | null;
   contextTags?: string[];
+  /** Known body-tour travel; filters directional variants when present. */
+  tourDirection?: ScriptBodyTourDirection | null;
   alreadyUsedVariantIds?: readonly string[];
   preferredVariantId?: string | null;
   /** When false, picks are stable (for duration/byte estimates). Default true. */
   random?: boolean;
 }): SegmentVariantCandidate | null {
   const random = params.random !== false;
-  const eligible = listEligibleSegmentVariants(
+  const directionFiltered = filterVariantsByDirection(
     params.variants,
+    params.tourDirection,
+  );
+  const eligible = listEligibleSegmentVariants(
+    directionFiltered,
     params.tagMeta,
     params.targetMinutes,
     params.meditationType ?? null,
@@ -155,14 +232,18 @@ export function createSegmentVariantPickerForBeats(params: {
   meditationType?: string | null;
   contextTags?: string[];
   preferredVariantIdByTag?: Record<string, string>;
+  /** When false, picks are stable (for duration/byte estimates). Default true. */
+  random?: boolean;
 }): {
   pickVariantText: (tag: string, beatIndex: number) => string | null;
   picksByBeatIndex: Record<number, string>;
   picksByTag: Record<string, string>;
+  tourDirection: ScriptBodyTourDirection | null;
 } {
   const usedByTag = new Map<string, string[]>();
   const picksByBeatIndex: Record<number, string> = {};
   const picksByTag: Record<string, string> = {};
+  const tourDirection = inferBodyTourDirectionFromBeats(params.beats);
 
   function pickVariantText(tag: string, beatIndex: number): string | null {
     const beat = params.beats[beatIndex];
@@ -183,8 +264,10 @@ export function createSegmentVariantPickerForBeats(params: {
       targetMinutes: params.targetMinutes,
       meditationType: params.meditationType,
       contextTags: params.contextTags,
+      tourDirection,
       alreadyUsedVariantIds: alreadyUsed,
       preferredVariantId: preferredAlreadyUsed ? null : preferredId,
+      random: params.random,
     });
     if (!picked) return null;
 
@@ -194,5 +277,5 @@ export function createSegmentVariantPickerForBeats(params: {
     return picked.text;
   }
 
-  return { pickVariantText, picksByBeatIndex, picksByTag };
+  return { pickVariantText, picksByBeatIndex, picksByTag, tourDirection };
 }

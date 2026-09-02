@@ -44,11 +44,32 @@ export type ScriptSegmentVariant = {
   lengthTier: ScriptLengthTier | null;
   requiredConstraints: string[];
   excludedConstraints: string[];
+  /** Body-tour / scan ordering hint (e.g. ascending, descending). */
+  direction?: string | null;
   sort: number;
   createdAt: string;
   updatedAt: string;
   audio: Record<string, ScriptSegmentAudioState>;
 };
+
+/** Identity / server-managed keys — not part of segment import field diff. */
+const VARIANT_OWN_KEYS = new Set([
+  "id",
+  "variantId",
+  "sort",
+  "createdAt",
+  "updatedAt",
+  "audio",
+]);
+
+const VARIANT_KNOWN_KEYS = new Set([
+  ...VARIANT_OWN_KEYS,
+  "text",
+  "lengthTier",
+  "requiredConstraints",
+  "excludedConstraints",
+  "direction",
+]);
 
 export type ScriptSegmentDocument = {
   tag: string;
@@ -84,6 +105,7 @@ export type ScriptSegmentVariantRow = {
   lengthTier: ScriptLengthTier | null;
   requiredConstraints: string[];
   excludedConstraints: string[];
+  direction?: string | null;
   sort: number;
   createdAt: string;
   updatedAt: string;
@@ -177,6 +199,123 @@ function normalizeVariantConstraintFields(
   };
 }
 
+function coerceVariantDirection(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed || null;
+}
+
+function isImportableVariantFieldValue(val: unknown): boolean {
+  if (val === null || val === undefined) return true;
+  if (typeof val === "string" || typeof val === "boolean" || typeof val === "number") {
+    return true;
+  }
+  if (Array.isArray(val) && val.every((x) => typeof x === "string")) return true;
+  return false;
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((x, i) => x === sb[i]);
+}
+
+/** Build normalized import-field map from a variant JSON object (shared by validator + import). */
+export function buildVariantImportFieldsFromJson(params: {
+  raw: Record<string, unknown>;
+  lengthTiered: boolean;
+  text: string;
+  lengthTier: ScriptLengthTier | null;
+  requiredConstraints: string[];
+  excludedConstraints: string[];
+}): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
+    text: params.text,
+    lengthTier: params.lengthTiered ? params.lengthTier : null,
+    requiredConstraints: params.requiredConstraints,
+    excludedConstraints: params.excludedConstraints,
+  };
+  if (params.raw.direction !== undefined) {
+    fields.direction = coerceVariantDirection(params.raw.direction);
+  }
+  for (const [key, val] of Object.entries(params.raw)) {
+    if (VARIANT_KNOWN_KEYS.has(key)) continue;
+    if (isImportableVariantFieldValue(val)) fields[key] = val;
+  }
+  return fields;
+}
+
+function variantImportFieldsFromStored(variant: ScriptSegmentVariant): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(variant)) {
+    if (VARIANT_OWN_KEYS.has(key)) continue;
+    if (!isImportableVariantFieldValue(val)) continue;
+    fields[key] = val;
+  }
+  return fields;
+}
+
+function normalizeImportFieldsForCompare(fields: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...fields };
+  if (Array.isArray(out.requiredConstraints)) {
+    out.requiredConstraints = [...out.requiredConstraints].sort();
+  }
+  if (Array.isArray(out.excludedConstraints)) {
+    out.excludedConstraints = [...out.excludedConstraints].sort();
+  }
+  return out;
+}
+
+function variantImportFieldsEqual(
+  stored: ScriptSegmentVariant,
+  incoming: Record<string, unknown>,
+): boolean {
+  const storedFields = normalizeImportFieldsForCompare(variantImportFieldsFromStored(stored));
+  const incomingFields = normalizeImportFieldsForCompare(incoming);
+  const keys = new Set([...Object.keys(storedFields), ...Object.keys(incomingFields)]);
+  for (const key of keys) {
+    const a = storedFields[key];
+    const b = incomingFields[key];
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (!arraysEqual(a as string[], b as string[])) return false;
+      continue;
+    }
+    if (a !== b) return false;
+  }
+  return true;
+}
+
+function resetVariantAudio(variant: ScriptSegmentVariant, now: string): void {
+  for (const speakerId of Object.keys(variant.audio)) {
+    variant.audio[speakerId] = {
+      status: "not_generated",
+      s3Key: null,
+      durationMs: null,
+      updatedAt: now,
+    };
+  }
+}
+
+function applyVariantImportFields(
+  variant: ScriptSegmentVariant,
+  incoming: Record<string, unknown>,
+  now: string,
+): { changed: boolean; textChanged: boolean } {
+  if (variantImportFieldsEqual(variant, incoming)) {
+    return { changed: false, textChanged: false };
+  }
+  const textChanged =
+    typeof incoming.text === "string" && variant.text !== incoming.text;
+  if (textChanged) resetVariantAudio(variant, now);
+  for (const [key, val] of Object.entries(incoming)) {
+    (variant as Record<string, unknown>)[key] = val;
+  }
+  variant.updatedAt = now;
+  return { changed: true, textChanged };
+}
+
 function coerceVariant(raw: unknown, tagName: string): ScriptSegmentVariant | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -203,17 +342,25 @@ function coerceVariant(raw: unknown, tagName: string): ScriptSegmentVariant | nu
       ? (o.excludedConstraints as string[])
       : undefined,
   );
-  return {
+  const variant: ScriptSegmentVariant = {
     id,
     text: text.slice(0, 4000),
     lengthTier: coerceLengthTier(o.lengthTier),
     requiredConstraints,
     excludedConstraints,
+    direction: coerceVariantDirection(o.direction),
     sort: typeof o.sort === "number" ? o.sort : Date.now(),
     createdAt: typeof o.createdAt === "string" ? o.createdAt : now,
     updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : now,
     audio,
   };
+  for (const [key, val] of Object.entries(o)) {
+    if (VARIANT_KNOWN_KEYS.has(key)) continue;
+    if (isImportableVariantFieldValue(val)) {
+      (variant as Record<string, unknown>)[key] = val;
+    }
+  }
+  return variant;
 }
 
 function documentFromItem(item: Record<string, unknown>): ScriptSegmentDocument | null {
@@ -300,6 +447,7 @@ function flattenDocument(doc: ScriptSegmentDocument): {
       lengthTier: v.lengthTier,
       requiredConstraints: v.requiredConstraints,
       excludedConstraints: v.excludedConstraints,
+      direction: v.direction ?? null,
       sort: v.sort,
       createdAt: v.createdAt,
       updatedAt: v.updatedAt,
@@ -722,6 +870,9 @@ export type ScriptSegmentImportResult = {
   variantsUnchanged: number;
   variantsIdNotFound: Array<{ tag: string; id: string }>;
   variantsAudioInvalidated: number;
+  /** Present when `fresh` import cleared the library before loading variants. */
+  variantsRemoved?: number;
+  freshImport?: boolean;
   constraintTagsAdded: string[];
 };
 
@@ -733,13 +884,7 @@ export type ScriptSegmentExportPayload = {
     lengthTiered: boolean;
     repeatability?: ScriptSegmentRepeatability;
     description?: string;
-    variants: Array<{
-      id: string;
-      text: string;
-      lengthTier: ScriptLengthTier | null;
-      requiredConstraints: string[];
-      excludedConstraints: string[];
-    }>;
+    variants: Array<{ id: string } & Record<string, unknown>>;
   }>;
 };
 
@@ -755,31 +900,43 @@ export async function exportScriptSegmentLibrary(): Promise<ScriptSegmentExportP
       ...(doc.description.trim() ? { description: doc.description } : {}),
       variants: doc.variants.map((v) => ({
         id: v.id,
-        text: v.text,
-        lengthTier: v.lengthTier,
-        requiredConstraints: v.requiredConstraints,
-        excludedConstraints: v.excludedConstraints,
+        ...variantImportFieldsFromStored(v),
       })),
     })),
   };
 }
 
-function arraysEqual(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  const sa = [...a].sort();
-  const sb = [...b].sort();
-  return sa.every((x, i) => x === sb[i]);
-}
-
-function resetVariantAudio(variant: ScriptSegmentVariant, now: string): void {
-  for (const speakerId of Object.keys(variant.audio)) {
-    variant.audio[speakerId] = {
-      status: "not_generated",
-      s3Key: null,
-      durationMs: null,
-      updatedAt: now,
-    };
+function buildImportedVariant(
+  imported: { id?: string; importFields: Record<string, unknown> },
+  lengthTiered: boolean,
+  now: string,
+): { variant: ScriptSegmentVariant; requiredConstraints: string[]; excludedConstraints: string[] } | null {
+  const incoming = imported.importFields;
+  const text =
+    typeof incoming.text === "string" ? incoming.text.trim().slice(0, 4000) : "";
+  if (!text) return null;
+  const lengthTier = lengthTiered ? coerceLengthTier(incoming.lengthTier) : null;
+  if (lengthTiered && !lengthTier) {
+    throw new Error("length-tiered segments require lengthTier on each variant.");
   }
+  const { requiredConstraints, excludedConstraints } = normalizeVariantConstraintFields(
+    incoming.requiredConstraints as string[] | undefined,
+    incoming.excludedConstraints as string[] | undefined,
+  );
+  const importId = imported.id?.trim();
+  const newVariant: ScriptSegmentVariant = {
+    id: importId || randomUUID(),
+    text: "",
+    lengthTier: null,
+    requiredConstraints: [],
+    excludedConstraints: [],
+    sort: Date.now(),
+    createdAt: now,
+    updatedAt: now,
+    audio: {},
+  };
+  applyVariantImportFields(newVariant, incoming, now);
+  return { variant: newVariant, requiredConstraints, excludedConstraints };
 }
 
 export async function importScriptSegments(
@@ -792,13 +949,12 @@ export async function importScriptSegments(
     description?: string;
     variants: Array<{
       id?: string;
-      text: string;
-      lengthTier: ScriptLengthTier | null;
-      requiredConstraints?: string[];
-      excludedConstraints?: string[];
+      importFields: Record<string, unknown>;
     }>;
   }>,
+  options?: { fresh?: boolean },
 ): Promise<ScriptSegmentImportResult> {
+  const fresh = options?.fresh === true;
   let tagsCreated = 0;
   let tagsUpdated = 0;
   let variantsAdded = 0;
@@ -806,8 +962,20 @@ export async function importScriptSegments(
   let variantsUpdatedByTextMatch = 0;
   let variantsUnchanged = 0;
   let variantsAudioInvalidated = 0;
+  let variantsRemoved = 0;
   const variantsIdNotFound: Array<{ tag: string; id: string }> = [];
   const allConstraintTags: string[] = [];
+
+  if (fresh) {
+    const clearNow = new Date().toISOString();
+    for (const doc of await listScriptSegmentDocuments()) {
+      variantsRemoved += doc.variants.length;
+      if (doc.variants.length === 0) continue;
+      doc.variants = [];
+      doc.updatedAt = clearNow;
+      await putScriptSegmentDocument(doc);
+    }
+  }
 
   for (const seg of segments) {
     const tagName = normalizeScriptSegmentTag(seg.tag);
@@ -820,6 +988,51 @@ export async function importScriptSegments(
     const types = coerceTypes(seg.types);
     if (scope === "types" && types.length === 0) {
       throw new Error(`Tag ${tagName}: restricted scope requires at least one type.`);
+    }
+
+    if (fresh) {
+      const repeatability =
+        seg.repeatability === "connective" || seg.repeatability === "singular"
+          ? seg.repeatability
+          : null;
+      const description =
+        typeof seg.description === "string" ? seg.description.trim().slice(0, 4000) : "";
+
+      const doc: ScriptSegmentDocument = existing ?? {
+        tag: tagName,
+        scope,
+        types,
+        lengthTiered: seg.lengthTiered,
+        repeatability,
+        description,
+        variants: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      if (!existing) {
+        tagsCreated += 1;
+      }
+
+      const nextVariants: ScriptSegmentVariant[] = [];
+      for (const imported of seg.variants) {
+        let built: ReturnType<typeof buildImportedVariant>;
+        try {
+          built = buildImportedVariant(imported, seg.lengthTiered, now);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          throw new Error(`Tag ${tagName}: ${msg}`);
+        }
+        if (!built) continue;
+        allConstraintTags.push(...built.requiredConstraints, ...built.excludedConstraints);
+        nextVariants.push(built.variant);
+        variantsAdded += 1;
+      }
+
+      doc.variants = nextVariants;
+      doc.updatedAt = now;
+      await putScriptSegmentDocument(doc);
+      continue;
     }
 
     const repeatability =
@@ -866,17 +1079,21 @@ export async function importScriptSegments(
     let docChanged = !existing || tagMetaChanged;
 
     for (const imported of seg.variants) {
-      const text = imported.text.trim().slice(0, 4000);
+      const incoming = imported.importFields;
+      const text =
+        typeof incoming.text === "string" ? incoming.text.trim().slice(0, 4000) : "";
       if (!text) continue;
-      const lengthTier = seg.lengthTiered ? imported.lengthTier : null;
+      const lengthTier = seg.lengthTiered
+        ? coerceLengthTier(incoming.lengthTier)
+        : null;
       if (seg.lengthTiered && !lengthTier) {
         throw new Error(
           `Tag ${tagName}: length-tiered segments require lengthTier on each variant.`,
         );
       }
       const { requiredConstraints, excludedConstraints } = normalizeVariantConstraintFields(
-        imported.requiredConstraints,
-        imported.excludedConstraints,
+        incoming.requiredConstraints as string[] | undefined,
+        incoming.excludedConstraints as string[] | undefined,
       );
       allConstraintTags.push(...requiredConstraints, ...excludedConstraints);
 
@@ -884,31 +1101,34 @@ export async function importScriptSegments(
       if (importId) {
         const idx = doc.variants.findIndex((v) => v.id === importId);
         if (idx < 0) {
-          variantsIdNotFound.push({ tag: tagName, id: importId });
+          if (existing) {
+            variantsIdNotFound.push({ tag: tagName, id: importId });
+            continue;
+          }
+          const newVariant: ScriptSegmentVariant = {
+            id: importId,
+            text: "",
+            lengthTier: null,
+            requiredConstraints: [],
+            excludedConstraints: [],
+            sort: Date.now(),
+            createdAt: now,
+            updatedAt: now,
+            audio: {},
+          };
+          applyVariantImportFields(newVariant, incoming, now);
+          doc.variants.push(newVariant);
+          variantsAdded += 1;
+          docChanged = true;
           continue;
         }
         const variant = doc.variants[idx]!;
-        const textChanged = variant.text !== text;
-        const unchanged =
-          !textChanged &&
-          variant.lengthTier === lengthTier &&
-          arraysEqual(variant.requiredConstraints, requiredConstraints) &&
-          arraysEqual(variant.excludedConstraints, excludedConstraints);
-
-        if (unchanged) {
+        const applied = applyVariantImportFields(variant, incoming, now);
+        if (!applied.changed) {
           variantsUnchanged += 1;
           continue;
         }
-
-        if (textChanged) {
-          resetVariantAudio(variant, now);
-          variantsAudioInvalidated += 1;
-        }
-        variant.text = text;
-        variant.lengthTier = lengthTier;
-        variant.requiredConstraints = requiredConstraints;
-        variant.excludedConstraints = excludedConstraints;
-        variant.updatedAt = now;
+        if (applied.textChanged) variantsAudioInvalidated += 1;
         variantsUpdatedById += 1;
         docChanged = true;
         continue;
@@ -917,36 +1137,29 @@ export async function importScriptSegments(
       const textMatchIdx = doc.variants.findIndex((v) => v.text === text);
       if (textMatchIdx >= 0) {
         const variant = doc.variants[textMatchIdx]!;
-        const unchanged =
-          variant.lengthTier === lengthTier &&
-          arraysEqual(variant.requiredConstraints, requiredConstraints) &&
-          arraysEqual(variant.excludedConstraints, excludedConstraints);
-
-        if (unchanged) {
+        const applied = applyVariantImportFields(variant, incoming, now);
+        if (!applied.changed) {
           variantsUnchanged += 1;
           continue;
         }
-
-        variant.lengthTier = lengthTier;
-        variant.requiredConstraints = requiredConstraints;
-        variant.excludedConstraints = excludedConstraints;
-        variant.updatedAt = now;
         variantsUpdatedByTextMatch += 1;
         docChanged = true;
         continue;
       }
 
-      doc.variants.push({
+      const newVariant: ScriptSegmentVariant = {
         id: randomUUID(),
-        text,
-        lengthTier,
-        requiredConstraints,
-        excludedConstraints,
+        text: "",
+        lengthTier: null,
+        requiredConstraints: [],
+        excludedConstraints: [],
         sort: Date.now(),
         createdAt: now,
         updatedAt: now,
         audio: {},
-      });
+      };
+      applyVariantImportFields(newVariant, incoming, now);
+      doc.variants.push(newVariant);
       variantsAdded += 1;
       docChanged = true;
     }
@@ -972,6 +1185,7 @@ export async function importScriptSegments(
     variantsUnchanged,
     variantsIdNotFound,
     variantsAudioInvalidated,
+    ...(fresh ? { variantsRemoved, freshImport: true } : {}),
     constraintTagsAdded,
   };
 }

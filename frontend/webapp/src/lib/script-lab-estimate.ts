@@ -16,7 +16,9 @@ import {
   type ScriptLabBeat,
 } from "@/lib/script-lab-beats";
 import {
+  inferBodyTourDirectionFromBeats,
   selectSegmentVariant,
+  type ScriptBodyTourDirection,
   type SegmentTagMeta,
 } from "@/lib/script-segment-variant-select";
 import {
@@ -37,6 +39,7 @@ export type ScriptLabVariant = {
   variantId: string;
   text: string;
   lengthTier?: ScriptLengthTier | null;
+  direction?: string | null;
   requiredConstraints?: string[];
   excludedConstraints?: string[];
   audio?: ScriptLabVariantAudio[];
@@ -72,6 +75,7 @@ function selectVariantForBeatTag(
     targetMinutes: number;
     meditationType?: string | null;
     contextTags?: string[];
+    tourDirection?: ScriptBodyTourDirection | null;
     variantsByTag: Record<string, ScriptLabVariant[]>;
     tagMetaByName?: Record<string, ScriptLabTagMeta>;
     picksByTag?: Record<string, string>;
@@ -90,6 +94,7 @@ function selectVariantForBeatTag(
     targetMinutes: params.targetMinutes,
     meditationType: params.meditationType ?? null,
     contextTags: params.contextTags ?? [],
+    tourDirection: params.tourDirection,
     alreadyUsedVariantIds: alreadyUsed,
     preferredVariantId: preferredAlreadyUsed ? null : preferredId,
     random: false,
@@ -211,6 +216,7 @@ export function estimateScriptLabBeatsDurationSeconds(params: {
   const contextTags = params.contextTags ?? [];
   const metricsIndex = buildMetricsIndexForEstimate(params);
   const speechSpeed = speechSpeedForEstimate();
+  const tourDirection = inferBodyTourDirectionFromBeats(params.beats);
   let segmentSeconds = 0;
   let segmentWordCount = 0;
   const usedByTag = new Map<string, string[]>();
@@ -224,6 +230,7 @@ export function estimateScriptLabBeatsDurationSeconds(params: {
         targetMinutes: params.targetMinutes,
         meditationType: params.meditationType ?? null,
         contextTags,
+        tourDirection,
         variantsByTag: params.variantsByTag,
         tagMetaByName: params.tagMetaByName,
         picksByTag: params.picksByTag,
@@ -268,6 +275,7 @@ function pickSegmentVariantForTag(
     targetMinutes: number;
     meditationType?: string | null;
     contextTags?: string[];
+    tourDirection?: ScriptBodyTourDirection | null;
     variantsByTag: Record<string, ScriptLabVariant[]>;
     tagMetaByName?: Record<string, ScriptLabTagMeta>;
     picksByTag?: Record<string, string>;
@@ -293,6 +301,7 @@ export function estimateScriptLabBeatsTextUtf8Bytes(params: {
   let customUtf8Bytes = 0;
   let totalUtf8Bytes = 0;
   const usedByTag = new Map<string, string[]>();
+  const tourDirection = inferBodyTourDirectionFromBeats(params.beats);
 
   for (const beat of params.beats) {
     if (beat.beatType === "pause") continue;
@@ -307,7 +316,11 @@ export function estimateScriptLabBeatsTextUtf8Bytes(params: {
     }
 
     if (!beat.custom && beat.tag) {
-      const variant = pickSegmentVariantForTag(beat.tag, params, usedByTag);
+      const variant = pickSegmentVariantForTag(
+        beat.tag,
+        { ...params, tourDirection },
+        usedByTag,
+      );
       const prose = variant?.text.trim() ?? "";
       if (prose) totalUtf8Bytes += utf8ByteLength(prose);
     }

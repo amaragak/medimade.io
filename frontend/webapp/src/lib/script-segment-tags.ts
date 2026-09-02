@@ -22,7 +22,8 @@ export type ScriptLengthTier = "short" | "medium" | "long";
 export function eligibleLengthTiers(targetMinutes: number): ScriptLengthTier[] {
   if (targetMinutes <= 2) return ["short"];
   if (targetMinutes <= 5) return ["short", "medium"];
-  return ["short", "medium", "long"];
+  if (targetMinutes <= 10) return ["medium"];
+  return ["long"];
 }
 
 export function variantEligibleForTargetLength(params: {
@@ -45,7 +46,8 @@ export function lengthTierSelectionWeights(
 ): Record<ScriptLengthTier, number> {
   if (targetMinutes <= 2) return { short: 1, medium: 0, long: 0 };
   if (targetMinutes <= 5) return { short: 1, medium: 3, long: 0 };
-  return { short: 1, medium: 3, long: 4 };
+  if (targetMinutes <= 10) return { short: 0, medium: 1, long: 0 };
+  return { short: 0, medium: 0, long: 1 };
 }
 
 /** Body-region segments where depth should scale with script length (not pacing/transition tags). */

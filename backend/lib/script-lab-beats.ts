@@ -177,7 +177,8 @@ export function scriptLabBeatsToolDefinition(): {
               pauseBand: {
                 type: "string",
                 enum: [...SCRIPT_PAUSE_BANDS],
-                description: "Required when beatType is pause — standalone structural silence.",
+                description:
+                  "Required when beatType is pause. One of: extra-short, short, medium, long, extra-long. Never omit on pause beats.",
               },
             },
             required: ["beatType", "custom"],
@@ -198,11 +199,13 @@ function normalizeIncomingBeat(raw: unknown, index: number): ScriptLabBeat {
   if (!beatType) throw new Error(`Beat ${index + 1} missing beatType`);
 
   if (beatType === "pause") {
-    const pauseBandRaw = typeof o.pauseBand === "string" ? o.pauseBand : "";
-    const pauseBand = normalizePauseBand(pauseBandRaw);
-    if (!pauseBand) {
-      throw new Error(`Beat ${index + 1} (pause) needs a valid pauseBand`);
-    }
+    const pauseBandRaw =
+      typeof o.pauseBand === "string"
+        ? o.pauseBand
+        : typeof o.band === "string"
+          ? o.band
+          : "";
+    const pauseBand = normalizePauseBand(pauseBandRaw) ?? "medium";
     return { beatType: "pause", custom: false, pauseBand };
   }
 

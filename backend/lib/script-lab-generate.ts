@@ -46,7 +46,7 @@ export async function generateScriptLabScript(params: {
   generalTagVariants: Array<{
     name: string;
     repeatability?: ScriptSegmentRepeatability;
-    variants: Array<{ variantId: string; text: string }>;
+    variants: Array<{ variantId: string; text: string; direction?: string | null }>;
   }>;
   tagRepeatabilityByName?: Record<string, ScriptSegmentRepeatability>;
 }): Promise<{
@@ -105,6 +105,7 @@ export async function generateScriptLabScript(params: {
 
   const verified = await verifyScriptLabBeats({
     apiKey: params.apiKey,
+    model: params.model,
     transcript: params.transcript,
     beatsBefore: beatsBeforeVerification,
     generalTags: params.generalTagVariants,
