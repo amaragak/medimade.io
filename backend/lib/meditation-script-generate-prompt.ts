@@ -28,6 +28,18 @@ import {
 export type { SegmentTagForPrompt, SegmentTagTierAverage } from "./script-segment-tag-metrics";
 
 /**
+ * Hard rule for spoken scripts and coach chat. Gendered language is allowed
+ * only when the creator themselves used it (e.g. “my daughter”, “she”, “I am a man”).
+ */
+export const GENDER_NEUTRAL_SCRIPT_RULES = [
+  "GENDER (non-negotiable): use gender-neutral language throughout. Never assign a gender to the listener, a future self, an inner voice, a guide, a partner, a child, or anyone else in imagery — unless the creator's own words in the conversation already specified that gender.",
+  "Forbidden unless the user said it: she/he/her/his/him/hers, herself/himself, woman/man/girl/boy, lady/gentleman, sister/brother as the listener, 'the woman/man you will become', or any invented gendered name.",
+  "Address the listener as you. For a third person who is not gendered in the chat, use they/them, this person, the one, that future you, that version of you — never she/he.",
+  "Bad: “Imagine the version of yourself in a year. She knows that she is clear.” Good: “Imagine the version of yourself in a year. They know they are clear.” or “That future you knows you are clear.”",
+  "If the user wrote she/he/her/his or named a gendered person, you MAY use that same language for that person only. Do not extend it to anyone else.",
+].join(" ");
+
+/**
  * Shared meditation script generation prompt used by the real create flow
  * (includeSegmentPlaceholders: false) and Script Lab admin (true).
  */
@@ -100,7 +112,7 @@ export function buildMeditationScriptGenerationPrompt(params: {
     "Use clear sections (e.g. opening/arrival, main practice, gentle closing).",
     "Match the emotional tone, intentions, and imagery implied by the conversation.",
     "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
-    "Use gender-neutral language throughout; never assume anyone's gender. Avoid he/she/his/her—prefer 'you' or singular 'they' where needed.",
+    GENDER_NEUTRAL_SCRIPT_RULES,
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
     SCRIPT_PAUSE_PROMPT_RULES,
     scriptPauseBudgetGuidanceAppendix(params.targetMinutes, {
@@ -213,7 +225,7 @@ export function buildMeditationScriptGenerationPrompt(params: {
     "Avoid self-referential product mentions. Do NOT mention Medimade/the app/this platform unless the user explicitly asks. If you must refer to it, use exactly: 'medimade.io' (lowercase) and nothing else.",
     "If the user is joking or playful, it is OK to include whimsical / funny subject matter (e.g. a monkey eating ice cream on a volcano) BUT the meditation itself should remain genuinely calming, coherent, and high-quality—never 'silly writing' or comedy bits. Use playful imagery as a vehicle for grounding, breath, and emotional regulation.",
     "Never generate hate/harassment, sexual content involving minors, non-consensual sexual content, graphic sexual content, instructions for wrongdoing, or glorification of self-harm. If the user asks for something socially unacceptable, refuse briefly and offer a safe alternative topic.",
-    "You use gender-neutral language and never assume anyone's gender.",
+    GENDER_NEUTRAL_SCRIPT_RULES,
     "You phrase lines for natural TTS: avoid isolated one-word sentences; use multi-word phrases where possible.",
     storyType
       ? `You scale pause bands for Story narrative pacing (${params.targetMinutes} min): keep silences modest — **medium** max in narrative sections, **long** only at major scene/emotional boundaries, **never extra-long**. Reach duration with story content, not contemplative silence.`

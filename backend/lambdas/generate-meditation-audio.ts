@@ -42,8 +42,11 @@ import {
   getFleetScriptWordTargets,
   scriptDurationPlanningAppendix,
 } from "../lib/script-duration-planning-prompt";
+import { GENDER_NEUTRAL_SCRIPT_RULES } from "../lib/meditation-script-generate-prompt";
 import {
+  fishPauseTagStyleForModel,
   parseScriptIntoSegments,
+  replacePauseMarkersWithFishNative,
   SCRIPT_PAUSE_PROMPT_RULES,
   stripPauseMarkers as spokenPlainWithoutPauses,
   sumPauseMarkerSeconds,
@@ -71,6 +74,16 @@ function normalizeFishTtsModel(raw: unknown): string {
 }
 /** Stretch named-band silence slightly at render (1 = as written). */
 const PAUSE_RENDER_SCALE = 1.12;
+
+/**
+ * Fish create-flow TTS path selector.
+ * `true`  → one Fish request with native pause tags (`[break]` / `[long-break]` …);
+ *           then a single loudnorm + voice-FX pass over the whole MP3.
+ * `false` → legacy path: split on `[[PAUSE …]]`, per-segment TTS, ffmpeg silence,
+ *           concat, then FX (kept for rollback / A-B).
+ * Only applies when `ttsProvider === "fish"`; Orpheus always uses the segmented path.
+ */
+const USE_FISH_NATIVE_PAUSE_TTS = true;
 
 /** Per speech-section + pipeline phase timings (dev flyover / analytics). */
 export type GenerationSectionTiming = {
@@ -641,6 +654,7 @@ async function generateScriptFromClaude(params: {
     "Use clear sections (e.g. opening/arrival, main practice, gentle closing).",
     "Match the emotional tone, intentions, and imagery implied by the conversation.",
     "Use second person or gentle imperatives; warm, inclusive, non-clinical language.",
+    GENDER_NEUTRAL_SCRIPT_RULES,
     "Phrase for natural text-to-speech: avoid single-word sentences or standalone one-word lines (they often get wrong stress or intonation). Prefer multi-word phrases and full sentences—for example, instead of ending with “Sleep.” alone, close with something like “When you’re ready, let yourself drift into sleep.”",
     SCRIPT_PAUSE_PROMPT_RULES,
     "Output **only** the words the guide speaks and these [[PAUSE …]] named-band markers; do not output other markdown or commentary.",
@@ -654,6 +668,7 @@ async function generateScriptFromClaude(params: {
     "You write speakable, production-ready guided meditation scripts.",
     "If the creator is joking or playful, it is OK to include whimsical subject matter, but the meditation itself must remain genuinely calming, coherent, and high-quality—not a joke script. Use playful imagery as a vehicle for grounding, breath, and emotional regulation.",
     "Never generate hate/harassment, sexual content involving minors, non-consensual sexual content, graphic sexual content, instructions for wrongdoing, or glorification of self-harm. If the creator asks for something socially unacceptable, refuse briefly and produce a safe alternative meditation topic.",
+    GENDER_NEUTRAL_SCRIPT_RULES,
     "You phrase lines for natural TTS: avoid isolated one-word sentences; use multi-word phrases where possible.",
     "You place pauses **generously and often** for clarity and pacing—especially spacious where self-paced work needs room—while keeping each silence **motivated** (never mechanical fillers). For **guided** in-then-out breath pairs, keep the gap between steps **short**; reserve long silences for open practice without an immediate next cue.",
   ].join(" ");
@@ -1230,6 +1245,79 @@ async function synthesizeScriptWithPauses(params: {
   };
 }
 
+/**
+ * Single Fish TTS request: convert `[[PAUSE …]]` → Fish native tags, synthesize
+ * the whole script, then one loudnorm + Pedalboard pass. No ffmpeg segmentation.
+ */
+async function synthesizeScriptWithFishNativePauses(params: {
+  fishApiKey: string;
+  script: string;
+  voiceId: string;
+  speed: number;
+  fishTtsModel?: string;
+  pauseBands?: Awaited<ReturnType<typeof loadPauseBandSeconds>>;
+  pauseScale?: number;
+  voiceFx?: { preset: string; bucket: string; jobId: string };
+}): Promise<{
+  audio: Buffer;
+  utf8Bytes: number;
+  voiceFxApplied: boolean;
+  timings: Pick<GenerationTimings, "sections"> & {
+    phases: Pick<
+      GenerationPhaseTimings,
+      "concatMs" | "fxMs" | "fxFfmpegMs" | "fxInvokeMs" | "fxBoardMs" | "fxColdStart"
+    >;
+  };
+}> {
+  const style = fishPauseTagStyleForModel(params.fishTtsModel);
+  const withFishPauses = replacePauseMarkersWithFishNative(
+    params.script,
+    style,
+    params.pauseBands,
+    params.pauseScale ?? 1,
+  );
+  const clean = sanitizeScriptForTts(withFishPauses);
+  const utf8Bytes = Buffer.byteLength(clean, "utf8");
+  const sectionTimings: GenerationSectionTiming[] = [];
+  const fxPhase: Pick<
+    GenerationPhaseTimings,
+    "fxMs" | "fxFfmpegMs" | "fxInvokeMs" | "fxBoardMs" | "fxColdStart"
+  > = {};
+
+  const ttsStarted = Date.now();
+  let audio = await fishTtsMp3({
+    apiKey: params.fishApiKey,
+    text: clean,
+    reference_id: params.voiceId,
+    speed: params.speed,
+    model: params.fishTtsModel ?? FISH_TTS_MODEL,
+  });
+  sectionTimings.push({
+    i: 0,
+    ttsMs: elapsedMs(ttsStarted),
+    utf8Bytes,
+  });
+
+  if (params.voiceFx) {
+    const fx = await loudnormThenVoiceFxMp3({
+      mp3: audio,
+      preset: params.voiceFx.preset,
+      bucket: params.voiceFx.bucket,
+      jobId: `${params.voiceFx.jobId}-full`,
+    });
+    fxPhase.fxMs = fx.ms;
+    Object.assign(fxPhase, fx.split);
+    audio = fx.mp3;
+  }
+
+  return {
+    audio,
+    utf8Bytes,
+    voiceFxApplied: Boolean(params.voiceFx),
+    timings: { sections: sectionTimings, phases: { ...fxPhase } },
+  };
+}
+
 function sanitizeScriptForTts(markdown: string): string {
   let t = markdown ?? "";
   // Normalize newlines.
@@ -1685,40 +1773,83 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   let spokenUtf8Bytes = 0;
   let spokenWordCount = 0;
   try {
-    console.log("calling TTS with pause-aware synthesis", {
-      reference_id: referenceId,
-      ttsProvider,
-      fishTtsModel,
-    });
     // Script already includes the spoken title when the writer put one in.
     const ttsScript = scriptTextUsed;
     const pauseBands = await loadPauseBandSeconds().catch(() => undefined);
-    pauseSecondsTotal = sumPauseMarkerSeconds(ttsScript, pauseBands) * PAUSE_RENDER_SCALE;
     const spokenPlain = spokenPlainWithoutPauses(ttsScript);
     spokenUtf8Bytes = Buffer.byteLength(spokenPlain, "utf8");
     spokenWordCount = spokenPlain
       ? spokenPlain.split(/\s+/).filter(Boolean).length
       : 0;
-    const { audio, utf8Bytes, voiceFxApplied, timings: synthTimings } =
-      await synthesizeScriptWithPauses({
-      provider: ttsProvider,
-      fishApiKey: fishKey,
-      runpod: runpodCreds,
-      script: ttsScript,
-      voiceId: referenceId,
-      speed: speechSpeed,
-      fishTtsModel,
-      pauseBands,
-      ...(voiceFxPreset
-        ? {
-            voiceFx: {
-              preset: voiceFxPreset,
-              bucket: mediaBucketName,
-              jobId: event.jobId,
-            },
-          }
-        : {}),
-    });
+
+    const voiceFxOpt = voiceFxPreset
+      ? {
+          voiceFx: {
+            preset: voiceFxPreset,
+            bucket: mediaBucketName,
+            jobId: event.jobId,
+          },
+        }
+      : {};
+
+    pauseSecondsTotal =
+      sumPauseMarkerSeconds(ttsScript, pauseBands) * PAUSE_RENDER_SCALE;
+
+    const useFishNative =
+      USE_FISH_NATIVE_PAUSE_TTS && ttsProvider === "fish" && Boolean(fishKey);
+
+    let audio: Buffer;
+    let utf8Bytes: number;
+    let voiceFxApplied: boolean;
+    let synthTimings: Awaited<
+      ReturnType<typeof synthesizeScriptWithPauses>
+    >["timings"];
+
+    if (useFishNative) {
+      console.log("calling TTS with Fish-native pauses (single request)", {
+        reference_id: referenceId,
+        ttsProvider,
+        fishTtsModel,
+        pauseTagStyle: fishPauseTagStyleForModel(fishTtsModel),
+        pauseSecondsTotal,
+      });
+      const result = await synthesizeScriptWithFishNativePauses({
+        fishApiKey: fishKey!,
+        script: ttsScript,
+        voiceId: referenceId,
+        speed: speechSpeed,
+        fishTtsModel,
+        pauseBands,
+        pauseScale: PAUSE_RENDER_SCALE,
+        ...voiceFxOpt,
+      });
+      audio = result.audio;
+      utf8Bytes = result.utf8Bytes;
+      voiceFxApplied = result.voiceFxApplied;
+      synthTimings = result.timings;
+    } else {
+      console.log("calling TTS with pause-aware synthesis", {
+        reference_id: referenceId,
+        ttsProvider,
+        fishTtsModel,
+      });
+      const result = await synthesizeScriptWithPauses({
+        provider: ttsProvider,
+        fishApiKey: fishKey,
+        runpod: runpodCreds,
+        script: ttsScript,
+        voiceId: referenceId,
+        speed: speechSpeed,
+        fishTtsModel,
+        pauseBands,
+        ...voiceFxOpt,
+      });
+      audio = result.audio;
+      utf8Bytes = result.utf8Bytes;
+      voiceFxApplied = result.voiceFxApplied;
+      synthTimings = result.timings;
+    }
+
     generationTimings.sections = synthTimings.sections;
     Object.assign(generationTimings.phases, synthTimings.phases);
     mp3Buf = audio;
@@ -1727,6 +1858,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
       bytes: mp3Buf.byteLength,
       ttsProvider,
       voiceFxApplied,
+      path: useFishNative ? "fish-native-pauses" : "segmented-pauses",
     });
     if (!voiceFxApplied) {
       try {
@@ -1741,7 +1873,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
         return json(500, { error: msg });
       }
     } else {
-      console.log("voice-fx already applied per speech section", {
+      console.log("voice-fx already applied to full TTS output", {
         preset: voiceFxPreset,
         bytes: mp3Buf.byteLength,
       });

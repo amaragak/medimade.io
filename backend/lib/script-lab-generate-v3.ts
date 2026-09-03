@@ -4,6 +4,7 @@
  * Standalone; does not modify V1/V2 or verification.
  */
 import { parseAnthropicMessageUsage } from "./anthropic-pricing";
+import { GENDER_NEUTRAL_SCRIPT_RULES } from "./meditation-script-generate-prompt";
 import {
   mergeUsageBreakdown,
   SCRIPT_LAB_HAIKU_MODEL,
@@ -494,6 +495,7 @@ export async function generateScriptLabScriptV3(params: {
       "You write excellent guided meditation scripts as continuous spoken prose.",
       "Do not use segment tags, beat schemas, JSON, markdown headings, or tool calls.",
       "Personalize naturally from the user's transcript and context.",
+      GENDER_NEUTRAL_SCRIPT_RULES,
       SCRIPT_PAUSE_PROMPT_RULES,
       "Output only the spoken script with [[PAUSE …]] markers — nothing else.",
     ].join("\n"),

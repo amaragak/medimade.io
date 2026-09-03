@@ -86,6 +86,59 @@ export function stripPauseMarkers(script: string): string {
     .trim();
 }
 
+/**
+ * Fish Audio inline pause tags (S2 `[brackets]` / S1 `(parens)`).
+ * Timed `[pause 4s]` so admin band lengths (and PAUSE_RENDER_SCALE) still apply
+ * in the single-request path.
+ */
+export type FishPauseTagStyle = "s2" | "s1";
+
+export function fishPauseTagStyleForModel(model: string | null | undefined): FishPauseTagStyle {
+  const m = (model ?? "").trim().toLowerCase();
+  if (!m) return "s2";
+  if (m === "s1" || m.startsWith("s1-") || m.includes("speech-1")) return "s1";
+  return "s2";
+}
+
+function formatPauseSecondsLabel(seconds: number): string {
+  const n = Math.round(Math.max(0, seconds) * 10) / 10;
+  if (n <= 0) return "0s";
+  return Number.isInteger(n) ? `${n}s` : `${n.toFixed(1)}s`;
+}
+
+/** `[pause 4s]` (S2) or `(pause 4s)` (S1). */
+export function fishNativeTimedPauseTag(
+  seconds: number,
+  style: FishPauseTagStyle = "s2",
+): string {
+  const label = formatPauseSecondsLabel(seconds);
+  return style === "s1" ? `(pause ${label})` : `[pause ${label}]`;
+}
+
+/**
+ * Replace `[[PAUSE …]]` with Fish timed pause tags using admin/default band seconds.
+ * Unknown / empty specs are removed.
+ */
+export function replacePauseMarkersWithFishNative(
+  script: string,
+  style: FishPauseTagStyle = "s2",
+  bands?: Record<ScriptPauseBand, number>,
+  scale = 1,
+): string {
+  if (!script) return "";
+  const re = new RegExp(SCRIPT_PAUSE_MARKER_RE.source, SCRIPT_PAUSE_MARKER_RE.flags);
+  return script
+    .replace(re, (_full, raw: string) => {
+      const secs = secondsForPauseSpec(raw ?? "", bands) * scale;
+      if (!(secs > 0)) return " ";
+      return ` ${fishNativeTimedPauseTag(secs, style)} `;
+    })
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 export type ScriptSegment = {
   text: string;
   pauseSeconds: number;
