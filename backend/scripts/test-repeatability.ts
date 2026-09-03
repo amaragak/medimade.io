@@ -11,7 +11,7 @@ import {
   customTextHasPersonalizationSignal,
   proximityBlocksTagConversion,
   prepareGeneralTagsForVerification,
-  type GeneralTagVariantCatalog,
+  type VerificationTagCard,
 } from "../lib/script-lab-beat-verification";
 import {
   findDuplicateBeatTypeWarnings,
@@ -19,7 +19,7 @@ import {
   type ScriptLabBeat,
 } from "../lib/script-lab-beats";
 
-const CATALOG: GeneralTagVariantCatalog[] = prepareGeneralTagsForVerification([
+const CATALOG: VerificationTagCard[] = prepareGeneralTagsForVerification([
   {
     name: "BODY_SCAN_NECK_SHOULDERS",
     repeatability: "singular",

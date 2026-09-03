@@ -5,6 +5,11 @@
 import { parseAnthropicMessageUsage } from "./anthropic-pricing";
 import { verifyScriptLabBeats } from "./script-lab-beat-verification";
 import {
+  mergeUsageBreakdown,
+  SCRIPT_LAB_SONNET_MODEL,
+  type ScriptLabUsageBreakdownEntry,
+} from "./script-lab-models";
+import {
   buildTagRepeatabilityMap,
   collapseSameConnectiveSeparatedOnlyByPauses,
   dropDuplicateSingularTagBeats,
@@ -321,12 +326,12 @@ export function validateSkeleton(params: {
     });
 
     const closingStart = skeleton.length - 3;
+    const closingPause = skeleton[closingStart + 1];
     const sleepClosingOk =
       skeleton.length >= 7 &&
       isTagBeat(skeleton[closingStart]!, SLEEP_CLOSING_TAGS[0]) &&
-      isPause(skeleton[closingStart + 1]!) &&
-      skeleton[closingStart + 1]!.kind === "pause" &&
-      skeleton[closingStart + 1]!.band === "extra-long" &&
+      closingPause?.kind === "pause" &&
+      closingPause.band === "extra-long" &&
       isTagBeat(skeleton[closingStart + 2]!, SLEEP_CLOSING_TAGS[1]);
     if (!sleepClosingOk) {
       errors.push(
@@ -678,9 +683,9 @@ function buildPassTwoPrompt(params: {
       ),
       "",
       "Return the complete script via submit_meditation_script_beats.",
-      "For library tags you keep: `{ custom: false, tag: \"TAG\", beatType: \"...\", text: \"…\" }` — copy the **exact** variant text from the rendered skeleton for that tag. Do not rewrite, paraphrase, or omit the locked variant wording.",
-      "For custom prose: `{ custom: true, text: \"...\", beatType: \"content\" }` (or a fitting beatType).",
-      "For pauses: `{ beatType: \"pause\", pauseBand: \"medium\" }` etc.",
+      "For library tags you keep: `{ tag: \"TAG\", text: \"…\" }` — copy the **exact** variant text from the rendered skeleton for that tag. Do not rewrite, paraphrase, or omit the locked variant wording. Omit `beatType` and `custom`; both are derived from the tag.",
+      "For custom prose: `{ beatType: \"content\", text: \"...\" }` (or a fitting beatType).",
+      "For pauses: `{ pauseBand: \"medium\" }` etc.",
       "Do not leave [[FOCUS_ANCHOR ...]] markers in the final output.",
     ].join("\n"),
   };
@@ -952,7 +957,8 @@ export function fillMissingTagVariantTexts(params: {
 
 export async function generateScriptLabScriptV2(params: {
   apiKey: string;
-  model: string;
+  /** @deprecated Display-only; pass 1/2 always use SCRIPT_LAB_SONNET_MODEL. */
+  model?: string;
   transcript: string;
   meditationStyle: string;
   journalMode: boolean;
@@ -966,7 +972,16 @@ export async function generateScriptLabScriptV2(params: {
   generalTagVariants: Array<{
     name: string;
     repeatability?: ScriptSegmentRepeatability;
-    variants: Array<{ variantId: string; text: string; direction?: string | null }>;
+    description?: string;
+    scope?: "general" | "types";
+    types?: string[];
+    variants: Array<{
+      variantId: string;
+      text: string;
+      direction?: string | null;
+      requiredConstraints?: string[];
+      excludedConstraints?: string[];
+    }>;
   }>;
   contextTags?: string[];
   recentVariantIds?: readonly string[];
@@ -977,6 +992,7 @@ export async function generateScriptLabScriptV2(params: {
   verificationCorrectionsApplied: boolean;
   beatWarnings: ScriptLabBeatDuplicateWarning[];
   usage: { input_tokens: number; output_tokens: number } | null;
+  usageBreakdown: ScriptLabUsageBreakdownEntry[];
   /** First Pass 1 call only (before retry / pass 2 / verification). */
   firstPassUsage: { input_tokens: number; output_tokens: number } | null;
   v2Meta: ScriptLabV2Meta;
@@ -1023,7 +1039,7 @@ export async function generateScriptLabScriptV2(params: {
 
   let pass1 = await callAnthropicTool({
     apiKey: params.apiKey,
-    model: params.model,
+    model: SCRIPT_LAB_SONNET_MODEL,
     system: pass1Prompt.system,
     userContent: pass1Prompt.userContent,
     tool: skeletonTool,
@@ -1050,7 +1066,7 @@ export async function generateScriptLabScriptV2(params: {
     };
     pass1 = await callAnthropicTool({
       apiKey: params.apiKey,
-      model: params.model,
+      model: SCRIPT_LAB_SONNET_MODEL,
       system: retryPrompt.system,
       userContent: retryPrompt.userContent,
       tool: skeletonTool,
@@ -1090,7 +1106,7 @@ export async function generateScriptLabScriptV2(params: {
   });
   const pass2 = await callAnthropicTool({
     apiKey: params.apiKey,
-    model: params.model,
+    model: SCRIPT_LAB_SONNET_MODEL,
     system: pass2Prompt.system,
     userContent: pass2Prompt.userContent,
     tool: scriptLabBeatsToolDefinition(),
@@ -1107,10 +1123,12 @@ export async function generateScriptLabScriptV2(params: {
 
   const verified = await verifyScriptLabBeats({
     apiKey: params.apiKey,
-    model: params.model,
     transcript: params.transcript,
     beatsBefore: beatsBeforeVerification,
     generalTags: params.generalTagVariants,
+    meditationType,
+    contextTags,
+    verificationStage: "v2_verification",
   });
 
   const beats = collapseSameConnectiveSeparatedOnlyByPauses(
@@ -1138,6 +1156,37 @@ export async function generateScriptLabScriptV2(params: {
   const removedTags = computeRemovedTags(passOneRendered, beats);
   const focusAnchorBeats = countFocusAnchorBeats(beats);
 
+  const usageBreakdown = mergeUsageBreakdown(
+    pass1.usage
+      ? [
+          {
+            stage: "v2_pass1_skeleton",
+            model: SCRIPT_LAB_SONNET_MODEL,
+            usage: pass1.usage,
+          },
+        ]
+      : undefined,
+    pass1RetryUsage
+      ? [
+          {
+            stage: "v2_pass1_skeleton",
+            model: SCRIPT_LAB_SONNET_MODEL,
+            usage: pass1RetryUsage,
+          },
+        ]
+      : undefined,
+    pass2.usage
+      ? [
+          {
+            stage: "v2_pass2_personalization",
+            model: SCRIPT_LAB_SONNET_MODEL,
+            usage: pass2.usage,
+          },
+        ]
+      : undefined,
+    verified.usageBreakdown,
+  );
+
   return {
     beats,
     beatsBeforeVerification: beatsBeforeVerificationOut,
@@ -1145,6 +1194,7 @@ export async function generateScriptLabScriptV2(params: {
     verificationCorrectionsApplied: verified.correctionsApplied,
     beatWarnings,
     usage: mergeUsage(pass1.usage, pass1RetryUsage, pass2.usage, verified.usage),
+    usageBreakdown,
     firstPassUsage,
     v2Meta: {
       passOneSkeleton: skeleton,

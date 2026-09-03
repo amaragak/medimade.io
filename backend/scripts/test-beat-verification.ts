@@ -49,16 +49,12 @@ const FIXTURE_BEATS: ScriptLabBeat[] = [
 ];
 
 function verdictKey(verdicts: SentenceVerdict[]): string {
-  return JSON.stringify(
-    [...verdicts]
-      .sort((a, b) => a.sentenceIndex - b.sentenceIndex)
-      .map((v) => ({
-        i: v.sentenceIndex,
-        v: v.verdict,
-        t: v.matchedTag ?? null,
-        c: v.confidence,
-      })),
-  );
+  return verdicts
+    .map(
+      (v) =>
+        `${v.sentenceIndex}:${v.verdict}:${v.matchedTag ?? ""}:${v.confidence ?? ""}`,
+    )
+    .join("|");
 }
 
 function beatSummary(b: ScriptLabBeat): string {
@@ -67,43 +63,55 @@ function beatSummary(b: ScriptLabBeat): string {
   return `custom(${b.beatType}): ${(b.text ?? "").slice(0, 90)}`;
 }
 
+const FIXTURE_CATALOG: GeneralTagVariantCatalog[] = [
+  {
+    name: "PACE_REASSURANCE",
+    scope: "general",
+    types: [],
+    variants: [
+      { variantId: "pr-1", text: "Continue naturally at your own pace." },
+      { variantId: "pr-2", text: "There's no rush here." },
+      { variantId: "pr-3", text: "Take whatever time you need with this." },
+      { variantId: "pr-4", text: "Stay with this for as long as feels right." },
+      { variantId: "pr-5", text: "Move through this gently, in your own time." },
+      { variantId: "pr-6", text: "There's nowhere else you need to be right now." },
+    ],
+  },
+  {
+    name: "BREATH_TRANSITION",
+    scope: "general",
+    types: [],
+    variants: [
+      {
+        variantId: "bt-1",
+        text: "And as you exhale, let yourself arrive fully here.",
+      },
+    ],
+  },
+];
+
 async function loadGeneralTags(useLiveLibrary: boolean): Promise<GeneralTagVariantCatalog[]> {
   if (useLiveLibrary && process.env.VOICE_ADMIN_TABLE_NAME) {
     const lib = await listAllScriptSegmentLibrary();
     return lib.tags
       .map((t) => ({
         name: t.name,
+        scope: t.scope,
+        types: t.types,
+        description: t.description,
+        repeatability: t.repeatability,
         variants: (lib.variantsByTag[t.name] ?? []).map((v) => ({
           variantId: v.variantId,
           text: v.text,
           direction: v.direction ?? null,
+          requiredConstraints: v.requiredConstraints,
+          excludedConstraints: v.excludedConstraints,
         })),
       }))
       .filter((t) => t.variants.length > 0);
   }
 
-  return prepareGeneralTagsForVerification([
-    {
-      name: "PACE_REASSURANCE",
-      variants: [
-        { variantId: "pr-1", text: "Continue naturally at your own pace." },
-        { variantId: "pr-2", text: "There's no rush here." },
-        { variantId: "pr-3", text: "Take whatever time you need with this." },
-        { variantId: "pr-4", text: "Stay with this for as long as feels right." },
-        { variantId: "pr-5", text: "Move through this gently, in your own time." },
-        { variantId: "pr-6", text: "There's nowhere else you need to be right now." },
-      ],
-    },
-    {
-      name: "BREATH_TRANSITION",
-      variants: [
-        {
-          variantId: "bt-1",
-          text: "And as you exhale, let yourself arrive fully here.",
-        },
-      ],
-    },
-  ]);
+  return FIXTURE_CATALOG;
 }
 
 async function main() {
@@ -122,16 +130,33 @@ async function main() {
   console.log(`\nTotal sentences across fixture: ${sentences.length}`);
 
   const generalTags = await loadGeneralTags(useLiveLibrary);
-  const pace = generalTags.find((t) => t.name === "PACE_REASSURANCE");
-  console.log(`PACE_REASSURANCE variants in prompt: ${pace?.variants.length ?? 0}`);
+  const cards = prepareGeneralTagsForVerification(generalTags, {
+    meditationType: "Body scan",
+    contextTags: ["seated_or_lying"],
+  });
+  const pace = cards.find((t) => t.name === "PACE_REASSURANCE");
+  console.log(
+    `PACE_REASSURANCE examples in prompt: ${pace?.examples.length ?? 0} (cards total: ${cards.length})`,
+  );
 
   const prompt = buildVerificationPrompt({
     transcript: TRANSCRIPT,
     sentences,
-    generalTags,
+    generalTags: cards,
   });
   console.log("\nPrompt uses numbered sentences:", prompt.userContent.includes("sentenceIndex"));
-  console.log("Prompt includes full variant ids:", prompt.userContent.includes("variantId") || prompt.userContent.includes("[pr-") || prompt.userContent.includes("["));
+  console.log(
+    "Prompt is tag-card style (Examples:):",
+    prompt.userContent.includes("Examples:"),
+  );
+  console.log(
+    "Prompt omits full variant ids:",
+    !prompt.userContent.includes("[pr-1]") && !prompt.userContent.includes("variantId"),
+  );
+  console.log(
+    "Prompt uses compact sentence JSON:",
+    !prompt.userContent.includes('\n  "sentenceIndex"'),
+  );
 
   if (dryRun) {
     console.log("\n(dry-run — skipping live Sonnet calls)");
@@ -157,6 +182,8 @@ async function main() {
       transcript: TRANSCRIPT,
       beatsBefore: FIXTURE_BEATS,
       generalTags,
+      meditationType: "Body scan",
+      contextTags: ["seated_or_lying"],
     });
     runResults.push({
       run,
@@ -208,7 +235,7 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  console.error(err);
+main().catch((e) => {
+  console.error(e);
   process.exit(1);
 });

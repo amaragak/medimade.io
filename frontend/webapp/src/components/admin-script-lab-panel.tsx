@@ -82,6 +82,8 @@ import {
   buildScriptLabCostSummary,
   characterCountsFromBeats,
   parseTokenUsage,
+  parseUsageBreakdown,
+  type ScriptLabUsageBreakdownEntry,
   type TokenUsage,
 } from "@/lib/script-lab-cost";
 
@@ -183,6 +185,7 @@ export function AdminScriptLabPanel() {
   const [generationUsage, setGenerationUsage] = useState<TokenUsage | null>(null);
   const [firstPassUsage, setFirstPassUsage] = useState<TokenUsage | null>(null);
   const [fillUsage, setFillUsage] = useState<TokenUsage | null>(null);
+  const [usageBreakdown, setUsageBreakdown] = useState<ScriptLabUsageBreakdownEntry[]>([]);
 
   const [newVariantText, setNewVariantText] = useState("");
   const [newVariantLengthTier, setNewVariantLengthTier] = useState<ScriptLengthTier>("medium");
@@ -205,6 +208,7 @@ export function AdminScriptLabPanel() {
   const [embedTestResult, setEmbedTestResult] = useState<string | null>(null);
 
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const librarySectionRef = useRef<HTMLElement | null>(null);
   const [previewingUrl, setPreviewingUrl] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
@@ -511,6 +515,7 @@ export function AdminScriptLabPanel() {
     return buildScriptLabCostSummary({
       generationUsage,
       fillUsage,
+      usageBreakdown,
       firstPassUsage,
       finalScriptText: displayedRenderedScript,
       generationLabel,
@@ -520,6 +525,7 @@ export function AdminScriptLabPanel() {
   }, [
     generationUsage,
     fillUsage,
+    usageBreakdown,
     firstPassUsage,
     displayedRenderedScript,
     statsBeats,
@@ -663,6 +669,10 @@ export function AdminScriptLabPanel() {
       setRenderedScript(rendered);
       setPreviewMode("rendered");
       setFillUsage(parseTokenUsage(data.usage));
+      setUsageBreakdown((prev) => [
+        ...prev.filter((e) => e.stage !== "fill"),
+        ...parseUsageBreakdown(data.usageBreakdown),
+      ]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Fill placeholders failed");
     } finally {
@@ -761,6 +771,8 @@ export function AdminScriptLabPanel() {
       );
       setGenerationUsage(parseTokenUsage(data.usage));
       setFirstPassUsage(parseTokenUsage(data.firstPassUsage));
+      setUsageBreakdown(parseUsageBreakdown(data.usageBreakdown));
+      setFillUsage(null);
       if (pathUsed === "v2" || pathUsed === "v3") {
         const embedded = renderBeatsToScript(nextBeats, () => null);
         setRenderedScript(embedded.includes("[[SEG:") ? "" : embedded);
@@ -1165,10 +1177,19 @@ export function AdminScriptLabPanel() {
             <ScriptLabV3PromoteBanner
               promotedCount={v3Meta.promotedVariantIds?.length ?? 0}
               onOpenPendingReview={() => {
-                void reload().then(() => {
-                  setPendingReviewFilterIds(new Set(v3Meta.promotedVariantIds ?? []));
-                  setLibraryTab("pending");
+                setPendingReviewFilterIds(new Set(v3Meta.promotedVariantIds ?? []));
+                setLibraryTab("pending");
+                librarySectionRef.current?.scrollIntoView({
+                  behavior: "smooth",
+                  block: "start",
                 });
+                void reload().catch((e) =>
+                  setError(
+                    e instanceof Error
+                      ? e.message
+                      : "Could not refresh pending review",
+                  ),
+                );
               }}
             />
           ) : null}
@@ -1291,7 +1312,11 @@ export function AdminScriptLabPanel() {
           ) : null}
         </section>
 
-        <section className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+        <section
+          ref={librarySectionRef}
+          id="script-lab-segment-library"
+          className="rounded-2xl border border-border bg-card p-4 shadow-sm"
+        >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-display text-lg font-medium">Segment library</h2>
             <div className="flex flex-wrap items-center gap-2">
@@ -2043,6 +2068,26 @@ function PendingReviewPanel({
           onClick={() => {
             void (async () => {
               try {
+                await postAdminScriptLab({ action: "backfill-pending-neighbors" });
+                await onReload();
+              } catch (e) {
+                onError(
+                  e instanceof Error
+                    ? e.message
+                    : "Refresh nearest neighbors failed (run backend script if undeployed)",
+                );
+              }
+            })();
+          }}
+        >
+          Refresh nearest neighbors
+        </button>
+        <button
+          type="button"
+          className="cursor-pointer rounded-full border border-border px-3 py-1 text-xs font-semibold"
+          onClick={() => {
+            void (async () => {
+              try {
                 await postAdminScriptLab({ action: "backfill-embeddings" });
                 await onReload();
               } catch (e) {
@@ -2067,16 +2112,68 @@ function PendingReviewPanel({
             >
               <p className="font-mono text-[10px] text-accent-link">{v.tagName}</p>
               <p className="whitespace-pre-wrap text-sm text-foreground">{v.text}</p>
-              <p className="text-muted">
-                Similarity to nearest:{" "}
-                {typeof v.promotionSimilarity === "number"
-                  ? v.promotionSimilarity.toFixed(3)
-                  : "—"}
-                {v.promotionNearestTag ? ` (${v.promotionNearestTag})` : ""}
-              </p>
-              {v.promotionContext ? (
-                <p className="line-clamp-3 text-muted">Context: {v.promotionContext}</p>
-              ) : null}
+              {(v.promotionNeighbors?.length ?? 0) > 0 ? (
+                <div className="space-y-1.5 rounded-lg border border-border bg-card/60 px-2.5 py-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+                    Nearest neighbors
+                  </p>
+                  <ol className="space-y-1.5">
+                    {v.promotionNeighbors!.map((n, i) => (
+                      <li key={`${n.tag}-${i}-${n.score}`} className="text-[11px]">
+                        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                          <span className="font-mono text-accent-link">{n.tag}</span>
+                          <span className="text-muted">{n.score.toFixed(3)}</span>
+                        </div>
+                        <p className="mt-0.5 whitespace-pre-wrap text-foreground/90">
+                          {n.text}
+                        </p>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : (
+                <p className="text-muted">
+                  Similarity to nearest:{" "}
+                  {typeof v.promotionSimilarity === "number"
+                    ? v.promotionSimilarity.toFixed(3)
+                    : "—"}
+                  {v.promotionNearestTag ? ` (${v.promotionNearestTag})` : ""}
+                  {v.promotionNearestText ? (
+                    <span className="mt-1 block whitespace-pre-wrap text-foreground/90">
+                      “{v.promotionNearestText}”
+                    </span>
+                  ) : (
+                    <span className="mt-1 block text-[10px] italic">
+                      Neighbor text missing — use “Refresh nearest neighbors” below, or reload.
+                    </span>
+                  )}
+                </p>
+              )}
+              {(() => {
+                const ctx = v.promotionContext?.trim() ?? "";
+                if (!ctx) return null;
+                // Older promotions stored rawScript.slice(0,500). Require the » mark
+                // from localPromotionContext so we don't treat "line happened to appear
+                // in the script opening" as real local context.
+                const looksLocal = ctx.includes("» ");
+                if (!looksLocal) {
+                  return (
+                    <p className="text-[10px] italic text-muted">
+                      Context was the script opening (legacy) — not shown.
+                    </p>
+                  );
+                }
+                return (
+                  <div className="rounded-lg border border-border/70 bg-background px-2.5 py-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+                      Local context (±1 pause chunk)
+                    </p>
+                    <pre className="mt-1 whitespace-pre-wrap font-sans text-[11px] leading-relaxed text-muted">
+                      {ctx}
+                    </pre>
+                  </div>
+                );
+              })()}
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"

@@ -1,6 +1,9 @@
 import {
   CLAUDE_HAIKU_45_MODEL_ID,
   CLAUDE_SONNET_45_MODEL_ID,
+  SCRIPT_LAB_HAIKU_MODEL,
+  SCRIPT_LAB_SONNET_MODEL,
+  claudeModelLabel,
   claudeUsdFromTokens,
 } from "@/lib/claude-pricing";
 import type { ScriptLabBeat } from "@/lib/script-lab-beats";
@@ -18,10 +21,18 @@ export type TokenUsage = {
   output_tokens: number;
 };
 
+export type ScriptLabUsageBreakdownEntry = {
+  stage: string;
+  model: string;
+  usage: TokenUsage;
+};
+
 export type ScriptLabUsageStage = {
   id: "generation" | "fill";
   label: string;
   usage: TokenUsage;
+  /** Model-aware cost when usageBreakdown is available. */
+  actual?: ScriptLabLlmCostLine;
 };
 
 export type ScriptLabLlmCostLine = {
@@ -50,8 +61,14 @@ export type ScriptLabSimulatedBaseline = {
 export type ScriptLabCostSummary = {
   stages: ScriptLabStageCost[];
   totalUsage: TokenUsage;
+  /** Hypothetical cost if every token were Sonnet-priced. */
   totalSonnet: ScriptLabLlmCostLine;
+  /** Hypothetical cost if every token were Haiku-priced. */
   totalHaiku: ScriptLabLlmCostLine;
+  /** Actual mixed-model pipeline cost. */
+  totalActual: ScriptLabLlmCostLine;
+  /** Per-call breakdown with model routing (when available). */
+  usageBreakdown: ScriptLabUsageBreakdownEntry[];
   /** Single-shot simulation: first-pass input + final-script output estimate. */
   simulatedBaseline: ScriptLabSimulatedBaseline | null;
   /** Optimised Sonnet vs simulated Sonnet: negative = optimised cheaper. */
@@ -70,6 +87,8 @@ export type ScriptLabCostSummary = {
   totalSonnetGbp: number;
   totalHaikuUsd: number;
   totalHaikuGbp: number;
+  totalActualUsd: number;
+  totalActualGbp: number;
   /** LLM Sonnet + Fish for custom text only (actual TTS if segments cached). */
   grandTotalSonnetUsd: number;
   grandTotalSonnetGbp: number;
@@ -103,11 +122,88 @@ export function buildSimulatedBaseline(params: {
   };
   return {
     usage,
-    sonnet: llmCostLine(usage, CLAUDE_SONNET_45_MODEL_ID, "Sonnet 4.5"),
-    haiku: llmCostLine(usage, CLAUDE_HAIKU_45_MODEL_ID, "Haiku 4.5"),
+    sonnet: llmCostLine(usage, SCRIPT_LAB_SONNET_MODEL, "Sonnet 4.6"),
+    haiku: llmCostLine(usage, SCRIPT_LAB_HAIKU_MODEL, "Haiku 4.5"),
     firstPassInputTokens: params.firstPassUsage.input_tokens,
     estimatedOutputTokens,
   };
+}
+
+export function parseUsageBreakdown(raw: unknown): ScriptLabUsageBreakdownEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ScriptLabUsageBreakdownEntry[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    const usage = parseTokenUsage(o.usage);
+    const stage = typeof o.stage === "string" ? o.stage : "";
+    const model = typeof o.model === "string" ? o.model : "";
+    if (!stage || !model || !usage) continue;
+    out.push({ stage, model, usage });
+  }
+  return out;
+}
+
+export function actualCostFromBreakdown(
+  entries: ScriptLabUsageBreakdownEntry[],
+): ScriptLabLlmCostLine {
+  let usd = 0;
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    usd += llmCostUsd(entry.usage, entry.model);
+    const label = claudeModelLabel(entry.model);
+    if (!seen.has(label)) {
+      seen.add(label);
+      labels.push(label);
+    }
+  }
+  const modelLabel =
+    labels.length === 0
+      ? "Mixed (routed)"
+      : labels.length === 1
+        ? labels[0]!
+        : labels.join(" + ");
+  return {
+    modelId: labels.length === 1 ? entries[0]!.model : "mixed",
+    modelLabel,
+    usd,
+    gbp: usdToGbp(usd),
+  };
+}
+
+/** Human label for a pipeline stage id from the backend usageBreakdown. */
+export function scriptLabStageDisplayLabel(stage: string): string {
+  switch (stage) {
+    case "v1_generation":
+      return "V1 generation";
+    case "v1_verification":
+      return "V1 verification";
+    case "v2_pass1_skeleton":
+      return "V2 pass 1 skeleton";
+    case "v2_pass2_personalization":
+      return "V2 pass 2 personalization";
+    case "v2_verification":
+      return "V2 verification";
+    case "v3_pass1_generation":
+      return "V3 pass 1 generation";
+    case "v3_pass3_classify":
+      return "V3 personalization classify";
+    case "v3_pass5_substitution_review":
+      return "V3 substitution review";
+    case "v3_pass5_promotion_review":
+      return "V3 promotion review";
+    case "fill":
+      return "Fill placeholders";
+    default:
+      return stage;
+  }
+}
+
+export function costLineForBreakdownEntry(
+  entry: ScriptLabUsageBreakdownEntry,
+): ScriptLabLlmCostLine {
+  return llmCostLine(entry.usage, entry.model);
 }
 
 export function parseTokenUsage(raw: unknown): TokenUsage | null {
@@ -155,10 +251,15 @@ export function llmCostUsd(
 export function llmCostLine(
   usage: TokenUsage,
   modelId: string,
-  modelLabel: string,
+  modelLabel?: string,
 ): ScriptLabLlmCostLine {
   const usd = llmCostUsd(usage, modelId);
-  return { modelId, modelLabel, usd, gbp: usdToGbp(usd) };
+  return {
+    modelId,
+    modelLabel: modelLabel ?? claudeModelLabel(modelId),
+    usd,
+    gbp: usdToGbp(usd),
+  };
 }
 
 export function fishCostUsd(characters: number): number {
@@ -215,41 +316,57 @@ export function characterCountsFromBeats(params: {
 export function buildScriptLabCostSummary(params: {
   generationUsage?: TokenUsage | null;
   fillUsage?: TokenUsage | null;
+  usageBreakdown?: ScriptLabUsageBreakdownEntry[] | null;
   firstPassUsage?: TokenUsage | null;
   finalScriptText?: string;
   generationLabel?: string;
   fishCustomChars?: number;
   fishSegmentChars?: number;
 }): ScriptLabCostSummary | null {
+  const usageBreakdown = params.usageBreakdown ?? [];
   const stages: ScriptLabUsageStage[] = [];
   if (params.generationUsage) {
+    const genBreakdown = usageBreakdown.filter((e) => e.stage !== "fill");
     stages.push({
       id: "generation",
       label: params.generationLabel ?? "Generation (incl. verification)",
       usage: params.generationUsage,
+      actual:
+        genBreakdown.length > 0
+          ? actualCostFromBreakdown(genBreakdown)
+          : undefined,
     });
   }
   if (params.fillUsage) {
+    const fillBreakdown = usageBreakdown.filter((e) => e.stage === "fill");
     stages.push({
       id: "fill",
       label: "Fill placeholders",
       usage: params.fillUsage,
+      actual:
+        fillBreakdown.length > 0
+          ? actualCostFromBreakdown(fillBreakdown)
+          : undefined,
     });
   }
   if (stages.length === 0) return null;
 
   const stageCosts: ScriptLabStageCost[] = stages.map((stage) => ({
     stage,
-    sonnet: llmCostLine(stage.usage, CLAUDE_SONNET_45_MODEL_ID, "Sonnet 4.5"),
-    haiku: llmCostLine(stage.usage, CLAUDE_HAIKU_45_MODEL_ID, "Haiku 4.5"),
+    sonnet: llmCostLine(stage.usage, SCRIPT_LAB_SONNET_MODEL),
+    haiku: llmCostLine(stage.usage, SCRIPT_LAB_HAIKU_MODEL),
   }));
 
   const totalUsage = mergeTokenUsage(
     params.generationUsage,
     params.fillUsage,
   );
-  const totalSonnet = llmCostLine(totalUsage, CLAUDE_SONNET_45_MODEL_ID, "Sonnet 4.5");
-  const totalHaiku = llmCostLine(totalUsage, CLAUDE_HAIKU_45_MODEL_ID, "Haiku 4.5");
+  const totalSonnet = llmCostLine(totalUsage, SCRIPT_LAB_SONNET_MODEL);
+  const totalHaiku = llmCostLine(totalUsage, SCRIPT_LAB_HAIKU_MODEL);
+  const totalActual =
+    usageBreakdown.length > 0
+      ? actualCostFromBreakdown(usageBreakdown)
+      : totalSonnet;
 
   const simulatedBaseline = buildSimulatedBaseline({
     firstPassUsage: params.firstPassUsage,
@@ -259,7 +376,7 @@ export function buildScriptLabCostSummary(params: {
   let sonnetDeltaUsd: number | null = null;
   let sonnetDeltaPct: number | null = null;
   if (simulatedBaseline && simulatedBaseline.sonnet.usd > 0) {
-    sonnetDeltaUsd = totalSonnet.usd - simulatedBaseline.sonnet.usd;
+    sonnetDeltaUsd = totalActual.usd - simulatedBaseline.sonnet.usd;
     sonnetDeltaPct = (sonnetDeltaUsd / simulatedBaseline.sonnet.usd) * 100;
   }
 
@@ -275,6 +392,8 @@ export function buildScriptLabCostSummary(params: {
     totalUsage,
     totalSonnet,
     totalHaiku,
+    totalActual,
+    usageBreakdown,
     simulatedBaseline,
     sonnetDeltaUsd,
     sonnetDeltaPct,
@@ -291,12 +410,14 @@ export function buildScriptLabCostSummary(params: {
     totalSonnetGbp: totalSonnet.gbp,
     totalHaikuUsd: totalHaiku.usd,
     totalHaikuGbp: totalHaiku.gbp,
-    grandTotalSonnetUsd: totalSonnet.usd + fishCustomUsd,
-    grandTotalSonnetGbp: usdToGbp(totalSonnet.usd + fishCustomUsd),
+    totalActualUsd: totalActual.usd,
+    totalActualGbp: totalActual.gbp,
+    grandTotalSonnetUsd: totalActual.usd + fishCustomUsd,
+    grandTotalSonnetGbp: usdToGbp(totalActual.usd + fishCustomUsd),
     grandTotalHaikuUsd: totalHaiku.usd + fishCustomUsd,
     grandTotalHaikuGbp: usdToGbp(totalHaiku.usd + fishCustomUsd),
-    grandTotalAllTtsSonnetUsd: totalSonnet.usd + fishAllUsd,
-    grandTotalAllTtsSonnetGbp: usdToGbp(totalSonnet.usd + fishAllUsd),
+    grandTotalAllTtsSonnetUsd: totalActual.usd + fishAllUsd,
+    grandTotalAllTtsSonnetGbp: usdToGbp(totalActual.usd + fishAllUsd),
     grandTotalAllTtsHaikuUsd: totalHaiku.usd + fishAllUsd,
     grandTotalAllTtsHaikuGbp: usdToGbp(totalHaiku.usd + fishAllUsd),
   };
@@ -317,9 +438,19 @@ export type LlmCostBreakdownGbp = {
 export function buildLlmCostBreakdownGbp(params: {
   generationUsage: TokenUsage | null | undefined;
   fillUsage?: TokenUsage | null | undefined;
+  usageBreakdown?: ScriptLabUsageBreakdownEntry[] | null;
 }): LlmCostBreakdownGbp {
-  const generation = usdToGbp(llmCostUsd(params.generationUsage, CLAUDE_SONNET_45_MODEL_ID));
-  const fill = usdToGbp(llmCostUsd(params.fillUsage, CLAUDE_SONNET_45_MODEL_ID));
+  const breakdown = params.usageBreakdown ?? [];
+  const genEntries = breakdown.filter((e) => e.stage !== "fill");
+  const fillEntries = breakdown.filter((e) => e.stage === "fill");
+  const generation =
+    genEntries.length > 0
+      ? usdToGbp(actualCostFromBreakdown(genEntries).usd)
+      : usdToGbp(llmCostUsd(params.generationUsage, SCRIPT_LAB_SONNET_MODEL));
+  const fill =
+    fillEntries.length > 0
+      ? usdToGbp(actualCostFromBreakdown(fillEntries).usd)
+      : usdToGbp(llmCostUsd(params.fillUsage, SCRIPT_LAB_HAIKU_MODEL));
   return { generation, verification: 0, fill, total: generation + fill };
 }
 

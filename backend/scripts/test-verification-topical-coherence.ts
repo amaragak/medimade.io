@@ -13,6 +13,7 @@ import {
   type GeneralTagVariantCatalog,
   type SentenceVerdict,
   type VerificationSentence,
+  type VerificationTagCard,
 } from "../lib/script-lab-beat-verification";
 import type { ScriptLabBeat } from "../lib/script-lab-beats";
 
@@ -55,7 +56,7 @@ const JAW_MISPLACEMENT_FIXTURE: ScriptLabBeat[] = [
   },
 ];
 
-const CATALOG = prepareGeneralTagsForVerification([
+const RAW_CATALOG: GeneralTagVariantCatalog[] = [
   {
     name: "BODY_SCAN_FACE_JAW",
     variants: [
@@ -78,7 +79,9 @@ const CATALOG = prepareGeneralTagsForVerification([
     name: "PACE_REASSURANCE",
     variants: [{ variantId: "pr-1", text: "There's no rush here." }],
   },
-]);
+];
+
+const CATALOG: VerificationTagCard[] = prepareGeneralTagsForVerification(RAW_CATALOG);
 
 function beatSummary(b: ScriptLabBeat): string {
   if (b.beatType === "pause") return `pause:${b.pauseBand ?? "?"}`;
@@ -220,7 +223,8 @@ async function runLiveTest(): Promise<boolean> {
     apiKey,
     transcript: TRANSCRIPT,
     beatsBefore: JAW_MISPLACEMENT_FIXTURE,
-    generalTags: CATALOG,
+    generalTags: RAW_CATALOG,
+    meditationType: "Body scan",
   });
 
   result.beats.forEach((b, i) => {

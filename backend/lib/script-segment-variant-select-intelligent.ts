@@ -1,4 +1,5 @@
 import { parseAnthropicMessageUsage } from "./anthropic-pricing";
+import { SCRIPT_LAB_HAIKU_MODEL } from "./script-lab-models";
 import { normalizePauseBand } from "./script-pause-bands";
 import type { ScriptLabBeat } from "./script-lab-beats";
 import {
@@ -188,12 +189,13 @@ function parseModelPicks(
 }
 
 /**
- * Context-aware variant fill: one Sonnet call picks a variant per tag beat
+ * Context-aware variant fill: one Haiku call picks a variant per tag beat
  * from pre-filtered eligible options; invalid/missing picks fall back to random.
  */
 export async function selectSegmentVariantsIntelligently(params: {
   apiKey: string;
-  model: string;
+  /** @deprecated Ignored — fill always uses SCRIPT_LAB_HAIKU_MODEL. */
+  model?: string;
   beats: ScriptLabBeat[];
   transcript: string;
   variantsByTag: Record<string, SegmentVariantCandidate[]>;
@@ -243,7 +245,7 @@ export async function selectSegmentVariantsIntelligently(params: {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: params.model,
+        model: SCRIPT_LAB_HAIKU_MODEL,
         max_tokens: 4096,
         temperature: 0.4,
         system,

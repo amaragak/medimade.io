@@ -175,12 +175,15 @@ export function repeatabilityLabel(repeatability: ScriptSegmentRepeatability): s
   return repeatability === "connective" ? "connective" : "singular";
 }
 
+/**
+ * Bare repeatability label for per-tag catalog entries. The full rule text lives
+ * once in {@link scriptSegmentSelectionRulesBlock} above the catalog — repeating
+ * it on every tag cost ~2.3k prompt tokens for no added signal.
+ */
 export function repeatabilityPromptLine(
   repeatability: ScriptSegmentRepeatability,
 ): string {
-  return repeatability === "connective"
-    ? "connective — may repeat, but never with only pauses between two consecutive instances of the same tag; separate uses with a substantive custom beat or a different tag"
-    : "singular — use at most once per script";
+  return repeatability === "connective" ? "connective" : "singular";
 }
 
 /** Opening / closing / body-tour phase hints for generation prompt ordering rules. */
@@ -248,20 +251,22 @@ function formatStructuredTagCatalogEntry(params: {
   const { tag: t, meditationType } = params;
   const rep = t.repeatability ?? inferDefaultSegmentRepeatability(t.name);
   const typeMatch = typesMatchMeditationType(t.types, meditationType);
+  // General-scope tags are eligible everywhere, so "Scope: general" adds nothing
+  // once the catalog is already filtered to type-relevant tags. Only surface the
+  // scope line when it actually narrows the tag.
   const scopeLine =
-    t.scope === "general"
-      ? "Scope: general (any meditation type)"
+    t.scope === "general" || t.types.length === 0
+      ? null
       : typeMatch
-        ? `Scope: type-restricted — preferred for ${t.types.join(", ")}`
-        : t.types.length > 0
-          ? `Scope: type-restricted — ${t.types.join(", ")} (still available when appropriate)`
-          : "Scope: type-restricted";
+        ? `Scope: preferred for ${t.types.join(", ")}`
+        : `Scope: ${t.types.join(", ")}`;
   const phase = segmentTagPhaseHint(t.name);
   const phaseLine = phase
     ? `Phase: ${phase === "opening" ? "opening / settling only" : phase === "closing" ? "closing section only" : "body-tour section only (after tour intro)"}`
     : null;
 
-  const lines = [`### ${t.name}`, scopeLine];
+  const lines = [`### ${t.name}`];
+  if (scopeLine) lines.push(scopeLine);
   if (phaseLine) lines.push(phaseLine);
   lines.push(`Repeatability: ${repeatabilityPromptLine(rep)}`);
   const desc = t.description?.trim();
@@ -269,11 +274,10 @@ function formatStructuredTagCatalogEntry(params: {
     lines.push(`Description: ${desc}`);
   }
   if (t.sampleVariants.length > 0) {
-    const variantPreviews = t.sampleVariants.slice(0, 2).map((v) => {
-      const preview = v.trim().slice(0, 100);
-      return `"${preview}${v.length > 100 ? "…" : ""}"`;
-    });
-    lines.push(`Variants: ${variantPreviews.join(" / ")}`);
+    const preview = t.sampleVariants[0]!.trim();
+    lines.push(
+      `Example: "${preview.slice(0, 100)}${preview.length > 100 ? "…" : ""}"`,
+    );
   }
   const metricsLine = formatSegmentTagMetricsForPrompt({
     name: t.name,
@@ -296,6 +300,21 @@ export function typesMatchMeditationType(
   const t = normalizeMeditationTypeKey(meditationType ?? "");
   if (!t || t === "general") return false;
   return types.some((x) => normalizeMeditationTypeKey(x) === t);
+}
+
+/**
+ * Whether a tag belongs in a type-scoped prompt catalog. General-scope tags and
+ * tags with no declared types are always eligible; type-restricted tags are kept
+ * only when they match the meditation type. With no meditation type, keep all.
+ */
+export function segmentTagEligibleForCatalog(
+  tag: { scope: ScriptSegmentScope; types: string[] },
+  meditationType: string | null | undefined,
+): boolean {
+  if (!meditationType) return true;
+  if (tag.scope === "general") return true;
+  if (tag.types.length === 0) return true;
+  return typesMatchMeditationType(tag.types, meditationType);
 }
 
 /** @deprecated types[] no longer gates eligibility — always true. Use typesMatchMeditationType for soft preference only. */
@@ -339,7 +358,14 @@ export function scriptSegmentLibraryPromptBlock(params: {
 }): string {
   const structuredBeats = params.structuredBeats === true;
   const meditationType = params.meditationType;
-  const sortedTags = [...params.tags].sort((a, b) => {
+  // Structured-beat generation only ever picks type-relevant tags, so shipping
+  // the whole library costs ~8k prompt tokens of tags the model must not use.
+  // Mirrors prepareGeneralTagsForVerification's filter so generation and
+  // verification see the same eligible catalog.
+  const eligibleTags = structuredBeats
+    ? params.tags.filter((t) => segmentTagEligibleForCatalog(t, meditationType))
+    : params.tags;
+  const sortedTags = [...eligibleTags].sort((a, b) => {
     const aPref = typesMatchMeditationType(a.types, meditationType) ? 0 : 1;
     const bPref = typesMatchMeditationType(b.types, meditationType) ? 0 : 1;
     if (aPref !== bPref) return aPref - bPref;
@@ -369,9 +395,8 @@ export function scriptSegmentLibraryPromptBlock(params: {
     ? [
         "### Reusable script segments (library)",
         "**Personalization wins by default.** Keep text custom when it references this user's specific input. Only use library tags for wording that would read identically for any user.",
-        "Fulfill a beat with `{ custom: false, tag: \"TAG_NAME\", beatType: \"…\" }`. Match beatType to the tag's functional role (e.g. SETTLE_OPENER → settle_opener).",
-        "Before writing `custom: true` generic wording, scan **every tag in the catalog below** — not only tags with an obvious topical link.",
-        "When custom prose embeds a generic aside with no personalization, split that aside into its own tag beat; keep personalized remainder custom. Do not over-fragment personalized lines.",
+        "Fulfill a beat with `{ custom: false, tag: \"TAG_NAME\" }` — no beatType needed, it is derived from the tag.",
+        "This catalog is already filtered to tags eligible for this meditation type; scan **all of it** before writing generic custom text, not only tags with an obvious topical link.",
         "",
         scriptSegmentSelectionRulesBlock({
           connectiveTagNames: connectiveFromLibrary,

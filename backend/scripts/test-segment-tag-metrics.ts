@@ -12,6 +12,7 @@ import {
   budgetMetricsForTagAtTarget,
   buildSegmentTagMetricsIndex,
 } from "../lib/script-segment-tag-metrics";
+import { scriptSegmentLibraryPromptBlock } from "../lib/script-segment-tags";
 import { estimateSyllableCount, countWords, speechSecondsFromWordCount } from "../lib/script-text-metrics";
 import { SCRIPT_PAUSE_BAND_SECONDS } from "../lib/script-pause-bands";
 import type { ScriptLabBeat } from "../lib/script-lab-beats";
@@ -102,8 +103,8 @@ function testPromptIncludesMetrics() {
   if (!userContent.includes("Description: Lower back")) {
     throw new Error("FAIL: prompt missing Description line");
   }
-  if (!userContent.includes("Variants:")) {
-    throw new Error("FAIL: prompt missing Variants line");
+  if (!userContent.includes("Example:")) {
+    throw new Error("FAIL: prompt missing Example variant line");
   }
   if (!userContent.includes("Segment library — selection rules")) {
     throw new Error("FAIL: prompt missing selection rules block");
@@ -118,6 +119,77 @@ function testPromptIncludesMetrics() {
     throw new Error("FAIL: prompt missing structured beat duration formula");
   }
   console.log("PASS: generation prompt includes metadata catalog and selection rules\n");
+}
+
+/** The catalog ships only type-relevant tags — general tags always, off-type never. */
+function testCatalogFiltersByMeditationType() {
+  const tags = buildSegmentTagsForGenerationPrompt({
+    tags: [
+      {
+        name: "BODY_SCAN_LOWER_BODY",
+        scope: "types",
+        types: ["body_scan"],
+        lengthTiered: true,
+        repeatability: "singular",
+        description: "Lower back and legs.",
+      },
+      {
+        name: "SLEEP_THRESHOLD",
+        scope: "types",
+        types: ["sleep"],
+        lengthTiered: false,
+        repeatability: "singular",
+        description: "Marks the threshold of sleep.",
+      },
+      {
+        name: "PACE_REASSURANCE",
+        scope: "general",
+        types: [],
+        lengthTiered: false,
+        repeatability: "connective",
+        description: "No-rush reassurance.",
+      },
+    ],
+    variantsByTag: {
+      BODY_SCAN_LOWER_BODY: MOCK_VARIANTS.BODY_SCAN_LOWER_BODY,
+      SLEEP_THRESHOLD: MOCK_VARIANTS.BODY_SCAN_LOWER_BODY,
+      PACE_REASSURANCE: MOCK_VARIANTS.BODY_SCAN_LOWER_BODY,
+    },
+  });
+
+  const catalogFor = (meditationType: string) =>
+    scriptSegmentLibraryPromptBlock({
+      tags,
+      meditationType,
+      structuredBeats: true,
+    });
+
+  const bodyScan = catalogFor("Body scan");
+  if (bodyScan.includes("### SLEEP_THRESHOLD")) {
+    throw new Error("FAIL: off-type SLEEP_THRESHOLD leaked into Body scan catalog");
+  }
+  if (!bodyScan.includes("### BODY_SCAN_LOWER_BODY")) {
+    throw new Error("FAIL: on-type BODY_SCAN_LOWER_BODY missing from Body scan catalog");
+  }
+  if (!bodyScan.includes("### PACE_REASSURANCE")) {
+    throw new Error("FAIL: general-scope PACE_REASSURANCE dropped from Body scan catalog");
+  }
+
+  const sleep = catalogFor("Sleep");
+  if (!sleep.includes("### SLEEP_THRESHOLD")) {
+    throw new Error("FAIL: on-type SLEEP_THRESHOLD missing from Sleep catalog");
+  }
+  if (sleep.includes("### BODY_SCAN_LOWER_BODY")) {
+    throw new Error("FAIL: off-type BODY_SCAN_LOWER_BODY leaked into Sleep catalog");
+  }
+
+  // General-scope tags carry no Scope: line now that the catalog is pre-filtered.
+  const paceEntry = bodyScan.slice(bodyScan.indexOf("### PACE_REASSURANCE"));
+  if (paceEntry.slice(0, paceEntry.indexOf("Description:")).includes("Scope:")) {
+    throw new Error("FAIL: general-scope tag should not emit a Scope line");
+  }
+
+  console.log("PASS: catalog filters to type-relevant tags\n");
 }
 
 function simulateBeatsDuration(params: {
@@ -239,6 +311,7 @@ async function main() {
   testSyllableHeuristic();
   testTierAverages();
   testPromptIncludesMetrics();
+  testCatalogFiltersByMeditationType();
   testBodyScanBudgetSimulation();
   await testLiveLibrary();
   console.log("All segment tag metrics tests passed.");

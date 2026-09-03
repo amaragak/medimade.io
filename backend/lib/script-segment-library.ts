@@ -40,6 +40,13 @@ export type ScriptSegmentAudioState = {
 
 export type ScriptSegmentVariantSource = "authored" | "auto";
 
+/** Snapshot of a catalog NN hit stored on auto-promoted variants for review UI. */
+export type PromotionNeighbor = {
+  tag: string;
+  text: string;
+  score: number;
+};
+
 export type ScriptSegmentVariant = {
   id: string;
   text: string;
@@ -57,7 +64,12 @@ export type ScriptSegmentVariant = {
   /** V3 auto-promotion metadata (pending review UI). */
   promotionSimilarity?: number | null;
   promotionNearestTag?: string | null;
+  /** Text of the nearest catalog variant at promotion time. */
+  promotionNearestText?: string | null;
+  /** Local script window (±1 pause-chunk) around the promoted line. */
   promotionContext?: string | null;
+  /** Top-k NN hits shown on the pending-review card. */
+  promotionNeighbors?: PromotionNeighbor[] | null;
   sort: number;
   createdAt: string;
   updatedAt: string;
@@ -86,7 +98,9 @@ const VARIANT_KNOWN_KEYS = new Set([
   "embedding",
   "promotionSimilarity",
   "promotionNearestTag",
+  "promotionNearestText",
   "promotionContext",
+  "promotionNeighbors",
 ]);
 
 /** V1/V2 selection: approved variants only (auto/unapproved stay in V3 search). */
@@ -136,7 +150,9 @@ export type ScriptSegmentVariantRow = {
   embedding?: number[];
   promotionSimilarity?: number | null;
   promotionNearestTag?: string | null;
+  promotionNearestText?: string | null;
   promotionContext?: string | null;
+  promotionNeighbors?: PromotionNeighbor[] | null;
   sort: number;
   createdAt: string;
   updatedAt: string;
@@ -204,6 +220,22 @@ function coerceEmbedding(raw: unknown): number[] | undefined {
     out.push(num);
   }
   return out.length > 0 ? out : undefined;
+}
+
+function coercePromotionNeighbors(raw: unknown): PromotionNeighbor[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: PromotionNeighbor[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    const tag = typeof o.tag === "string" ? o.tag.trim() : "";
+    const text = typeof o.text === "string" ? o.text.trim() : "";
+    const score = typeof o.score === "number" ? o.score : Number.NaN;
+    if (!tag || !text || !Number.isFinite(score)) continue;
+    out.push({ tag, text: text.slice(0, 500), score });
+    if (out.length >= 10) break;
+  }
+  return out.length > 0 ? out : null;
 }
 
 /** Infer length tier from word count for auto-promoted variants. */
@@ -431,8 +463,11 @@ function coerceVariant(raw: unknown, tagName: string): ScriptSegmentVariant | nu
       typeof o.promotionSimilarity === "number" ? o.promotionSimilarity : null,
     promotionNearestTag:
       typeof o.promotionNearestTag === "string" ? o.promotionNearestTag : null,
+    promotionNearestText:
+      typeof o.promotionNearestText === "string" ? o.promotionNearestText : null,
     promotionContext:
       typeof o.promotionContext === "string" ? o.promotionContext : null,
+    promotionNeighbors: coercePromotionNeighbors(o.promotionNeighbors),
     sort: typeof o.sort === "number" ? o.sort : Date.now(),
     createdAt: typeof o.createdAt === "string" ? o.createdAt : now,
     updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : now,
@@ -537,7 +572,9 @@ function flattenDocument(doc: ScriptSegmentDocument): {
       embedding: v.embedding,
       promotionSimilarity: v.promotionSimilarity ?? null,
       promotionNearestTag: v.promotionNearestTag ?? null,
+      promotionNearestText: v.promotionNearestText ?? null,
       promotionContext: v.promotionContext ?? null,
+      promotionNeighbors: v.promotionNeighbors ?? null,
       sort: v.sort,
       createdAt: v.createdAt,
       updatedAt: v.updatedAt,
@@ -849,7 +886,9 @@ export async function putScriptSegmentVariant(params: {
   embedding?: number[];
   promotionSimilarity?: number | null;
   promotionNearestTag?: string | null;
+  promotionNearestText?: string | null;
   promotionContext?: string | null;
+  promotionNeighbors?: PromotionNeighbor[] | null;
   /** When true, skip async embedding refresh (caller already computed). */
   skipEmbed?: boolean;
 }): Promise<ScriptSegmentVariantRow> {
@@ -907,10 +946,18 @@ export async function putScriptSegmentVariant(params: {
       params.promotionNearestTag !== undefined
         ? params.promotionNearestTag
         : existing?.promotionNearestTag ?? null,
+    promotionNearestText:
+      params.promotionNearestText !== undefined
+        ? params.promotionNearestText
+        : existing?.promotionNearestText ?? null,
     promotionContext:
       params.promotionContext !== undefined
         ? params.promotionContext
         : existing?.promotionContext ?? null,
+    promotionNeighbors:
+      params.promotionNeighbors !== undefined
+        ? params.promotionNeighbors
+        : existing?.promotionNeighbors ?? null,
     sort: typeof params.sort === "number" ? params.sort : existing?.sort ?? Date.now(),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,

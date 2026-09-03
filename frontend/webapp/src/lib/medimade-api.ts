@@ -1924,7 +1924,13 @@ export type ScriptLabVariant = {
   approved?: boolean;
   promotionSimilarity?: number | null;
   promotionNearestTag?: string | null;
+  promotionNearestText?: string | null;
   promotionContext?: string | null;
+  promotionNeighbors?: Array<{
+    tag: string;
+    text: string;
+    score: number;
+  }> | null;
   sort: number;
   createdAt: string;
   updatedAt: string;

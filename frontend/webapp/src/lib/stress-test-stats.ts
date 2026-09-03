@@ -21,6 +21,7 @@ import {
   totalEstCostGbp,
   type LlmCostBreakdownGbp,
   type ScriptLabCostSummary,
+  type ScriptLabUsageBreakdownEntry,
   type TokenUsage,
 } from "@/lib/script-lab-cost";
 import type { ScriptLabV3Meta } from "@/components/script-lab-v3-preview";
@@ -132,6 +133,7 @@ export function computeStressTestRunStats(params: {
   tagMetaByName: Record<string, ScriptLabTagMeta>;
   generationUsage: TokenUsage | null;
   fillUsage?: TokenUsage | null;
+  usageBreakdown?: ScriptLabUsageBreakdownEntry[];
   firstPassUsage?: TokenUsage | null;
   finalScriptText?: string;
 }): StressTestRunStats {
@@ -168,6 +170,7 @@ export function computeStressTestRunStats(params: {
   const llmCostGBP = buildLlmCostBreakdownGbp({
     generationUsage: params.generationUsage,
     fillUsage: params.fillUsage,
+    usageBreakdown: params.usageBreakdown,
   });
 
   const generationLabel =
@@ -178,6 +181,7 @@ export function computeStressTestRunStats(params: {
   const costSummary = buildScriptLabCostSummary({
     generationUsage: params.generationUsage,
     fillUsage: params.fillUsage,
+    usageBreakdown: params.usageBreakdown,
     firstPassUsage: params.firstPassUsage,
     finalScriptText:
       params.finalScriptText ??

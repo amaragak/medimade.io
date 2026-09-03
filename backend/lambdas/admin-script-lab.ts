@@ -6,6 +6,10 @@ import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-sec
 import { S3Client } from "@aws-sdk/client-s3";
 import { requireAdminJson } from "../lib/admin-auth";
 import { coerceClaudeModel, CLAUDE_SONNET_45_MODEL_ID } from "../lib/anthropic-pricing";
+import {
+  SCRIPT_LAB_HAIKU_MODEL,
+  type ScriptLabUsageBreakdownEntry,
+} from "../lib/script-lab-models";
 import { coerceMeditationTargetMinutes } from "../lib/meditation-target-minutes";
 import { FIXED_SPEECH_PREVIEW_SPEED } from "../lib/speaker-sample-speed";
 import {
@@ -19,6 +23,7 @@ import {
 } from "../lib/script-lab-v3-no-match-log";
 import { buildScriptLabContextTags } from "../lib/script-constraint-tags";
 import { invokeEmbedLambdaDiagnostic } from "../lib/script-embed-client";
+import { backfillPendingPromotionNeighbors } from "../lib/script-lab-backfill-pending-neighbors";
 import {
   deleteScriptSegmentTag,
   deleteScriptSegmentVariant,
@@ -364,6 +369,11 @@ async function handlePost(event: APIGatewayProxyEventV2) {
     return json(200, { ok: true, queued, skipped, embeddingStats });
   }
 
+  if (action === "backfill-pending-neighbors") {
+    const result = await backfillPendingPromotionNeighbors();
+    return json(200, { ok: true, ...result });
+  }
+
   if (action === "test-embed") {
     const library = await listAllScriptSegmentLibrary();
     const pool: Array<{ tagName: string; variantId: string; text: string }> = [];
@@ -484,7 +494,7 @@ async function handleFillPlaceholders(body: Record<string, unknown>) {
         userText: transcript,
       });
 
-  const claudeModel = coerceClaudeModel(
+  const displayModel = coerceClaudeModel(
     body.claudeModel ?? body.modelId ?? CLAUDE_SONNET_45_MODEL_ID,
   );
 
@@ -530,7 +540,6 @@ async function handleFillPlaceholders(body: Record<string, unknown>) {
   const recentVariantIds = await loadScriptLabRecentVariantIds();
   const result = await selectSegmentVariantsIntelligently({
     apiKey,
-    model: claudeModel,
     beats,
     transcript,
     variantsByTag,
@@ -540,6 +549,10 @@ async function handleFillPlaceholders(body: Record<string, unknown>) {
     contextTags,
     recentVariantIds,
   });
+
+  const fillUsageBreakdown: ScriptLabUsageBreakdownEntry[] = result.usage
+    ? [{ stage: "fill", model: SCRIPT_LAB_HAIKU_MODEL, usage: result.usage }]
+    : [];
 
   const usedVariantIds = collectVariantIdsFromBeatPicks(beats, result.picksByBeatIndex);
   if (usedVariantIds.length > 0) {
@@ -552,6 +565,8 @@ async function handleFillPlaceholders(body: Record<string, unknown>) {
     modelPicksByBeatIndex: result.modelPicksByBeatIndex,
     fallbackBeatIndices: result.fallbackBeatIndices,
     usage: result.usage,
+    usageBreakdown: fillUsageBreakdown,
+    displayModel,
   });
 }
 
@@ -561,7 +576,7 @@ async function handleGenerateScript(body: Record<string, unknown>) {
     typeof body.speechSpeed === "number" && body.speechSpeed > 0
       ? body.speechSpeed
       : FIXED_SPEECH_PREVIEW_SPEED;
-  const claudeModel = coerceClaudeModel(
+  const displayModel = coerceClaudeModel(
     body.claudeModel ?? body.modelId ?? CLAUDE_SONNET_45_MODEL_ID,
   );
 
@@ -591,10 +606,15 @@ async function handleGenerateScript(body: Record<string, unknown>) {
     .map((t) => ({
       name: t.name,
       repeatability: t.repeatability,
+      description: t.description,
+      scope: t.scope,
+      types: t.types,
       variants: (variantsByTagApproved[t.name] ?? []).map((v) => ({
         variantId: v.variantId,
         text: v.text,
         direction: v.direction ?? null,
+        requiredConstraints: v.requiredConstraints,
+        excludedConstraints: v.excludedConstraints,
       })),
     }))
     .filter((t) => t.variants.length > 0);
@@ -700,7 +720,6 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       typeof body.additionalContext === "string" ? body.additionalContext.trim() : "";
     const result = await generateScriptLabScriptV3({
       apiKey,
-      model: claudeModel,
       transcript,
       meditationStyle,
       journalMode,
@@ -722,8 +741,10 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       journalMode,
       targetMinutes,
       usage: result.usage,
+      usageBreakdown: result.usageBreakdown,
       firstPassUsage: result.firstPassUsage,
       generationPath: "v3",
+      displayModel,
       v3Meta: result.v3Meta,
     });
   }
@@ -739,7 +760,6 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       typeof body.additionalContext === "string" ? body.additionalContext.trim() : "";
     const result = await generateScriptLabScriptV2({
       apiKey,
-      model: claudeModel,
       transcript,
       meditationStyle,
       journalMode,
@@ -768,15 +788,16 @@ async function handleGenerateScript(body: Record<string, unknown>) {
       journalMode,
       targetMinutes,
       usage: result.usage,
+      usageBreakdown: result.usageBreakdown,
       firstPassUsage: result.firstPassUsage,
       generationPath: "v2",
+      displayModel,
       v2Meta: result.v2Meta,
     });
   }
 
   const result = await generateScriptLabScript({
     apiKey,
-    model: claudeModel,
     transcript,
     meditationStyle,
     journalMode,
@@ -784,6 +805,10 @@ async function handleGenerateScript(body: Record<string, unknown>) {
     speechSpeed,
     segmentTags,
     generalTagVariants: verificationTagVariants,
+    contextTags: buildScriptLabContextTags({
+      meditationType: journalMode ? null : meditationStyle,
+      userText: transcript,
+    }),
   });
 
   return json(200, {
@@ -797,8 +822,10 @@ async function handleGenerateScript(body: Record<string, unknown>) {
     journalMode,
     targetMinutes,
     usage: result.usage,
+    usageBreakdown: result.usageBreakdown,
     firstPassUsage: result.firstPassUsage,
     generationPath: "v1",
+    displayModel,
   });
 }
 

@@ -9,6 +9,9 @@ export const CLAUDE_HAIKU_45_USD_PER_OUTPUT_TOKEN = 5 / 1_000_000;
 
 export const CLAUDE_HAIKU_45_MODEL_ID = "claude-haiku-4-5";
 export const CLAUDE_SONNET_45_MODEL_ID = "claude-sonnet-4-5";
+/** Script Lab pipeline stages. */
+export const SCRIPT_LAB_SONNET_MODEL = "claude-sonnet-4-6";
+export const SCRIPT_LAB_HAIKU_MODEL = "claude-haiku-4-5-20251001";
 
 export const CLAUDE_MODEL_RATES: Record<
   string,
@@ -19,10 +22,20 @@ export const CLAUDE_MODEL_RATES: Record<
     usdPerOutputToken: 5 / 1_000_000,
     label: "Haiku 4.5",
   },
+  [SCRIPT_LAB_HAIKU_MODEL]: {
+    usdPerInputToken: 1 / 1_000_000,
+    usdPerOutputToken: 5 / 1_000_000,
+    label: "Haiku 4.5",
+  },
   [CLAUDE_SONNET_45_MODEL_ID]: {
     usdPerInputToken: 3 / 1_000_000,
     usdPerOutputToken: 15 / 1_000_000,
     label: "Sonnet 4.5",
+  },
+  [SCRIPT_LAB_SONNET_MODEL]: {
+    usdPerInputToken: 3 / 1_000_000,
+    usdPerOutputToken: 15 / 1_000_000,
+    label: "Sonnet 4.6",
   },
 };
 

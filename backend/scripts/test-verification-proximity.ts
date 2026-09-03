@@ -15,6 +15,7 @@ import {
   type GeneralTagVariantCatalog,
   type SentenceVerdict,
   type VerificationSentence,
+  type VerificationTagCard,
 } from "../lib/script-lab-beat-verification";
 import { tagNameToBeatType, type ScriptLabBeat } from "../lib/script-lab-beats";
 
@@ -154,24 +155,32 @@ function mockAggressiveVerdicts(sentences: VerificationSentence[]): SentenceVerd
   });
 }
 
-async function loadCatalog(): Promise<GeneralTagVariantCatalog[]> {
+async function loadCatalog(): Promise<{
+  raw: GeneralTagVariantCatalog[];
+  cards: VerificationTagCard[];
+}> {
   if (process.env.VOICE_ADMIN_TABLE_NAME) {
     const lib = await listAllScriptSegmentLibrary();
-    return prepareGeneralTagsForVerification(
-      lib.tags
-        .map((t) => ({
-          name: t.name,
-          variants: (lib.variantsByTag[t.name] ?? []).map((v) => ({
-            variantId: v.variantId,
-            text: v.text,
-            direction: v.direction ?? null,
-          })),
-        }))
-        .filter((t) => t.variants.length > 0),
-    );
+    const raw = lib.tags
+      .map((t) => ({
+        name: t.name,
+        scope: t.scope,
+        types: t.types,
+        description: t.description,
+        repeatability: t.repeatability,
+        variants: (lib.variantsByTag[t.name] ?? []).map((v) => ({
+          variantId: v.variantId,
+          text: v.text,
+          direction: v.direction ?? null,
+          requiredConstraints: v.requiredConstraints,
+          excludedConstraints: v.excludedConstraints,
+        })),
+      }))
+      .filter((t) => t.variants.length > 0);
+    return { raw, cards: prepareGeneralTagsForVerification(raw) };
   }
 
-  return prepareGeneralTagsForVerification([
+  const raw: GeneralTagVariantCatalog[] = [
     {
       name: "PACE_REASSURANCE",
       variants: [
@@ -197,10 +206,11 @@ async function loadCatalog(): Promise<GeneralTagVariantCatalog[]> {
         },
       ],
     },
-  ]);
+  ];
+  return { raw, cards: prepareGeneralTagsForVerification(raw) };
 }
 
-function runMockProximityTest(catalog: GeneralTagVariantCatalog[]) {
+function runMockProximityTest(catalog: VerificationTagCard[]) {
   const sentences = buildVerificationSentenceList(BODY_SCAN_PROXIMITY_FIXTURE);
   const verdicts = mockAggressiveVerdicts(sentences);
   const beats = assembleBeatsFromSentenceVerdicts({
@@ -250,6 +260,7 @@ async function runLiveProximityTest(catalog: GeneralTagVariantCatalog[]) {
     transcript: TRANSCRIPT,
     beatsBefore: BODY_SCAN_PROXIMITY_FIXTURE,
     generalTags: catalog,
+    meditationType: "Body scan",
   });
 
   result.beats.forEach((b, i) => {
@@ -286,11 +297,11 @@ async function runLiveProximityTest(catalog: GeneralTagVariantCatalog[]) {
 }
 
 async function main() {
-  const catalog = await loadCatalog();
-  const mockOk = runMockProximityTest(catalog);
+  const { raw, cards } = await loadCatalog();
+  const mockOk = runMockProximityTest(cards);
 
   if (process.argv.includes("--live")) {
-    const liveOk = await runLiveProximityTest(catalog);
+    const liveOk = await runLiveProximityTest(raw);
     if (!mockOk || !liveOk) process.exit(1);
     return;
   }

@@ -106,7 +106,9 @@ export function buildMeditationScriptGenerationPrompt(params: {
     scriptPauseBudgetGuidanceAppendix(params.targetMinutes, {
       meditationType: meditationTypeForRules,
     }),
-    ...(sleepType
+    // Closing-phase tag rules are emitted once in the structured-beats section
+    // below; the sleep-only copy here was a verbatim duplicate.
+    ...(sleepType && !params.includeSegmentPlaceholders
       ? ["", scriptLabClosingPhaseTagRulesForType(meditationTypeForRules)]
       : []),
     "Important formatting constraints:",
@@ -119,20 +121,17 @@ export function buildMeditationScriptGenerationPrompt(params: {
     userParts.push(
       "### Output format (Script Lab — structured beats)",
       "Return the script ONLY by calling the `submit_meditation_script_beats` tool with an ordered `beats` array. Do not output free-form prose or [[SEG:…]] markers in chat text.",
-      "Each beat needs an accurate `beatType` (functional category), whether custom or library-based.",
       "",
       "**Personalization wins by default.** Prefer `custom: true` whenever text references this user's specific input — their situation, words, or journal details — even if it resembles a library line. Only consider tags for text with **no personalization signal**: wording that would read the same for any user.",
       "Must stay custom (personalized): e.g. \"Find a comfortable position, sitting beneath your tree\"; \"This is where you've been feeling that tension.\" May belong in a tag if a fit exists (generic, no user signal): e.g. \"Let that breath settle, and notice the natural rhythm that lives in your body\"; \"There's no rush—just notice what's there.\"",
       "",
-      "For non-pause beats: set `custom: false` with a library `tag` when a segment covers generic wording; set `custom: true` with `text` when personalization needs bespoke phrasing.",
-      "Before writing `custom: true` generic text, check the **full eligible tag library** above — any tag that covers the same idea, not only tags with an obvious topical match to the current beat.",
-      "If a custom passage mixes personalized content with a generic aside (reassurance, pacing, transition) that carries no personalization, split the aside into its own tag beat and keep the personalized remainder as a separate `content` beat. Example: a body-scan intro ending with \"There's no rush—just notice what's there\" → custom `content` for \"Now I'm going to invite your attention to slowly move through your body…\" then `{ beatType: \"pace_reassurance\", custom: false, tag: \"PACE_REASSURANCE\" }` for the aside — not embedded inside the custom text.",
-      "Do not over-fragment. Never split personalized phrases or load-bearing lines that would not make sense on their own. One blended custom beat is valid — e.g. for \"sitting under a tree\", `{ beatType: \"settle_opener\", custom: true, text: \"Notice you're sitting beneath a tree — let that place hold you for these next few minutes.\" }` needs no separate SETTLE_OPENER tag beat afterward.",
+      "For non-pause beats: set `custom: false` with a library `tag` when a segment covers generic wording; set `custom: true` with `beatType` and `text` when personalization needs bespoke phrasing.",
+      "If a custom passage mixes personalized content with a generic aside (reassurance, pacing, transition) that carries no personalization, split the aside into its own tag beat and keep the personalized remainder as a separate `content` beat.",
+      "Do not over-fragment. Never split personalized phrases or load-bearing lines that would not make sense on their own. One blended custom beat is valid — e.g. for \"sitting under a tree\", `{ beatType: \"settle_opener\", text: \"Notice you're sitting beneath a tree — let that place hold you for these next few minutes.\" }` needs no separate SETTLE_OPENER tag beat afterward.",
       "",
       scriptLabSingularAdjacentCustomRules(),
       "",
-      "Follow the **Segment library — selection rules** and per-tag **Repeatability**, **Description**, and **Phase** lines in the catalog above.",
-      "Singular tags: at most once — a second mention of the same subject area must be custom text, not the same tag again. The adjacent-custom rule above applies to **singular** tags only.",
+      "Follow the **Segment library — selection rules** and per-tag **Repeatability**, **Description**, and **Phase** lines in the catalog above. The adjacent-custom rule applies to **singular** tags only.",
       "",
       scriptLabConnectiveTagSpacingRules(),
       "",
@@ -140,15 +139,17 @@ export function buildMeditationScriptGenerationPrompt(params: {
       "",
       scriptLabClosingPhaseTagRulesForType(meditationTypeForRules),
       "",
-      "Before selecting any tag, read its Description; skip tags whose stated boundary conditions apply to this script (e.g. defer BODY_SCAN_SPINE_BACK when lower-back personalization already dominates).",
-      "Also respect: SETTLE_OPENER and BREATH_OPENER only in opening; BODY_SCAN_* only after a body-tour intro beat.",
       ...(sleepType
         ? [
             "Sleep scripts: never use CLOSE_* tags; end with SLEEP_THRESHOLD → pause extra-long → SLEEP_CLOSE as the final beat — nothing after SLEEP_CLOSE.",
           ]
         : []),
-      "Use `{ beatType: \"content\", custom: true, text: \"…\" }` for main personalized practice material (may repeat).",
-      "Use `{ beatType: \"pause\", pauseBand: \"medium\" }` for standalone structural silences between beats; use inline `[[PAUSE …]]` inside a custom beat's text only for shorter pauses within one flowing narration.",
+      "",
+      "**Beat shapes — emit the minimal fields, nothing more:**",
+      "- Library beat: `{ tag: \"SETTLE_OPENER\" }` — never send `beatType` or `custom` here; both are derived from the tag.",
+      "- Custom beat: `{ beatType: \"content\", text: \"…\" }` — main personalized practice material (may repeat).",
+      "- Pause beat: `{ pauseBand: \"medium\" }` — standalone structural silence between beats.",
+      "Use inline `[[PAUSE …]]` inside a custom beat's text only for shorter pauses within one flowing narration.",
       "Pause bands: extra-short, short, medium, long, extra-long (same vocabulary as [[PAUSE …]] rules above).",
       ...(storyType
         ? [
@@ -156,33 +157,29 @@ export function buildMeditationScriptGenerationPrompt(params: {
             "For Story scripts, reach duration through **narrative length** (more scenes and detail), not contemplative silence — do not insert **`long`** or **`extra-long`** pause beats between routine story beats.",
           ]
         : [
-            "For long targets, **standalone pause beats** are the main duration lever — insert many `{ beatType: \"pause\", pauseBand: \"long\" }` beats between body regions; use `{ beatType: \"pause\", pauseBand: \"extra-long\" }` only at the personalized focus linger and genuine emotional peaks (see Pause budget — Extra-long is punctuation). Do not rely on inline short pauses alone, and do not spray `extra-long` every few beats.",
+            "For long targets, **standalone pause beats** are the main duration lever — insert many `{ pauseBand: \"long\" }` beats between body regions; use `{ pauseBand: \"extra-long\" }` only at the personalized focus linger and genuine emotional peaks (see Pause budget — Extra-long is punctuation). Do not rely on inline short pauses alone, and do not spray `extra-long` every few beats.",
             "The **Pause budget (scales with target duration)** section above overrides generic pause-share hints when they conflict — longer scripts need proportionally **more** pause beats with **`long` as the workhorse**, not wall-to-wall `extra-long`.",
           ]),
       "",
       "### Worked examples (segment vs custom)",
       "",
       "**Fully generic → all tags**",
-      "Before:",
-      "`{ beatType: \"content\", custom: true, text: \"And as you exhale, let yourself arrive fully here. [[PAUSE short]] There's nowhere to rush, nowhere to be except right now.\" }`",
-      "After:",
-      "`{ beatType: \"breath_transition\", custom: false, tag: \"BREATH_TRANSITION\" }`, `{ beatType: \"pause\", pauseBand: \"short\" }`, `{ beatType: \"pace_reassurance\", custom: false, tag: \"PACE_REASSURANCE\" }`",
+      "Before: `{ beatType: \"content\", text: \"And as you exhale, let yourself arrive fully here. [[PAUSE short]] There's nowhere to rush, nowhere to be except right now.\" }`",
+      "After: `{ tag: \"BREATH_TRANSITION\" }`, `{ pauseBand: \"short\" }`, `{ tag: \"PACE_REASSURANCE\" }`",
       "",
       "**Partial split (generic aside only)**",
-      "Before:",
-      "`{ beatType: \"content\", custom: true, text: \"Now I'm going to invite your attention to slowly move through your body, noticing where you hold tension, and gently asking it to soften and release. There's no rush—just notice what's there.\" }`",
-      "After:",
-      "`{ beatType: \"content\", custom: true, text: \"Now I'm going to invite your attention to slowly move through your body, noticing where you hold tension, and gently asking it to soften and release.\" }`, `{ beatType: \"pace_reassurance\", custom: false, tag: \"PACE_REASSURANCE\" }`",
+      "Before: `{ beatType: \"content\", text: \"Now I'm going to invite your attention to slowly move through your body, noticing where you hold tension, and gently asking it to soften and release. There's no rush—just notice what's there.\" }`",
+      "After: `{ beatType: \"content\", text: \"Now I'm going to invite your attention to slowly move through your body, noticing where you hold tension, and gently asking it to soften and release.\" }`, `{ tag: \"PACE_REASSURANCE\" }`",
       "",
       "**Do not change this (personalized — keep custom):**",
-      "`{ beatType: \"settle_opener\", custom: true, text: \"Find a comfortable position, sitting beneath your tree\" }`",
-      "`{ beatType: \"content\", custom: true, text: \"This is where you've been feeling that tension\" }`",
+      "`{ beatType: \"settle_opener\", text: \"Find a comfortable position, sitting beneath your tree\" }`",
+      "`{ beatType: \"content\", text: \"This is where you've been feeling that tension\" }`",
       "",
       "**Singular tag + adjacent custom (complement only):**",
-      "Before: `{ beatType: \"close_deepen_breath\", custom: false, tag: \"CLOSE_DEEPEN_BREATH\" }`, `{ beatType: \"close_deepen_breath\", custom: true, text: \"Let each breath become a little fuller.\" }`",
-      "After: `{ beatType: \"close_deepen_breath\", custom: false, tag: \"CLOSE_DEEPEN_BREATH\" }` only — generic duplicate omitted.",
-      "Before: `{ beatType: \"close_sensory_return\", custom: false, tag: \"CLOSE_SENSORY_RETURN\" }`, `{ beatType: \"close_sensory_return\", custom: true, text: \"Notice the room around you and the rustling of leaves from your oak tree.\" }`",
-      "After: tag beat, then `{ beatType: \"close_sensory_return\", custom: true, text: \"Notice the rustling of leaves from your oak tree.\" }` — personalized detail only.",
+      "Before: `{ tag: \"CLOSE_DEEPEN_BREATH\" }`, `{ beatType: \"close_deepen_breath\", text: \"Let each breath become a little fuller.\" }`",
+      "After: `{ tag: \"CLOSE_DEEPEN_BREATH\" }` only — generic duplicate omitted.",
+      "Before: `{ tag: \"CLOSE_SENSORY_RETURN\" }`, `{ beatType: \"close_sensory_return\", text: \"Notice the room around you and the rustling of leaves from your oak tree.\" }`",
+      "After: tag beat, then `{ beatType: \"close_sensory_return\", text: \"Notice the rustling of leaves from your oak tree.\" }` — personalized detail only.",
     );
   } else {
     userParts.push(

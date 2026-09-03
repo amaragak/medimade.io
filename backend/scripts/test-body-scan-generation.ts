@@ -67,7 +67,7 @@ async function main() {
   );
   const preferredLabel = bodyScanTags.some((t) =>
     promptBlock.includes(`### ${t.name}`) &&
-    promptBlock.includes(`Scope: type-restricted — preferred for body_scan`),
+    promptBlock.includes(`Scope: preferred for body_scan`),
   );
   console.log(`(a) All BODY_SCAN tags in generation prompt: ${bodyScanInPrompt}`);
   console.log(`(a) At least one labeled Preferred for: ${preferredLabel}`);
@@ -108,6 +108,37 @@ async function main() {
     segmentTags,
     generalTagVariants: verificationTagVariants,
   });
+
+  console.log("\nLLM usage by stage:");
+  for (const u of result.usageBreakdown) {
+    console.log(
+      `  ${u.stage.padEnd(18)} ${String(u.usage.input_tokens).padStart(6)} in / ${String(u.usage.output_tokens).padStart(5)} out  [${u.model}]`,
+    );
+  }
+  const totals = result.usageBreakdown.reduce(
+    (acc, u) => ({
+      input: acc.input + u.usage.input_tokens,
+      output: acc.output + u.usage.output_tokens,
+    }),
+    { input: 0, output: 0 },
+  );
+  console.log(
+    `  ${"TOTAL".padEnd(18)} ${String(totals.input).padStart(6)} in / ${String(totals.output).padStart(5)} out`,
+  );
+
+  // beatType is no longer emitted by the model on tag beats — it must be
+  // derived from the tag name during parsing.
+  const misderived = result.beats.filter(
+    (b) => !b.custom && b.tag && b.beatType !== b.tag.toLowerCase(),
+  );
+  if (misderived.length > 0) {
+    console.error(
+      `FAIL: ${misderived.length} tag beat(s) have a beatType that does not match the tag`,
+      misderived.map((b) => `${b.tag} -> ${b.beatType}`),
+    );
+    process.exit(1);
+  }
+  console.log(`(d) beatType derived from tag on all ${result.beats.filter((b) => !b.custom && b.tag).length} tag beats`);
 
   const usedBodyScanTags = result.beats.filter(
     (b) => !b.custom && b.tag?.startsWith("BODY_SCAN_"),

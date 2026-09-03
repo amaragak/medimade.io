@@ -182,7 +182,7 @@ export function scriptLabBeatsToolDefinition(): {
   return {
     name: "submit_meditation_script_beats",
     description:
-      "Return the complete guided meditation as an ordered list of typed beats. Do not output free-form prose outside this tool.",
+      "Return the complete guided meditation as an ordered list of typed beats. Do not output free-form prose outside this tool. Emit the minimal fields for each beat: library beat = {tag}, custom beat = {beatType, text}, pause beat = {pauseBand}.",
     input_schema: {
       type: "object",
       additionalProperties: false,
@@ -194,33 +194,34 @@ export function scriptLabBeatsToolDefinition(): {
             type: "object",
             additionalProperties: false,
             properties: {
-              beatType: {
-                type: "string",
-                description:
-                  "Functional category, e.g. settle_opener, breath_transition, close_sendoff, content, pause.",
-              },
-              custom: {
-                type: "boolean",
-                description:
-                  "false = library segment (tag required); true = model-written text (text required). Not used for pause beats.",
-              },
               tag: {
                 type: "string",
-                description: "Library segment tag when custom is false, e.g. SETTLE_OPENER.",
+                description:
+                  "Library segment beat, e.g. SETTLE_OPENER. When set, this is the ONLY field needed — omit beatType and custom, they are derived from the tag name.",
               },
               text: {
                 type: "string",
                 description:
-                  "Spoken words when custom is true (may include inline [[PAUSE band]] markers). For custom=false library tags, optional locked variant text when already chosen (e.g. Script Lab V2).",
+                  "Custom beat: the spoken words (may include inline [[PAUSE band]] markers). Pair with beatType. Do not set alongside tag.",
+              },
+              beatType: {
+                type: "string",
+                description:
+                  "Functional category for custom beats only, e.g. content, settle_opener. Omit on tag and pause beats.",
               },
               pauseBand: {
                 type: "string",
                 enum: [...SCRIPT_PAUSE_BANDS],
                 description:
-                  "Required when beatType is pause. One of: extra-short, short, medium, long, extra-long. Never omit on pause beats.",
+                  "Standalone silence beat. When set alone, this is the ONLY field needed — omit beatType and custom. One of: extra-short, short, medium, long, extra-long.",
+              },
+              custom: {
+                type: "boolean",
+                description:
+                  "Optional and normally omitted — inferred from tag/text. Only set it to disambiguate.",
               },
             },
-            required: ["beatType", "custom"],
+            required: [],
           },
         },
       },
@@ -234,38 +235,44 @@ function normalizeIncomingBeat(raw: unknown, index: number): ScriptLabBeat {
     throw new Error(`Beat ${index + 1} is not an object`);
   }
   const o = raw as Record<string, unknown>;
-  const beatType = normalizeBeatType(String(o.beatType ?? ""));
-  if (!beatType) throw new Error(`Beat ${index + 1} missing beatType`);
-
-  if (beatType === "pause") {
-    const pauseBandRaw =
-      typeof o.pauseBand === "string"
-        ? o.pauseBand
-        : typeof o.band === "string"
-          ? o.band
-          : "";
-    const pauseBand = normalizePauseBand(pauseBandRaw) ?? "medium";
-    return { beatType: "pause", custom: false, pauseBand };
-  }
-
-  const custom = o.custom === true;
+  const rawBeatType = normalizeBeatType(String(o.beatType ?? ""));
   const tag =
     typeof o.tag === "string" && o.tag.trim()
       ? normalizeScriptSegmentTag(o.tag)
       : undefined;
   const text = typeof o.text === "string" ? o.text.trim() : undefined;
+  const pauseBandRaw =
+    typeof o.pauseBand === "string"
+      ? o.pauseBand
+      : typeof o.band === "string"
+        ? o.band
+        : "";
 
-  if (custom) {
-    if (!text) throw new Error(`Beat ${index + 1} (${beatType}) custom=true requires text`);
-    if (tag) throw new Error(`Beat ${index + 1} (${beatType}) custom=true must not include tag`);
-    return { beatType, custom: true, text };
+  if (rawBeatType === "pause" || (!tag && !text && pauseBandRaw)) {
+    const pauseBand = normalizePauseBand(pauseBandRaw) ?? "medium";
+    return { beatType: "pause", custom: false, pauseBand };
   }
 
-  if (!tag) throw new Error(`Beat ${index + 1} (${beatType}) custom=false requires tag`);
-  // Optional locked variant text (V2 keeps Pass-1 picks on tag beats).
-  return text
-    ? { beatType, custom: false, tag, text }
-    : { beatType, custom: false, tag };
+  // beatType is a pure function of the tag name, so the model omits it on
+  // library beats; accept an explicit one for backwards compatibility.
+  if (tag) {
+    if (o.custom === true) {
+      throw new Error(`Beat ${index + 1} (${tag}) custom=true must not include tag`);
+    }
+    const beatType = rawBeatType || tagNameToBeatType(tag);
+    // Optional locked variant text (V2 keeps Pass-1 picks on tag beats).
+    return text
+      ? { beatType, custom: false, tag, text }
+      : { beatType, custom: false, tag };
+  }
+
+  if (!text) {
+    throw new Error(
+      `Beat ${index + 1}${rawBeatType ? ` (${rawBeatType})` : ""} needs a tag (library beat), text (custom beat), or pauseBand (pause beat)`,
+    );
+  }
+  if (!rawBeatType) throw new Error(`Beat ${index + 1} (custom) missing beatType`);
+  return { beatType: rawBeatType, custom: true, text };
 }
 
 export function parseScriptLabBeatsFromToolInput(input: unknown): ScriptLabBeat[] {

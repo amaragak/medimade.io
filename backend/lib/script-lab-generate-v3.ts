@@ -5,6 +5,12 @@
  */
 import { parseAnthropicMessageUsage } from "./anthropic-pricing";
 import {
+  mergeUsageBreakdown,
+  SCRIPT_LAB_HAIKU_MODEL,
+  SCRIPT_LAB_SONNET_MODEL,
+  type ScriptLabUsageBreakdownEntry,
+} from "./script-lab-models";
+import {
   findDuplicateBeatTypeWarnings,
   tagNameToBeatType,
   type ScriptLabBeat,
@@ -119,7 +125,29 @@ function mergeUsage(
   return any ? { input_tokens: input, output_tokens: output } : null;
 }
 
-async function callSonnet(params: {
+function localPromotionContext(chunks: V3Chunk[], chunkIndex: number): string {
+  const window = chunks.filter((c) => Math.abs(c.index - chunkIndex) <= 1);
+  return window
+    .map((c) => {
+      const mark = c.index === chunkIndex ? "» " : "";
+      const pause = c.pauseAfter ? ` [[PAUSE ${c.pauseAfter}]]` : "";
+      return `${mark}${c.text}${pause}`;
+    })
+    .join("\n");
+}
+
+function promotionNeighborsFromMatches(
+  matches: V3Match[],
+  limit = 5,
+): Array<{ tag: string; text: string; score: number }> {
+  return matches.slice(0, limit).map((m) => ({
+    tag: m.tag,
+    text: m.text.slice(0, 500),
+    score: m.score,
+  }));
+}
+
+async function callAnthropic(params: {
   apiKey: string;
   model: string;
   system: string;
@@ -331,9 +359,95 @@ function assembleBeats(params: {
   return beats;
 }
 
+function reviewSystemPrompt(): string {
+  return [
+    "You review meditation script chunks against library segment variants.",
+    "For substitution candidates: decide substitute:variantId or keep_custom.",
+    "Only substitute when the match captures essentially the same meaning.",
+    "A 0.94 match is almost always substitutable; 0.70 rarely is.",
+    "Never substitute a chunk that carries emotional or narrative specificity even if listed as generic.",
+    "For promotion candidates: decide promote:TAG_NAME or discard.",
+    "Promote only if the chunk adds a meaningfully different instruction, sensory angle, or framing vs existing variants.",
+    "Different wording of the same instruction → discard. Genuinely new content → promote.",
+    "Include a brief reasoning string for promote, discard, and borderline keep_custom decisions.",
+  ].join("\n");
+}
+
+function parseReviewDecisions(params: {
+  toolInput: Record<string, unknown> | null;
+  topMatchesByChunk: Record<number, V3Match[]>;
+  usedVariantIds: Set<string>;
+  promotionDetailByChunk: Record<number, V3PromotionDetail>;
+  variantsByTag: Record<string, Array<SegmentVariantCandidate & Record<string, unknown>>>;
+}): V3ChunkDecision[] {
+  const reviewDecisions: V3ChunkDecision[] = [];
+  const parseReasoning = (r: Record<string, unknown>): string | undefined => {
+    const s = typeof r.reasoning === "string" ? r.reasoning.trim() : "";
+    return s || undefined;
+  };
+  const arr = Array.isArray(params.toolInput?.decisions) ? params.toolInput!.decisions : [];
+  for (const row of arr) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const chunkIndex = typeof r.chunkIndex === "number" ? r.chunkIndex : -1;
+    if (chunkIndex < 0) continue;
+    const decision = String(r.decision ?? "");
+    const reasoning = parseReasoning(r);
+    if (decision === "substitute") {
+      const variantId = String(r.variantId ?? "").trim();
+      const matches = params.topMatchesByChunk[chunkIndex] ?? [];
+      const hit = matches.find((m) => m.variantId === variantId) ?? matches[0];
+      if (hit && !params.usedVariantIds.has(hit.variantId)) {
+        params.usedVariantIds.add(hit.variantId);
+        reviewDecisions.push({
+          chunkIndex,
+          decision: "substitute",
+          variantId: hit.variantId,
+          tag: hit.tag,
+          score: hit.score,
+          reasoning,
+        });
+      } else {
+        reviewDecisions.push({ chunkIndex, decision: "keep_custom", reasoning });
+      }
+    } else if (decision === "promote") {
+      const matches = params.topMatchesByChunk[chunkIndex] ?? [];
+      const targetTag = normalizeScriptSegmentTag(
+        String(r.targetTag ?? matches[0]?.tag ?? ""),
+      );
+      const score = matches[0]?.score ?? 0;
+      if (targetTag) {
+        const existingVariantTexts = (params.variantsByTag[targetTag] ?? [])
+          .filter((v) => v.approved !== false)
+          .map((v) => v.text);
+        params.promotionDetailByChunk[chunkIndex] = {
+          targetTag,
+          reasoning,
+          existingVariantTexts,
+        };
+        reviewDecisions.push({
+          chunkIndex,
+          decision: "promote",
+          targetTag,
+          score,
+          reasoning,
+        });
+      } else {
+        reviewDecisions.push({ chunkIndex, decision: "discard", reasoning });
+      }
+    } else if (decision === "discard") {
+      reviewDecisions.push({ chunkIndex, decision: "discard", reasoning });
+    } else {
+      reviewDecisions.push({ chunkIndex, decision: "keep_custom", reasoning });
+    }
+  }
+  return reviewDecisions;
+}
+
 export async function generateScriptLabScriptV3(params: {
   apiKey: string;
-  model: string;
+  /** @deprecated Display-only; stages use SCRIPT_LAB_*_MODEL constants. */
+  model?: string;
   transcript: string;
   meditationStyle: string;
   journalMode: boolean;
@@ -360,10 +474,12 @@ export async function generateScriptLabScriptV3(params: {
   verificationCorrectionsApplied: boolean;
   beatWarnings: ScriptLabBeatDuplicateWarning[];
   usage: { input_tokens: number; output_tokens: number } | null;
+  usageBreakdown: ScriptLabUsageBreakdownEntry[];
   /** Pass 1 prose call only — for single-shot cost simulation. */
   firstPassUsage: { input_tokens: number; output_tokens: number } | null;
   v3Meta: ScriptLabV3Meta;
 }> {
+  const usageBreakdown: ScriptLabUsageBreakdownEntry[] = [];
   const meditationType = params.journalMode ? null : params.meditationStyle;
   const constraintNote =
     params.contextTags.length > 0
@@ -371,9 +487,9 @@ export async function generateScriptLabScriptV3(params: {
       : "No extra constraint tags.";
 
   // --- Pass 1: custom continuous prose ---
-  const pass1 = await callSonnet({
+  const pass1 = await callAnthropic({
     apiKey: params.apiKey,
-    model: params.model,
+    model: SCRIPT_LAB_SONNET_MODEL,
     system: [
       "You write excellent guided meditation scripts as continuous spoken prose.",
       "Do not use segment tags, beat schemas, JSON, markdown headings, or tool calls.",
@@ -402,6 +518,13 @@ export async function generateScriptLabScriptV3(params: {
 
   const rawScript = pass1.text;
   if (!rawScript) throw new Error("V3 Pass 1 returned empty script");
+  if (pass1.usage) {
+    usageBreakdown.push({
+      stage: "v3_pass1_generation",
+      model: SCRIPT_LAB_SONNET_MODEL,
+      usage: pass1.usage,
+    });
+  }
 
   // --- Pass 2: split ---
   const chunks = splitScriptOnPauseMarkers(rawScript);
@@ -411,9 +534,9 @@ export async function generateScriptLabScriptV3(params: {
   const chunkList = chunks
     .map((c) => `[${c.index}] ${c.text}`)
     .join("\n\n");
-  const pass3 = await callSonnet({
+  const pass3 = await callAnthropic({
     apiKey: params.apiKey,
-    model: params.model,
+    model: SCRIPT_LAB_HAIKU_MODEL,
     system:
       "Classify each script chunk. personalized = references anything specific to this user's input. generic = would read identically for any user in any meditation of this type. uncertain = borderline (mixed generic framing with user-specific detail, or genuinely unclear). Use uncertain sparingly.",
     userContent: [
@@ -428,6 +551,13 @@ export async function generateScriptLabScriptV3(params: {
     tools: [classificationTool()],
     toolChoice: { type: "tool", name: "classify_chunks" },
   });
+  if (pass3.usage) {
+    usageBreakdown.push({
+      stage: "v3_pass3_classify",
+      model: SCRIPT_LAB_HAIKU_MODEL,
+      usage: pass3.usage,
+    });
+  }
 
   const classifications: Record<number, V3ChunkClass> = {};
   const classArr = Array.isArray(pass3.toolInput?.classifications)
@@ -600,96 +730,72 @@ export async function generateScriptLabScriptV3(params: {
   const promotionDetailByChunk: Record<number, V3PromotionDetail> = {};
   let pass5Usage: ReturnType<typeof parseAnthropicMessageUsage> = null;
 
-  function parseReasoning(r: Record<string, unknown>): string | undefined {
-    const s = typeof r.reasoning === "string" ? r.reasoning.trim() : "";
-    return s || undefined;
-  }
-
   if (subBlocks.length > 0 || promoBlocks.length > 0) {
-    const pass5 = await callSonnet({
-      apiKey: params.apiKey,
-      model: params.model,
-      system: [
-        "You review meditation script chunks against library segment variants.",
-        "For substitution candidates: decide substitute:variantId or keep_custom.",
-        "Only substitute when the match captures essentially the same meaning.",
-        "A 0.94 match is almost always substitutable; 0.70 rarely is.",
-        "Never substitute a chunk that carries emotional or narrative specificity even if listed as generic.",
-        "For promotion candidates: decide promote:TAG_NAME or discard.",
-        "Promote only if the chunk adds a meaningfully different instruction, sensory angle, or framing vs existing variants.",
-        "Different wording of the same instruction → discard. Genuinely new content → promote.",
-        "Include a brief reasoning string for promote, discard, and borderline keep_custom decisions.",
-      ].join("\n"),
-      userContent: [
-        subBlocks.length
-          ? `## Substitution candidates (≥ ${V3_SUBSTITUTION_THRESHOLD})\n\n${subBlocks.join("\n\n")}`
-          : "",
-        promoBlocks.length
-          ? `## Promotion candidates (${V3_PROMOTION_THRESHOLD}–${V3_SUBSTITUTION_THRESHOLD})\n\n${promoBlocks.join("\n\n")}`
-          : "",
-        "Return a decision for every listed chunkIndex.",
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-      tools: [reviewTool()],
-      toolChoice: { type: "tool", name: "review_chunk_decisions" },
-    });
-    pass5Usage = pass5.usage;
-    const arr = Array.isArray(pass5.toolInput?.decisions) ? pass5.toolInput!.decisions : [];
-    for (const row of arr) {
-      if (!row || typeof row !== "object") continue;
-      const r = row as Record<string, unknown>;
-      const chunkIndex = typeof r.chunkIndex === "number" ? r.chunkIndex : -1;
-      if (chunkIndex < 0) continue;
-      const decision = String(r.decision ?? "");
-      const reasoning = parseReasoning(r);
-      if (decision === "substitute") {
-        const variantId = String(r.variantId ?? "").trim();
-        const matches = topMatchesByChunk[chunkIndex] ?? [];
-        const hit = matches.find((m) => m.variantId === variantId) ?? matches[0];
-        if (hit && !usedVariantIds.has(hit.variantId)) {
-          usedVariantIds.add(hit.variantId);
-          reviewDecisions.push({
-            chunkIndex,
-            decision: "substitute",
-            variantId: hit.variantId,
-            tag: hit.tag,
-            score: hit.score,
-            reasoning,
-          });
-        } else {
-          reviewDecisions.push({ chunkIndex, decision: "keep_custom", reasoning });
-        }
-      } else if (decision === "promote") {
-        const matches = topMatchesByChunk[chunkIndex] ?? [];
-        const targetTag = normalizeScriptSegmentTag(
-          String(r.targetTag ?? matches[0]?.tag ?? ""),
-        );
-        const score = matches[0]?.score ?? 0;
-        if (targetTag) {
-          const existingVariantTexts = (params.variantsByTag[targetTag] ?? [])
-            .filter((v) => v.approved !== false)
-            .map((v) => v.text);
-          promotionDetailByChunk[chunkIndex] = {
-            targetTag,
-            reasoning,
-            existingVariantTexts,
-          };
-          reviewDecisions.push({
-            chunkIndex,
-            decision: "promote",
-            targetTag,
-            score,
-            reasoning,
-          });
-        } else {
-          reviewDecisions.push({ chunkIndex, decision: "discard", reasoning });
-        }
-      } else if (decision === "discard") {
-        reviewDecisions.push({ chunkIndex, decision: "discard", reasoning });
-      } else {
-        reviewDecisions.push({ chunkIndex, decision: "keep_custom", reasoning });
+    const reviewTasks: Array<{
+      stage: "v3_pass5_substitution_review" | "v3_pass5_promotion_review";
+      model: string;
+      userContent: string;
+    }> = [];
+
+    if (subBlocks.length > 0) {
+      reviewTasks.push({
+        stage: "v3_pass5_substitution_review",
+        model: SCRIPT_LAB_HAIKU_MODEL,
+        userContent: [
+          `## Substitution candidates (≥ ${V3_SUBSTITUTION_THRESHOLD})`,
+          "",
+          subBlocks.join("\n\n"),
+          "",
+          "Return a decision for every listed chunkIndex.",
+        ].join("\n"),
+      });
+    }
+    if (promoBlocks.length > 0) {
+      reviewTasks.push({
+        stage: "v3_pass5_promotion_review",
+        model: SCRIPT_LAB_SONNET_MODEL,
+        userContent: [
+          `## Promotion candidates (${V3_PROMOTION_THRESHOLD}–${V3_SUBSTITUTION_THRESHOLD})`,
+          "",
+          promoBlocks.join("\n\n"),
+          "",
+          "Return a decision for every listed chunkIndex.",
+        ].join("\n"),
+      });
+    }
+
+    const reviewResults = await Promise.all(
+      reviewTasks.map(async (task) => {
+        const result = await callAnthropic({
+          apiKey: params.apiKey,
+          model: task.model,
+          system: reviewSystemPrompt(),
+          userContent: task.userContent,
+          tools: [reviewTool()],
+          toolChoice: { type: "tool", name: "review_chunk_decisions" },
+        });
+        return { ...task, ...result };
+      }),
+    );
+
+    for (const result of reviewResults) {
+      pass5Usage = mergeUsage(pass5Usage, result.usage);
+      if (result.usage) {
+        usageBreakdown.push({
+          stage: result.stage,
+          model: result.model,
+          usage: result.usage,
+        });
       }
+      reviewDecisions.push(
+        ...parseReviewDecisions({
+          toolInput: result.toolInput,
+          topMatchesByChunk,
+          usedVariantIds,
+          promotionDetailByChunk,
+          variantsByTag: params.variantsByTag,
+        }),
+      );
     }
   }
 
@@ -708,7 +814,9 @@ export async function generateScriptLabScriptV3(params: {
     const chunk = chunks.find((c) => c.index === d.chunkIndex);
     if (!chunk) continue;
     const embedding = chunkEmbeddings.get(d.chunkIndex);
-    const nearest = (topMatchesByChunk[d.chunkIndex] ?? [])[0];
+    const matches = topMatchesByChunk[d.chunkIndex] ?? [];
+    const nearest = matches[0];
+    const neighbors = promotionNeighborsFromMatches(matches);
     const lengthTiered = params.tagMetaByName[d.targetTag]?.lengthTiered === true;
     try {
       const row = await putScriptSegmentVariant({
@@ -721,9 +829,11 @@ export async function generateScriptLabScriptV3(params: {
         approved: false,
         embedding,
         skipEmbed: Boolean(embedding?.length),
-        promotionSimilarity: d.score,
+        promotionSimilarity: nearest?.score ?? d.score,
         promotionNearestTag: nearest?.tag ?? d.targetTag,
-        promotionContext: rawScript.slice(0, 500),
+        promotionNearestText: nearest?.text ?? null,
+        promotionContext: localPromotionContext(chunks, d.chunkIndex),
+        promotionNeighbors: neighbors.length > 0 ? neighbors : null,
       });
       promotedVariantIds.push(row.variantId);
       if (!embedding?.length) {
@@ -781,6 +891,7 @@ export async function generateScriptLabScriptV3(params: {
     verificationCorrectionsApplied: false,
     beatWarnings,
     usage: mergeUsage(pass1.usage, pass3.usage, pass5Usage),
+    usageBreakdown,
     firstPassUsage: pass1.usage,
     v3Meta: {
       pass1RawScript: rawScript,

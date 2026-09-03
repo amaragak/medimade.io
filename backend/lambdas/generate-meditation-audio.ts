@@ -118,7 +118,9 @@ function elapsedMs(start: number): number {
 
 const secrets = new SecretsManagerClient({});
 const s3 = new S3Client({});
-const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+  marshallOptions: { removeUndefinedValues: true },
+});
 const lambdaClient = new LambdaClient({});
 const execFileAsync = promisify(execFile);
 

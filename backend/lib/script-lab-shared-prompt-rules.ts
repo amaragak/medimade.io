@@ -231,7 +231,7 @@ export function scriptSleepClosingPhaseTagRules(): string {
     "Sleep scripts must **not** use `CLOSE_DEEPEN_BREATH`, `CLOSE_SENSORY_RETURN`, `CLOSE_EYES_OPEN`, or `CLOSE_SENDOFF` under **any circumstances**. Those tags return the listener to waking awareness — the opposite of sleep.",
     "",
     "**Closing sequence (exact final beats):**",
-    "`SLEEP_THRESHOLD` (singular — once, near the end) → `{ beatType: \"pause\", pauseBand: \"extra-long\" }` → `SLEEP_CLOSE` (singular — **final beat**)",
+    "`SLEEP_THRESHOLD` (singular — once, near the end) → `{ pauseBand: \"extra-long\" }` → `SLEEP_CLOSE` (singular — **final beat**)",
     "",
     "**After `SLEEP_CLOSE`:** nothing — no pause beat, no custom text, no further tags. The script **ends** on `SLEEP_CLOSE` and fades to silence.",
     "",

@@ -58,9 +58,15 @@ assert(
   "library-stored singular overrides seed set",
 );
 
+// The per-tag line is a bare label — the full spacing rule is stated once in
+// the selection-rules block below, not repeated on all ~70 catalog entries.
 const line = repeatabilityPromptLine("connective");
 assert(!/freely/i.test(line), `repeatabilityPromptLine still says freely: ${line}`);
-assert(/never with only pauses/i.test(line), `repeatabilityPromptLine missing pause ban: ${line}`);
+assert(line === "connective", `repeatabilityPromptLine should be a bare label: ${line}`);
+assert(
+  repeatabilityPromptLine("singular") === "singular",
+  "singular repeatability line should be a bare label",
+);
 
 const rules = scriptSegmentSelectionRulesBlock({
   connectiveTagNames: ["SENSORY_EXPAND", "PACE_REASSURANCE"],
@@ -97,8 +103,13 @@ const catalog = scriptSegmentLibraryPromptBlock({
 });
 assert(!/may repeat freely/i.test(catalog), "catalog block still says freely");
 assert(
-  catalog.includes(repeatabilityPromptLine("connective")),
-  "catalog should use updated per-tag connective line",
+  catalog.includes(`Repeatability: ${repeatabilityPromptLine("connective")}`),
+  "catalog should use the bare per-tag connective label",
+);
+// The rule the per-tag line no longer carries must still reach the model once.
+assert(
+  /never.*only pauses/i.test(catalog),
+  "catalog must still carry the connective spacing rule via the selection-rules block",
 );
 
 const stacked: ScriptLabBeat[] = [

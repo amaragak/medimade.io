@@ -1,28 +1,61 @@
 import {
-  CLAUDE_SONNET_45_MODEL_ID,
   parseAnthropicMessageUsage,
 } from "./anthropic-pricing";
+import {
+  SCRIPT_LAB_HAIKU_MODEL,
+  type ScriptLabUsageBreakdownEntry,
+} from "./script-lab-models";
+import {
+  buildScriptLabContextTags,
+  variantEligibleForContext,
+} from "./script-constraint-tags";
 import { normalizePauseBand } from "./script-pause-bands";
 import {
   tagNameToBeatType,
   type ScriptLabBeat,
 } from "./script-lab-beats";
 import { scriptLabBreathReturnDisambiguationVerification } from "./script-lab-shared-prompt-rules";
-import { normalizeScriptSegmentTag, inferDefaultSegmentRepeatability, type ScriptSegmentRepeatability } from "./script-segment-tags";
+import {
+  normalizeScriptSegmentTag,
+  inferDefaultSegmentRepeatability,
+  typesMatchMeditationType,
+  type ScriptSegmentRepeatability,
+  type ScriptSegmentScope,
+} from "./script-segment-tags";
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+
+/** ~500 tokens ≈ 2000 chars for personalization-only excerpt. */
+export const VERIFICATION_TRANSCRIPT_MAX_CHARS = 2000;
+
+const EXAMPLE_TEXT_MAX = 100;
 
 export type GeneralTagVariantEntry = {
   variantId: string;
   text: string;
   /** Imported variant metadata: up | down | neutral */
   direction?: string | null;
+  requiredConstraints?: string[];
+  excludedConstraints?: string[];
 };
 
+/** Caller input: full variants used only to build compact tag cards + eligibility filter. */
 export type GeneralTagVariantCatalog = {
   name: string;
   variants: GeneralTagVariantEntry[];
   repeatability?: ScriptSegmentRepeatability;
+  description?: string;
+  scope?: ScriptSegmentScope;
+  types?: string[];
+};
+
+/** Compact catalog card passed to the verification LLM (no full variant list). */
+export type VerificationTagCard = {
+  name: string;
+  beatType: string;
+  repeatability: ScriptSegmentRepeatability;
+  description?: string;
+  examples: string[];
 };
 
 export type VerificationSentence = {
@@ -40,29 +73,113 @@ export type SentenceVerdict = {
   sentenceIndex: number;
   verdict: SentenceVerdictKind;
   matchedTag?: string;
+  /** @deprecated Verification no longer selects variants; fill does. Kept for parse compat. */
   matchedVariantId?: string;
   confidence?: "high" | "medium" | "low";
 };
 
 const PAUSE_MARKER_RE = /\[\[PAUSE\s+([^\]]+)\]\]/gi;
 
-/** Full variant library for verification — no truncation. */
+function truncateExample(text: string): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= EXAMPLE_TEXT_MAX) return t;
+  return `${t.slice(0, EXAMPLE_TEXT_MAX - 1).trim()}…`;
+}
+
+/**
+ * Build compact verification tag cards from the library.
+ * Filters by meditation type (type-scoped tags) and variant constraint eligibility.
+ */
 export function prepareGeneralTagsForVerification(
   tags: GeneralTagVariantCatalog[],
-): GeneralTagVariantCatalog[] {
-  return tags.map((t) => ({
-    name: normalizeScriptSegmentTag(t.name),
-    repeatability: t.repeatability ?? inferDefaultSegmentRepeatability(t.name),
-    variants: t.variants.map((v, i) => ({
-      variantId: v.variantId?.trim() || `${t.name}#${i}`,
-      text: v.text.replace(/\s+/g, " ").trim(),
-    })),
-  }));
+  opts?: {
+    meditationType?: string | null;
+    contextTags?: string[];
+  },
+): VerificationTagCard[] {
+  const meditationType = opts?.meditationType ?? null;
+  const contextTags = opts?.contextTags ?? [];
+  const cards: VerificationTagCard[] = [];
+
+  for (const t of tags) {
+    const name = normalizeScriptSegmentTag(t.name);
+    const scope = t.scope ?? "general";
+    const types = t.types ?? [];
+
+    if (
+      meditationType &&
+      scope !== "general" &&
+      types.length > 0 &&
+      !typesMatchMeditationType(types, meditationType)
+    ) {
+      continue;
+    }
+
+    const withText = t.variants
+      .map((v, i) => ({
+        variantId: v.variantId?.trim() || `${name}#${i}`,
+        text: (v.text ?? "").replace(/\s+/g, " ").trim(),
+        requiredConstraints: v.requiredConstraints ?? [],
+        excludedConstraints: v.excludedConstraints ?? [],
+      }))
+      .filter((v) => v.text.length > 0);
+
+    if (withText.length === 0) continue;
+
+    const eligible = withText.filter((v) =>
+      variantEligibleForContext({
+        requiredConstraints: v.requiredConstraints,
+        excludedConstraints: v.excludedConstraints,
+        contextTags,
+      }),
+    );
+    if (eligible.length === 0) continue;
+
+    const description = t.description?.trim() || undefined;
+    cards.push({
+      name,
+      beatType: tagNameToBeatType(name),
+      repeatability: t.repeatability ?? inferDefaultSegmentRepeatability(name),
+      ...(description ? { description } : {}),
+      examples: eligible.slice(0, 2).map((v) => truncateExample(v.text)),
+    });
+  }
+
+  return cards;
+}
+
+/**
+ * Condensed personalization excerpt for verification (~500 tokens max).
+ * Full transcript remains for generation/fill; verification only needs
+ * enough signal to keep personalized sentences custom.
+ */
+export function condenseTranscriptForVerification(transcript: string): string {
+  const trimmed = transcript.trim();
+  if (!trimmed) return "(No transcript.)";
+
+  const userLines = trimmed
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => /^User:\s*/i.test(line))
+    .map((line) => line.replace(/^User:\s*/i, "").trim())
+    .filter(Boolean);
+
+  const body =
+    userLines.length > 0
+      ? userLines.join("\n")
+      : trimmed.replace(/\s+/g, " ").trim();
+
+  const header = "User personalization signals:";
+  const budget = VERIFICATION_TRANSCRIPT_MAX_CHARS - header.length - 1;
+  if (body.length <= budget) {
+    return `${header}\n${body}`;
+  }
+  return `${header}\n${body.slice(0, Math.max(0, budget - 1)).trim()}…`;
 }
 
 function tagRepeatabilityFromCatalog(
   tag: string,
-  catalog: GeneralTagVariantCatalog[],
+  catalog: VerificationTagCard[],
 ): ScriptSegmentRepeatability {
   const normalized = normalizeScriptSegmentTag(tag);
   const entry = catalog.find((t) => t.name === normalized);
@@ -72,8 +189,12 @@ function tagRepeatabilityFromCatalog(
 /** @deprecated Use prepareGeneralTagsForVerification — kept for imports that referenced the old name. */
 export function compactGeneralTagsForVerification(
   tags: GeneralTagVariantCatalog[],
-): GeneralTagVariantCatalog[] {
-  return prepareGeneralTagsForVerification(tags);
+  opts?: {
+    meditationType?: string | null;
+    contextTags?: string[];
+  },
+): VerificationTagCard[] {
+  return prepareGeneralTagsForVerification(tags, opts);
 }
 
 export function splitCustomBeatTextIntoSentences(text: string): Array<{
@@ -206,16 +327,11 @@ function scriptLabSentenceVerificationToolDefinition(sentenceCount: number): {
                 type: "string",
                 enum: ["keep_custom", "convert_tag", "no_match"],
                 description:
-                  "convert_tag when the sentence is generic and serves the same semantic function as a catalog tag (any variant under that tag).",
+                  "convert_tag when the sentence is generic and serves the same semantic function as a catalog tag.",
               },
               matchedTag: {
                 type: "string",
                 description: "Required for convert_tag — tag name whose purpose matches semantically.",
-              },
-              matchedVariantId: {
-                type: "string",
-                description:
-                  "For convert_tag: id of the catalog variant that best exemplifies the same meaning (need not be word-for-word).",
               },
               confidence: {
                 type: "string",
@@ -234,26 +350,23 @@ function scriptLabSentenceVerificationToolDefinition(sentenceCount: number): {
 export function buildVerificationPrompt(params: {
   transcript: string;
   sentences: VerificationSentence[];
-  generalTags: GeneralTagVariantCatalog[];
+  generalTags: VerificationTagCard[];
 }): { system: string; userContent: string } {
   const tagCatalog = params.generalTags
     .map((t) => {
-      const lines = [`### ${t.name} (beatType: ${tagNameToBeatType(t.name)})`];
-      for (const v of t.variants) {
-        const dir =
-          typeof v.direction === "string" && v.direction.trim()
-            ? v.direction.trim().toLowerCase()
-            : null;
-        const dirLabel =
-          dir === "up" || dir === "down" || dir === "neutral"
-            ? ` direction=${dir}`
-            : "";
-        lines.push(`- [${v.variantId}]${dirLabel} "${v.text}"`);
+      const lines = [
+        `### ${t.name} (beatType: ${t.beatType})`,
+        `Repeatability: ${t.repeatability}`,
+      ];
+      if (t.description) lines.push(`Description: ${t.description}`);
+      if (t.examples.length > 0) {
+        lines.push(`Examples: ${t.examples.map((e) => `"${e}"`).join(" / ")}`);
       }
       return lines.join("\n");
     })
     .join("\n\n");
 
+  // Fix 4: compact single-line JSON for the sentence list
   const sentencesJson = JSON.stringify(
     params.sentences.map((s) => ({
       sentenceIndex: s.globalIndex,
@@ -262,9 +375,10 @@ export function buildVerificationPrompt(params: {
       beatType: s.beatType,
       text: sentenceDisplayText(s),
     })),
-    null,
-    2,
   );
+
+  // Fix 3: condensed personalization excerpt
+  const transcriptExcerpt = condenseTranscriptForVerification(params.transcript);
 
   return {
     system: [
@@ -272,36 +386,35 @@ export function buildVerificationPrompt(params: {
       "You judge pre-split numbered sentences only — you do NOT rewrite or assemble beats.",
       "Personalization always wins: if a sentence references this user's specific situation, words, or journal details, verdict MUST be keep_custom.",
       "Personalization test: does this sentence reference anything specific to this user's actual input? If yes → keep_custom. If no — it would read identically for any user — it may be convert_tag when it serves the same semantic function as a library tag.",
-      "Tag matching is SEMANTIC, not verbatim. Do NOT require the sentence to quote or closely paraphrase a variant's exact wording. Ask: would this line be interchangeable with a variant under that tag for any user? Same pacing cue, breath transition, body-scan invitation, reassurance, etc.",
-      "convert_tag requires confidence high, a matchedTag, and matchedVariantId pointing to the catalog variant that best represents the same meaning (pick the closest semantic fit among that tag's variants).",
-      "When a BODY_SCAN_* tag lists direction=up|down|neutral on variants: tour direction is inferred from the script's BODY_SCAN order (what the practice is already doing from the creator conversation — crown→feet = down; feet→crown = up). Prefer matchedVariantId with matching direction; neutral is acceptable; do not pick the opposite direction when a match or neutral exists. Do not invent a tour direction.",
-      "When uncertain about personalization → keep_custom. When generic but no tag's purpose fits semantically → no_match. When generic and a tag clearly covers the same function → convert_tag with confidence high, even if wording differs substantially — do not use medium/low merely because the sentence is not a near-quote of a variant.",
+      "Tag matching is SEMANTIC, not verbatim. Do NOT require the sentence to quote or closely paraphrase an example. Ask: would this line be interchangeable with a line under that tag for any user? Same pacing cue, breath transition, body-scan invitation, reassurance, etc.",
+      "convert_tag requires confidence high and a matchedTag whose purpose matches semantically. Do not pick a specific variant — variant selection happens later.",
+      "When uncertain about personalization → keep_custom. When generic but no tag's purpose fits semantically → no_match. When generic and a tag clearly covers the same function → convert_tag with confidence high, even if wording differs substantially — do not use medium/low merely because the sentence is not a near-quote of an example.",
       "Repeated convert_tag to the same **connective** tag across multiple sentences is expected and correct — do NOT skip a later sentence because you already converted an earlier one to the same connective tag.",
       "For **singular** tags (Repeatability: singular in the catalog): at most one convert_tag to each singular tag in this pass — if you already assigned convert_tag to a singular matchedTag on an earlier sentenceIndex, use keep_custom or no_match for later sentences that would map to the same singular tag; do not convert them.",
       "Return exactly one verdict per sentenceIndex via submit_sentence_verification_verdicts — no omissions.",
     ].join(" "),
     userContent: [
       "### Creator conversation (personalization check)",
-      params.transcript.trim() || "(No transcript.)",
+      transcriptExcerpt,
       "",
       "### Numbered custom-beat sentences (pre-split in code — judge each independently)",
       sentencesJson,
       "",
-      "### Tag library (all scopes) — ALL variant texts with ids",
-      "Use variants as examples of each tag's semantic function — matching is by purpose, not exact text.",
+      "### Tag library — tag cards (name, purpose, examples)",
+      "Use examples as illustrations of each tag's semantic function — matching is by purpose, not exact text.",
       tagCatalog || "(No tags in library.)",
       "",
       "### Verdict rules",
       "- keep_custom: personalized or must stay bespoke",
-      "- convert_tag: zero personalization AND the sentence serves the same semantic function as a tag (pick matchedTag + the variantId whose meaning is closest — wording may differ greatly; for directional BODY_SCAN variants, match the direction already implied by the script)",
+      "- convert_tag: zero personalization AND the sentence serves the same semantic function as a tag (pick matchedTag only)",
       "- no_match: generic but no tag's purpose applies semantically — stays in custom text",
       "",
-      "### Semantic match examples (wording need NOT match variants)",
+      "### Semantic match examples (wording need NOT match catalog examples)",
       "- Personalized: \"Now bring your full awareness to your lower back.\" → keep_custom",
-      "- \"There is nowhere to rush, nowhere to be except right now.\" → convert_tag PACE_REASSURANCE (same pacing/no-rush function as \"There's nowhere else you need to be right now.\")",
-      "- \"Don't try to change it yet—just notice it.\" → convert_tag PACE_REASSURANCE (same gentle pacing / non-striving cue as \"There's no rush here.\")",
+      "- \"There is nowhere to rush, nowhere to be except right now.\" → convert_tag PACE_REASSURANCE (same pacing/no-rush function)",
+      "- \"Don't try to change it yet—just notice it.\" → convert_tag PACE_REASSURANCE (same gentle pacing / non-striving cue)",
       "- \"Simply observe with curiosity.\" → convert_tag PACE_REASSURANCE or BODY_SCAN cue tag if one fits semantically",
-      "- \"And as you exhale, let yourself arrive fully here.\" → convert_tag BREATH_TRANSITION (arriving-on-the-breath function; pick closest variant even if exhale wording differs)",
+      "- \"And as you exhale, let yourself arrive fully here.\" → convert_tag BREATH_TRANSITION (arriving-on-the-breath function)",
       "- Generic but unique: \"Imagine a warm golden light pooling at the base of your spine.\" → no_match (no tag covers this imagery)",
       "",
       scriptLabBreathReturnDisambiguationVerification(),
@@ -401,33 +514,17 @@ function defaultKeepCustomVerdicts(indices: number[]): SentenceVerdict[] {
   }));
 }
 
-function tagCatalogHasTag(catalog: GeneralTagVariantCatalog[], tag: string): boolean {
+function tagCatalogHasTag(catalog: VerificationTagCard[], tag: string): boolean {
   return catalog.some((t) => t.name === tag);
-}
-
-function resolveVariantIdForTag(
-  catalog: GeneralTagVariantCatalog[],
-  tag: string,
-  variantId: string | undefined,
-): string | null {
-  const row = catalog.find((t) => t.name === tag);
-  if (!row || row.variants.length === 0) return null;
-  if (variantId && row.variants.some((v) => v.variantId === variantId)) {
-    return variantId;
-  }
-  return row.variants[0]!.variantId;
 }
 
 function effectiveVerdict(
   v: SentenceVerdict,
-  catalog: GeneralTagVariantCatalog[],
+  catalog: VerificationTagCard[],
 ): SentenceVerdictKind {
   if (v.verdict !== "convert_tag") return v.verdict;
   if (v.confidence !== "high") return "no_match";
   if (!v.matchedTag || !tagCatalogHasTag(catalog, v.matchedTag)) return "no_match";
-  if (!resolveVariantIdForTag(catalog, v.matchedTag, v.matchedVariantId)) {
-    return "no_match";
-  }
   return "convert_tag";
 }
 
@@ -473,7 +570,7 @@ export function adjacencyBlocksTagConversion(params: {
   assembled: ScriptLabBeat[];
   beatsBefore: ScriptLabBeat[];
   beatIndex: number;
-  catalog: GeneralTagVariantCatalog[];
+  catalog: VerificationTagCard[];
   windowNonPauseBeats?: number;
 }): boolean {
   const normalized = normalizeScriptSegmentTag(params.matchedTag);
@@ -562,7 +659,7 @@ function adjacentSingularTagForBeatType(params: {
   assembled: ScriptLabBeat[];
   beatsBefore: ScriptLabBeat[];
   beatIndex: number;
-  catalog: GeneralTagVariantCatalog[];
+  catalog: VerificationTagCard[];
   windowNonPauseBeats?: number;
 }): ScriptLabBeat | null {
   for (const b of collectAdjacentNonPauseBeats(params)) {
@@ -585,7 +682,7 @@ function isRedundantAdjacentCustomSentence(params: {
   assembled: ScriptLabBeat[];
   beatsBefore: ScriptLabBeat[];
   beatIndex: number;
-  catalog: GeneralTagVariantCatalog[];
+  catalog: VerificationTagCard[];
   transcript: string;
 }): boolean {
   const adjacentTag = adjacentSingularTagForBeatType(params);
@@ -600,7 +697,7 @@ export const VERIFICATION_TAG_PROXIMITY_WINDOW = 4;
 export function proximityBlocksTagConversion(
   assembledSoFar: ScriptLabBeat[],
   matchedTag: string,
-  catalog: GeneralTagVariantCatalog[],
+  catalog: VerificationTagCard[],
   beatsBefore?: ScriptLabBeat[],
 ): boolean {
   const normalized = normalizeScriptSegmentTag(matchedTag);
@@ -618,7 +715,7 @@ export function proximityBlocksTagConversion(
 function shouldDropPassthroughSingularTagBeat(
   beat: ScriptLabBeat,
   assembled: ScriptLabBeat[],
-  catalog: GeneralTagVariantCatalog[],
+  catalog: VerificationTagCard[],
 ): boolean {
   if (beat.custom || !beat.tag) return false;
   const normalized = normalizeScriptSegmentTag(beat.tag);
@@ -778,7 +875,7 @@ export function assembleBeatsFromSentenceVerdicts(params: {
   beatsBefore: ScriptLabBeat[];
   sentences: VerificationSentence[];
   verdicts: SentenceVerdict[];
-  generalTags: GeneralTagVariantCatalog[];
+  generalTags: VerificationTagCard[];
   transcript?: string;
 }): ScriptLabBeat[] {
   const transcript = params.transcript ?? "";
@@ -994,10 +1091,17 @@ async function fetchSentenceVerdicts(params: {
 
 export async function verifyScriptLabBeats(params: {
   apiKey: string;
+  /** @deprecated Ignored — verification always uses SCRIPT_LAB_HAIKU_MODEL. */
   model?: string;
   transcript: string;
   beatsBefore: ScriptLabBeat[];
   generalTags: GeneralTagVariantCatalog[];
+  /** Meditation type for catalog type-scope filtering. */
+  meditationType?: string | null;
+  /** Constraint context tags for catalog eligibility filtering. */
+  contextTags?: string[];
+  /** Usage breakdown stage label (V1 vs V2). */
+  verificationStage?: "v1_verification" | "v2_verification";
   timeoutMs?: number;
 }): Promise<{
   beats: ScriptLabBeat[];
@@ -1006,9 +1110,23 @@ export async function verifyScriptLabBeats(params: {
   correctionsApplied: boolean;
   sentenceVerdicts: SentenceVerdict[];
   usage: { input_tokens: number; output_tokens: number } | null;
+  usageBreakdown: ScriptLabUsageBreakdownEntry[];
 }> {
   const beatsBeforeVerification = params.beatsBefore;
-  const generalTags = prepareGeneralTagsForVerification(params.generalTags);
+  const meditationType =
+    params.meditationType !== undefined
+      ? params.meditationType
+      : null;
+  const contextTags =
+    params.contextTags ??
+    buildScriptLabContextTags({
+      meditationType,
+      userText: params.transcript,
+    });
+  const generalTags = prepareGeneralTagsForVerification(params.generalTags, {
+    meditationType,
+    contextTags,
+  });
 
   const hasCustom = params.beatsBefore.some((b) => b.custom && b.text?.trim());
   if (!hasCustom || generalTags.length === 0) {
@@ -1019,6 +1137,7 @@ export async function verifyScriptLabBeats(params: {
       correctionsApplied: false,
       sentenceVerdicts: [],
       usage: null,
+      usageBreakdown: [],
     };
   }
 
@@ -1031,6 +1150,7 @@ export async function verifyScriptLabBeats(params: {
       correctionsApplied: false,
       sentenceVerdicts: [],
       usage: null,
+      usageBreakdown: [],
     };
   }
 
@@ -1040,8 +1160,9 @@ export async function verifyScriptLabBeats(params: {
     generalTags,
   });
 
-  const model = params.model ?? CLAUDE_SONNET_45_MODEL_ID;
+  const model = SCRIPT_LAB_HAIKU_MODEL;
   const timeoutMs = params.timeoutMs ?? 45_000;
+  const stage = params.verificationStage ?? "v1_verification";
 
   try {
     let usage: { input_tokens: number; output_tokens: number } | null = null;
@@ -1118,6 +1239,9 @@ export async function verifyScriptLabBeats(params: {
       correctionsApplied,
       sentenceVerdicts: verdicts,
       usage,
+      usageBreakdown: usage
+        ? [{ stage, model, usage }]
+        : [],
     };
   } catch (err) {
     console.warn("Beat verification error:", err);
@@ -1128,6 +1252,7 @@ export async function verifyScriptLabBeats(params: {
       correctionsApplied: false,
       sentenceVerdicts: [],
       usage: null,
+      usageBreakdown: [],
     };
   }
 }

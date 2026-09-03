@@ -2,6 +2,10 @@ import { buildMeditationScriptGenerationPrompt } from "./meditation-script-gener
 import { parseAnthropicMessageUsage } from "./anthropic-pricing";
 import { verifyScriptLabBeats } from "./script-lab-beat-verification";
 import {
+  SCRIPT_LAB_SONNET_MODEL,
+  type ScriptLabUsageBreakdownEntry,
+} from "./script-lab-models";
+import {
   buildTagRepeatabilityMap,
   collapseSameConnectiveSeparatedOnlyByPauses,
   dropDuplicateSingularTagBeats,
@@ -30,7 +34,8 @@ function mergeUsage(
 
 export async function generateScriptLabScript(params: {
   apiKey: string;
-  model: string;
+  /** @deprecated Display-only; generation always uses SCRIPT_LAB_SONNET_MODEL. */
+  model?: string;
   transcript: string;
   meditationStyle: string;
   journalMode: boolean;
@@ -48,9 +53,19 @@ export async function generateScriptLabScript(params: {
   generalTagVariants: Array<{
     name: string;
     repeatability?: ScriptSegmentRepeatability;
-    variants: Array<{ variantId: string; text: string; direction?: string | null }>;
+    description?: string;
+    scope?: "general" | "types";
+    types?: string[];
+    variants: Array<{
+      variantId: string;
+      text: string;
+      direction?: string | null;
+      requiredConstraints?: string[];
+      excludedConstraints?: string[];
+    }>;
   }>;
   tagRepeatabilityByName?: Record<string, ScriptSegmentRepeatability>;
+  contextTags?: string[];
 }): Promise<{
   beats: ScriptLabBeat[];
   beatsBeforeVerification: ScriptLabBeat[];
@@ -58,6 +73,7 @@ export async function generateScriptLabScript(params: {
   verificationCorrectionsApplied: boolean;
   beatWarnings: ScriptLabBeatDuplicateWarning[];
   usage: { input_tokens: number; output_tokens: number } | null;
+  usageBreakdown: ScriptLabUsageBreakdownEntry[];
   /** First generation call only (before verification) — for single-shot cost simulation. */
   firstPassUsage: { input_tokens: number; output_tokens: number } | null;
 }> {
@@ -81,7 +97,7 @@ export async function generateScriptLabScript(params: {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: params.model,
+      model: SCRIPT_LAB_SONNET_MODEL,
       max_tokens: 8192,
       system,
       tools: [tool],
@@ -119,10 +135,11 @@ export async function generateScriptLabScript(params: {
 
   const verified = await verifyScriptLabBeats({
     apiKey: params.apiKey,
-    model: params.model,
     transcript: params.transcript,
     beatsBefore: beatsBeforeVerification,
     generalTags: params.generalTagVariants,
+    meditationType: params.journalMode ? null : params.meditationStyle,
+    contextTags: params.contextTags,
   });
 
   const finalBeats = collapseSameConnectiveSeparatedOnlyByPauses(
@@ -132,6 +149,16 @@ export async function generateScriptLabScript(params: {
 
   const beatWarnings = findDuplicateBeatTypeWarnings(finalBeats, repMap);
 
+  const usageBreakdown: ScriptLabUsageBreakdownEntry[] = [];
+  if (primaryUsage) {
+    usageBreakdown.push({
+      stage: "v1_generation",
+      model: SCRIPT_LAB_SONNET_MODEL,
+      usage: primaryUsage,
+    });
+  }
+  usageBreakdown.push(...verified.usageBreakdown);
+
   return {
     beats: finalBeats,
     beatsBeforeVerification: verified.beatsBeforeVerification,
@@ -139,6 +166,7 @@ export async function generateScriptLabScript(params: {
     verificationCorrectionsApplied: verified.correctionsApplied,
     beatWarnings,
     usage: mergeUsage(primaryUsage, verified.usage),
+    usageBreakdown,
     firstPassUsage: primaryUsage,
   };
 }

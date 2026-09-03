@@ -22,7 +22,7 @@ import {
   renderStressTestScript,
 } from "@/lib/stress-test-stats";
 import { buildStressTestTranscript } from "@/lib/stress-test-transcript";
-import { parseTokenUsage, type TokenUsage } from "@/lib/script-lab-cost";
+import { parseTokenUsage, parseUsageBreakdown, type TokenUsage } from "@/lib/script-lab-cost";
 
 export type StressTestRunStatus =
   | "pending"
@@ -179,6 +179,7 @@ async function runSingleStressTest(params: {
       : [];
     const generationUsage = parseTokenUsageFromResponse(genData.usage);
     const firstPassUsage = parseTokenUsageFromResponse(genData.firstPassUsage);
+    let usageBreakdown = parseUsageBreakdown(genData.usageBreakdown);
     const v3Meta =
       genData.v3Meta && typeof genData.v3Meta === "object"
         ? (genData.v3Meta as ScriptLabV3Meta)
@@ -209,6 +210,10 @@ async function runSingleStressTest(params: {
       }
 
       fillUsage = parseTokenUsageFromResponse(fillData.usage);
+      usageBreakdown = [
+        ...usageBreakdown.filter((e) => e.stage !== "fill"),
+        ...parseUsageBreakdown(fillData.usageBreakdown),
+      ];
       const picksByBeatIndex: Record<number, string> = {};
       if (fillData.picksByBeatIndex && typeof fillData.picksByBeatIndex === "object") {
         for (const [k, v] of Object.entries(
@@ -271,6 +276,7 @@ async function runSingleStressTest(params: {
       tagMetaByName,
       generationUsage,
       fillUsage,
+      usageBreakdown,
       firstPassUsage,
       finalScriptText: renderedText,
     });
