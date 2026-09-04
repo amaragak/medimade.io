@@ -15,6 +15,7 @@ import {
   meditationGlobalUserPk,
   meditationUserPk,
 } from "../lib/meditation-user-pk";
+import { listProgramOwnedAudioKeys } from "../lib/programs";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const s3 = new S3Client({});
@@ -399,9 +400,20 @@ function buildLibraryItems(params: {
   cfDomain: string;
   draftUserFallback?: string;
   speakerNames: Map<string, string>;
+  /** Program-shelf audio keys — omit from My Creations / uncatalogued merge. */
+  excludeS3Keys?: Set<string>;
 }): OutItem[] {
-  const { ddbItems, s3Objects, cfDomain, draftUserFallback, speakerNames } = params;
+  const {
+    ddbItems,
+    s3Objects,
+    cfDomain,
+    draftUserFallback,
+    speakerNames,
+    excludeS3Keys,
+  } = params;
   const merged = new Map<string, OutItem>();
+  const excluded = excludeS3Keys ?? new Set<string>();
+  const claimedOnly = new Set<string>();
 
   for (const row of ddbItems) {
     const isDraft = row.isDraft === true;
@@ -416,6 +428,12 @@ function buildLibraryItems(params: {
       continue;
     }
     const catalogS3Key = isDraft ? s3Key : meditationPlaybackS3Key(s3Key);
+    if (excluded.has(s3Key) || excluded.has(catalogS3Key)) {
+      // Claim the key so an S3 orphan doesn't reappear as "Uncatalogued audio".
+      claimedOnly.add(catalogS3Key);
+      claimedOnly.add(s3Key);
+      continue;
+    }
     const sk = typeof row.sk === "string" ? row.sk : null;
     const title =
       typeof row.title === "string" && row.title.trim()
@@ -559,8 +577,12 @@ function buildLibraryItems(params: {
     });
   }
 
+  for (const k of excluded) claimedOnly.add(k);
+
   for (const obj of s3Objects) {
-    if (merged.has(obj.key)) continue;
+    if (merged.has(obj.key) || claimedOnly.has(obj.key) || excluded.has(obj.key)) {
+      continue;
+    }
     merged.set(obj.key, {
       id: null,
       sk: null,
@@ -670,13 +692,23 @@ export async function handler(
       return json(200, { items });
     }
 
+    const programAudioKeys = await listProgramOwnedAudioKeys().catch(
+      () => new Set<string>(),
+    );
+
     if (!user) {
       const [ddbItems, s3Objects] = await Promise.all([
         scanAllMeditationItems(tableName),
         listAllMeditationMp3Keys(bucket),
       ]);
       return json(200, {
-        items: buildLibraryItems({ ddbItems, s3Objects, cfDomain, speakerNames }),
+        items: buildLibraryItems({
+          ddbItems,
+          s3Objects,
+          cfDomain,
+          speakerNames,
+          excludeS3Keys: programAudioKeys,
+        }),
       });
     }
 
@@ -712,6 +744,7 @@ export async function handler(
         cfDomain,
         draftUserFallback: user.sub,
         speakerNames,
+        excludeS3Keys: programAudioKeys,
       }),
     });
   } catch (e) {

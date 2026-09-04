@@ -970,6 +970,9 @@ export type OrpheusSpeaker = {
 
 export type TtsProvider = "fish" | "orpheus";
 
+/** Fish pause render path. Default `segmented` (ffmpeg silence). */
+export type FishPauseMode = "native" | "segmented";
+
 /** Pedalboard preset for light delay + reverb (sound mixer / speaker previews). */
 export const VOICE_FX_PRESET_MEDITATION_MIXER = "mixer";
 
@@ -1239,6 +1242,10 @@ export async function createMeditationAudioJob(params: {
   fishTtsModel?: "s2.1-pro" | "s2.1-pro-free" | "s1" | string;
   /** Dev-only Claude A/B for worker script + metadata generation. */
   claudeModel?: string;
+  /** Dev: Fish qualitative tags vs ffmpeg silence chunks. Default segmented. */
+  fishPauseMode?: FishPauseMode;
+  /** Program shelf audio — keep off My Creations. */
+  excludeFromLibrary?: boolean;
   speed?: number;
   /** If set, applies voice FX (Pedalboard) after loudness normalization. */
   voiceFxPreset?: string | null;
@@ -1286,8 +1293,12 @@ export async function createMeditationAudioJob(params: {
     ...(params.ttsProvider ? { ttsProvider: params.ttsProvider } : {}),
     ...(params.fishTtsModel ? { fishTtsModel: params.fishTtsModel } : {}),
     ...(params.claudeModel ? { claudeModel: params.claudeModel } : {}),
+    ...(params.fishPauseMode === "native" || params.fishPauseMode === "segmented"
+      ? { fishPauseMode: params.fishPauseMode }
+      : {}),
     meditationTargetMinutes,
     ...(params.journalMode === true ? { journalMode: true } : {}),
+    ...(params.excludeFromLibrary === true ? { excludeFromLibrary: true } : {}),
     ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
     ...(sessionTokenForBody() ? { sessionToken: sessionTokenForBody() } : {}),
     ...(speed === undefined ? {} : { speed }),
@@ -2191,6 +2202,262 @@ export async function deleteAdminFactoryMix(id: string): Promise<void> {
     throw new Error(data.detail ?? data.error ?? res.statusText);
   }
 }
+
+export type AdminProgramDayStatus = "draft" | "generating" | "ready" | "failed";
+
+export type AdminProgramDay = {
+  id: string;
+  dayNumber: number;
+  title: string;
+  prompt: string;
+  description: string;
+  speakerModelId: string;
+  compositionKey: string;
+  targetMinutes: MeditationTargetMinutes;
+  status: AdminProgramDayStatus;
+  jobId: string | null;
+  audioUrl: string | null;
+  audioKey: string | null;
+  errorMessage: string | null;
+  generatedAt: string | null;
+};
+
+export type AdminProgram = {
+  id: string;
+  title: string;
+  description: string;
+  published: boolean;
+  sort: number;
+  days: AdminProgramDay[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+function normalizeAdminProgramDay(raw: unknown): AdminProgramDay | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = typeof o.id === "string" ? o.id.trim() : "";
+  if (!id) return null;
+  const status =
+    o.status === "generating" || o.status === "ready" || o.status === "failed"
+      ? o.status
+      : "draft";
+  return {
+    id,
+    dayNumber:
+      typeof o.dayNumber === "number" && Number.isFinite(o.dayNumber)
+        ? Math.max(1, Math.floor(o.dayNumber))
+        : 1,
+    title: typeof o.title === "string" ? o.title : "",
+    prompt: typeof o.prompt === "string" ? o.prompt : "",
+    description: typeof o.description === "string" ? o.description : "",
+    speakerModelId: typeof o.speakerModelId === "string" ? o.speakerModelId : "",
+    compositionKey: typeof o.compositionKey === "string" ? o.compositionKey : "",
+    targetMinutes: coerceMeditationTargetMinutes(o.targetMinutes),
+    status,
+    jobId: typeof o.jobId === "string" ? o.jobId : null,
+    audioUrl: typeof o.audioUrl === "string" ? o.audioUrl : null,
+    audioKey: typeof o.audioKey === "string" ? o.audioKey : null,
+    errorMessage: typeof o.errorMessage === "string" ? o.errorMessage : null,
+    generatedAt: typeof o.generatedAt === "string" ? o.generatedAt : null,
+  };
+}
+
+function normalizeAdminProgram(raw: unknown): AdminProgram | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = typeof o.id === "string" ? o.id.trim() : "";
+  if (!id) return null;
+  const days = Array.isArray(o.days)
+    ? o.days
+        .map(normalizeAdminProgramDay)
+        .filter((d): d is AdminProgramDay => Boolean(d))
+    : [];
+  return {
+    id,
+    title: typeof o.title === "string" ? o.title : "Untitled program",
+    description: typeof o.description === "string" ? o.description : "",
+    published: o.published === true,
+    sort: typeof o.sort === "number" && Number.isFinite(o.sort) ? o.sort : 0,
+    days,
+    createdAt: typeof o.createdAt === "string" ? o.createdAt : "",
+    updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : "",
+  };
+}
+
+export async function listAdminPrograms(): Promise<AdminProgram[]> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/programs`, {
+    headers: medimadeApiAuthHeaders(),
+  });
+  const data = (await res.json()) as {
+    programs?: unknown[];
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  return (data.programs ?? [])
+    .map(normalizeAdminProgram)
+    .filter((p): p is AdminProgram => Boolean(p));
+}
+
+/** Published programs for the Library Programs shelf (ready days only). */
+export type LibraryProgramDay = {
+  id: string;
+  dayNumber: number;
+  title: string;
+  description: string;
+  targetMinutes: MeditationTargetMinutes;
+  audioUrl: string;
+  audioKey: string;
+  /** Music / composition bed mixed live under the voice stem. */
+  backgroundMusicKey: string;
+};
+
+export type LibraryProgram = {
+  id: string;
+  title: string;
+  description: string;
+  sort: number;
+  days: LibraryProgramDay[];
+};
+
+function normalizeLibraryProgramDay(raw: unknown): LibraryProgramDay | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = typeof o.id === "string" ? o.id.trim() : "";
+  const audioUrl = typeof o.audioUrl === "string" ? o.audioUrl.trim() : "";
+  const audioKey = typeof o.audioKey === "string" ? o.audioKey.trim() : "";
+  if (!id || !audioUrl || !audioKey) return null;
+  return {
+    id,
+    dayNumber:
+      typeof o.dayNumber === "number" && Number.isFinite(o.dayNumber)
+        ? Math.max(1, Math.floor(o.dayNumber))
+        : 1,
+    title: typeof o.title === "string" ? o.title : "",
+    description: typeof o.description === "string" ? o.description : "",
+    targetMinutes: coerceMeditationTargetMinutes(o.targetMinutes),
+    audioUrl,
+    audioKey,
+    backgroundMusicKey:
+      typeof o.backgroundMusicKey === "string"
+        ? o.backgroundMusicKey.trim()
+        : typeof o.compositionKey === "string"
+          ? o.compositionKey.trim()
+          : "",
+  };
+}
+
+function normalizeLibraryProgram(raw: unknown): LibraryProgram | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = typeof o.id === "string" ? o.id.trim() : "";
+  if (!id) return null;
+  const days = Array.isArray(o.days)
+    ? o.days
+        .map(normalizeLibraryProgramDay)
+        .filter((d): d is LibraryProgramDay => Boolean(d))
+    : [];
+  return {
+    id,
+    title: typeof o.title === "string" ? o.title : "Untitled program",
+    description: typeof o.description === "string" ? o.description : "",
+    sort: typeof o.sort === "number" && Number.isFinite(o.sort) ? o.sort : 0,
+    days,
+  };
+}
+
+export async function listLibraryPrograms(): Promise<LibraryProgram[]> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/library/programs`);
+  const data = (await res.json()) as {
+    programs?: unknown[];
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  return (data.programs ?? [])
+    .map(normalizeLibraryProgram)
+    .filter((p): p is LibraryProgram => Boolean(p));
+}
+
+export async function saveAdminProgram(
+  program: Partial<AdminProgram> & { id?: string },
+): Promise<AdminProgram> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/programs`, {
+    method: "PATCH",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify(program),
+  });
+  const data = (await res.json()) as {
+    program?: unknown;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  const saved = normalizeAdminProgram(data.program);
+  if (!saved) throw new Error("Invalid program response");
+  return saved;
+}
+
+export async function deleteAdminProgram(id: string): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/programs`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ action: "delete", id }),
+  });
+  const data = (await res.json()) as { error?: string; detail?: string };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+}
+
+/** LLM ~50-word blurb from a program day one-shot prompt. */
+export async function generateAdminProgramDayDescription(params: {
+  prompt: string;
+  title?: string;
+  programTitle?: string;
+}): Promise<string> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await fetch(`${base}/admin/programs`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      action: "describe-day",
+      prompt: params.prompt,
+      title: params.title ?? "",
+      programTitle: params.programTitle ?? "",
+    }),
+  });
+  const data = (await res.json()) as {
+    description?: string;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.detail ?? data.error ?? res.statusText);
+  }
+  const description = typeof data.description === "string" ? data.description.trim() : "";
+  if (!description) throw new Error("No description returned");
+  return description;
+}
+
+/** Treat day descriptions shorter than this as missing (auto-generate). */
+export const PROGRAM_DAY_DESCRIPTION_MIN_CHARS = 100;
 
 export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> {
   const base = getMedimadeApiBase();

@@ -88,10 +88,17 @@ export function stripPauseMarkers(script: string): string {
 
 /**
  * Fish Audio inline pause tags (S2 `[brackets]` / S1 `(parens)`).
- * Timed `[pause 4s]` so admin band lengths (and PAUSE_RENDER_SCALE) still apply
- * in the single-request path.
+ * Use Fish’s documented qualitative tags — not timed `[pause 4s]`.
+ * @see https://docs.fish.audio/developer-guide/core-features/emotions
  */
 export type FishPauseTagStyle = "s2" | "s1";
+
+/** Fish S2 pause cue text (without brackets). */
+export type FishPauseCue =
+  | "break"
+  | "short pause"
+  | "long pause"
+  | "long-break";
 
 export function fishPauseTagStyleForModel(model: string | null | undefined): FishPauseTagStyle {
   const m = (model ?? "").trim().toLowerCase();
@@ -100,38 +107,62 @@ export function fishPauseTagStyleForModel(model: string | null | undefined): Fis
   return "s2";
 }
 
-function formatPauseSecondsLabel(seconds: number): string {
-  const n = Math.round(Math.max(0, seconds) * 10) / 10;
-  if (n <= 0) return "0s";
-  return Number.isInteger(n) ? `${n}s` : `${n.toFixed(1)}s`;
+/**
+ * Map our named bands → Fish pause cues.
+ * Admin band seconds still apply on the segmented (ffmpeg) path only.
+ */
+export function fishPauseCueForBand(band: ScriptPauseBand): FishPauseCue {
+  switch (band) {
+    case "extra-short":
+      return "break";
+    case "short":
+      return "short pause";
+    case "medium":
+      return "long pause";
+    case "long":
+    case "extra-long":
+      return "long-break";
+  }
 }
 
-/** `[pause 4s]` (S2) or `(pause 4s)` (S1). */
-export function fishNativeTimedPauseTag(
-  seconds: number,
+/** Legacy `[[PAUSE 3s]]` → nearest Fish cue by duration. */
+function fishPauseCueForSeconds(seconds: number): FishPauseCue | null {
+  if (!(seconds > 0)) return null;
+  if (seconds < 2) return "break";
+  if (seconds < 3.5) return "short pause";
+  if (seconds < 6) return "long pause";
+  return "long-break";
+}
+
+/** `[break]` (S2) or `(break)` (S1). */
+export function fishNativePauseTag(
+  cue: FishPauseCue,
   style: FishPauseTagStyle = "s2",
 ): string {
-  const label = formatPauseSecondsLabel(seconds);
-  return style === "s1" ? `(pause ${label})` : `[pause ${label}]`;
+  return style === "s1" ? `(${cue})` : `[${cue}]`;
 }
 
 /**
- * Replace `[[PAUSE …]]` with Fish timed pause tags using admin/default band seconds.
- * Unknown / empty specs are removed.
+ * Replace `[[PAUSE …]]` with Fish qualitative pause tags.
+ * Unknown / empty specs are removed. `bands` / `scale` are ignored (seconds
+ * only matter on the segmented ffmpeg path).
  */
 export function replacePauseMarkersWithFishNative(
   script: string,
   style: FishPauseTagStyle = "s2",
-  bands?: Record<ScriptPauseBand, number>,
-  scale = 1,
+  _bands?: Record<ScriptPauseBand, number>,
+  _scale = 1,
 ): string {
   if (!script) return "";
   const re = new RegExp(SCRIPT_PAUSE_MARKER_RE.source, SCRIPT_PAUSE_MARKER_RE.flags);
   return script
     .replace(re, (_full, raw: string) => {
-      const secs = secondsForPauseSpec(raw ?? "", bands) * scale;
-      if (!(secs > 0)) return " ";
-      return ` ${fishNativeTimedPauseTag(secs, style)} `;
+      const band = normalizePauseBand(raw ?? "");
+      const cue = band
+        ? fishPauseCueForBand(band)
+        : fishPauseCueForSeconds(secondsForPauseSpec(raw ?? ""));
+      if (!cue) return " ";
+      return ` ${fishNativePauseTag(cue, style)} `;
     })
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")

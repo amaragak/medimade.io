@@ -597,6 +597,31 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    const libraryPrograms = new lambda_nodejs.NodejsFunction(
+      this,
+      "LibraryProgramsFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/library-programs.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(15),
+        memorySize: 256,
+        environment: {
+          VOICE_ADMIN_TABLE_NAME: voiceAdminTable.tableName,
+        },
+      },
+    );
+    voiceAdminTable.grantReadData(libraryPrograms);
+
+    httpApi.addRoutes({
+      path: "/library/programs",
+      methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "LibraryProgramsIntegration",
+        libraryPrograms,
+      ),
+    });
+
     const libraryDraft = new lambda_nodejs.NodejsFunction(
       this,
       "LibraryDraftFunction",
@@ -925,6 +950,41 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "AdminFactoryMixesIntegration",
         adminFactoryMixes,
+      ),
+    });
+
+    const adminPrograms = new lambda_nodejs.NodejsFunction(
+      this,
+      "AdminProgramsFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/admin-programs.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(60),
+        memorySize: 256,
+        environment: {
+          VOICE_ADMIN_TABLE_NAME: voiceAdminTable.tableName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+          ADMIN_EMAILS: adminEmails,
+          CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,
+        },
+      },
+    );
+    voiceAdminTable.grantReadWriteData(adminPrograms);
+    authJwtSecret.grantRead(adminPrograms);
+    claudeApiKeySecret.grantRead(adminPrograms);
+
+    httpApi.addRoutes({
+      path: "/admin/programs",
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.PATCH,
+        apigwv2.HttpMethod.POST,
+        apigwv2.HttpMethod.OPTIONS,
+      ],
+      integration: new integrations.HttpLambdaIntegration(
+        "AdminProgramsIntegration",
+        adminPrograms,
       ),
     });
 

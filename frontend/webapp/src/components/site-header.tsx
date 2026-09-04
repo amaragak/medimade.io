@@ -24,7 +24,7 @@ type NavSubItem = { href: string; label: string };
 
 const meditateSub: NavSubItem[] = [
   { href: "/meditate/create", label: "Create" },
-  { href: "/meditate/library", label: "Library" },
+  { href: "/meditate/library/creations", label: "Library" },
   { href: "/meditate/sounds", label: "Sounds" },
 ];
 

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { IconAdjustmentsHorizontal, IconPlus } from "@tabler/icons-react";
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Switch from "@radix-ui/react-switch";
@@ -11,8 +11,11 @@ import { SoundFolderSelect } from "@/components/sound-folder-select";
 import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
 import {
   type LibraryMeditationItem,
+  type LibraryProgram,
+  type LibraryProgramDay,
   libraryMeditationCategoryLabel,
   listLibraryMeditations,
+  listLibraryPrograms,
   getMeditationAudioJobStatus,
   getMedimadeMediaBaseUrl,
   listBackgroundAudio,
@@ -490,7 +493,80 @@ function IconHeart({
 
 type ViewMode = "list" | "grid";
 type SortBy = "newest" | "oldest" | "title";
-type LibraryMainTab = "meditations" | "community";
+type LibraryMainTab = "meditations" | "programs" | "community";
+type LibraryPathTab = "creations" | "programs" | "community";
+
+const LIBRARY_MAIN_TABS: {
+  id: LibraryMainTab;
+  path: LibraryPathTab;
+  label: string;
+  shortLabel: string;
+}[] = [
+  { id: "meditations", path: "creations", label: "My Creations", shortLabel: "Creations" },
+  { id: "programs", path: "programs", label: "Programs", shortLabel: "Programs" },
+  { id: "community", path: "community", label: "Community", shortLabel: "Community" },
+];
+
+function libraryTabFromPath(tab: string | null | undefined): LibraryMainTab {
+  if (tab === "programs") return "programs";
+  if (tab === "community") return "community";
+  return "meditations";
+}
+
+function libraryPathForTab(tab: LibraryMainTab): LibraryPathTab {
+  return LIBRARY_MAIN_TABS.find((t) => t.id === tab)?.path ?? "creations";
+}
+
+/** URL-safe slug from a program title (e.g. "Chakra Cleanse" → "chakra-cleanse"). */
+function slugifyProgramTitle(title: string): string {
+  const slug = title
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return slug || "program";
+}
+
+function programUrlSlug(
+  program: { id: string; title: string },
+  all: { id: string; title: string }[],
+): string {
+  const base = slugifyProgramTitle(program.title);
+  const collisions = all.filter((p) => slugifyProgramTitle(p.title) === base);
+  if (collisions.length <= 1) return base;
+  return `${base}-${program.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8)}`;
+}
+
+function findLibraryProgramByPathKey(
+  programs: LibraryProgram[],
+  key: string,
+): LibraryProgram | null {
+  const k = key.trim().toLowerCase();
+  if (!k) return null;
+  const byId = programs.find((p) => p.id.toLowerCase() === k);
+  if (byId) return byId;
+  const bySlug = programs.find((p) => programUrlSlug(p, programs) === k);
+  if (bySlug) return bySlug;
+  return (
+    programs.find((p) => slugifyProgramTitle(p.title) === k) ?? null
+  );
+}
+
+function libraryPathSegments(pathname: string | null | undefined): {
+  tab: string | null;
+  programSlug: string | null;
+} {
+  const parts = (pathname ?? "").split("/").filter(Boolean);
+  const i = parts.indexOf("library");
+  if (i < 0) return { tab: null, programSlug: null };
+  const tab = parts[i + 1] ?? null;
+  const programSlug =
+    tab === "programs" && parts[i + 2] ? parts[i + 2]! : null;
+  return { tab, programSlug };
+}
 
 type ActiveTrack = {
   url: string;
@@ -1135,6 +1211,58 @@ function isPendingRow(x: LibraryRow): x is PendingLibraryMeditationItem {
   return (x as PendingLibraryMeditationItem).kind === "pending";
 }
 
+function programDayLibraryTitle(day: {
+  title: string;
+  dayNumber: number;
+}): string {
+  return (
+    day.title
+      .replace(/^(?:Day|Lesson|Class)\s+\d+\s*[·:.-]?\s*/i, "")
+      .trim() ||
+    day.title.trim() ||
+    `Lesson ${day.dayNumber}`
+  );
+}
+
+/** Map a program class onto the shared library card shape so we reuse renderItem. */
+function libraryItemFromProgramDay(
+  day: LibraryProgramDay,
+  program: LibraryProgram,
+): LibraryMeditationItem {
+  const musicKey = day.backgroundMusicKey.trim();
+  return {
+    id: `program-day:${program.id}:${day.id}`,
+    sk: null,
+    s3Key: day.audioKey,
+    audioUrl: day.audioUrl,
+    title: programDayLibraryTitle(day),
+    meditationType: program.title,
+    meditationStyle: null,
+    speakerModelId: null,
+    speakerName: null,
+    description: day.description.trim() || null,
+    createdAt: null,
+    durationSeconds: day.targetMinutes * 60,
+    scriptText: null,
+    scriptTruncated: false,
+    rating: null,
+    favourite: false,
+    archived: false,
+    catalogued: true,
+    mp3Bytes: null,
+    isDraft: false,
+    liveMix: Boolean(musicKey),
+    backgroundMusicKey: musicKey || null,
+    backgroundMusicGain: musicKey ? SOUNDSCAPE_MIX_GAIN : null,
+    backgroundNatureKey: "",
+    backgroundDrumsKey: "",
+    backgroundNoiseKey: "",
+    backgroundNatureGain: 0,
+    backgroundDrumsGain: 0,
+    backgroundNoiseGain: 0,
+  };
+}
+
 function librarySearchTokens(q: string): string[] {
   return q
     .toLowerCase()
@@ -1732,10 +1860,18 @@ function LibraryAudioStrip({
 
 export default function LibraryView({
   initialItems = null,
+  initialTab = "creations",
+  initialProgramSlug = null,
 }: {
   initialItems?: LibraryMeditationItem[] | null;
+  /** URL segment: creations | programs | community */
+  initialTab?: LibraryPathTab | string;
+  /** When on /meditate/library/programs/[slug], open that program. */
+  initialProgramSlug?: string | null;
 }) {
   const alwaysShowRowChrome = useMobileOrTouchChrome();
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [items, setItems] = useState<LibraryMeditationItem[]>(
     Array.isArray(initialItems) ? initialItems : [],
@@ -1792,8 +1928,61 @@ export default function LibraryView({
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
-  const [libraryTab, setLibraryTab] = useState<LibraryMainTab>("meditations");
+  const [libraryTab, setLibraryTab] = useState<LibraryMainTab>(() =>
+    libraryTabFromPath(initialTab),
+  );
+  const [programs, setPrograms] = useState<LibraryProgram[]>([]);
+  const [programsLoading, setProgramsLoading] = useState(false);
+  const [programsError, setProgramsError] = useState<string | null>(null);
+  const [exploringProgramId, setExploringProgramId] = useState<string | null>(
+    null,
+  );
+  const [programPathKey, setProgramPathKey] = useState<string | null>(() =>
+    initialProgramSlug?.trim() ? initialProgramSlug.trim() : null,
+  );
   const PAGE_SIZE = 24;
+
+  function goToLibraryTab(
+    tab: LibraryMainTab,
+    opts?: { replace?: boolean; keepQuery?: boolean },
+  ) {
+    const path = `/meditate/library/${libraryPathForTab(tab)}`;
+    const qs = opts?.keepQuery ? searchParams.toString() : "";
+    const href = qs ? `${path}?${qs}` : path;
+    setLibraryTab(tab);
+    setExploringProgramId(null);
+    setProgramPathKey(null);
+    if (opts?.replace) router.replace(href);
+    else router.push(href);
+  }
+
+  function openProgram(program: LibraryProgram) {
+    const slug = programUrlSlug(program, programs);
+    setExploringProgramId(program.id);
+    setProgramPathKey(slug);
+    router.push(`/meditate/library/programs/${encodeURIComponent(slug)}`);
+  }
+
+  function closeProgram() {
+    setExploringProgramId(null);
+    setProgramPathKey(null);
+    router.push("/meditate/library/programs");
+  }
+
+  useEffect(() => {
+    const { tab, programSlug } = libraryPathSegments(pathname);
+    if (tab === "creations" || tab === "programs" || tab === "community") {
+      const next = libraryTabFromPath(tab);
+      setLibraryTab((cur) => (cur === next ? cur : next));
+    }
+    if (tab === "programs") {
+      setProgramPathKey((cur) => (cur === programSlug ? cur : programSlug));
+      if (!programSlug) setExploringProgramId(null);
+    } else {
+      setProgramPathKey(null);
+      setExploringProgramId(null);
+    }
+  }, [pathname]);
   const [page, setPage] = useState(1);
   const [nowPlaying, setNowPlaying] = useState<ActiveTrack | null>(null);
   const [playingS3Key, setPlayingS3Key] = useState<string | null>(null);
@@ -1841,6 +2030,41 @@ export default function LibraryView({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (libraryTab !== "programs") return;
+    let cancelled = false;
+    setProgramsLoading(true);
+    setProgramsError(null);
+    void listLibraryPrograms()
+      .then((list) => {
+        if (cancelled) return;
+        setPrograms(list);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setPrograms([]);
+        setProgramsError(
+          e instanceof Error ? e.message : "Could not load programs",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setProgramsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [libraryTab]);
+
+  useEffect(() => {
+    if (!programPathKey) {
+      setExploringProgramId(null);
+      return;
+    }
+    if (programs.length === 0) return;
+    const found = findLibraryProgramByPathKey(programs, programPathKey);
+    setExploringProgramId(found?.id ?? null);
+  }, [programPathKey, programs]);
 
   const sortedItems = useMemo(() => {
     const next = [...items];
@@ -1902,11 +2126,13 @@ export default function LibraryView({
 
   const libraryRows: LibraryRow[] = useMemo(() => {
     if (libraryTab === "community") return sortedCommunityItems;
+    if (libraryTab === "programs") return [];
     return [...pendingRows, ...sortedItems];
   }, [libraryTab, pendingRows, sortedItems, sortedCommunityItems]);
 
   const visibleItems: LibraryRow[] = useMemo(() => {
     const tokens = librarySearchTokens(searchQuery);
+    if (libraryTab === "programs") return [];
     if (libraryTab === "community") {
       const list =
         categoryFilter === "all"
@@ -1948,6 +2174,8 @@ export default function LibraryView({
   useEffect(() => {
     setCategoryFilter("all");
     setFavouritesOnly(false);
+    setExploringProgramId(null);
+    if (libraryTab === "programs") setViewMode("list");
   }, [libraryTab]);
 
   const nonPendingVisibleItems = useMemo(() => {
@@ -2346,8 +2574,8 @@ export default function LibraryView({
     if (!focus) return;
     focusHandledRef.current = true;
 
-    // Ensure we show the meditations tab for a generated audio key.
-    setLibraryTab("meditations");
+    // Ensure we show the creations tab for a generated audio key.
+    goToLibraryTab("meditations", { replace: true, keepQuery: true });
 
     const found = visibleItems.find((x) => {
       if (isPendingRow(x)) return x.pendingKey === focus;
@@ -2378,7 +2606,7 @@ export default function LibraryView({
     if (!id) return;
 
     if (libraryTab !== "community") {
-      setLibraryTab("community");
+      goToLibraryTab("community", { replace: true, keepQuery: true });
       return;
     }
     if (categoryFilter !== "all") {
@@ -2836,13 +3064,15 @@ export default function LibraryView({
     const fishCostText = showFishCostTooltip ? fishCostTooltipText(m) : null;
 
     const isCommunity = libraryTab === "community";
+    const isProgramShelf = libraryTab === "programs";
+    const hideOwnerActions = isCommunity || isProgramShelf;
     const stars = isCommunity ? null : (
       <div className="flex items-center gap-0.5">
         {[1, 2, 3, 4, 5].map((star) => (
           <button
             key={star}
             type="button"
-            disabled={!m.sk || ratingBusy === m.sk}
+            disabled={!m.sk || ratingBusy === m.sk || isProgramShelf}
             onClick={() =>
               void setRating(m, m.rating === star ? null : star)
             }
@@ -2850,11 +3080,13 @@ export default function LibraryView({
               m.rating != null && star <= m.rating
                 ? "text-accent"
                 : "text-star-idle"
-            } ${!m.sk ? "cursor-not-allowed opacity-40" : ""}`}
+            } ${!m.sk || isProgramShelf ? "cursor-not-allowed opacity-40" : ""}`}
             title={
-              m.sk
-                ? undefined
-                : "Ratings need a catalogued row (generated after metadata deploy)"
+              isProgramShelf
+                ? "Ratings aren’t available on program classes"
+                : m.sk
+                  ? undefined
+                  : "Ratings need a catalogued row (generated after metadata deploy)"
             }
           >
             ★
@@ -2864,7 +3096,7 @@ export default function LibraryView({
     );
 
     const favouriteDisabled = !m.sk || favouriteBusySk === m.sk;
-    const favouriteBtn = isCommunity ? null : (
+    const favouriteBtn = hideOwnerActions ? null : (
       <button
         type="button"
         onClick={() => void setFavourite(m, !m.favourite)}
@@ -2917,15 +3149,15 @@ export default function LibraryView({
         ? "opacity-100 pointer-events-auto"
         : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto";
     const publicBtn =
-      libraryTab !== "community" && m.sk && !m.isDraft ? (
+      !hideOwnerActions && m.sk && !m.isDraft ? (
         <div
           className={`flex items-center gap-2 transition-opacity ${rowChrome} ${
             publicDisabled ? "cursor-not-allowed opacity-50" : ""
           }`}
           title={
             m.isPublic === true
-              ? "Public — in Community Library"
-              : "Make public in Community Library"
+              ? "Public — in Community"
+              : "Make public in Community"
           }
         >
           <span
@@ -2948,7 +3180,7 @@ export default function LibraryView({
           </Switch.Root>
         </div>
       ) : null;
-    const archiveBtn = isCommunity ? null : (
+    const archiveBtn = hideOwnerActions ? null : (
       <button
         type="button"
         onClick={() => {
@@ -2968,12 +3200,14 @@ export default function LibraryView({
 
     const shareId = m.id?.trim() || "";
     const canShare =
-      Boolean(shareId) && (isCommunity || m.isPublic === true);
+      Boolean(shareId) &&
+      !isProgramShelf &&
+      (isCommunity || m.isPublic === true);
     const shareBtn = canShare ? (
       <button
         type="button"
         onClick={() => {
-          const url = `https://consciously.live/meditate/library?id=${encodeURIComponent(shareId)}`;
+          const url = `https://consciously.live/meditate/library/community?id=${encodeURIComponent(shareId)}`;
           void (async () => {
             try {
               await navigator.clipboard.writeText(url);
@@ -3084,7 +3318,7 @@ export default function LibraryView({
       </div>
     );
 
-    const mobileFavouriteBtn = isCommunity ? null : (
+    const mobileFavouriteBtn = hideOwnerActions ? null : (
       <button
         type="button"
         onClick={() => void setFavourite(m, !m.favourite)}
@@ -3351,7 +3585,7 @@ export default function LibraryView({
                   aria-haspopup="listbox"
                   aria-expanded={sortDropdownOpen}
                   onClick={() => setSortDropdownOpen((v) => !v)}
-                  className="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground/80 hover:border-accent/40"
+                  className="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground/80 hover:border-accent/40"
                   style={
                     sortButtonWidthPx
                       ? { width: `${sortButtonWidthPx}px` }
@@ -3379,7 +3613,7 @@ export default function LibraryView({
                   <div
                     role="listbox"
                     aria-label="Sort library"
-                    className="absolute left-0 z-20 mt-2 overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+                    className="absolute left-0 z-20 mt-2 overflow-hidden rounded-xl border border-border bg-card shadow-lg"
                     style={
                       sortMenuWidthPx
                         ? { width: `${sortMenuWidthPx}px` }
@@ -3447,7 +3681,7 @@ export default function LibraryView({
   const searchInput = (
             <SearchInput
               className="min-w-[10rem] flex-1"
-              inputClassName="py-2 placeholder:text-muted"
+              inputClassName="bg-card py-2 placeholder:text-muted"
               value={searchQuery}
               onChange={setSearchQuery}
               placeholder="Search title, description, type"
@@ -3456,7 +3690,7 @@ export default function LibraryView({
   );
 
   const mobileToolbarChrome =
-    "h-[38px] rounded-[9px] border border-foreground/12 bg-foreground/[0.06]";
+    "h-[38px] rounded-[9px] border border-border bg-card";
   const mobileFilterActive =
     sortBy !== "newest" || categoryFilter !== "all";
 
@@ -3525,36 +3759,26 @@ export default function LibraryView({
           {/* Tablet+ : tabs + create text (unchanged) */}
           <div className="hidden min-w-0 flex-wrap items-center justify-end gap-2 sm:flex">
             <div
-              className="inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
+              className="inline-flex max-w-full flex-wrap rounded-xl border border-border bg-card p-1"
               role="tablist"
               aria-label="Library section"
             >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={libraryTab === "meditations"}
-                onClick={() => setLibraryTab("meditations")}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                  libraryTab === "meditations"
-                    ? "bg-selected text-on-selected"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                My Meditations
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={libraryTab === "community"}
-                onClick={() => setLibraryTab("community")}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                  libraryTab === "community"
-                    ? "bg-selected text-on-selected"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                Community Library
-              </button>
+              {LIBRARY_MAIN_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={libraryTab === tab.id}
+                  onClick={() => goToLibraryTab(tab.id)}
+                  className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                    libraryTab === tab.id
+                      ? "bg-selected text-on-selected"
+                      : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
             <Link
               href="/meditate/create"
@@ -3567,36 +3791,26 @@ export default function LibraryView({
         {/* Mobile: compact tabs + icon create on one row */}
         <div className="mt-3 flex items-center gap-2 sm:hidden">
           <div
-            className="inline-flex min-w-0 flex-1 rounded-xl border border-border bg-background p-0.5"
+            className="inline-flex min-w-0 flex-1 rounded-xl border border-border bg-card p-0.5"
             role="tablist"
             aria-label="Library section"
           >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={libraryTab === "meditations"}
-              onClick={() => setLibraryTab("meditations")}
-              className={`min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-[13px] font-semibold transition-colors ${
-                libraryTab === "meditations"
-                  ? "bg-selected text-on-selected"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              My Meditations
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={libraryTab === "community"}
-              onClick={() => setLibraryTab("community")}
-              className={`min-w-0 flex-1 rounded-lg px-2.5 py-1.5 text-[13px] font-semibold transition-colors ${
-                libraryTab === "community"
-                  ? "bg-selected text-on-selected"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              Community
-            </button>
+              {LIBRARY_MAIN_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={libraryTab === tab.id}
+                  onClick={() => goToLibraryTab(tab.id)}
+                  className={`min-w-0 flex-1 rounded-lg px-1.5 py-1.5 text-[12px] font-semibold transition-colors sm:text-[13px] ${
+                    libraryTab === tab.id
+                      ? "bg-selected text-on-selected"
+                      : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {tab.shortLabel}
+                </button>
+              ))}
           </div>
           <Link
             href="/meditate/create"
@@ -3606,7 +3820,7 @@ export default function LibraryView({
             <IconPlus size={22} stroke={2.25} aria-hidden />
           </Link>
         </div>
-        {libraryTab !== "community" ? (
+        {libraryTab === "meditations" ? (
           <>
             <div className="mt-3 sm:hidden">{mobileSearchFilterRow}</div>
             <div className="mt-4 hidden w-full flex-wrap items-center gap-3 sm:flex">
@@ -3619,7 +3833,7 @@ export default function LibraryView({
                 className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${
                   favouritesOnly
                     ? "border-selected/60 bg-selected text-on-selected"
-                    : "border-border bg-background text-foreground hover:border-accent/40"
+                    : "border-border bg-card text-foreground hover:border-accent/40"
                 }`}
               >
                 <IconHeart filled={favouritesOnly} />
@@ -3635,7 +3849,7 @@ export default function LibraryView({
                   aria-haspopup="listbox"
                   aria-expanded={categoryDropdownOpen}
                   onClick={() => setCategoryDropdownOpen((v) => !v)}
-                  className="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-sm font-semibold text-foreground hover:border-accent/40"
+                  className="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm font-semibold text-foreground hover:border-accent/40"
                   style={
                     categoryButtonWidthPx
                       ? { width: `${categoryButtonWidthPx}px` }
@@ -3663,7 +3877,7 @@ export default function LibraryView({
                   <div
                     role="listbox"
                     aria-label="Filter category"
-                    className="absolute left-0 z-20 mt-2 overflow-hidden rounded-xl border border-border bg-background shadow-lg"
+                    className="absolute left-0 z-20 mt-2 overflow-hidden rounded-xl border border-border bg-card shadow-lg"
                     style={
                       categoryMenuWidthPx
                         ? { width: `${categoryMenuWidthPx}px` }
@@ -3722,17 +3936,155 @@ export default function LibraryView({
         </>
       ) : null}
 
-      {error ? (
+      {libraryTab === "programs" ? (
+        programsLoading ? (
+          <p className="mt-10 text-sm text-muted">Loading programs…</p>
+        ) : programsError ? (
+          <p className="mt-6 w-full min-w-0 rounded-xl border border-border bg-card px-4 py-3 text-sm text-danger">
+            {programsError}
+          </p>
+        ) : programs.length === 0 ? (
+          <div className="mt-10 w-full min-w-0 rounded-2xl border border-border bg-card px-5 py-10 text-center sm:px-10">
+            <h2 className="font-display text-xl font-medium tracking-tight">
+              Programs
+            </h2>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted">
+              Curated programs will show up here once published from Admin →
+              Programs.
+            </p>
+          </div>
+        ) : (() => {
+          const exploring = exploringProgramId
+            ? programs.find((p) => p.id === exploringProgramId)
+            : null;
+          if (programPathKey && !programsLoading && !exploring) {
+            return (
+              <div className="mt-10 w-full min-w-0 rounded-2xl border border-border bg-card px-5 py-10 text-center sm:px-10">
+                <h2 className="font-display text-xl font-medium tracking-tight">
+                  Program not found
+                </h2>
+                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted">
+                  This course isn&apos;t on the shelf (or the link is outdated).
+                </p>
+                <button
+                  type="button"
+                  onClick={closeProgram}
+                  className="mt-5 cursor-pointer rounded-full accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent"
+                >
+                  All programs
+                </button>
+              </div>
+            );
+          }
+          if (exploring) {
+            return (
+              <div className="mt-8 w-full min-w-0">
+                <button
+                  type="button"
+                  onClick={closeProgram}
+                  className="mb-4 inline-flex cursor-pointer items-center gap-1.5 text-sm font-semibold text-muted hover:text-foreground"
+                >
+                  <span aria-hidden>←</span> All programs
+                </button>
+                <header className="mb-6">
+                  <h2 className="font-display text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
+                    {exploring.title}
+                  </h2>
+                  {exploring.description ? (
+                    <p className="mt-2 w-full text-sm leading-relaxed text-muted sm:text-base">
+                      {exploring.description}
+                    </p>
+                  ) : null}
+                  <p className="mt-2 text-xs text-muted">
+                    {exploring.days.length} lesson
+                    {exploring.days.length === 1 ? "" : "s"}
+                  </p>
+                </header>
+                {exploring.days.length === 0 ? (
+                  <p className="text-sm text-muted">No lessons ready yet.</p>
+                ) : (
+                  <ul className="mt-2 flex w-full min-w-0 max-w-full flex-col gap-3">
+                    {exploring.days.map((day) =>
+                      renderItem(libraryItemFromProgramDay(day, exploring)),
+                    )}
+                  </ul>
+                )}
+              </div>
+            );
+          }
+          return (
+            <ul className="mt-10 flex w-full min-w-0 max-w-full flex-col gap-4">
+              {programs.map((program) => {
+                const lessonCount = program.days.length;
+                return (
+                  <li
+                    key={program.id}
+                    className="flex w-full min-w-0 gap-4 rounded-2xl border border-border bg-card p-4 sm:gap-5 sm:p-5"
+                  >
+                    <div
+                      className="flex h-24 w-24 shrink-0 items-center justify-center rounded-xl bg-background sm:h-28 sm:w-28"
+                      aria-hidden
+                    >
+                      <svg
+                        viewBox="0 0 48 48"
+                        className="h-10 w-10 text-muted/50"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                      >
+                        <rect x="8" y="12" width="32" height="24" rx="3" />
+                        <circle cx="18" cy="22" r="3" />
+                        <path d="M8 30l8-6 6 4 10-8 8 6" />
+                      </svg>
+                    </div>
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <h2 className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
+                        {program.title}
+                      </h2>
+                      {program.description ? (
+                        <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-muted">
+                          {program.description}
+                        </p>
+                      ) : (
+                        <p className="mt-1.5 text-sm text-muted">
+                          {lessonCount} lesson{lessonCount === 1 ? "" : "s"}
+                          {lessonCount === 0 ? " · audio coming soon" : ""}
+                        </p>
+                      )}
+                      <div className="mt-auto flex flex-wrap items-center gap-3 pt-3">
+                        {program.description ? (
+                          <span className="text-xs text-muted">
+                            {lessonCount} lesson
+                            {lessonCount === 1 ? "" : "s"}
+                          </span>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => openProgram(program)}
+                          className="cursor-pointer rounded-full accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+                        >
+                          Explore course
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          );
+        })()
+      ) : error ? (
         <p className="mt-6 w-full min-w-0 rounded-xl border border-border bg-card px-4 py-3 text-sm text-danger">
           {error}
         </p>
       ) : null}
 
-      {libraryTab !== "community" &&
+      {libraryTab !== "programs" &&
+      libraryTab === "meditations" &&
       loading &&
       pagedVisibleItems.length === 0 ? (
         <p className="mt-10 text-sm text-muted">Loading…</p>
-      ) : pagedVisibleItems.length === 0 ? (
+      ) : libraryTab !== "programs" && pagedVisibleItems.length === 0 ? (
         <p className={`${libraryTab === "community" ? "mt-4" : "mt-10"} w-full min-w-0 text-sm text-muted`}>
           {searchQuery.trim() ? (
             "No meditations match your search."
@@ -3746,7 +4098,7 @@ export default function LibraryView({
             "No meditation audio yet. Generate one from Create — it will appear here after upload."
           )}
         </p>
-      ) : (
+      ) : libraryTab !== "programs" ? (
         <ul
           className={
             viewMode === "grid"
@@ -3784,7 +4136,7 @@ export default function LibraryView({
             );
           })}
         </ul>
-      )}
+      ) : null}
 
       {pagination ? (
         <div className="mt-8 flex w-full flex-wrap items-center justify-center gap-2">

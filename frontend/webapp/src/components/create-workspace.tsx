@@ -59,6 +59,7 @@ import {
   type FishSpeaker,
   type OrpheusSpeaker,
   type TtsProvider,
+  type FishPauseMode,
   type BackgroundAudioItem,
 } from "@/lib/medimade-api";
 import {
@@ -1067,7 +1068,7 @@ export function CreateWorkspace({
 
   // Reduce perceived navigation latency (and any browser "redirecting" UI) by prefetching Library.
   useEffect(() => {
-    router.prefetch("/meditate/library");
+    router.prefetch("/meditate/library/creations");
   }, [router]);
 
   const [phase, setPhase] = useState<Phase>(() => {
@@ -1100,6 +1101,8 @@ export function CreateWorkspace({
   const [claudeModelChoice, setClaudeModelChoice] = useState<string>(
     CLAUDE_HAIKU_45_MODEL_ID,
   );
+  /** Dev: Fish qualitative tags vs our ffmpeg silence chunks (default). */
+  const [fishPauseMode, setFishPauseMode] = useState<FishPauseMode>("segmented");
   /**
    * Minutes the latest chat `variant: "script"` bubble was written for.
    * Audio generate reuses that script only when Length still matches; otherwise
@@ -3272,6 +3275,7 @@ export function CreateWorkspace({
         ttsProvider: "fish",
         fishTtsModel: "s2.1-pro-free",
         claudeModel: claudeModelChoice,
+        fishPauseMode: isLocalDevHost() ? fishPauseMode : "segmented",
         speed: speechSpeed,
         voiceFxPreset: speakerFxPreviewOn ? "mixer" : null,
         // A soundscape replaces the whole bed: it rides the music slot alone,
@@ -3367,7 +3371,7 @@ export function CreateWorkspace({
       isRedirectingToLibraryRef.current = true;
       clearCreateSession();
       router.push(
-        `/meditate/library?focus=${encodeURIComponent(`pending:${jobId}`)}`,
+        `/meditate/library/creations?focus=${encodeURIComponent(`pending:${jobId}`)}`,
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Audio generation failed";
@@ -4123,6 +4127,33 @@ export function CreateWorkspace({
                       onClick={() => setClaudeModelChoice(value)}
                       className={`cursor-pointer px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                         claudeModelChoice === value
+                          ? "bg-accent-soft text-foreground"
+                          : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div
+                  className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
+                  role="group"
+                  aria-label="Pause render path"
+                  title="Our chunks (default): split on [[PAUSE]], ffmpeg silence at admin band lengths. Fish tags: one TTS request with [break] / [short pause] / [long pause] / [long-break]."
+                >
+                  {(
+                    [
+                      ["segmented", "Our chunks"],
+                      ["native", "Fish tags"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      disabled={audioLoading}
+                      onClick={() => setFishPauseMode(value)}
+                      className={`cursor-pointer px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                        fishPauseMode === value
                           ? "bg-accent-soft text-foreground"
                           : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
                       }`}
@@ -5530,7 +5561,7 @@ export function CreateWorkspace({
               </a>
               {audioModalKey ? (
                 <Link
-                  href={`/meditate/library?focus=${encodeURIComponent(audioModalKey)}&play=1`}
+                  href={`/meditate/library/creations?focus=${encodeURIComponent(audioModalKey)}&play=1`}
                   className="cursor-pointer rounded-lg border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground hover:border-accent/50"
                 >
                   View in Library

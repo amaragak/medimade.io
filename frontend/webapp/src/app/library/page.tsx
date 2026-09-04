@@ -5,5 +5,5 @@ export const metadata = {
 };
 
 export default async function LibraryPage() {
-  redirect("/meditate/library");
+  redirect("/meditate/library/creations");
 }

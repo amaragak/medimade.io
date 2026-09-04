@@ -204,6 +204,6 @@ export async function startHomepageOneShotGeneration(opts: {
 
   return {
     jobId,
-    libraryHref: `/meditate/library?focus=${encodeURIComponent(`pending:${jobId}`)}`,
+    libraryHref: `/meditate/library/creations?focus=${encodeURIComponent(`pending:${jobId}`)}`,
   };
 }

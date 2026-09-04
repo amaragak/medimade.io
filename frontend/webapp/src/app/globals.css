@@ -487,8 +487,8 @@ main[data-page-kind="standard"] {
   -webkit-mask-size: 100% 100%;
   mask-size: 100% 100%;
   /*
-   * Fade spans ~the entire gutter: peak only at the viewport edge, then a long
-   * gentle falloff to transparent at the content column — no bold band.
+   * Fade spans ~the entire gutter: peak at the viewport edge, then a long
+   * gentle falloff — content column stays at a faint floor (not fully clear).
    */
   --page-pattern-gutter-mask: linear-gradient(
     to right,
@@ -502,12 +502,10 @@ main[data-page-kind="standard"] {
     rgb(0 0 0 / 0.13) calc(var(--content-edge) * 0.66),
     rgb(0 0 0 / 0.085) calc(var(--content-edge) * 0.76),
     rgb(0 0 0 / 0.05) calc(var(--content-edge) * 0.86),
-    rgb(0 0 0 / 0.022) calc(var(--content-edge) * 0.94),
-    rgb(0 0 0 / 0.006) calc(var(--content-edge) * 0.98),
-    transparent var(--content-edge),
-    transparent calc(100% - var(--content-edge)),
-    rgb(0 0 0 / 0.006) calc(100% - var(--content-edge) * 0.98),
-    rgb(0 0 0 / 0.022) calc(100% - var(--content-edge) * 0.94),
+    rgb(0 0 0 / 0.04) calc(var(--content-edge) * 0.94),
+    rgb(0 0 0 / 0.04) var(--content-edge),
+    rgb(0 0 0 / 0.04) calc(100% - var(--content-edge)),
+    rgb(0 0 0 / 0.04) calc(100% - var(--content-edge) * 0.94),
     rgb(0 0 0 / 0.05) calc(100% - var(--content-edge) * 0.86),
     rgb(0 0 0 / 0.085) calc(100% - var(--content-edge) * 0.76),
     rgb(0 0 0 / 0.13) calc(100% - var(--content-edge) * 0.66),

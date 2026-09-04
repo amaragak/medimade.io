@@ -8,6 +8,7 @@ const SECTIONS = [
   { href: "/admin/sounds", label: "Sounds" },
   { href: "/admin/sound-mixes", label: "Sound mixes" },
   { href: "/admin/voice", label: "Voice" },
+  { href: "/admin/programs", label: "Programs" },
   { href: "/admin/analytics", label: "Analytics" },
   { href: "/admin/script-lab", label: "Script Lab" },
   { href: "/admin/stress-test", label: "Stress Test" },
@@ -28,9 +29,10 @@ export function AdminPageClient({ children }: { children: ReactNode }) {
       <h1 className="font-display text-2xl font-medium tracking-tight">Admin</h1>
       <p className="mt-1 max-w-2xl shrink-0 text-sm text-muted">
         Internal tools. Sounds: import and categorise beds. Sound mixes: factory mixer
-        presets. Voice: Fish speakers and pauses. Analytics: meditation cost and duration
-        stats. Analytics: meditation cost and duration stats. Script Lab: reusable script
-        segments and test generation. Stress Test: batch script comparison across types and paths.
+        presets. Voice: Fish speakers and pauses. Programs: courses for the
+        Library shelf. Analytics: meditation cost and duration stats. Script Lab:
+        reusable script segments and test generation. Stress Test: batch script
+        comparison across types and paths.
       </p>
 
       <div className="mt-6 flex shrink-0 flex-wrap gap-2">

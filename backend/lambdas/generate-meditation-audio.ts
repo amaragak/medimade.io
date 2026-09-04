@@ -75,15 +75,15 @@ function normalizeFishTtsModel(raw: unknown): string {
 /** Stretch named-band silence slightly at render (1 = as written). */
 const PAUSE_RENDER_SCALE = 1.12;
 
-/**
- * Fish create-flow TTS path selector.
- * `true`  → one Fish request with native pause tags (`[break]` / `[long-break]` …);
- *           then a single loudnorm + voice-FX pass over the whole MP3.
- * `false` → legacy path: split on `[[PAUSE …]]`, per-segment TTS, ffmpeg silence,
- *           concat, then FX (kept for rollback / A-B).
- * Only applies when `ttsProvider === "fish"`; Orpheus always uses the segmented path.
- */
-const USE_FISH_NATIVE_PAUSE_TTS = true;
+/** Default: our ffmpeg silence chunks. Dev can opt into Fish qualitative tags. */
+const DEFAULT_FISH_PAUSE_MODE: "native" | "segmented" = "segmented";
+
+function normalizeFishPauseMode(raw: unknown): "native" | "segmented" {
+  const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (s === "native") return "native";
+  if (s === "segmented") return "segmented";
+  return DEFAULT_FISH_PAUSE_MODE;
+}
 
 /** Per speech-section + pipeline phase timings (dev flyover / analytics). */
 export type GenerationSectionTiming = {
@@ -1246,7 +1246,8 @@ async function synthesizeScriptWithPauses(params: {
 }
 
 /**
- * Single Fish TTS request: convert `[[PAUSE …]]` → Fish native tags, synthesize
+ * Single Fish TTS request: convert `[[PAUSE …]]` → Fish qualitative tags
+ * (`[break]` / `[short pause]` / `[long pause]` / `[long-break]`), synthesize
  * the whole script, then one loudnorm + Pedalboard pass. No ffmpeg segmentation.
  */
 async function synthesizeScriptWithFishNativePauses(params: {
@@ -1403,6 +1404,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     referenceId?: string;
     ttsProvider?: TtsProvider;
     fishTtsModel?: string;
+    fishPauseMode?: "native" | "segmented";
     speed?: number;
     voiceFxPreset?: string;
     backgroundSoundKey?: string;
@@ -1454,6 +1456,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     reference_id?: string;
     ttsProvider?: TtsProvider;
     fishTtsModel?: string;
+    fishPauseMode?: "native" | "segmented";
     speed?: number;
     voiceFxPreset?: string;
     backgroundSoundKey?: string;
@@ -1469,12 +1472,14 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     transcript: jobItem.transcript,
     meditationStyle: jobItem.meditationStyle,
     journalMode: jobItem.journalMode,
+    excludeFromLibrary: jobItem.excludeFromLibrary,
     meditationTargetMinutes: jobItem.meditationTargetMinutes,
     claudeModel: jobItem.claudeModel,
     scriptText: jobItem.scriptText,
     reference_id: jobItem.referenceId,
     ttsProvider: jobItem.ttsProvider,
     fishTtsModel: jobItem.fishTtsModel,
+    fishPauseMode: jobItem.fishPauseMode,
     speed: jobItem.speed,
     voiceFxPreset: jobItem.voiceFxPreset,
     backgroundSoundKey: jobItem.backgroundSoundKey,
@@ -1509,6 +1514,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   const meditationStyle =
     typeof body.meditationStyle === "string" ? body.meditationStyle : "";
   const journalModeFromJob = body.journalMode === true;
+  const excludeFromLibrary = body.excludeFromLibrary === true;
   /** Dev A/B from the create flow; unsupported ids fall back to Haiku. */
   const claudeModel = coerceClaudeModel(body.claudeModel);
   const targetMinutes = coerceMeditationTargetMinutes(
@@ -1795,8 +1801,9 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     pauseSecondsTotal =
       sumPauseMarkerSeconds(ttsScript, pauseBands) * PAUSE_RENDER_SCALE;
 
+    const fishPauseMode = normalizeFishPauseMode(jobItem.fishPauseMode);
     const useFishNative =
-      USE_FISH_NATIVE_PAUSE_TTS && ttsProvider === "fish" && Boolean(fishKey);
+      fishPauseMode === "native" && ttsProvider === "fish" && Boolean(fishKey);
 
     let audio: Buffer;
     let utf8Bytes: number;
@@ -1811,6 +1818,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
         ttsProvider,
         fishTtsModel,
         pauseTagStyle: fishPauseTagStyleForModel(fishTtsModel),
+        fishPauseMode,
         pauseSecondsTotal,
       });
       const result = await synthesizeScriptWithFishNativePauses({
@@ -1891,7 +1899,9 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     return json(500, { error: msg });
   }
 
-  const key = `meditations/${jobUserId}/${randomUUID()}.mp3`;
+  const key = excludeFromLibrary
+    ? `programs/${jobUserId}/${randomUUID()}.mp3`
+    : `meditations/${jobUserId}/${randomUUID()}.mp3`;
   const durationSeconds = await getMp3DurationSeconds(mp3Buf);
 
   // Background beds are mixed live in the Library player (not baked into this MP3).
@@ -1952,6 +1962,8 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   // Library metadata was already derived above (best-effort) so the Library can show it early.
 
   // Best-effort analytics / library index write (don’t fail the main job if this fails).
+  // Program shelf audio stays off the personal library index.
+  if (!excludeFromLibrary) {
   try {
     const createdAt = new Date().toISOString();
     const id = randomUUID();
@@ -2066,6 +2078,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
   } catch (e) {
     const msg = e instanceof Error ? e.message : "analytics write failed";
     console.warn("analytics write failed", { msg });
+  }
   }
 
   // Update job record.

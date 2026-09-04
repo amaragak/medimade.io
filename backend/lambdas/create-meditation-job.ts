@@ -55,6 +55,10 @@ export async function handler(
     meditationTargetMinutes?: number;
     /** Dev-only Claude A/B; unsupported ids fall back to Haiku in the worker. */
     claudeModel?: string;
+    /** `native` = Fish `[break]` / `[long-break]` …; `segmented` = ffmpeg silence (default). */
+    fishPauseMode?: string;
+    /** When true, do not index the result in the personal library (program shelf audio). */
+    excludeFromLibrary?: boolean;
     backgroundSoundKey?: string;
     backgroundNatureKey?: string;
     backgroundMusicKey?: string;
@@ -134,6 +138,7 @@ export async function handler(
   const backgroundNoiseGain = optGain(body.backgroundNoiseGain);
 
   const journalMode = body.journalMode === true;
+  const excludeFromLibrary = body.excludeFromLibrary === true;
 
   const meditationTargetMinutes = coerceMeditationTargetMinutes(
     body.meditationTargetMinutes,
@@ -172,8 +177,11 @@ export async function handler(
         fishTtsModel,
         speed,
         ...(journalMode ? { journalMode: true } : {}),
+        ...(excludeFromLibrary ? { excludeFromLibrary: true } : {}),
         meditationTargetMinutes,
         claudeModel,
+        fishPauseMode:
+          body.fishPauseMode === "native" ? "native" : "segmented",
         ...(voiceFxPreset ? { voiceFxPreset } : {}),
         backgroundSoundKey,
         ...(backgroundNatureKey ? { backgroundNatureKey } : {}),
