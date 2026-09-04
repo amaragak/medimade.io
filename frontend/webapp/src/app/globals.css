@@ -293,7 +293,7 @@ body {
   color: var(--on-accent);
 }
 
-/* Header “consciously” — radial from sun (white) → light gold-tan. Edit in theme-colors.ts.
+/* Header “consciously” — radial from sun (white) → light gold-peach. Edit in theme-colors.ts.
  * Light mode uses a solid clay fill (set via --brand-wordmark-gradient). */
 .brand-wordmark {
   display: inline-block;
@@ -317,7 +317,7 @@ body {
   background: var(--header-glow-right);
 }
 
-/* Header Pro CTA: flat gold-tan + on-accent (same token as other brand fills). */
+/* Header Pro CTA: flat gold-peach + on-accent (same token as other brand fills). */
 .pro-header-cta {
   background-color: var(--pro-header-cta-bg);
   background-image: var(--pro-header-cta-image);
@@ -580,7 +580,7 @@ main[data-page-kind="standard"] {
 /* Hero one-shot input: gold border fade in/out (brand sun hue). */
 .home-hero-one-shot-shell {
   border-width: 1.5px;
-  border-color: rgba(217, 162, 79, 0.28);
+  border-color: rgba(240, 168, 85, 0.28);
   box-shadow:
     0 0 4px 0 rgba(244, 220, 160, 0.15),
     0 10px 28px rgb(30 37 48 / 0.08);
@@ -588,37 +588,37 @@ main[data-page-kind="standard"] {
 }
 
 .dark .home-hero-one-shot-shell {
-  border-color: rgba(217, 162, 79, 0.22);
+  border-color: rgba(240, 168, 85, 0.22);
   box-shadow: 0 0 4px 0 rgba(244, 220, 160, 0.12);
   animation-name: home-hero-one-shot-border-dark;
 }
 
 @keyframes home-hero-one-shot-border {
   from {
-    border-color: rgba(217, 162, 79, 0.18);
+    border-color: rgba(240, 168, 85, 0.18);
     box-shadow:
       0 0 3px 0 rgba(244, 220, 160, 0.08),
       0 10px 28px rgb(30 37 48 / 0.08);
   }
   to {
-    border-color: rgba(217, 162, 79, 1);
+    border-color: rgba(240, 168, 85, 1);
     box-shadow:
       0 0 8px 1px rgba(244, 220, 160, 0.45),
-      0 0 14px 2px rgba(217, 162, 79, 0.2),
+      0 0 14px 2px rgba(240, 168, 85, 0.2),
       0 10px 28px rgb(30 37 48 / 0.08);
   }
 }
 
 @keyframes home-hero-one-shot-border-dark {
   from {
-    border-color: rgba(217, 162, 79, 0.18);
+    border-color: rgba(240, 168, 85, 0.18);
     box-shadow: 0 0 3px 0 rgba(244, 220, 160, 0.08);
   }
   to {
-    border-color: rgba(217, 162, 79, 1);
+    border-color: rgba(240, 168, 85, 1);
     box-shadow:
       0 0 8px 1px rgba(244, 220, 160, 0.4),
-      0 0 14px 2px rgba(217, 162, 79, 0.22);
+      0 0 14px 2px rgba(240, 168, 85, 0.22);
   }
 }
 
@@ -626,7 +626,7 @@ main[data-page-kind="standard"] {
   .home-hero-one-shot-shell,
   .dark .home-hero-one-shot-shell {
     animation: none;
-    border-color: rgba(217, 162, 79, 0.75);
+    border-color: rgba(240, 168, 85, 0.75);
     box-shadow:
       0 0 6px 1px rgba(244, 220, 160, 0.35),
       0 10px 28px rgb(30 37 48 / 0.08);
@@ -636,30 +636,30 @@ main[data-page-kind="standard"] {
 /* Border-only gold pulse (create-path cards on meditate hero). */
 .home-hero-gold-border-pulse {
   border-width: 1.5px;
-  border-color: rgba(217, 162, 79, 0.28);
+  border-color: rgba(240, 168, 85, 0.28);
   animation: home-hero-gold-border-only 1.35s ease-in-out infinite alternate;
 }
 
 .dark .home-hero-gold-border-pulse {
-  border-color: rgba(217, 162, 79, 0.22);
+  border-color: rgba(240, 168, 85, 0.22);
   animation-name: home-hero-gold-border-only-dark;
 }
 
 @keyframes home-hero-gold-border-only {
   from {
-    border-color: rgba(217, 162, 79, 0.18);
+    border-color: rgba(240, 168, 85, 0.18);
   }
   to {
-    border-color: rgba(217, 162, 79, 1);
+    border-color: rgba(240, 168, 85, 1);
   }
 }
 
 @keyframes home-hero-gold-border-only-dark {
   from {
-    border-color: rgba(217, 162, 79, 0.18);
+    border-color: rgba(240, 168, 85, 0.18);
   }
   to {
-    border-color: rgba(217, 162, 79, 1);
+    border-color: rgba(240, 168, 85, 1);
   }
 }
 
@@ -667,7 +667,7 @@ main[data-page-kind="standard"] {
   .home-hero-gold-border-pulse,
   .dark .home-hero-gold-border-pulse {
     animation: none;
-    border-color: rgba(217, 162, 79, 0.75);
+    border-color: rgba(240, 168, 85, 0.75);
   }
 }
 

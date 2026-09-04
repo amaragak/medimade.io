@@ -538,7 +538,7 @@ export function PlanHomeClient() {
                 type="button"
                 disabled={!newTitle.trim()}
                 onClick={() => addDream()}
-                className="cursor-pointer rounded-full bg-[#D9A24F] px-5 py-2.5 text-sm font-semibold text-[#1E2530] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                className="cursor-pointer rounded-full bg-[#F0A855] px-5 py-2.5 text-sm font-semibold text-[#1E2530] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Create
               </button>

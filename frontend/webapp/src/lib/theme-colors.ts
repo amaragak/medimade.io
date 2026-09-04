@@ -1,7 +1,7 @@
 /**
  * Theme source of truth.
  *
- * `PRIMARY` is the brand fill (gold-tan). Neutrals (paper, navy ink, borders)
+ * `PRIMARY` is the brand fill (gold-peach). Neutrals (paper, navy ink, borders)
  * are independent so the page stays cream and the light header matches the app canvas.
  */
 
@@ -10,13 +10,13 @@ import {
   HOME_HERO_PATTERN_LIGHT,
 } from "@/lib/color-scheme";
 
-/** Brand fill — gold-tan. Text on this fill must use `onAccent` (#3D2E10). */
-export const PRIMARY = "#D9A24F";
+/** Brand fill — gold-peach. Text on this fill must use `onAccent` (#3D2E10). */
+export const PRIMARY = "#F0A855";
 
-/** Links and accent text on cream (deeper amber — gold-tan on cream fails contrast). */
+/** Links and accent text on cream (deeper amber — peach fill on cream fails contrast). */
 export const ACCENT_LINK = "#B8703A";
 
-/** Dark warm brown on gold-tan fills. */
+/** Dark warm brown on gold-peach fills. */
 export const ON_ACCENT = "#3D2E10";
 
 /**
@@ -28,10 +28,10 @@ export const ACCENT_BUTTON_GRADIENT_BLEND = 1;
 
 /**
  * Header wordmark fill. Radial origin sits on the sun (left of the text).
- * White near the sun → light gold-tan by the end of “consciously”.
+ * White near the sun → light gold-peach by the end of “consciously”.
  * Ellipse is sized to the glyph box so the shift reads across the word.
  * Placeholders: {white} {soft} {end}. Becomes `--brand-wordmark-gradient`.
- * SOFT/END = accent mixed into white (0 = white, 1 = solid gold-tan).
+ * SOFT/END = accent mixed into white (0 = white, 1 = solid gold-peach).
  */
 export const BRAND_WORDMARK_GRADIENT =
   "radial-gradient(ellipse 155% 200% at -1.75rem 50%, {white} 0%, {white} 28%, {soft} 55%, {end} 100%)";
@@ -60,7 +60,7 @@ const NAV_MUTED_LIGHT = "#5A5648";
 /** Unrated star glyphs. */
 export const STAR_IDLE = "#B5AF9F";
 
-const GOLD_LIGHT = "#D9A24F";
+const GOLD_LIGHT = "#F0A855";
 
 /**
  * Paper / ink / chrome. Independent of PRIMARY.
@@ -239,7 +239,7 @@ type Semantic = {
   navForeground: string;
   navMuted: string;
   navActive: string;
-  /** Selected / active segment fills — gold-tan in light, navy in dark. */
+  /** Selected / active segment fills — gold-peach in light, navy in dark. */
   selected: string;
   onSelected: string;
   starIdle: string;
@@ -382,7 +382,7 @@ function assemble(
     marketingPillarIdleBg: dark ? "#243041" : "#FFFFFF",
     marketingPillarSelectedBg: dark ? "#2F2C24" : "#FFFFFF",
     marketingPillarIdleIconFg: dark ? "#F4F0E8" : "#33465C",
-    marketingHighlightIconBg: dark ? "rgba(217,162,79,0.22)" : "#F3ECD9",
+    marketingHighlightIconBg: dark ? "rgba(240,168,85,0.22)" : "#F3ECD9",
     marketingHighlightIconFg: dark ? GOLD_LIGHT : ACCENT_LINK,
     marketingNavChrome: dark ? "rgba(255,255,255,0.2)" : "#D8D0BC",
     marketingInputShellBg: dark ? "rgba(255,255,255,0.06)" : "#FFFFFF",

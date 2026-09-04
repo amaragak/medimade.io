@@ -3979,8 +3979,8 @@ export function CreateWorkspace({
    */
   const showLengthInCrumbs = createCrumbs.length > 0;
   const lengthCrumbControl = (
-    <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#D9A24F]/60 bg-[#D9A24F]/15 px-2.5 py-1">
-      <IconClock className="h-3.5 w-3.5 shrink-0 text-[#B07C28] dark:text-[#D9A24F]" />
+    <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#F0A855]/60 bg-[#F0A855]/15 px-2.5 py-1">
+      <IconClock className="h-3.5 w-3.5 shrink-0 text-[#C47A2E] dark:text-[#F0A855]" />
       <span className="text-xs font-medium text-foreground/75">Length</span>
       {/* Native select with its own chevron so the indicator can be gold. */}
       <span className="relative flex items-center">
@@ -4002,7 +4002,7 @@ export function CreateWorkspace({
             </option>
           ))}
         </select>
-        <IconChevronDown className="pointer-events-none absolute right-0 h-3.5 w-3.5 text-[#B07C28] dark:text-[#D9A24F]" />
+        <IconChevronDown className="pointer-events-none absolute right-0 h-3.5 w-3.5 text-[#C47A2E] dark:text-[#F0A855]" />
       </span>
     </div>
   );

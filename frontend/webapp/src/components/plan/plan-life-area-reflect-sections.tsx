@@ -217,7 +217,7 @@ function RunningThoughtsList({
               type="button"
               disabled={!draft.trim()}
               onClick={() => submit()}
-              className="cursor-pointer rounded-full bg-[#D9A24F] px-3 py-1 text-xs font-semibold text-[#1E2530] disabled:opacity-40"
+              className="cursor-pointer rounded-full bg-[#F0A855] px-3 py-1 text-xs font-semibold text-[#1E2530] disabled:opacity-40"
             >
               Add
             </button>
