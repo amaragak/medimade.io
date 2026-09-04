@@ -87,6 +87,7 @@ function blankDay(dayNumber: number): AdminProgramDay {
     jobId: null,
     audioUrl: null,
     audioKey: null,
+    durationSeconds: null,
     errorMessage: null,
     generatedAt: null,
     generatedPrompt: null,
@@ -703,6 +704,7 @@ export function AdminProgramsPanel() {
                   jobId: null,
                   audioUrl: null,
                   audioKey: null,
+                  durationSeconds: null,
                 }
               : { ...d, speakerModelId: speakerId },
           ),
@@ -734,6 +736,7 @@ export function AdminProgramsPanel() {
     let delayMs = 1500;
     let audioUrl = "";
     let audioKey = "";
+    let durationSeconds: number | null = null;
     for (;;) {
       const st = await getMeditationAudioJobStatus(jobId);
       if (st.status === "failed") {
@@ -742,6 +745,12 @@ export function AdminProgramsPanel() {
       if (st.status === "completed") {
         audioUrl = st.audioUrl?.trim() || "";
         audioKey = st.audioKey?.trim() || "";
+        durationSeconds =
+          typeof st.durationSeconds === "number" &&
+          Number.isFinite(st.durationSeconds) &&
+          st.durationSeconds > 0
+            ? st.durationSeconds
+            : null;
         if (!audioUrl) throw new Error("Job completed without audio URL");
         break;
       }
@@ -760,6 +769,7 @@ export function AdminProgramsPanel() {
             jobId,
             audioUrl,
             audioKey: audioKey || null,
+            durationSeconds,
             errorMessage: null,
             generatedAt: new Date().toISOString(),
             generatedPrompt: day.prompt.trim(),

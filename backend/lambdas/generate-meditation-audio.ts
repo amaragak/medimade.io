@@ -2088,7 +2088,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
         TableName: jobsTableName,
         Key: { jobId: event.jobId },
         UpdateExpression:
-          "SET #status = :s, audioUrl = :a, scriptTextUsed = :t, audioKey = :k, updatedAt = :u",
+          "SET #status = :s, audioUrl = :a, scriptTextUsed = :t, audioKey = :k, updatedAt = :u, durationSeconds = :d",
         ExpressionAttributeNames: {
           "#status": "status",
         },
@@ -2098,6 +2098,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
           ":t": scriptTextUsed,
           ":k": key,
           ":u": new Date().toISOString(),
+          ":d": durationSeconds ?? null,
         },
       }),
     );
@@ -2106,6 +2107,11 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     console.warn("job update failed", { msg });
   }
 
-  return json(200, { audioUrl, scriptTextUsed, audioKey: key });
+  return json(200, {
+    audioUrl,
+    scriptTextUsed,
+    audioKey: key,
+    durationSeconds: durationSeconds ?? null,
+  });
 }
 

@@ -81,6 +81,7 @@ export async function handler(
     errorMessage,
     createdAt,
     updatedAt,
+    durationSeconds,
   } =
     out.Item as {
       status?: string;
@@ -92,6 +93,7 @@ export async function handler(
       errorMessage?: string;
       createdAt?: string;
       updatedAt?: string;
+      durationSeconds?: number | null;
     };
 
   const playbackKey =
@@ -100,6 +102,13 @@ export async function handler(
     typeof audioUrl === "string"
       ? meditationPlaybackAudioUrl(audioUrl)
       : audioUrl;
+
+  const duration =
+    typeof durationSeconds === "number" &&
+    Number.isFinite(durationSeconds) &&
+    durationSeconds > 0
+      ? durationSeconds
+      : null;
 
   return json(200, {
     jobId,
@@ -112,6 +121,7 @@ export async function handler(
     error: errorMessage ?? undefined,
     createdAt,
     updatedAt,
+    durationSeconds: duration,
   });
 }
 

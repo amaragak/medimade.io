@@ -1191,7 +1191,12 @@ function libraryItemFromProgramDay(
     speakerName: null,
     description: day.description.trim() || null,
     createdAt: null,
-    durationSeconds: day.targetMinutes * 60,
+    durationSeconds:
+      day.durationSeconds != null &&
+      Number.isFinite(day.durationSeconds) &&
+      day.durationSeconds > 0
+        ? day.durationSeconds
+        : null,
     scriptText: null,
     scriptTruncated: false,
     rating: null,
@@ -1258,6 +1263,7 @@ export default function LibraryView({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const pathSegs = libraryPathSegments(pathname);
+  const programDurationProbeTriedRef = useRef(new Set<string>());
   const {
     nowPlaying,
     playingS3Key,
@@ -1470,6 +1476,89 @@ export default function LibraryView({
       cancelled = true;
     };
   }, [libraryTab]);
+
+  /** Older program days lack stored duration — probe the MP3 once for the card label. */
+  useEffect(() => {
+    if (libraryTab !== "programs" || programs.length === 0) return;
+    let cancelled = false;
+    const missing: { programId: string; dayId: string; url: string }[] = [];
+    for (const p of programs) {
+      for (const d of p.days) {
+        const id = `${p.id}:${d.id}`;
+        if (programDurationProbeTriedRef.current.has(id)) continue;
+        if (
+          d.durationSeconds != null &&
+          Number.isFinite(d.durationSeconds) &&
+          d.durationSeconds > 0
+        ) {
+          programDurationProbeTriedRef.current.add(id);
+          continue;
+        }
+        const url = d.audioUrl?.trim();
+        if (!url) {
+          programDurationProbeTriedRef.current.add(id);
+          continue;
+        }
+        missing.push({ programId: p.id, dayId: d.id, url });
+      }
+    }
+    if (missing.length === 0) return;
+
+    for (const m of missing) {
+      programDurationProbeTriedRef.current.add(`${m.programId}:${m.dayId}`);
+    }
+
+    void (async () => {
+      const measured = new Map<string, number>();
+      await Promise.all(
+        missing.map(
+          ({ programId, dayId, url }) =>
+            new Promise<void>((resolve) => {
+              const a = new Audio();
+              a.preload = "metadata";
+              const finish = (sec: number | null) => {
+                a.removeAttribute("src");
+                try {
+                  a.load();
+                } catch {
+                  // ignore
+                }
+                if (sec != null && sec > 0) {
+                  measured.set(`${programId}:${dayId}`, sec);
+                }
+                resolve();
+              };
+              a.onloadedmetadata = () => {
+                const d = a.duration;
+                finish(
+                  typeof d === "number" && Number.isFinite(d) && d > 0
+                    ? d
+                    : null,
+                );
+              };
+              a.onerror = () => finish(null);
+              a.src = url;
+            }),
+        ),
+      );
+      if (cancelled || measured.size === 0) return;
+      setPrograms((prev) => {
+        const next = prev.map((p) => ({
+          ...p,
+          days: p.days.map((d) => {
+            const sec = measured.get(`${p.id}:${d.id}`);
+            return sec != null ? { ...d, durationSeconds: sec } : d;
+          }),
+        }));
+        programsMemoryCache = next;
+        return next;
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [libraryTab, programs]);
 
   useEffect(() => {
     if (!programPathKey) {

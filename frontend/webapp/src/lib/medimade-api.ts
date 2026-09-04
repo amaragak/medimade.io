@@ -894,6 +894,8 @@ export type MeditationAudioJobStatus = {
   title?: string;
   description?: string;
   error?: string;
+  /** Measured MP3 length when the job completed. */
+  durationSeconds?: number | null;
 };
 
 export type BackgroundAudioItem = {
@@ -2218,6 +2220,8 @@ export type AdminProgramDay = {
   jobId: string | null;
   audioUrl: string | null;
   audioKey: string | null;
+  /** Measured MP3 length from the last successful generate. */
+  durationSeconds: number | null;
   errorMessage: string | null;
   generatedAt: string | null;
   /** Inputs used for last successful audio — for stale detection. */
@@ -2264,6 +2268,12 @@ function normalizeAdminProgramDay(raw: unknown): AdminProgramDay | null {
     jobId: typeof o.jobId === "string" ? o.jobId : null,
     audioUrl: typeof o.audioUrl === "string" ? o.audioUrl : null,
     audioKey: typeof o.audioKey === "string" ? o.audioKey : null,
+    durationSeconds:
+      typeof o.durationSeconds === "number" &&
+      Number.isFinite(o.durationSeconds) &&
+      o.durationSeconds > 0
+        ? o.durationSeconds
+        : null,
     errorMessage: typeof o.errorMessage === "string" ? o.errorMessage : null,
     generatedAt: typeof o.generatedAt === "string" ? o.generatedAt : null,
     generatedPrompt:
@@ -2341,6 +2351,8 @@ export type LibraryProgramDay = {
   title: string;
   description: string;
   targetMinutes: MeditationTargetMinutes;
+  /** Measured voice-stem length; prefer over targetMinutes for display. */
+  durationSeconds: number | null;
   audioUrl: string;
   audioKey: string;
   /** Music / composition bed mixed live under the voice stem. */
@@ -2371,6 +2383,12 @@ function normalizeLibraryProgramDay(raw: unknown): LibraryProgramDay | null {
     title: typeof o.title === "string" ? o.title : "",
     description: typeof o.description === "string" ? o.description : "",
     targetMinutes: coerceMeditationTargetMinutes(o.targetMinutes),
+    durationSeconds:
+      typeof o.durationSeconds === "number" &&
+      Number.isFinite(o.durationSeconds) &&
+      o.durationSeconds > 0
+        ? o.durationSeconds
+        : null,
     audioUrl,
     audioKey,
     backgroundMusicKey:

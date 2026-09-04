@@ -34,6 +34,8 @@ export type ProgramDay = {
   jobId: string | null;
   audioUrl: string | null;
   audioKey: string | null;
+  /** Measured MP3 length when audio was generated. */
+  durationSeconds: number | null;
   errorMessage: string | null;
   generatedAt: string | null;
   /** Snapshot of inputs used for the last successful audio (staleness). */
@@ -108,6 +110,12 @@ function coerceDay(raw: unknown, fallbackIndex: number): ProgramDay | null {
     audioKey:
       typeof o.audioKey === "string" && o.audioKey.trim()
         ? o.audioKey.trim()
+        : null,
+    durationSeconds:
+      typeof o.durationSeconds === "number" &&
+      Number.isFinite(o.durationSeconds) &&
+      o.durationSeconds > 0
+        ? o.durationSeconds
         : null,
     errorMessage:
       typeof o.errorMessage === "string" && o.errorMessage.trim()
@@ -213,6 +221,8 @@ export type LibraryProgramDay = {
   title: string;
   description: string;
   targetMinutes: number;
+  /** Measured voice-stem length; prefer over targetMinutes for display. */
+  durationSeconds: number | null;
   audioUrl: string;
   audioKey: string;
   /** Music / composition bed mixed live under the voice stem. */
@@ -244,6 +254,7 @@ export function toLibraryProgram(p: ProgramPublic): LibraryProgram | null {
       title: d.title,
       description: d.description,
       targetMinutes: d.targetMinutes,
+      durationSeconds: d.durationSeconds,
       audioUrl: d.audioUrl!.trim(),
       audioKey: d.audioKey!.trim(),
       backgroundMusicKey: d.compositionKey.trim(),
