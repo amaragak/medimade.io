@@ -1,5 +1,3 @@
-import LibraryView from "@/components/library-view";
-import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
 export const metadata = {
@@ -20,10 +18,5 @@ export default async function MeditateLibraryTabPage({
 }) {
   const { tab } = await params;
   if (!isLibraryPathTab(tab)) notFound();
-
-  return (
-    <Suspense fallback={<div className="p-6" />}>
-      <LibraryView initialTab={tab} initialItems={null} />
-    </Suspense>
-  );
+  return null;
 }

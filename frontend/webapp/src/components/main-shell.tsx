@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { useLibraryPlayer } from "@/components/library-player-provider";
 import { isMarketingHeroRoute } from "@/lib/marketing-hero-routes";
 
 function usePatternTileHeight(
@@ -51,11 +52,17 @@ export function MainShell({ children }: { children: ReactNode }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const patternTileActive = !isHeroPage;
   const tileHeightPx = usePatternTileHeight(contentRef, patternTileActive);
+  const { nowPlaying, playerStripHeightPx } = useLibraryPlayer();
+  const playerPad =
+    nowPlaying && playerStripHeightPx > 0
+      ? playerStripHeightPx + 16
+      : 0;
 
   return (
     <main
       className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain bg-background"
       data-page-kind={isHeroPage ? "hero" : "standard"}
+      style={playerPad > 0 ? { paddingBottom: playerPad } : undefined}
     >
       {patternTileActive && tileHeightPx > 0 ? (
         <div

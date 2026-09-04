@@ -5,7 +5,6 @@ import {
   IconSparkles,
   IconTargetArrow,
 } from "@tabler/icons-react";
-import { HomeHeadlineTypewriter } from "@/components/home-headline-typewriter";
 
 const features = [
   {
@@ -43,7 +42,12 @@ export function EnhancedHomePage() {
     <div className="w-full">
       <section className="home-hero home-hero--live w-full px-4 pb-16 pt-14 sm:px-6 sm:pb-20 sm:pt-16">
         <div className="mx-auto flex max-w-6xl flex-col items-center text-center">
-          <HomeHeadlineTypewriter />
+          <h1 className="max-w-3xl font-display text-4xl font-medium leading-tight tracking-tight text-marketing-ink sm:text-5xl md:text-[3.5rem]">
+            Live Consciously.
+          </h1>
+          <p className="mt-4 max-w-xl text-base leading-relaxed text-marketing-body sm:text-lg">
+            with our suite of self reflection tools.
+          </p>
 
           <ul className="mt-10 grid w-full max-w-6xl grid-cols-1 gap-3 sm:mt-12 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
             {features.map(({ href, title, body, Icon }) => (
