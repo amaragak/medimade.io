@@ -89,12 +89,154 @@ function blankDay(dayNumber: number): AdminProgramDay {
     audioKey: null,
     errorMessage: null,
     generatedAt: null,
+    generatedPrompt: null,
+    generatedSpeakerModelId: null,
+    generatedTargetMinutes: null,
   };
 }
 
 function renumberDays(days: AdminProgramDay[]): AdminProgramDay[] {
   return days.map((d, i) => ({ ...d, dayNumber: i + 1 }));
 }
+
+function dayHasReadyAudio(day: AdminProgramDay): boolean {
+  return (
+    day.status === "ready" &&
+    Boolean(day.audioUrl?.trim()) &&
+    Boolean(day.audioKey?.trim())
+  );
+}
+
+/** True when audio is missing or prompt / speaker / length changed since last generate. */
+function isProgramDayAudioStale(
+  day: AdminProgramDay,
+  programSpeakerModelId: string,
+): boolean {
+  if (!dayHasReadyAudio(day)) return true;
+  const speaker = (programSpeakerModelId || day.speakerModelId).trim();
+  const hasFingerprint =
+    day.generatedPrompt != null ||
+    day.generatedSpeakerModelId != null ||
+    day.generatedTargetMinutes != null;
+  // Legacy ready audio (no fingerprint yet) — treat as fresh until next generate stamps it.
+  if (!hasFingerprint) return false;
+  return (
+    day.prompt.trim() !== (day.generatedPrompt ?? "").trim() ||
+    speaker !== (day.generatedSpeakerModelId ?? "").trim() ||
+    day.targetMinutes !== day.generatedTargetMinutes
+  );
+}
+
+function withProgramSpeaker(
+  program: AdminProgram,
+  speakerModelId = program.speakerModelId.trim(),
+): AdminProgram {
+  const sid = speakerModelId.trim();
+  return {
+    ...program,
+    speakerModelId: sid,
+    days: program.days.map((d) => ({ ...d, speakerModelId: sid })),
+  };
+}
+
+type ImportedLesson = {
+  title: string;
+  prompt: string;
+  description?: string;
+  targetMinutes?: MeditationTargetMinutes;
+  compositionKey?: string;
+};
+
+function parseProgramImportJson(raw: string): {
+  title?: string;
+  description?: string;
+  speakerModelId?: string;
+  lessons: ImportedLesson[];
+} {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Invalid JSON — check for trailing commas or quotes.");
+  }
+
+  let title: string | undefined;
+  let description: string | undefined;
+  let speakerModelId: string | undefined;
+  let list: unknown[] = [];
+
+  if (Array.isArray(parsed)) {
+    list = parsed;
+  } else if (parsed && typeof parsed === "object") {
+    const o = parsed as Record<string, unknown>;
+    if (typeof o.title === "string" && o.title.trim()) title = o.title.trim();
+    if (typeof o.description === "string") description = o.description.trim();
+    if (typeof o.speakerModelId === "string" && o.speakerModelId.trim()) {
+      speakerModelId = o.speakerModelId.trim();
+    }
+    if (Array.isArray(o.lessons)) list = o.lessons;
+    else if (Array.isArray(o.days)) list = o.days;
+    else {
+      throw new Error(
+        'JSON must be an array of lessons, or an object with a "lessons" / "days" array.',
+      );
+    }
+  } else {
+    throw new Error("JSON must be an object or array.");
+  }
+
+  const lessons: ImportedLesson[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const lessonTitle =
+      (typeof row.title === "string" && row.title.trim()) ||
+      (typeof row.name === "string" && row.name.trim()) ||
+      "";
+    const prompt =
+      (typeof row.prompt === "string" && row.prompt.trim()) ||
+      (typeof row.oneShot === "string" && row.oneShot.trim()) ||
+      (typeof row.one_shot === "string" && row.one_shot.trim()) ||
+      "";
+    if (!lessonTitle && !prompt) continue;
+    const targetRaw = row.targetMinutes ?? row.minutes ?? row.length;
+    const targetMinutes =
+      typeof targetRaw === "number" && Number.isFinite(targetRaw)
+        ? (MEDITATION_TARGET_MINUTES.includes(
+            targetRaw as MeditationTargetMinutes,
+          )
+            ? (targetRaw as MeditationTargetMinutes)
+            : undefined)
+        : undefined;
+    lessons.push({
+      title: lessonTitle || `Lesson ${lessons.length + 1}`,
+      prompt,
+      description:
+        typeof row.description === "string" ? row.description.trim() : undefined,
+      targetMinutes,
+      compositionKey:
+        typeof row.compositionKey === "string"
+          ? row.compositionKey.trim()
+          : typeof row.musicKey === "string"
+            ? row.musicKey.trim()
+            : undefined,
+    });
+  }
+
+  if (lessons.length === 0) {
+    throw new Error("No lessons found — each item needs a title and/or prompt.");
+  }
+
+  return { title, description, speakerModelId, lessons };
+}
+
+const IMPORT_JSON_PLACEHOLDER = `{
+  "title": "Optional program title",
+  "lessons": [
+    { "title": "Introduction", "prompt": "A short grounding welcome…" },
+    { "title": "Root Chakra", "prompt": "Settle into the base of the spine…" }
+  ]
+}`;
 
 export function AdminProgramsPanel() {
   const [loading, setLoading] = useState(true);
@@ -106,9 +248,19 @@ export function AdminProgramsPanel() {
   const [generateBusyDayId, setGenerateBusyDayId] = useState<string | null>(
     null,
   );
+  const [generateBatchBusy, setGenerateBatchBusy] = useState(false);
+  const [generateBatchProgress, setGenerateBatchProgress] = useState<
+    string | null
+  >(null);
   const [describeBusyDayId, setDescribeBusyDayId] = useState<string | null>(
     null,
   );
+  const [importJson, setImportJson] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [describeBatchBusy, setDescribeBatchBusy] = useState(false);
+  const [describeBatchProgress, setDescribeBatchProgress] = useState<
+    string | null
+  >(null);
   const [speakers, setSpeakers] = useState<FishSpeaker[]>([]);
   /** Music channel list — compositions already folded in as a subcategory. */
   const [musicItems, setMusicItems] = useState<BackgroundAudioItem[]>([]);
@@ -283,6 +435,7 @@ export function AdminProgramsPanel() {
         title: "New program",
         description: "",
         published: false,
+        speakerModelId: "",
         days: [blankDay(1)],
       });
       const list = await loadPrograms();
@@ -301,10 +454,11 @@ export function AdminProgramsPanel() {
     setError(null);
     setSaveBusy(true);
     try {
-      const saved = await saveAdminProgram({
+      const synced = withProgramSpeaker({
         ...draft,
         days: renumberDays(draft.days),
       });
+      const saved = await saveAdminProgram(synced);
       const list = await loadPrograms();
       setPrograms(list);
       setSelectedId(saved.id);
@@ -408,122 +562,225 @@ export function AdminProgramsPanel() {
     }
   }
 
-  async function generateDay(dayId: string) {
-    if (!draft) return;
-    const day = draft.days.find((d) => d.id === dayId);
-    if (!day) return;
-    if (!day.prompt.trim()) {
-      setError("Add a one-shot prompt before generating.");
-      return;
+  async function describeAllLessons(program: AdminProgram) {
+    const targets = program.days.filter((d) => d.prompt.trim());
+    if (targets.length === 0) {
+      setError("Imported lessons need prompts before descriptions can be generated.");
+      return program;
     }
-    if (!day.speakerModelId.trim()) {
-      setError("Choose a speaker before generating.");
-      return;
+    setDescribeBatchBusy(true);
+    setError(null);
+    let next = program;
+    try {
+      for (let i = 0; i < targets.length; i += 1) {
+        const day = targets[i]!;
+        setDescribeBatchProgress(
+          `Generating descriptions… ${i + 1}/${targets.length}`,
+        );
+        const description = await generateAdminProgramDayDescription({
+          prompt: day.prompt,
+          title: day.title,
+          programTitle: next.title,
+        });
+        next = {
+          ...next,
+          days: next.days.map((d) =>
+            d.id === day.id ? { ...d, description } : d,
+          ),
+        };
+        setDraft({ ...next, days: next.days.map((d) => ({ ...d })) });
+      }
+      return next;
+    } finally {
+      setDescribeBatchBusy(false);
+      setDescribeBatchProgress(null);
+    }
+  }
+
+  async function importLessonsFromJson() {
+    if (!draft) return;
+    setError(null);
+    setImportBusy(true);
+    try {
+      const parsed = parseProgramImportJson(importJson);
+      const hasExistingWork = draft.days.some(
+        (d) => d.prompt.trim() || d.audioKey || d.description.trim(),
+      );
+      if (
+        hasExistingWork &&
+        !window.confirm(
+          "Replace all current lessons with the imported JSON? Existing lesson content will be lost.",
+        )
+      ) {
+        return;
+      }
+
+      const speaker =
+        parsed.speakerModelId?.trim() || draft.speakerModelId.trim();
+      let next: AdminProgram = withProgramSpeaker(
+        {
+          ...draft,
+          title: parsed.title?.trim() || draft.title,
+          description:
+            parsed.description !== undefined
+              ? parsed.description
+              : draft.description,
+          speakerModelId: speaker,
+          days: renumberDays(
+            parsed.lessons.map((lesson, i) => ({
+              ...blankDay(i + 1),
+              title: lesson.title.slice(0, 120),
+              prompt: lesson.prompt.slice(0, 4000),
+              description: (lesson.description ?? "").slice(0, 600),
+              speakerModelId: speaker,
+              compositionKey: lesson.compositionKey ?? "",
+              targetMinutes: lesson.targetMinutes ?? 5,
+            })),
+          ),
+        },
+        speaker,
+      );
+
+      setDraft({ ...next, days: next.days.map((d) => ({ ...d })) });
+      setImportJson("");
+
+      next = await describeAllLessons(next);
+      const saved = await saveAdminProgram(next);
+      const list = await loadPrograms();
+      setPrograms(list);
+      setSelectedId(saved.id);
+      setDraft({ ...saved, days: saved.days.map((d) => ({ ...d })) });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not import lessons");
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function generateDayAudio(
+    programIn: AdminProgram,
+    dayId: string,
+  ): Promise<AdminProgram> {
+    const day = programIn.days.find((d) => d.id === dayId);
+    if (!day) throw new Error("Lesson not found");
+    if (!day.prompt.trim()) {
+      throw new Error(`Lesson ${day.dayNumber}: add a one-shot prompt first.`);
+    }
+    const speakerId =
+      programIn.speakerModelId.trim() || day.speakerModelId.trim();
+    if (!speakerId) {
+      throw new Error("Choose a program speaker before generating.");
     }
     if (!day.compositionKey.trim()) {
-      setError("Choose music before generating.");
-      return;
+      throw new Error(`Lesson ${day.dayNumber}: choose music before generating.`);
     }
 
     stopAllPreviews();
-    setError(null);
     setGenerateBusyDayId(dayId);
-    updateDay(dayId, {
-      status: "generating",
-      errorMessage: null,
-      jobId: null,
-      audioUrl: null,
-      audioKey: null,
-    });
 
-    try {
-      let description = day.description.trim();
-      if (description.length < PROGRAM_DAY_DESCRIPTION_MIN_CHARS) {
-        description = await generateAdminProgramDayDescription({
-          prompt: day.prompt,
-          title: day.title,
-          programTitle: draft.title,
-        });
-        updateDay(dayId, { description });
-      }
+    let description = day.description.trim();
+    if (description.length < PROGRAM_DAY_DESCRIPTION_MIN_CHARS) {
+      description = await generateAdminProgramDayDescription({
+        prompt: day.prompt,
+        title: day.title,
+        programTitle: programIn.title,
+      });
+    }
 
-      const toSave: AdminProgram = {
-        ...draft,
+    const toSave = withProgramSpeaker(
+      {
+        ...programIn,
+        speakerModelId: speakerId,
         days: renumberDays(
-          draft.days.map((d) =>
+          programIn.days.map((d) =>
             d.id === dayId
               ? {
                   ...d,
                   description,
+                  speakerModelId: speakerId,
                   status: "generating",
                   errorMessage: null,
                   jobId: null,
                   audioUrl: null,
                   audioKey: null,
                 }
-              : d,
+              : { ...d, speakerModelId: speakerId },
           ),
         ),
-      };
-      const saved = await saveAdminProgram(toSave);
-      setPrograms(await loadPrograms());
-      setDraft({ ...saved, days: saved.days.map((d) => ({ ...d })) });
+      },
+      speakerId,
+    );
+    const saved = await saveAdminProgram(toSave);
+    setPrograms(await loadPrograms());
+    setDraft({ ...saved, days: saved.days.map((d) => ({ ...d })) });
 
-      const { jobId } = await createMeditationAudioJob({
-        meditationStyle: "General",
-        journalMode: true,
-        meditationTargetMinutes: day.targetMinutes,
-        transcript: `User: ${packageOneShotPrompt(day.prompt)}`,
-        scriptText: "",
-        reference_id: day.speakerModelId.trim(),
-        ttsProvider: "fish",
-        fishTtsModel: "s2.1-pro-free",
-        fishPauseMode: "segmented",
-        excludeFromLibrary: true,
-        speed: FIXED_SPEECH_PREVIEW_SPEED,
-        voiceFxPreset: VOICE_FX_PRESET_MEDITATION_MIXER,
-        backgroundMusicKey: backgroundAudioStreamingKey(day.compositionKey),
-        backgroundMusicGain: SOUNDSCAPE_GAIN,
-      });
+    const { jobId } = await createMeditationAudioJob({
+      meditationStyle: "General",
+      journalMode: true,
+      meditationTargetMinutes: day.targetMinutes,
+      transcript: `User: ${packageOneShotPrompt(day.prompt)}`,
+      scriptText: "",
+      reference_id: speakerId,
+      ttsProvider: "fish",
+      fishTtsModel: "s2.1-pro-free",
+      fishPauseMode: "segmented",
+      excludeFromLibrary: true,
+      speed: FIXED_SPEECH_PREVIEW_SPEED,
+      voiceFxPreset: VOICE_FX_PRESET_MEDITATION_MIXER,
+      backgroundMusicKey: backgroundAudioStreamingKey(day.compositionKey),
+      backgroundMusicGain: SOUNDSCAPE_GAIN,
+    });
 
-      let delayMs = 1500;
-      let audioUrl = "";
-      let audioKey = "";
-      for (;;) {
-        const st = await getMeditationAudioJobStatus(jobId);
-        if (st.status === "failed") {
-          throw new Error(st.error || "Generation failed");
-        }
-        if (st.status === "completed") {
-          audioUrl = st.audioUrl?.trim() || "";
-          audioKey = st.audioKey?.trim() || "";
-          if (!audioUrl) throw new Error("Job completed without audio URL");
-          break;
-        }
-        await new Promise((r) => setTimeout(r, delayMs));
-        delayMs = Math.min(5000, delayMs + 500);
+    let delayMs = 1500;
+    let audioUrl = "";
+    let audioKey = "";
+    for (;;) {
+      const st = await getMeditationAudioJobStatus(jobId);
+      if (st.status === "failed") {
+        throw new Error(st.error || "Generation failed");
       }
+      if (st.status === "completed") {
+        audioUrl = st.audioUrl?.trim() || "";
+        audioKey = st.audioKey?.trim() || "";
+        if (!audioUrl) throw new Error("Job completed without audio URL");
+        break;
+      }
+      await new Promise((r) => setTimeout(r, delayMs));
+      delayMs = Math.min(5000, delayMs + 500);
+    }
 
-      const latest = await listAdminPrograms();
-      const program = latest.find((p) => p.id === saved.id);
-      if (!program) throw new Error("Program missing after generate");
-      const nextDays = program.days.map((d) =>
-        d.id === dayId
-          ? {
-              ...d,
-              status: "ready" as const,
-              jobId,
-              audioUrl,
-              audioKey: audioKey || null,
-              errorMessage: null,
-              generatedAt: new Date().toISOString(),
-            }
-          : d,
-      );
-      const finished = await saveAdminProgram({ ...program, days: nextDays });
-      setPrograms(await loadPrograms());
-      setSelectedId(finished.id);
-      setDraft({ ...finished, days: finished.days.map((d) => ({ ...d })) });
+    const latest = await listAdminPrograms();
+    const program = latest.find((p) => p.id === saved.id);
+    if (!program) throw new Error("Program missing after generate");
+    const nextDays = program.days.map((d) =>
+      d.id === dayId
+        ? {
+            ...d,
+            status: "ready" as const,
+            jobId,
+            audioUrl,
+            audioKey: audioKey || null,
+            errorMessage: null,
+            generatedAt: new Date().toISOString(),
+            generatedPrompt: day.prompt.trim(),
+            generatedSpeakerModelId: speakerId,
+            generatedTargetMinutes: day.targetMinutes,
+          }
+        : d,
+    );
+    const finished = await saveAdminProgram({ ...program, days: nextDays });
+    setPrograms(await loadPrograms());
+    setSelectedId(finished.id);
+    setDraft({ ...finished, days: finished.days.map((d) => ({ ...d })) });
+    return finished;
+  }
+
+  async function generateDay(dayId: string) {
+    if (!draft) return;
+    setError(null);
+    setGenerateBusyDayId(dayId);
+    try {
+      await generateDayAudio(draft, dayId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Generation failed";
       setError(msg);
@@ -548,6 +805,88 @@ export function AdminProgramsPanel() {
         /* keep local error */
       }
     } finally {
+      setGenerateBusyDayId(null);
+    }
+  }
+
+  async function generateAllStaleAudio() {
+    if (!draft) return;
+    const speakerId = draft.speakerModelId.trim();
+    if (!speakerId) {
+      setError("Choose a program speaker before generating.");
+      return;
+    }
+
+    const candidates = draft.days.filter((d) =>
+      isProgramDayAudioStale(d, draft.speakerModelId),
+    );
+    if (candidates.length === 0) {
+      setError("Nothing to generate — all lessons are up to date.");
+      return;
+    }
+
+    const missingMusic = candidates.filter((d) => !d.compositionKey.trim());
+    const missingPrompt = candidates.filter((d) => !d.prompt.trim());
+    if (missingPrompt.length > 0) {
+      setError(
+        `Add prompts before batch generate (lesson ${missingPrompt
+          .map((d) => d.dayNumber)
+          .join(", ")}).`,
+      );
+      return;
+    }
+    if (missingMusic.length > 0) {
+      setError(
+        `Choose music for every stale lesson first (lesson ${missingMusic
+          .map((d) => d.dayNumber)
+          .join(", ")}).`,
+      );
+      return;
+    }
+
+    setError(null);
+    setGenerateBatchBusy(true);
+    let current = draft;
+    const failures: string[] = [];
+    try {
+      for (let i = 0; i < candidates.length; i += 1) {
+        const day = candidates[i]!;
+        setGenerateBatchProgress(
+          `Generating audio… ${i + 1}/${candidates.length} (lesson ${day.dayNumber})`,
+        );
+        try {
+          current = await generateDayAudio(current, day.id);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Generation failed";
+          failures.push(`Lesson ${day.dayNumber}: ${msg}`);
+          try {
+            const latest = await listAdminPrograms();
+            const program = latest.find((p) => p.id === current.id) ?? current;
+            const nextDays = program.days.map((d) =>
+              d.id === day.id
+                ? {
+                    ...d,
+                    status: "failed" as const,
+                    errorMessage: msg,
+                  }
+                : d,
+            );
+            current = await saveAdminProgram({ ...program, days: nextDays });
+            setPrograms(await loadPrograms());
+            setDraft({ ...current, days: current.days.map((d) => ({ ...d })) });
+          } catch {
+            /* continue batch */
+          }
+        }
+      }
+      if (failures.length > 0) {
+        setError(
+          `Batch finished with ${failures.length} error(s): ${failures.join(" · ")}`,
+        );
+      }
+    } finally {
+      setGenerateBatchBusy(false);
+      setGenerateBatchProgress(null);
       setGenerateBusyDayId(null);
     }
   }
@@ -580,11 +919,13 @@ export function AdminProgramsPanel() {
               Programs
             </h2>
             <p className="mt-1 max-w-2xl text-sm text-muted">
-              Design courses for the Library Programs shelf. Each lesson is a
-              one-shot meditation: write the prompt, pick a Fish speaker and
-              music, then generate. Toggle <strong className="font-semibold text-foreground">Published</strong> to
-              show the course under Library → Programs (saves immediately; lesson
-              audio stays off My Creations).
+              Design courses for the Library Programs shelf. Set one speaker for
+              the whole course, then add lessons manually or import JSON (titles +
+              prompts). Import auto-generates descriptions. Each lesson still picks
+              its own music and length before you generate audio. Toggle{" "}
+              <strong className="font-semibold text-foreground">Published</strong>{" "}
+              to show the course under Library → Programs (saves immediately;
+              lesson audio stays off My Creations).
             </p>
           </div>
           <button
@@ -673,11 +1014,13 @@ export function AdminProgramsPanel() {
                           setError(null);
                           setSaveBusy(true);
                           try {
-                            const saved = await saveAdminProgram({
-                              ...draft,
-                              published,
-                              days: renumberDays(draft.days),
-                            });
+                            const saved = await saveAdminProgram(
+                              withProgramSpeaker({
+                                ...draft,
+                                published,
+                                days: renumberDays(draft.days),
+                              }),
+                            );
                             const list = await loadPrograms();
                             setPrograms(list);
                             setSelectedId(saved.id);
@@ -748,6 +1091,96 @@ export function AdminProgramsPanel() {
                     className="w-full resize-y rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/50"
                   />
                 </label>
+                <div className="block text-sm sm:col-span-2">
+                  <span className="mb-1 block text-muted">
+                    Speaker (all lessons)
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={draft.speakerModelId}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (playingSpeakerId && playingSpeakerId !== next) {
+                          stopSpeakerPreview();
+                        }
+                        setDraft((cur) =>
+                          cur ? withProgramSpeaker(cur, next) : cur,
+                        );
+                      }}
+                      className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/50"
+                    >
+                      <option value="">Select speaker…</option>
+                      {speakers.map((s) => (
+                        <option key={s.modelId} value={s.modelId}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!canPreview || !draft.speakerModelId}
+                      aria-label={
+                        playingSpeakerId === draft.speakerModelId
+                          ? "Pause speaker preview"
+                          : "Play speaker preview"
+                      }
+                      title={
+                        playingSpeakerId === draft.speakerModelId
+                          ? "Pause speaker preview"
+                          : "Play speaker preview"
+                      }
+                      onClick={() =>
+                        void toggleSpeakerPreview(draft.speakerModelId)
+                      }
+                      className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-border text-foreground hover:bg-background disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {playingSpeakerId === draft.speakerModelId ? (
+                        <IconPause />
+                      ) : (
+                        <IconPlay />
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <div className="block text-sm sm:col-span-2">
+                  <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-muted">Import lessons (JSON)</span>
+                    <button
+                      type="button"
+                      disabled={
+                        importBusy ||
+                        describeBatchBusy ||
+                        saveBusy ||
+                        !importJson.trim()
+                      }
+                      onClick={() => void importLessonsFromJson()}
+                      className="cursor-pointer rounded-lg border border-border px-2.5 py-1 text-xs font-semibold text-foreground hover:border-accent/40 disabled:opacity-40"
+                    >
+                      {importBusy || describeBatchBusy
+                        ? describeBatchProgress || "Importing…"
+                        : "Import + generate descriptions"}
+                    </button>
+                  </div>
+                  <textarea
+                    value={importJson}
+                    onChange={(e) => setImportJson(e.target.value)}
+                    rows={7}
+                    spellCheck={false}
+                    placeholder={IMPORT_JSON_PLACEHOLDER}
+                    className="w-full resize-y rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs outline-none focus:border-accent/50"
+                  />
+                  <p className="mt-1 text-[11px] text-muted">
+                    Paste an array of{" "}
+                    <code className="text-foreground/80">
+                      {"{ title, prompt }"}
+                    </code>{" "}
+                    or an object with{" "}
+                    <code className="text-foreground/80">lessons</code> /{" "}
+                    <code className="text-foreground/80">days</code>. Optional
+                    program <code className="text-foreground/80">title</code>.
+                    Replaces current lessons, then generates each description.
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -755,21 +1188,66 @@ export function AdminProgramsPanel() {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-display text-base font-medium">
                   Lessons ({draft.days.length})
+                  {draft.days.filter((d) =>
+                    isProgramDayAudioStale(d, draft.speakerModelId),
+                  ).length > 0 ? (
+                    <span className="ml-2 text-sm font-normal text-muted">
+                      ·{" "}
+                      {
+                        draft.days.filter((d) =>
+                          isProgramDayAudioStale(d, draft.speakerModelId),
+                        ).length
+                      }{" "}
+                      need audio
+                    </span>
+                  ) : null}
                 </h3>
-                <button
-                  type="button"
-                  onClick={addDay}
-                  className="cursor-pointer rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold text-foreground hover:border-accent/40"
-                >
-                  + Add lesson
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={
+                      generateBatchBusy ||
+                      Boolean(generateBusyDayId) ||
+                      importBusy ||
+                      describeBatchBusy ||
+                      saveBusy ||
+                      !draft.speakerModelId.trim()
+                    }
+                    onClick={() => void generateAllStaleAudio()}
+                    className="cursor-pointer rounded-xl accent-fill-gradient px-3 py-1.5 text-sm font-semibold text-on-accent disabled:opacity-50"
+                  >
+                    {generateBatchBusy
+                      ? generateBatchProgress || "Generating…"
+                      : "Generate all audio"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={generateBatchBusy || Boolean(generateBusyDayId)}
+                    onClick={addDay}
+                    className="cursor-pointer rounded-full border border-border bg-card px-3 py-1.5 text-sm font-semibold text-foreground hover:border-accent/40 disabled:opacity-40"
+                  >
+                    + Add lesson
+                  </button>
+                </div>
               </div>
+              <p className="text-[11px] text-muted">
+                Batch generate runs every lesson with no audio, or where prompt,
+                speaker, or length changed since the last successful generate.
+                Up-to-date lessons are skipped. Per-lesson Generate still forces a
+                regen.
+              </p>
 
               {draft.days.map((day, index) => {
-                const generating = generateBusyDayId === day.id;
-                const speakerPlaying =
-                  Boolean(day.speakerModelId) &&
-                  playingSpeakerId === day.speakerModelId;
+                const generating =
+                  generateBusyDayId === day.id ||
+                  (generateBatchBusy &&
+                    generateBatchProgress?.includes(
+                      `lesson ${day.dayNumber}`,
+                    ));
+                const stale = isProgramDayAudioStale(
+                  day,
+                  draft.speakerModelId,
+                );
                 const compositionPlaying =
                   Boolean(day.compositionKey) &&
                   playingCompositionKey === day.compositionKey;
@@ -779,28 +1257,32 @@ export function AdminProgramsPanel() {
                     className="rounded-2xl border border-border bg-card p-4 sm:p-5"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="rounded-full bg-accent-soft/50 px-2.5 py-0.5 text-xs font-semibold text-accent-link">
                           Lesson {day.dayNumber}
                         </span>
                         <span
                           className={`text-xs font-medium uppercase tracking-wide ${
-                            day.status === "ready"
+                            day.status === "ready" && !stale
                               ? "text-success"
                               : day.status === "failed"
                                 ? "text-danger"
-                                : day.status === "generating"
+                                : day.status === "generating" || generating
                                   ? "text-accent-link"
                                   : "text-muted"
                           }`}
                         >
-                          {day.status}
+                          {generating
+                            ? "generating"
+                            : day.status === "ready" && stale
+                              ? "stale"
+                              : day.status}
                         </span>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
                         <button
                           type="button"
-                          disabled={index === 0}
+                          disabled={index === 0 || generateBatchBusy}
                           onClick={() => moveDay(day.id, -1)}
                           className="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs font-semibold disabled:opacity-40"
                           aria-label="Move lesson up"
@@ -809,7 +1291,9 @@ export function AdminProgramsPanel() {
                         </button>
                         <button
                           type="button"
-                          disabled={index === draft.days.length - 1}
+                          disabled={
+                            index === draft.days.length - 1 || generateBatchBusy
+                          }
                           onClick={() => moveDay(day.id, 1)}
                           className="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs font-semibold disabled:opacity-40"
                           aria-label="Move lesson down"
@@ -818,7 +1302,9 @@ export function AdminProgramsPanel() {
                         </button>
                         <button
                           type="button"
-                          disabled={draft.days.length <= 1}
+                          disabled={
+                            draft.days.length <= 1 || generateBatchBusy
+                          }
                           onClick={() => removeDay(day.id)}
                           className="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs font-semibold text-danger disabled:opacity-40"
                         >
@@ -826,11 +1312,21 @@ export function AdminProgramsPanel() {
                         </button>
                         <button
                           type="button"
-                          disabled={generating || saveBusy}
+                          disabled={
+                            generating ||
+                            generateBatchBusy ||
+                            saveBusy ||
+                            importBusy ||
+                            describeBatchBusy
+                          }
                           onClick={() => void generateDay(day.id)}
                           className="cursor-pointer rounded-xl accent-fill-gradient px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-50"
                         >
-                          {generating ? "Generating…" : "Generate audio"}
+                          {generating
+                            ? "Generating…"
+                            : stale
+                              ? "Generate audio"
+                              : "Regenerate audio"}
                         </button>
                       </div>
                     </div>
@@ -872,6 +1368,7 @@ export function AdminProgramsPanel() {
                             disabled={
                               generating ||
                               describeBusyDayId === day.id ||
+                              describeBatchBusy ||
                               !day.prompt.trim()
                             }
                             onClick={() => void describeDay(day.id)}
@@ -896,54 +1393,6 @@ export function AdminProgramsPanel() {
                           {PROGRAM_DAY_DESCRIPTION_MIN_CHARS}+ chars preferred
                           before generate
                         </p>
-                      </div>
-                      <div className="block text-sm">
-                        <span className="mb-1 block text-muted">Speaker</span>
-                        <div className="flex items-center gap-2">
-                          <select
-                            value={day.speakerModelId}
-                            onChange={(e) => {
-                              const next = e.target.value;
-                              if (
-                                playingSpeakerId &&
-                                playingSpeakerId !== next
-                              ) {
-                                stopSpeakerPreview();
-                              }
-                              updateDay(day.id, { speakerModelId: next });
-                            }}
-                            className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent/50"
-                          >
-                            <option value="">Select speaker…</option>
-                            {speakers.map((s) => (
-                              <option key={s.modelId} value={s.modelId}>
-                                {s.name}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            type="button"
-                            disabled={
-                              !canPreview || !day.speakerModelId || generating
-                            }
-                            aria-label={
-                              speakerPlaying
-                                ? "Pause speaker preview"
-                                : "Play speaker preview"
-                            }
-                            title={
-                              speakerPlaying
-                                ? "Pause speaker preview"
-                                : "Play speaker preview"
-                            }
-                            onClick={() =>
-                              void toggleSpeakerPreview(day.speakerModelId)
-                            }
-                            className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-border text-foreground hover:bg-background disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            {speakerPlaying ? <IconPause /> : <IconPlay />}
-                          </button>
-                        </div>
                       </div>
                       <div className="block text-sm">
                         <span className="mb-1 block text-muted">Music</span>

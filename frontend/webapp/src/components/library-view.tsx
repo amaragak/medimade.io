@@ -3657,7 +3657,7 @@ export default function LibraryView({
                 aria-pressed={viewMode === "list"}
                 className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
                   viewMode === "list"
-                    ? "bg-selected text-on-selected"
+                    ? "bg-nav-active text-nav-foreground"
                     : "text-muted hover:text-foreground"
                 }`}
               >
@@ -3669,7 +3669,7 @@ export default function LibraryView({
                 aria-pressed={viewMode === "grid"}
                 className={`flex items-center rounded-lg px-3 py-2 text-sm font-medium ${
                   viewMode === "grid"
-                    ? "bg-selected text-on-selected"
+                    ? "bg-nav-active text-nav-foreground"
                     : "text-muted hover:text-foreground"
                 }`}
               >
@@ -3772,7 +3772,7 @@ export default function LibraryView({
                   onClick={() => goToLibraryTab(tab.id)}
                   className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
                     libraryTab === tab.id
-                      ? "bg-selected text-on-selected"
+                      ? "bg-nav-active text-nav-foreground"
                       : "text-muted hover:text-foreground"
                   }`}
                 >
@@ -3804,7 +3804,7 @@ export default function LibraryView({
                   onClick={() => goToLibraryTab(tab.id)}
                   className={`min-w-0 flex-1 rounded-lg px-1.5 py-1.5 text-[12px] font-semibold transition-colors sm:text-[13px] ${
                     libraryTab === tab.id
-                      ? "bg-selected text-on-selected"
+                      ? "bg-nav-active text-nav-foreground"
                       : "text-muted hover:text-foreground"
                   }`}
                 >

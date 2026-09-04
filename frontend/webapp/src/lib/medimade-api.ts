@@ -2220,6 +2220,10 @@ export type AdminProgramDay = {
   audioKey: string | null;
   errorMessage: string | null;
   generatedAt: string | null;
+  /** Inputs used for last successful audio — for stale detection. */
+  generatedPrompt: string | null;
+  generatedSpeakerModelId: string | null;
+  generatedTargetMinutes: MeditationTargetMinutes | null;
 };
 
 export type AdminProgram = {
@@ -2227,6 +2231,8 @@ export type AdminProgram = {
   title: string;
   description: string;
   published: boolean;
+  /** Fish speaker shared by every lesson. */
+  speakerModelId: string;
   sort: number;
   days: AdminProgramDay[];
   createdAt: string;
@@ -2260,6 +2266,17 @@ function normalizeAdminProgramDay(raw: unknown): AdminProgramDay | null {
     audioKey: typeof o.audioKey === "string" ? o.audioKey : null,
     errorMessage: typeof o.errorMessage === "string" ? o.errorMessage : null,
     generatedAt: typeof o.generatedAt === "string" ? o.generatedAt : null,
+    generatedPrompt:
+      typeof o.generatedPrompt === "string" ? o.generatedPrompt : null,
+    generatedSpeakerModelId:
+      typeof o.generatedSpeakerModelId === "string"
+        ? o.generatedSpeakerModelId.trim() || null
+        : null,
+    generatedTargetMinutes:
+      typeof o.generatedTargetMinutes === "number" &&
+      Number.isFinite(o.generatedTargetMinutes)
+        ? coerceMeditationTargetMinutes(o.generatedTargetMinutes)
+        : null,
   };
 }
 
@@ -2273,13 +2290,26 @@ function normalizeAdminProgram(raw: unknown): AdminProgram | null {
         .map(normalizeAdminProgramDay)
         .filter((d): d is AdminProgramDay => Boolean(d))
     : [];
+  let speakerModelId =
+    typeof o.speakerModelId === "string" ? o.speakerModelId.trim() : "";
+  if (!speakerModelId) {
+    for (const d of days) {
+      if (d.speakerModelId.trim()) {
+        speakerModelId = d.speakerModelId.trim();
+        break;
+      }
+    }
+  }
   return {
     id,
     title: typeof o.title === "string" ? o.title : "Untitled program",
     description: typeof o.description === "string" ? o.description : "",
     published: o.published === true,
+    speakerModelId,
     sort: typeof o.sort === "number" && Number.isFinite(o.sort) ? o.sort : 0,
-    days,
+    days: days.map((d) =>
+      speakerModelId ? { ...d, speakerModelId } : d,
+    ),
     createdAt: typeof o.createdAt === "string" ? o.createdAt : "",
     updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : "",
   };

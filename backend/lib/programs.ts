@@ -36,6 +36,10 @@ export type ProgramDay = {
   audioKey: string | null;
   errorMessage: string | null;
   generatedAt: string | null;
+  /** Snapshot of inputs used for the last successful audio (staleness). */
+  generatedPrompt: string | null;
+  generatedSpeakerModelId: string | null;
+  generatedTargetMinutes: number | null;
 };
 
 export type ProgramPublic = {
@@ -44,6 +48,8 @@ export type ProgramPublic = {
   description: string;
   /** When true, eligible for the Library Programs shelf. */
   published: boolean;
+  /** Fish speaker for every lesson in this program. */
+  speakerModelId: string;
   sort: number;
   days: ProgramDay[];
   createdAt: string;
@@ -111,6 +117,18 @@ function coerceDay(raw: unknown, fallbackIndex: number): ProgramDay | null {
       typeof o.generatedAt === "string" && o.generatedAt.trim()
         ? o.generatedAt.trim()
         : null,
+    generatedPrompt:
+      typeof o.generatedPrompt === "string" ? o.generatedPrompt : null,
+    generatedSpeakerModelId:
+      typeof o.generatedSpeakerModelId === "string" &&
+      o.generatedSpeakerModelId.trim()
+        ? o.generatedSpeakerModelId.trim()
+        : null,
+    generatedTargetMinutes:
+      typeof o.generatedTargetMinutes === "number" &&
+      Number.isFinite(o.generatedTargetMinutes)
+        ? coerceMeditationTargetMinutes(o.generatedTargetMinutes)
+        : null,
   };
 }
 
@@ -134,6 +152,17 @@ export function normalizeProgram(raw: unknown): ProgramPublic | null {
     typeof o.updatedAt === "string" ? o.updatedAt : createdAt;
   const sort =
     typeof o.sort === "number" && Number.isFinite(o.sort) ? o.sort : 0;
+  let speakerModelId =
+    typeof o.speakerModelId === "string" ? o.speakerModelId.trim() : "";
+  // Legacy: older programs only stored speaker per day.
+  if (!speakerModelId) {
+    for (const d of days) {
+      if (d.speakerModelId.trim()) {
+        speakerModelId = d.speakerModelId.trim();
+        break;
+      }
+    }
+  }
   return {
     id,
     title:
@@ -145,8 +174,11 @@ export function normalizeProgram(raw: unknown): ProgramPublic | null {
         ? o.description.trim().slice(0, 500)
         : "",
     published: o.published === true,
+    speakerModelId,
     sort,
-    days,
+    days: days.map((d) =>
+      speakerModelId ? { ...d, speakerModelId } : d,
+    ),
     createdAt,
     updatedAt,
   };
