@@ -360,29 +360,43 @@ function assemble(
     marketingMuted: dark ? "#A8B0BC" : "#5A5342",
     marketingBody: dark ? "#A8B0BC" : "#7A7566",
     /** Lighter mid band (e.g. “Tools that talk…”, pillars). */
-    marketingBandA: dark ? "#2A3A4E" : "#F0DFC0",
+    marketingBandA: dark
+      ? "#2A3A4E"
+      : mixHex(PRIMARY, paper.background, 0.82),
     /** Deeper CTA band (e.g. “Start with…”). */
-    marketingBandB: dark ? "#1A2330" : "#E8CE9C",
-    /** Mid band (meditate journal). */
-    marketingBandC: dark ? "#243447" : "#E8CE9C",
-    /** Soft cream band (journal, listen samples) — warm linen, not deep gold. */
-    marketingBandD: dark ? "#161D28" : "#F2EBDC",
-    /** Soft cream band (ideate) — lighter ivory cream, distinct from journal band D. */
-    marketingBandIdeate: dark ? "#1A2330" : "#FBF6EA",
+    marketingBandB: dark
+      ? "#1A2330"
+      : mixHex(PRIMARY, paper.background, 0.7),
+    /** Mid band (meditate / feature strips). */
+    marketingBandC: dark
+      ? "#243447"
+      : mixHex(PRIMARY, paper.background, 0.74),
+    /** Soft cream band (journal, listen samples). */
+    marketingBandD: dark
+      ? "#161D28"
+      : mixHex(PRIMARY, paper.background, 0.9),
+    /** Softest band (ideate) — distinct from journal band D. */
+    marketingBandIdeate: dark
+      ? "#1A2330"
+      : mixHex(PRIMARY, paper.background, 0.94),
     marketingCardBg: dark ? "#2A3544" : "#FFFFFF",
     marketingCardBorder: dark ? "rgba(255,255,255,0.1)" : "#E5DFD0",
     marketingCardHover: dark ? "#323E4F" : "#FBF8F2",
     marketingCardShadow: dark
       ? "none"
       : "0 10px 28px rgb(30 37 48 / 0.06)",
-    marketingIconBg: dark ? "rgba(255,255,255,0.1)" : "#F3ECD9",
+    marketingIconBg: dark
+      ? "rgba(255,255,255,0.1)"
+      : mixHex(PRIMARY, paper.background, 0.86),
     marketingIconFg: dark ? GOLD_LIGHT : "#33465C",
     marketingPanelBg: dark ? "#12181F" : "#FFFFFF",
     marketingEyebrow: dark ? GOLD_LIGHT : ACCENT_LINK,
     marketingPillarIdleBg: dark ? "#243041" : "#FFFFFF",
     marketingPillarSelectedBg: dark ? "#2F2C24" : "#FFFFFF",
     marketingPillarIdleIconFg: dark ? "#F4F0E8" : "#33465C",
-    marketingHighlightIconBg: dark ? "rgba(240,168,85,0.22)" : "#F3ECD9",
+    marketingHighlightIconBg: dark
+      ? "rgba(240,168,85,0.22)"
+      : mixHex(PRIMARY, paper.background, 0.86),
     marketingHighlightIconFg: dark ? GOLD_LIGHT : ACCENT_LINK,
     marketingNavChrome: dark ? "rgba(255,255,255,0.2)" : "#D8D0BC",
     marketingInputShellBg: dark ? "rgba(255,255,255,0.06)" : "#FFFFFF",
@@ -391,8 +405,12 @@ function assemble(
     marketingMenuBorder: dark ? "rgba(255,255,255,0.15)" : "#D8D2C4",
     marketingMenuHover: dark ? "rgba(255,255,255,0.1)" : "#F4F0E8",
     marketingMenuMuted: dark ? "#C8C0B2" : "#5A5548",
-    journalWarmBg: dark ? "#2A261F" : "#FBF6EA",
-    journalWarmBorder: dark ? "#5A4F3A" : "#EEDFC0",
+    journalWarmBg: dark
+      ? "#2A261F"
+      : mixHex(PRIMARY, paper.background, 0.94),
+    journalWarmBorder: dark
+      ? "#5A4F3A"
+      : mixHex(PRIMARY, paper.background, 0.72),
     journalWarmInputBg: dark ? "#1C1914" : "#FFFFFF",
     headerBorder: dark ? "rgba(255,255,255,0.1)" : "#E5E0D2",
     headerShadow: dark

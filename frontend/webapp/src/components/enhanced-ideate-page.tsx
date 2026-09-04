@@ -98,8 +98,8 @@ export function EnhancedIdeatePage() {
         </div>
       </section>
 
-      {/* Life areas — stone fill sits between hero cream and vision-board gold. */}
-      <section className="w-full bg-[#E2D6C0] px-4 py-16 dark:bg-marketing-band-ideate sm:px-6 sm:py-20">
+      {/* Life areas — mid peach band between hero cream and deeper vision board. */}
+      <section className="w-full bg-marketing-band-d px-4 py-16 dark:bg-marketing-band-ideate sm:px-6 sm:py-20">
         <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
           <div>
             <h2 className="font-display text-3xl font-medium tracking-tight text-marketing-ink sm:text-4xl">
@@ -160,9 +160,8 @@ export function EnhancedIdeatePage() {
         </div>
       </section>
 
-      {/* Vision board feature — placeholder copy, not final.
-          Fill is warmer gold (#E8CE9C) so it separates from band-a (#F0DFC0) below. */}
-      <section className="w-full bg-[#E8CE9C] px-4 py-16 dark:bg-marketing-band-c sm:px-6 sm:py-20">
+      {/* Vision board feature — placeholder copy, not final. */}
+      <section className="w-full bg-marketing-band-c px-4 py-16 sm:px-6 sm:py-20">
         <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
           <div>
             <h2 className="font-display text-3xl font-medium tracking-tight text-marketing-ink sm:text-4xl">
