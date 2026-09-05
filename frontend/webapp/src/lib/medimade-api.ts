@@ -287,10 +287,21 @@ export async function transcribeJournalAudio(params: {
     /* ignore */
   }
   if (!res.ok) {
-    const msg =
+    let msg =
       (typeof data.detail === "string" && data.detail) ||
       (typeof data.error === "string" && data.error) ||
       res.statusText;
+    // Older API responses nested OpenAI's JSON in `detail`.
+    if (typeof msg === "string" && msg.trim().startsWith("{")) {
+      try {
+        const nested = JSON.parse(msg) as { error?: { message?: string } };
+        if (typeof nested.error?.message === "string" && nested.error.message.trim()) {
+          msg = nested.error.message.trim();
+        }
+      } catch {
+        /* keep msg */
+      }
+    }
     throw new Error(msg);
   }
   const text = typeof data.text === "string" ? data.text : "";

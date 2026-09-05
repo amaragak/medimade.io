@@ -31,15 +31,81 @@ async function getOpenAiApiKey(): Promise<string> {
   return cachedOpenAiKey;
 }
 
-function extFromMime(mime: string): string {
-  const m = mime.toLowerCase();
-  if (m.includes("webm")) return "webm";
-  if (m.includes("mp4") || m.includes("m4a")) return "m4a";
-  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
-  if (m.includes("wav")) return "wav";
-  if (m.includes("ogg")) return "ogg";
-  if (m.includes("caf")) return "caf";
-  return "bin";
+/** Strip codecs / params so OpenAI sees a plain audio/* type. */
+function baseMime(mime: string): string {
+  return mime.split(";")[0]!.trim().toLowerCase();
+}
+
+/**
+ * Whisper accepts: flac, m4a, mp3, mp4, mpeg, mpga, oga, ogg, wav, webm.
+ * Prefer bytes over client-reported MIME (Safari often mislabels mp4 as webm).
+ */
+function resolveWhisperFile(
+  buf: Buffer,
+  claimedMime: string,
+): { ext: string; mime: string } | { error: string } {
+  const sniffed = sniffAudioFormat(buf);
+  if (sniffed) return sniffed;
+
+  const m = baseMime(claimedMime);
+  if (m.includes("webm")) return { ext: "webm", mime: "audio/webm" };
+  if (m.includes("mp4") || m.includes("m4a") || m.includes("aac")) {
+    return { ext: "m4a", mime: "audio/mp4" };
+  }
+  if (m.includes("mpeg") || m.includes("mp3") || m.includes("mpga")) {
+    return { ext: "mp3", mime: "audio/mpeg" };
+  }
+  if (m.includes("wav") || m.includes("wave")) return { ext: "wav", mime: "audio/wav" };
+  if (m.includes("ogg") || m.includes("oga") || m.includes("opus")) {
+    return { ext: "ogg", mime: "audio/ogg" };
+  }
+  if (m.includes("flac")) return { ext: "flac", mime: "audio/flac" };
+  if (m.includes("caf")) {
+    return {
+      error:
+        "This browser recorded CAF audio, which Whisper cannot transcribe. Try Chrome or Firefox, or another browser that records WebM/MP4.",
+    };
+  }
+  return {
+    error: `Unrecognized audio format (${claimedMime || "unknown"}). Supported: webm, m4a/mp4, mp3, wav, ogg, flac.`,
+  };
+}
+
+function sniffAudioFormat(buf: Buffer): { ext: string; mime: string } | null {
+  if (buf.length < 4) return null;
+  // EBML / WebM
+  if (buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) {
+    return { ext: "webm", mime: "audio/webm" };
+  }
+  // Ogg
+  if (buf.toString("ascii", 0, 4) === "OggS") {
+    return { ext: "ogg", mime: "audio/ogg" };
+  }
+  // WAV
+  if (
+    buf.length >= 12 &&
+    buf.toString("ascii", 0, 4) === "RIFF" &&
+    buf.toString("ascii", 8, 12) === "WAVE"
+  ) {
+    return { ext: "wav", mime: "audio/wav" };
+  }
+  // FLAC
+  if (buf.toString("ascii", 0, 4) === "fLaC") {
+    return { ext: "flac", mime: "audio/flac" };
+  }
+  // MP4 / M4A / AAC in MP4 (`....ftyp`)
+  if (buf.length >= 8 && buf.toString("ascii", 4, 8) === "ftyp") {
+    return { ext: "m4a", mime: "audio/mp4" };
+  }
+  // MP3 with ID3 tag
+  if (buf.length >= 3 && buf.toString("ascii", 0, 3) === "ID3") {
+    return { ext: "mp3", mime: "audio/mpeg" };
+  }
+  // MP3 frame sync
+  if (buf.length >= 2 && buf[0] === 0xff && (buf[1]! & 0xe0) === 0xe0) {
+    return { ext: "mp3", mime: "audio/mpeg" };
+  }
+  return null;
 }
 
 function json(
@@ -128,16 +194,26 @@ export async function handler(
     });
   }
 
-  const mime =
+  const claimedMime =
     typeof body.mimeType === "string" && body.mimeType.trim()
       ? body.mimeType.trim()
       : "audio/webm";
 
-  const ext = extFromMime(mime);
+  const resolved = resolveWhisperFile(buf, claimedMime);
+  if ("error" in resolved) {
+    return json(400, { error: resolved.error });
+  }
+  const { ext, mime } = resolved;
   const filename = `journal-${randomUUID().slice(0, 8)}.${ext}`;
 
   const form = new FormData();
-  form.append("file", new Blob([new Uint8Array(buf)], { type: mime }), filename);
+  // Prefer File so multipart includes a real filename + clean Content-Type.
+  const fileBytes = new Uint8Array(buf);
+  const filePart =
+    typeof File !== "undefined"
+      ? new File([fileBytes], filename, { type: mime })
+      : new Blob([fileBytes], { type: mime });
+  form.append("file", filePart, filename);
   form.append("model", "whisper-1");
 
   const upstream = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
@@ -147,10 +223,21 @@ export async function handler(
   });
 
   if (!upstream.ok) {
-    const detail = await upstream.text();
+    const detailRaw = await upstream.text();
+    let detail = detailRaw.slice(0, 2000);
+    try {
+      const parsed = JSON.parse(detailRaw) as {
+        error?: { message?: string };
+      };
+      if (typeof parsed.error?.message === "string" && parsed.error.message.trim()) {
+        detail = parsed.error.message.trim();
+      }
+    } catch {
+      /* keep raw */
+    }
     return json(upstream.status >= 400 ? upstream.status : 502, {
       error: "OpenAI Whisper request failed",
-      detail: detail.slice(0, 2000),
+      detail,
     });
   }
 

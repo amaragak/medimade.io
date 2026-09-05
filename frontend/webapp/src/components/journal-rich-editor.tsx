@@ -69,6 +69,7 @@ export function JournalRichEditor({
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaRecorderMimeRef = useRef<string>("");
   const mediaChunksRef = useRef<BlobPart[]>([]);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
@@ -89,8 +90,14 @@ export function JournalRichEditor({
     mediaStreamRef.current = null;
     const parts = mediaChunksRef.current;
     mediaChunksRef.current = [];
+    const preferred =
+      mediaRecorderMimeRef.current ||
+      (typeof rec.mimeType === "string" ? rec.mimeType : "") ||
+      "audio/webm";
+    mediaRecorderMimeRef.current = "";
     if (!parts.length) return null;
-    return new Blob(parts, { type: (parts[0] as Blob).type || "audio/webm" });
+    const chunkType = (parts[0] as Blob).type;
+    return new Blob(parts, { type: chunkType || preferred });
   }, []);
 
   const startVoiceRecording = useCallback(async () => {
@@ -104,14 +111,19 @@ export function JournalRichEditor({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaStreamRef.current = stream;
       mediaChunksRef.current = [];
-      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-        ? "audio/webm;codecs=opus"
-        : MediaRecorder.isTypeSupported("audio/webm")
-          ? "audio/webm"
-          : "";
+      // Prefer WebM on Chromium; Safari needs audio/mp4 (m4a) for Whisper.
+      const candidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/ogg;codecs=opus",
+      ];
+      const mime =
+        candidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
       const rec = mime
         ? new MediaRecorder(stream, { mimeType: mime })
         : new MediaRecorder(stream);
+      mediaRecorderMimeRef.current = mime || rec.mimeType || "";
       mediaRecorderRef.current = rec;
       rec.ondataavailable = (ev) => {
         if (ev.data.size > 0) mediaChunksRef.current.push(ev.data);
@@ -141,9 +153,13 @@ export function JournalRichEditor({
         return;
       }
       const dataUrl = await blobToDataUrl(blob);
+      const mimeType =
+        (blob.type || mediaRecorderMimeRef.current || "audio/webm").split(
+          ";",
+        )[0] || "audio/webm";
       insertJournalVoiceClipAtCursor(ed, {
         src: dataUrl,
-        mimeType: blob.type || "audio/webm",
+        mimeType,
       });
     } catch (e) {
       setVoiceError(e instanceof Error ? e.message : "Could not save recording");
