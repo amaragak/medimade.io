@@ -24,13 +24,14 @@ import {
 } from "@/lib/medimade-api";
 import { SoundFolderSelect } from "@/components/sound-folder-select";
 import { packageOneShotPrompt } from "@/lib/homepage-one-shot-handoff";
+import { SOUNDSCAPE_ELEMENT_VOLUME } from "@/lib/bed-volume";
 import {
   FIXED_SPEECH_PREVIEW_SPEED,
   speakerPreviewLoudSampleKey,
 } from "@/lib/speaker-sample-speed";
 
+/** Mixer fader value persisted with the generate job (same as create soundscape). */
 const SOUNDSCAPE_GAIN = 50;
-const COMPOSITION_PREVIEW_VOLUME = 0.45;
 
 function mediaFileUrl(base: string, key: string): string {
   const b = base.replace(/\/$/, "");
@@ -328,11 +329,23 @@ export function AdminProgramsPanel() {
     stopSpeakerPreview();
     if (el.src !== url) {
       el.src = url;
-      void el.load();
+      // load() resets HTMLMediaElement.volume to 1 — wait, then set bed level.
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          el.removeEventListener("canplay", done);
+          el.removeEventListener("error", done);
+          resolve();
+        };
+        el.addEventListener("canplay", done);
+        el.addEventListener("error", done);
+        el.load();
+      });
     }
-    el.volume = COMPOSITION_PREVIEW_VOLUME;
+    el.volume = SOUNDSCAPE_ELEMENT_VOLUME;
     try {
       await el.play();
+      // Re-apply: some browsers reset volume when playback actually starts.
+      el.volume = SOUNDSCAPE_ELEMENT_VOLUME;
       setPlayingCompositionKey(k);
     } catch {
       setPlayingCompositionKey(null);
@@ -348,12 +361,22 @@ export function AdminProgramsPanel() {
     const url = mediaFileUrl(mediaBaseUrl, backgroundAudioPlaybackKey(k));
     if (el.src !== url) {
       el.src = url;
-      void el.load();
+      await new Promise<void>((resolve) => {
+        const done = () => {
+          el.removeEventListener("canplay", done);
+          el.removeEventListener("error", done);
+          resolve();
+        };
+        el.addEventListener("canplay", done);
+        el.addEventListener("error", done);
+        el.load();
+      });
     }
     el.loop = true;
-    el.volume = COMPOSITION_PREVIEW_VOLUME;
+    el.volume = SOUNDSCAPE_ELEMENT_VOLUME;
     try {
       await el.play();
+      el.volume = SOUNDSCAPE_ELEMENT_VOLUME;
       setPlayingCompositionKey(k);
     } catch {
       setPlayingCompositionKey(null);

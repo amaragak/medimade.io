@@ -64,6 +64,7 @@ export default function RootLayout({
         <style dangerouslySetInnerHTML={{ __html: homeHeroPatternCriticalCss }} />
       </head>
       <body
+        suppressHydrationWarning
         className={`${dmSans.variable} ${fraunces.variable} ${caveat.variable} flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground antialiased`}
       >
         <LibraryPlayerProvider>

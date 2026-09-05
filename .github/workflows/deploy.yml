@@ -1,0 +1,139 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/webapp/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+    inputs:
+      force_backend:
+        description: "Deploy backend even if paths unchanged"
+        type: boolean
+        default: false
+      force_frontend:
+        description: "Deploy frontend even if paths unchanged"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/deploy.yml'
+            frontend:
+              - 'frontend/webapp/**'
+              - '.github/workflows/deploy.yml'
+
+  deploy:
+    needs: changes
+    if: >-
+      needs.changes.outputs.backend == 'true' ||
+      needs.changes.outputs.frontend == 'true' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # Path filter only — backend-only does not force a frontend redeploy.
+      # Frontend always refreshes .env from live CloudFormation before build.
+      DEPLOY_BACKEND: ${{ needs.changes.outputs.backend == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_backend) }}
+      DEPLOY_FRONTEND: ${{ needs.changes.outputs.frontend == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_frontend) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/webapp/package-lock.json
+            frontend/webapp/deploy/package-lock.json
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-2' }}
+
+      - name: Decide what to deploy
+        id: plan
+        run: |
+          set -euo pipefail
+          BACKEND="${DEPLOY_BACKEND}"
+          FRONTEND="${DEPLOY_FRONTEND}"
+          # workflow_dispatch with no force flags: use path filter; if nothing
+          # matched (rare), deploy both so a manual run still does something.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "$BACKEND" != "true" ] && [ "$FRONTEND" != "true" ]; then
+              if [ "${{ needs.changes.outputs.backend }}" = "true" ] || [ "${{ needs.changes.outputs.frontend }}" = "true" ]; then
+                BACKEND="${{ needs.changes.outputs.backend }}"
+                FRONTEND="${{ needs.changes.outputs.frontend }}"
+              else
+                BACKEND=true
+                FRONTEND=true
+              fi
+            fi
+          fi
+          echo "backend=$BACKEND" >> "$GITHUB_OUTPUT"
+          echo "frontend=$FRONTEND" >> "$GITHUB_OUTPUT"
+          echo "Plan: backend=$BACKEND frontend=$FRONTEND"
+
+      - name: Install backend dependencies
+        if: steps.plan.outputs.backend == 'true'
+        working-directory: backend
+        run: npm ci
+
+      - name: Deploy backend (CDK)
+        if: steps.plan.outputs.backend == 'true'
+        working-directory: backend
+        env:
+          MEDIMADE_AUTH_EMAIL_FROM: ${{ secrets.MEDIMADE_AUTH_EMAIL_FROM }}
+          MEDIMADE_AUTH_WEBAPP_ORIGIN: ${{ secrets.MEDIMADE_AUTH_WEBAPP_ORIGIN }}
+        run: |
+          ./scripts/deploy-back MedimadeBackend --require-approval never
+
+      # Before any frontend build, pull NEXT_PUBLIC_* from the live stack
+      # (covers frontend-only and back+front — no GitHub secrets for those URLs).
+      - name: Sync webapp .env from CloudFormation outputs
+        if: steps.plan.outputs.frontend == 'true'
+        run: |
+          node backend/scripts/write-webapp-env-from-outputs.mjs \
+            --stack MedimadeBackend \
+            frontend/webapp/.env \
+            frontend/mobile/.env \
+            frontend/extension/.env
+
+      - name: Install webapp dependencies
+        if: steps.plan.outputs.frontend == 'true'
+        working-directory: frontend/webapp
+        run: npm ci
+
+      - name: Install SST deploy tooling
+        if: steps.plan.outputs.frontend == 'true'
+        working-directory: frontend/webapp/deploy
+        run: |
+          npm ci
+          npm run install-platform
+
+      - name: Deploy frontend (SST prod)
+        if: steps.plan.outputs.frontend == 'true'
+        working-directory: frontend/webapp/deploy
+        run: ./deploy-web --stage production

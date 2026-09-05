@@ -533,20 +533,9 @@ export async function handler(
 
   if (method === "GET") {
     const user = await optionalUserJson(event);
+    // Guests use local demo / device journal only — never scan every owner's store.
     if (!user) {
-      try {
-        const items = await scanAllItems(table);
-        if (!items.length) return json(200, { store: null });
-        const store = mergeAllJournalItems(items);
-        return json(200, {
-          store: store.entries.length
-            ? store
-            : { version: 2, activeEntryId: null, entries: [] },
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Read failed";
-        return json(500, { error: msg });
-      }
+      return json(200, { store: null });
     }
     const ownerId = user.sub;
     try {

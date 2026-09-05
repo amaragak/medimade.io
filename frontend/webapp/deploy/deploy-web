@@ -87,7 +87,11 @@ fi
 if [[ -n "$PROFILE" ]]; then
   export AWS_PROFILE="$PROFILE"
 elif [[ -z "${AWS_PROFILE:-}" ]]; then
-  export AWS_PROFILE=mm
+  # Local default. GitHub Actions / CI usually injects AWS_ACCESS_KEY_ID
+  # (or OIDC) and should not force a named profile.
+  if [[ -z "${AWS_ACCESS_KEY_ID:-}" && -z "${AWS_ROLE_ARN:-}" ]]; then
+    export AWS_PROFILE=mm
+  fi
 fi
 
 cd "$DEPLOY_DIR"

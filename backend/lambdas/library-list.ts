@@ -304,22 +304,6 @@ function applyListenerMixOverlay(
   });
 }
 
-async function scanAllMeditationItems(tableName: string): Promise<DdbMeditation[]> {
-  const items: DdbMeditation[] = [];
-  let lek: Record<string, unknown> | undefined;
-  do {
-    const out = await ddb.send(
-      new ScanCommand({
-        TableName: tableName,
-        ExclusiveStartKey: lek,
-      }),
-    );
-    items.push(...((out.Items ?? []) as DdbMeditation[]));
-    lek = out.LastEvaluatedKey;
-  } while (lek);
-  return items;
-}
-
 async function listMeditationMp3Keys(
   bucket: string,
   prefix: string,
@@ -347,14 +331,6 @@ async function listMeditationMp3Keys(
     token = res.IsTruncated ? res.NextContinuationToken : undefined;
   } while (token);
   return out;
-}
-
-async function listAllMeditationMp3Keys(
-  bucket: string,
-): Promise<
-  Array<{ key: string; lastModified: string | null; size: number | null }>
-> {
-  return listMeditationMp3Keys(bucket, "meditations/");
 }
 
 /** `meditations/<file>.mp3` (no extra path segment) — pre–per-user S3 layout. */
@@ -696,15 +672,29 @@ export async function handler(
       () => new Set<string>(),
     );
 
+    // Guest: shared pre-auth pool only (global + legacy). Signed-in: personal
+    // partition only — never merge guest/global into My Creations.
     if (!user) {
-      const [ddbItems, s3Objects] = await Promise.all([
-        scanAllMeditationItems(tableName),
-        listAllMeditationMp3Keys(bucket),
+      const globalPk = meditationGlobalUserPk();
+      const legacyPk = LEGACY_MEDITATION_PARTITION_PK;
+      const [globalRows, legacyRows, globalS3, legacyS3] = await Promise.all([
+        queryAllMeditationItems(tableName, globalPk),
+        queryAllMeditationItems(tableName, legacyPk),
+        listMeditationMp3Keys(bucket, `meditations/${GLOBAL_MEDITATION_USER_ID}/`),
+        listLegacyRootMeditationMp3Keys(bucket),
       ]);
+      const s3ByKey = new Map<
+        string,
+        { key: string; lastModified: string | null; size: number | null }
+      >();
+      for (const o of [...globalS3, ...legacyS3]) {
+        if (!o.key.endsWith(".mp3")) continue;
+        s3ByKey.set(o.key, o);
+      }
       return json(200, {
         items: buildLibraryItems({
-          ddbItems,
-          s3Objects,
+          ddbItems: [...globalRows, ...legacyRows],
+          s3Objects: [...s3ByKey.values()],
           cfDomain,
           speakerNames,
           excludeS3Keys: programAudioKeys,
@@ -713,34 +703,17 @@ export async function handler(
     }
 
     const userPk = meditationUserPk(user.sub);
-    const globalPk = meditationGlobalUserPk();
-    const legacyPk = LEGACY_MEDITATION_PARTITION_PK;
     const userMp3Prefix = `meditations/${user.sub}/`;
-    const globalMp3Prefix = `meditations/_/`;
 
-    const [userRows, globalRows, legacyRows, userS3, globalS3, legacyS3] =
-      await Promise.all([
-        queryAllMeditationItems(tableName, userPk),
-        queryAllMeditationItems(tableName, globalPk),
-        queryAllMeditationItems(tableName, legacyPk),
-        listMeditationMp3Keys(bucket, userMp3Prefix),
-        listMeditationMp3Keys(bucket, globalMp3Prefix),
-        listLegacyRootMeditationMp3Keys(bucket),
-      ]);
-    const ddbItems = [...userRows, ...globalRows, ...legacyRows];
-    const s3ByKey = new Map<
-      string,
-      { key: string; lastModified: string | null; size: number | null }
-    >();
-    for (const o of [...userS3, ...globalS3, ...legacyS3]) {
-      if (!o.key.endsWith(".mp3")) continue;
-      s3ByKey.set(o.key, o);
-    }
+    const [userRows, userS3] = await Promise.all([
+      queryAllMeditationItems(tableName, userPk),
+      listMeditationMp3Keys(bucket, userMp3Prefix),
+    ]);
 
     return json(200, {
       items: buildLibraryItems({
-        ddbItems,
-        s3Objects: [...s3ByKey.values()],
+        ddbItems: userRows,
+        s3Objects: userS3.filter((o) => o.key.endsWith(".mp3")),
         cfDomain,
         draftUserFallback: user.sub,
         speakerNames,

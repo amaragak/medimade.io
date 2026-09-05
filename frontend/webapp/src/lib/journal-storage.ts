@@ -48,6 +48,15 @@ export type JournalStoreV2 = {
 
 const LEGACY_PLAIN_KEY = "mm_journal_entries_v1";
 const STORE_KEY = "mm_journal_store_v2";
+/** Bump when demo copy changes so guests get a one-time reseed of missing demos. */
+const DEMO_SEED_FLAG_KEY = "mm_journal_demo_seed_v1";
+
+const DEMO_ENTRY_IDS = [
+  "demo-journal-blank",
+  "demo-journal-morning",
+  "demo-journal-resistance",
+  "demo-journal-gratitude",
+] as const;
 
 /** Stable id for `GET/PUT /journal/store` and `POST /journal/voice` (treat as a device secret). */
 export const JOURNAL_OWNER_ID_KEY = "mm_journal_owner_id";
@@ -267,10 +276,136 @@ function newEntry(overrides?: Partial<JournalEntry>): JournalEntry {
   };
 }
 
-export function loadJournalStore(): JournalStoreV2 {
+function daysAgoIso(days: number, hour = 9): string {
+  const d = new Date();
+  d.setHours(hour, 15, 0, 0);
+  d.setDate(d.getDate() - days);
+  return d.toISOString();
+}
+
+/** Sample pages for guests — never synced to the cloud. */
+export function buildDemoJournalStore(): JournalStoreV2 {
+  const morning = newEntry({
+    id: "demo-journal-morning",
+    createdAt: daysAgoIso(1, 8),
+    updatedAt: daysAgoIso(1, 8),
+    title: "A quieter morning",
+    mood: "calm",
+    localOnly: true,
+    sourceMetadata: { demo: true },
+    contentHtml:
+      "<p>Woke without reaching for my phone. Made tea and sat by the window for ten minutes.</p><p>Noticed how loud my usual rush feels once I stop it — and how little of it was actually urgent.</p>",
+  });
+  const resistance = newEntry({
+    id: "demo-journal-resistance",
+    createdAt: daysAgoIso(3, 21),
+    updatedAt: daysAgoIso(3, 21),
+    title: "What I keep putting off",
+    mood: "mixed",
+    localOnly: true,
+    sourceMetadata: { demo: true },
+    contentHtml:
+      "<p>The project I care about keeps sliding to “tomorrow.” When I look closer, it isn’t laziness — it’s fear of doing it imperfectly.</p><p>Tomorrow I’ll open the doc for fifteen minutes only. No finishing required.</p>",
+  });
+  const gratitude = newEntry({
+    id: "demo-journal-gratitude",
+    createdAt: daysAgoIso(5, 7),
+    updatedAt: daysAgoIso(5, 7),
+    kind: "gratitude",
+    title: "Three things",
+    mood: "good",
+    localOnly: true,
+    sourceMetadata: { demo: true },
+    gratitude: [
+      "A walk without headphones",
+      "A message from someone who remembered",
+      "Hot water and a clean mug",
+    ],
+    contentHtml:
+      "<p>A walk without headphones</p><p>A message from someone who remembered</p><p>Hot water and a clean mug</p>",
+  });
+  const blank = newEntry({
+    id: "demo-journal-blank",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    title: "",
+    localOnly: true,
+    sourceMetadata: { demo: true },
+    contentHtml: "<p></p>",
+  });
+  return {
+    version: 2,
+    activeEntryId: blank.id,
+    entries: [blank, morning, resistance, gratitude],
+  };
+}
+
+function isDemoOnlyStore(store: JournalStoreV2): boolean {
+  return (
+    store.entries.length > 0 &&
+    store.entries.every((e) => e.sourceMetadata?.demo === true)
+  );
+}
+
+function demoSeedFlagSet(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(DEMO_SEED_FLAG_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markDemoSeedFlag(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(DEMO_SEED_FLAG_KEY, "1");
+  } catch {
+    /* */
+  }
+}
+
+/**
+ * For guests: ensure demo sample pages exist when the device journal has no
+ * real writing yet. Safe to call repeatedly. Never overwrites meaningful
+ * personal entries.
+ */
+export function ensureGuestDemoJournalSeeded(
+  existing?: JournalStoreV2 | null,
+): JournalStoreV2 {
+  const current =
+    existing ??
+    (typeof window !== "undefined" ? loadJournalStoreRaw() : buildDemoJournalStore());
+  const personalMeaningful = current.entries.filter(
+    (e) =>
+      e.sourceMetadata?.demo !== true && journalEntryHasMeaningfulContent(e),
+  );
+  if (personalMeaningful.length > 0) {
+    markDemoSeedFlag();
+    return current;
+  }
+
+  const hasAllDemos = DEMO_ENTRY_IDS.every((id) =>
+    current.entries.some((e) => e.id === id),
+  );
+  if (hasAllDemos && isDemoOnlyStore(current)) {
+    markDemoSeedFlag();
+    return current;
+  }
+
+  // Empty stub or missing demos with no personal writing → full demo set.
+  const demo = buildDemoJournalStore();
+  if (typeof window !== "undefined") {
+    saveJournalStore(demo);
+    markDemoSeedFlag();
+  }
+  return demo;
+}
+
+/** Read local store without side-effect seeding (used by ensureGuest…). */
+function loadJournalStoreRaw(): JournalStoreV2 {
   if (typeof window === "undefined") {
-    const e = newEntry();
-    return { version: 2, activeEntryId: e.id, entries: [e] };
+    return buildDemoJournalStore();
   }
   try {
     const raw = window.localStorage.getItem(STORE_KEY);
@@ -297,19 +432,81 @@ export function loadJournalStore(): JournalStoreV2 {
         contentHtml: `<p>${escapeLegacyPlain(legacy)}</p>`,
         title: deriveEntryTitle(`<p>${escapeLegacyPlain(legacy)}</p>`),
       });
+      return { version: 2, activeEntryId: e.id, entries: [e] };
+    }
+  } catch {
+    /* */
+  }
+  return { version: 2, activeEntryId: null, entries: [] };
+}
+
+export function loadJournalStore(): JournalStoreV2 {
+  if (typeof window === "undefined") {
+    return buildDemoJournalStore();
+  }
+  try {
+    const raw = window.localStorage.getItem(STORE_KEY);
+    if (raw) {
+      const data = JSON.parse(raw) as unknown;
+      if (isStoreV2(data) && data.entries.length > 0) {
+        const normalized: JournalStoreV2 = {
+          version: 2,
+          activeEntryId:
+            data.activeEntryId &&
+            data.entries.some((e) => e.id === data.activeEntryId)
+              ? data.activeEntryId
+              : data.entries[0].id,
+          entries: data.entries.map(normalizeEntry),
+          ...(normalizeFolders(data.folders)
+            ? { folders: normalizeFolders(data.folders) }
+            : {}),
+        };
+        const meaningful = normalized.entries.filter(
+          journalEntryHasMeaningfulContent,
+        );
+        if (meaningful.length === 0) {
+          return ensureGuestDemoJournalSeeded(normalized);
+        }
+        // Guests who never received demos (flag unset) and have no writing yet
+        // were handled above; if they only have blanks, still seed.
+        if (!demoSeedFlagSet()) {
+          const personal = normalized.entries.filter(
+            (e) => e.sourceMetadata?.demo !== true,
+          );
+          if (
+            personal.length === 0 ||
+            !personal.some(journalEntryHasMeaningfulContent)
+          ) {
+            return ensureGuestDemoJournalSeeded(normalized);
+          }
+          markDemoSeedFlag();
+        }
+        return normalized;
+      }
+    }
+    const legacy = window.localStorage.getItem(LEGACY_PLAIN_KEY);
+    if (legacy && typeof legacy === "string" && legacy.trim()) {
+      const e = newEntry({
+        contentHtml: `<p>${escapeLegacyPlain(legacy)}</p>`,
+        title: deriveEntryTitle(`<p>${escapeLegacyPlain(legacy)}</p>`),
+      });
       const store: JournalStoreV2 = {
         version: 2,
         activeEntryId: e.id,
         entries: [e],
       };
       saveJournalStore(store);
+      markDemoSeedFlag();
       return store;
     }
   } catch {
     /* */
   }
-  const e = newEntry();
-  return { version: 2, activeEntryId: e.id, entries: [e] };
+  return ensureGuestDemoJournalSeeded({
+    version: 2,
+    activeEntryId: null,
+    entries: [],
+  });
 }
 
 function escapeLegacyPlain(s: string): string {

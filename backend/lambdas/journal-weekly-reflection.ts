@@ -775,8 +775,11 @@ export async function handler(
   }
 
   const user = await optionalUserJson(event);
-  const ownerId = user?.sub ?? "__all__";
-  const allUsers = !user;
+  if (!user?.sub?.trim()) {
+    return json(401, { error: "Sign in to use weekly reflections" });
+  }
+  const ownerId = user.sub;
+  const allUsers = false;
 
   const weekParam = event.queryStringParameters?.week?.trim();
   const bounds = weekParam

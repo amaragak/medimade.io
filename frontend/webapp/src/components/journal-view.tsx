@@ -36,6 +36,7 @@ import {
 import {
   emptyGratitudeLines,
   entriesForCloudPut,
+  ensureGuestDemoJournalSeeded,
   findGratitudeEntryForLocalDate,
   formatJournalEntryDate,
   gratitudeLinesToHtml,
@@ -381,7 +382,9 @@ export function JournalView() {
   );
 
   useEffect(() => {
-    const store = loadJournalStore();
+    const store = signedIn
+      ? loadJournalStore()
+      : ensureGuestDemoJournalSeeded();
     const nextActive = activeIdForJournalTab(
       store.entries,
       store.activeEntryId,
@@ -399,12 +402,12 @@ export function JournalView() {
     setHydrated(true);
   }, [signedIn]);
 
-  /** Pull cloud journal when API is configured and cloud copy is newer (or local is empty stub). */
+  /** Pull cloud journal when signed in (guests stay on local demo / device pages). */
   useEffect(() => {
     if (!hydrated) return;
     let cancelled = false;
     const base = getMedimadeApiBase();
-    if (!base || isJournalLocalOnlyMode()) {
+    if (!signedIn || !base || isJournalLocalOnlyMode()) {
       setRemoteJournalChecked(true);
       return;
     }
@@ -415,13 +418,42 @@ export function JournalView() {
     void (async () => {
       try {
         const remote = await fetchJournalStoreRemote();
-        if (cancelled || !remote) return;
+        if (cancelled) return;
         const localEntries = entriesRef.current;
-        if (!shouldPreferRemoteJournalStore(remote, localEntries)) return;
+        const localIsDemoOnly =
+          localEntries.length > 0 &&
+          localEntries.every((e) => e.sourceMetadata?.demo === true);
+
+        if (!remote?.entries?.length) {
+          if (localIsDemoOnly) {
+            const blank = newJournalEntry();
+            skipCloudPushRef.current = true;
+            entriesRef.current = [blank];
+            setEntries([blank]);
+            setFolders([]);
+            foldersRef.current = [];
+            setActiveEntryId(blank.id);
+            latestHtmlRef.current = blank.contentHtml;
+            latestTitleRef.current = blank.title;
+            latestGratitudeRef.current = emptyGratitudeLines();
+            setGratitudeDraft(latestGratitudeRef.current);
+            persist([blank], blank.id, []);
+          }
+          return;
+        }
+
+        if (
+          !shouldPreferRemoteJournalStore(remote, localEntries) &&
+          !localIsDemoOnly
+        ) {
+          return;
+        }
         skipCloudPushRef.current = true;
         const merged = mergeRemoteJournalKeepingLocalOnly(
           remote,
-          localEntries,
+          localIsDemoOnly
+            ? localEntries.filter((e) => e.sourceMetadata?.demo !== true)
+            : localEntries,
         );
         const preferred =
           merged.activeEntryId &&
@@ -437,7 +469,8 @@ export function JournalView() {
         const nextEntry = merged.entries.find((e) => e.id === nextActive);
         latestHtmlRef.current = nextEntry?.contentHtml ?? "<p></p>";
         latestTitleRef.current = nextEntry?.title ?? "";
-        latestGratitudeRef.current = nextEntry?.gratitude ?? emptyGratitudeLines();
+        latestGratitudeRef.current =
+          nextEntry?.gratitude ?? emptyGratitudeLines();
         setGratitudeDraft(latestGratitudeRef.current);
         persist(merged.entries, nextActive, merged.folders ?? []);
       } catch {
@@ -452,7 +485,7 @@ export function JournalView() {
     return () => {
       cancelled = true;
     };
-  }, [hydrated, persist, keepLocalOnly]);
+  }, [hydrated, persist, keepLocalOnly, signedIn]);
 
   const cloudPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 

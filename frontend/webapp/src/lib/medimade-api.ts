@@ -299,9 +299,8 @@ export async function transcribeJournalAudio(params: {
 }
 
 /**
- * Loads journal from `GET /journal/store` (DynamoDB-backed; same JSON shape as before).
- * Without a session JWT, returns all journal entries from the table (dev mode).
- * With a session JWT, returns the signed-in user's journal.
+ * Loads journal from `GET /journal/store`.
+ * Requires a session JWT — guests use the local demo / device journal only.
  */
 export async function fetchJournalStoreRemote(): Promise<JournalStoreV2 | null> {
   const base = getMedimadeApiBase();
