@@ -20,8 +20,8 @@ const features = [
     Icon: IconNotebook,
   },
   {
-    href: "/ideate",
-    title: "Ideate",
+    href: "/dream",
+    title: "Dream",
     body: "Name the project, the resistance, and the next steps — then build a visualisation or manifestation practice from what’s blocking you.",
     Icon: IconBulb,
   },
@@ -160,12 +160,12 @@ export function EnhancedHomePage() {
         </div>
       </section>
 
-      {/* Ideate */}
+      {/* Dream */}
       <section className="w-full bg-marketing-band-ideate px-4 py-16 sm:px-6 sm:py-20">
         <div className="mx-auto grid max-w-6xl items-center gap-10 lg:grid-cols-2 lg:gap-14">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-marketing-eyebrow">
-              Ideate
+              Dream
             </p>
             <h2 className="mt-3 font-display text-3xl font-medium tracking-tight text-marketing-ink sm:text-4xl">
               Turn what&apos;s blocking you into what you build toward.
@@ -176,10 +176,10 @@ export function EnhancedHomePage() {
               underneath.
             </p>
             <Link
-              href="/ideate"
+              href="/dream"
               className="mt-6 inline-flex items-center rounded-full accent-fill-gradient px-5 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
             >
-              Explore Ideate →
+              Explore Dream →
             </Link>
           </div>
           <div className="rounded-2xl border border-marketing-card-border bg-marketing-panel-bg p-5 sm:p-6">

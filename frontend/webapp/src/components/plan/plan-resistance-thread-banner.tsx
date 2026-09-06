@@ -38,7 +38,7 @@ export function PlanResistanceThreadBanner({
         },
       ],
     });
-    router.push("/meditate/create/from-chat?fromIdeate=1");
+    router.push("/meditate/create/from-chat?fromDream=1");
   }
 
   return (
@@ -57,7 +57,7 @@ export function PlanResistanceThreadBanner({
         </button>
         {projectId ? (
           <Link
-            href={`/ideate/goal/${encodeURIComponent(projectId)}`}
+            href={`/dream/goal/${encodeURIComponent(projectId)}`}
             className="rounded-full px-4 py-2 text-sm text-muted hover:text-foreground"
           >
             View project

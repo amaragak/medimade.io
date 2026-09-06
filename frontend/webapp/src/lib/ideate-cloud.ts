@@ -77,6 +77,7 @@ export function wipeIdeateDeviceData(): void {
   if (typeof window !== "undefined") {
     try {
       window.localStorage.removeItem("mm_ideate_demo_seed_v1");
+      window.localStorage.removeItem("mm_ideate_demo_seed_v2");
     } catch {
       /* */
     }

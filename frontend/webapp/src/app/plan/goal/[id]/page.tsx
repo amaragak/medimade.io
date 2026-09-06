@@ -6,5 +6,5 @@ export default async function PlanGoalRedirectPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  redirect(`/ideate/goal/${encodeURIComponent(id)}`);
+  redirect(`/dream/goal/${encodeURIComponent(id)}`);
 }

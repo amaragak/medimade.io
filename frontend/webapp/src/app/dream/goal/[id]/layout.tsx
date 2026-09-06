@@ -1,7 +1,7 @@
 import { IdeateCloudProvider } from "@/components/plan/ideate-cloud-provider";
 
 export const metadata = {
-  title: "Dream workspace · Ideate",
+  title: "Dream workspace",
   description: "Reflect, explore resistance, and shape a vision for your dream.",
 };
 

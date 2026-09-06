@@ -10,7 +10,9 @@ export function CreateWorkspaceRoute() {
       initialDraftSk={sp.get("draftSk")}
       seedJournalContext={sp.get("fromJournal") === "1"}
       seedPlanContext={
-        sp.get("fromIdeate") === "1" || sp.get("fromPlan") === "1"
+        sp.get("fromDream") === "1" ||
+        sp.get("fromIdeate") === "1" ||
+        sp.get("fromPlan") === "1"
       }
     />
   );

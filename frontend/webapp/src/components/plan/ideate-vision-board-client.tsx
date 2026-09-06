@@ -951,10 +951,10 @@ export function IdeateVisionBoardClient() {
     <div className="min-h-[calc(100vh-3.5rem)] pb-16">
       <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
         <Link
-          href="/ideate/my"
+          href="/dream/my"
           className="text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
         >
-          ← My Ideas
+          ← My Dreams
         </Link>
 
         <h1 className="mt-6 font-display text-2xl font-medium tracking-tight text-foreground sm:text-3xl">

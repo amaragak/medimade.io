@@ -3,7 +3,7 @@ const MARKETING_HERO_ROUTES = new Set([
   "/",
   "/meditate",
   "/journal",
-  "/ideate",
+  "/dream",
   "/focus",
 ]);
 

@@ -1,33 +1,25 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { Suspense } from "react";
-import { useParams } from "next/navigation";
-import { PlanGoalWorkspace } from "@/components/plan/plan-goal-workspace";
-
-function IdeateGoalPageInner() {
-  const params = useParams();
-  const raw = params?.id;
-  const id = typeof raw === "string" ? decodeURIComponent(raw) : "";
-
-  if (!id) {
-    return (
-      <div className="px-4 py-16 text-muted">
-        Missing dream link.
-      </div>
-    );
+export default async function IdeateGoalRedirectPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const { id } = await params;
+  const sp = await searchParams;
+  const q = new URLSearchParams();
+  for (const [key, value] of Object.entries(sp)) {
+    if (typeof value === "string") q.set(key, value);
+    else if (Array.isArray(value)) {
+      for (const v of value) q.append(key, v);
+    }
   }
-
-  return <PlanGoalWorkspace dreamId={id} />;
-}
-
-export default function IdeateGoalPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="px-4 py-16 text-sm text-muted">Loading…</div>
-      }
-    >
-      <IdeateGoalPageInner />
-    </Suspense>
+  const qs = q.toString();
+  redirect(
+    qs
+      ? `/dream/goal/${encodeURIComponent(id)}?${qs}`
+      : `/dream/goal/${encodeURIComponent(id)}`,
   );
 }

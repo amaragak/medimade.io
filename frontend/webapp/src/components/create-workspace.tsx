@@ -4392,7 +4392,7 @@ export function CreateWorkspace({
                     Move towards a goal
                   </span>
                   <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                    Choose a goal from Ideate. The guide creates a visualization / manifestation meditation that helps you step toward it.
+                    Choose a goal from Dream. The guide creates a visualization / manifestation meditation that helps you step toward it.
                   </p>
                   {!planGoalsReady ? (
                     <p className="mt-3 text-xs text-muted">Checking your goals…</p>
@@ -4400,7 +4400,7 @@ export function CreateWorkspace({
                     <p className="mt-3 text-sm leading-relaxed text-muted">
                       Add a project in{" "}
                       <Link
-                        href="/ideate/my"
+                        href="/dream/my"
                         className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                       >
                         Ideate
@@ -4428,7 +4428,7 @@ export function CreateWorkspace({
                       Move towards a goal
                     </span>
                     <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
-                      Choose a goal from Ideate. The guide creates a visualization / manifestation meditation that helps you step toward it.
+                      Choose a goal from Dream. The guide creates a visualization / manifestation meditation that helps you step toward it.
                     </p>
                     {!planGoalsReady ? (
                       <p className="mt-2 text-xs text-muted">Checking your goals…</p>
@@ -4436,7 +4436,7 @@ export function CreateWorkspace({
                       <p className="mt-2 text-sm leading-relaxed text-muted">
                         Add a project in{" "}
                         <Link
-                          href="/ideate/my"
+                          href="/dream/my"
                           className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                         >
                           Ideate
@@ -4952,7 +4952,7 @@ export function CreateWorkspace({
               {phase === "goalPick" ? (
                 <div className="mt-3 space-y-3 rounded-xl border border-border bg-background px-3 py-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                    Your goals (from Ideate)
+                    Your goals (from Dream)
                   </p>
                   {!planGoalsReady ? (
                     <p className="text-sm text-muted">Loading goals…</p>
@@ -4960,7 +4960,7 @@ export function CreateWorkspace({
                     <p className="text-sm leading-relaxed text-muted">
                       Add a project in{" "}
                       <Link
-                        href="/ideate/my"
+                        href="/dream/my"
                         className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
                       >
                         Ideate

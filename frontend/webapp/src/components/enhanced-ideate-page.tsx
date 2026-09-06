@@ -63,7 +63,7 @@ const LIFE_AREA_BREAKDOWN = [
 ] as const;
 
 /**
- * Ideate marketing page at `/ideate`. App lives at `/ideate/my`.
+ * Dream marketing page at `/dream`. App lives at `/dream/my`.
  */
 export function EnhancedIdeatePage() {
   return (
@@ -74,8 +74,8 @@ export function EnhancedIdeatePage() {
             Turn what&apos;s blocking you into what you build toward.
           </h1>
           <p className="mt-4 max-w-xl text-base leading-relaxed text-marketing-body sm:text-lg">
-            Ideate holds dreams and goals gently — then helps you shape a
-            vision, steps, and meditations from what&apos;s underneath.
+            Dream holds your goals gently — then helps you shape a vision,
+            steps, and meditations from what&apos;s underneath.
           </p>
 
           <ul className="mt-10 grid w-full max-w-6xl grid-cols-1 gap-3 sm:mt-12 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
@@ -111,7 +111,7 @@ export function EnhancedIdeatePage() {
               pull the threads together.
             </p>
             <Link
-              href="/ideate/my"
+              href="/dream/my"
               className="mt-6 inline-flex items-center rounded-full bg-[#1E2530] px-5 py-2.5 text-sm font-semibold text-[#FAF8F3] transition-opacity hover:opacity-90 dark:bg-marketing-ink dark:text-home-hero-bg"
             >
               Open life areas →
@@ -172,7 +172,7 @@ export function EnhancedIdeatePage() {
               quiet mosaic beside your goals.
             </p>
             <Link
-              href="/ideate/my/vision-board"
+              href="/dream/my/vision-board"
               className="mt-6 inline-flex items-center rounded-full bg-[#1E2530] px-5 py-2.5 text-sm font-semibold text-[#FAF8F3] transition-opacity hover:opacity-90 dark:bg-marketing-ink dark:text-home-hero-bg"
             >
               Open vision board →
@@ -207,14 +207,14 @@ export function EnhancedIdeatePage() {
       <section className="w-full bg-marketing-band-b px-4 py-20 sm:px-6 sm:py-24">
         <div className="mx-auto flex max-w-2xl flex-col items-center text-center">
           <h2 className="font-display text-3xl font-medium tracking-tight text-marketing-ink sm:text-4xl">
-            Open your ideas.
+            Open your dreams.
           </h2>
           <div className="mt-8">
             <Link
-              href="/ideate/my"
+              href="/dream/my"
               className="inline-flex items-center justify-center rounded-full accent-fill-gradient px-7 py-3 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
             >
-              My Ideas
+              My Dreams
             </Link>
           </div>
         </div>

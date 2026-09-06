@@ -112,7 +112,7 @@ const PATHS: Array<{
   {
     path: "goal",
     title: "Move towards a goal",
-    body: "Choose a goal from Ideate. The guide creates a visualization meditation that helps you step toward it.",
+    body: "Choose a goal from Dream. The guide creates a visualization meditation that helps you step toward it.",
     Icon: IconGoalTarget,
   },
 ];

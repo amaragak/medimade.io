@@ -33,7 +33,7 @@ const journalSub: NavSubItem[] = [
 ];
 
 const ideateSub: NavSubItem[] = [
-  { href: "/ideate/my", label: "My Ideas" },
+  { href: "/dream/my", label: "My Dreams" },
 ];
 
 const focusSub: NavSubItem[] = [];
@@ -276,10 +276,10 @@ export function SiteHeader() {
             isItemActive={isItemActive}
           />
           <NavFlyout
-            href="/ideate"
-            label="Ideate"
+            href="/dream"
+            label="Dream"
             items={ideateSub}
-            active={sectionActive(pathname, "/ideate")}
+            active={sectionActive(pathname, "/dream")}
             isItemActive={isItemActive}
           />
           <NavFlyout
@@ -375,8 +375,8 @@ export function SiteHeader() {
               />
               <div className="my-2 border-t border-border" role="separator" />
               <MobileSection
-                title="Ideate"
-                overviewHref="/ideate"
+                title="Dream"
+                overviewHref="/dream"
                 items={ideateSub}
                 pathname={pathname}
                 isItemActive={isItemActive}

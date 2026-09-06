@@ -92,8 +92,8 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
     const q = params.toString();
     router.replace(
       q
-        ? `/ideate/goal/${encodeURIComponent(dreamId)}?${q}`
-        : `/ideate/goal/${encodeURIComponent(dreamId)}`,
+        ? `/dream/goal/${encodeURIComponent(dreamId)}?${q}`
+        : `/dream/goal/${encodeURIComponent(dreamId)}`,
       { scroll: false },
     );
   }
@@ -135,7 +135,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
     };
     writePlanCreateHandoff(handoff);
     patch({ meditationsGenerated: dream.meditationsGenerated + 1 });
-    router.push("/meditate/create/from-chat?fromIdeate=1");
+    router.push("/meditate/create/from-chat?fromDream=1");
   }
 
   if (!cloudReady || missing || !dream) {
@@ -150,10 +150,10 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
         </p>
         {cloudReady && missing ? (
           <Link
-            href="/ideate/my"
+            href="/dream/my"
             className="mt-6 inline-block text-sm font-semibold text-accent-link underline-offset-2 hover:underline"
           >
-            Back to Ideate
+            Back to My Dreams
           </Link>
         ) : null}
       </div>
@@ -169,10 +169,10 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
       <div className="mx-auto max-w-6xl px-4 pt-3 pb-10 sm:px-6 sm:py-14">
         <div className="pb-0">
           <Link
-            href="/ideate/my"
+            href="/dream/my"
             className="text-xs font-semibold uppercase tracking-wide text-accent-link hover:underline"
           >
-            ← Ideate
+            ← My Dreams
           </Link>
           <div className="mt-2 flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">

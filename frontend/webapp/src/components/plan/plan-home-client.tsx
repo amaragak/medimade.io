@@ -42,7 +42,7 @@ import {
 import {
   VisionBoardMosaic,
   VISION_BOARD_EMPTY_COLORS,
-  VISION_BOARD_MOSAIC_SLOT_COUNT,
+  VISION_BOARD_GRID_SLOT_COUNT,
 } from "@/components/plan/vision-board-mosaic";
 import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 
@@ -66,7 +66,7 @@ function mosaicImages(
 ): string[] {
   const urls: string[] = [];
   for (const item of items) {
-    if (urls.length >= VISION_BOARD_MOSAIC_SLOT_COUNT) break;
+    if (urls.length >= VISION_BOARD_GRID_SLOT_COUNT) break;
     const src =
       (typeof item.imageUrl === "string" && item.imageUrl.trim()
         ? item.imageUrl
@@ -319,9 +319,9 @@ export function PlanHomeClient() {
   return (
     <div className="min-h-[calc(100vh-3.5rem)] pb-16">
       <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
-        {/* Utilitarian page label — no marketing pitch (that lives on /ideate) */}
+        {/* Utilitarian page label — no marketing pitch (that lives on /dream) */}
         <h1 className="font-display text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
-          My Ideas
+          My Dreams
         </h1>
 
         {resistanceThreads[0] ? (
@@ -330,34 +330,167 @@ export function PlanHomeClient() {
           </div>
         ) : null}
 
-        {/* —— Section A: Vision board (most prominent) —— */}
+        {/* —— Section A: Vision board + values —— */}
         <div className="mt-8">
           <p className={SECTION_LABEL}>Your dream</p>
-          <Link
-            href="/ideate/my/vision-board"
-            className="mt-3 flex w-full flex-col gap-6 rounded-2xl border border-[#E5DFD0] bg-card p-6 shadow-sm transition-colors hover:border-accent/35 hover:bg-accent-soft/10 sm:flex-row sm:items-center sm:gap-10 sm:p-8 md:gap-12"
-          >
-            <VisionBoardMosaic
-              colors={mosaicColors(visionItems)}
-              images={mosaicImages(visionItems, visionTileUrls)}
-              sizeClassName="h-[200px] w-full sm:h-[280px] sm:w-[300px] md:h-[320px] md:w-[360px]"
-            />
-            <div className="min-w-0 flex-1 text-left sm:pl-2 md:pl-4">
-              <h2 className="font-display text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
-                Vision board
-              </h2>
-              <p className="mt-2 text-base leading-relaxed text-muted">
-                {itemCount === 0
-                  ? "No pieces yet"
-                  : `${itemCount} ${itemCount === 1 ? "piece" : "pieces"}`}
-                {" · "}
-                Gather images and colours for what you&apos;re moving toward.
-              </p>
-              <span className="mt-5 inline-block text-base font-semibold text-accent-link">
-                Open →
-              </span>
+          <div className="mt-3 grid gap-8 rounded-2xl border border-[#E5DFD0] bg-card p-6 shadow-sm sm:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] sm:items-start sm:gap-10 sm:p-8">
+            <div className="min-w-0">
+              <Link
+                href="/dream/my/vision-board"
+                className="group relative block overflow-hidden rounded-xl outline-none ring-accent/30 transition-[box-shadow] focus-visible:ring-2"
+                aria-label={
+                  itemCount === 0
+                    ? "Open vision board — no pieces yet"
+                    : `Open vision board — ${itemCount} ${itemCount === 1 ? "piece" : "pieces"}`
+                }
+              >
+                <VisionBoardMosaic
+                  layout="grid"
+                  colors={mosaicColors(visionItems)}
+                  images={mosaicImages(visionItems, visionTileUrls)}
+                  sizeClassName="w-full"
+                />
+                <span className="absolute bottom-3 right-3 rounded-full accent-fill-gradient px-3.5 py-1.5 text-sm font-semibold text-[#1E2530] shadow-sm transition-opacity group-hover:opacity-90">
+                  Open Vision Board →
+                </span>
+              </Link>
             </div>
-          </Link>
+
+            <div className="min-w-0 sm:border-l sm:border-[#E5DFD0]/80 sm:pl-8 dark:sm:border-border">
+              <p className={SECTION_LABEL}>Your values</p>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                Name what matters — one value at a time.
+              </p>
+
+              {values.length === 0 && !addingValue ? (
+                <p className="mt-5 text-sm italic text-[#A39C8C]">
+                  No values yet — add one when you&apos;re ready.
+                </p>
+              ) : (
+                <ul className="mt-4 divide-y divide-border/70 border-y border-border/70">
+                  {values.map((v) => (
+                    <li key={v.id} className="py-2.5">
+                      {editingValueId === v.id ? (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            saveEditValue();
+                          }}
+                          className="flex flex-col gap-2"
+                        >
+                          <label
+                            className="sr-only"
+                            htmlFor={`ideate-value-edit-${v.id}`}
+                          >
+                            Edit value
+                          </label>
+                          <input
+                            id={`ideate-value-edit-${v.id}`}
+                            autoFocus
+                            value={editValueDraft}
+                            onChange={(e) => setEditValueDraft(e.target.value)}
+                            maxLength={120}
+                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingValueId(null);
+                                setEditValueDraft("");
+                              }}
+                              className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={!editValueDraft.trim()}
+                              className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </form>
+                      ) : (
+                        <div className="flex items-baseline justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() => openEditValue(v)}
+                            className="min-w-0 flex-1 cursor-pointer text-left font-display text-lg font-medium tracking-tight text-[#1E2530] transition-opacity hover:opacity-80 dark:text-foreground"
+                          >
+                            {v.text}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveValue(v.id)}
+                            className="shrink-0 cursor-pointer text-sm text-[#A39C8C] transition-colors hover:text-foreground"
+                            aria-label={`Remove ${v.text}`}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {addingValue ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleAddValue();
+                  }}
+                  className="mt-3 flex flex-col gap-2"
+                >
+                  <label className="sr-only" htmlFor="ideate-value-new">
+                    New value
+                  </label>
+                  <input
+                    id="ideate-value-new"
+                    autoFocus
+                    value={valueDraft}
+                    onChange={(e) => setValueDraft(e.target.value)}
+                    placeholder="e.g. Honesty, Presence, Craft"
+                    maxLength={120}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAddingValue(false);
+                        setValueDraft("");
+                      }}
+                      className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={!valueDraft.trim()}
+                      className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingValue(true);
+                    setEditingValueId(null);
+                    setEditValueDraft("");
+                  }}
+                  className="mt-3 cursor-pointer text-sm font-medium text-[#B8703A] transition-opacity hover:opacity-80"
+                >
+                  + Add a value
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* —— Section B: Reflection questions —— */}
@@ -526,140 +659,7 @@ export function PlanHomeClient() {
           </div>
         </div>
 
-        {/* —— Section C: Values —— */}
-        <div className="mt-14">
-          <p className={SECTION_LABEL}>Your values</p>
-          <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted">
-            Name what matters — one value at a time.
-          </p>
-
-          {values.length === 0 && !addingValue ? (
-            <p className="mt-5 max-w-md text-sm italic text-[#A39C8C]">
-              No values yet — add one when you&apos;re ready.
-            </p>
-          ) : (
-            <ul className="mt-5 divide-y divide-border/70 border-y border-border/70">
-              {values.map((v) => (
-                <li key={v.id} className="py-3">
-                  {editingValueId === v.id ? (
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        saveEditValue();
-                      }}
-                      className="flex flex-col gap-2 sm:flex-row sm:items-center"
-                    >
-                      <label className="sr-only" htmlFor={`ideate-value-edit-${v.id}`}>
-                        Edit value
-                      </label>
-                      <input
-                        id={`ideate-value-edit-${v.id}`}
-                        autoFocus
-                        value={editValueDraft}
-                        onChange={(e) => setEditValueDraft(e.target.value)}
-                        maxLength={120}
-                        className="w-full flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
-                      />
-                      <div className="flex shrink-0 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingValueId(null);
-                            setEditValueDraft("");
-                          }}
-                          className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={!editValueDraft.trim()}
-                          className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
-                        >
-                          Save
-                        </button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div className="flex items-baseline justify-between gap-4">
-                      <button
-                        type="button"
-                        onClick={() => openEditValue(v)}
-                        className="min-w-0 flex-1 cursor-pointer text-left font-display text-lg font-medium tracking-tight text-[#1E2530] transition-opacity hover:opacity-80 dark:text-foreground"
-                      >
-                        {v.text}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveValue(v.id)}
-                        className="shrink-0 cursor-pointer text-sm text-[#A39C8C] transition-colors hover:text-foreground"
-                        aria-label={`Remove ${v.text}`}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {addingValue ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleAddValue();
-              }}
-              className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center"
-            >
-              <label className="sr-only" htmlFor="ideate-value-new">
-                New value
-              </label>
-              <input
-                id="ideate-value-new"
-                autoFocus
-                value={valueDraft}
-                onChange={(e) => setValueDraft(e.target.value)}
-                placeholder="e.g. Honesty, Presence, Craft"
-                maxLength={120}
-                className="w-full flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
-              />
-              <div className="flex shrink-0 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddingValue(false);
-                    setValueDraft("");
-                  }}
-                  className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!valueDraft.trim()}
-                  className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
-                >
-                  Add
-                </button>
-              </div>
-            </form>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setAddingValue(true);
-                setEditingValueId(null);
-                setEditValueDraft("");
-              }}
-              className="mt-4 cursor-pointer text-sm font-medium text-[#B8703A] transition-opacity hover:opacity-80"
-            >
-              + Add a value
-            </button>
-          )}
-        </div>
-
-        {/* —— Section D: Life areas —— */}
+        {/* —— Section C: Life areas —— */}
         <div className="mt-14">
           <p className={SECTION_LABEL}>Your life areas</p>
           {sortedDreams.length === 0 ? (
@@ -673,7 +673,7 @@ export function PlanHomeClient() {
                 return (
                   <li key={d.id}>
                     <Link
-                      href={`/ideate/goal/${encodeURIComponent(d.id)}`}
+                      href={`/dream/goal/${encodeURIComponent(d.id)}`}
                       className="flex items-baseline justify-between gap-4 py-4 transition-opacity hover:opacity-80"
                     >
                       <span className="min-w-0 font-display text-lg font-medium tracking-tight text-[#1E2530] dark:text-foreground">

@@ -1,6 +1,7 @@
 /**
- * Asymmetric mosaic used for vision board previews
- * (marketing pitch + /ideate/my card).
+ * Vision board preview mosaic.
+ * `asymmetric` — marketing pitch collage.
+ * `grid` — straight 3×2 square grid (/dream/my).
  * Slots prefer images when provided; remaining slots use color fills.
  */
 
@@ -19,17 +20,23 @@ export const VISION_BOARD_EMPTY_COLORS = [
   "#D4CFC4",
   "#E2D9CE",
   "#D8D2C6",
+  "#E0DAD0",
 ] as const;
 
 export const VISION_BOARD_MOSAIC_SLOT_COUNT = 5;
+export const VISION_BOARD_GRID_SLOT_COUNT = 6;
+
+type Layout = "asymmetric" | "grid";
 
 type Props = {
   colors: readonly string[];
   /**
-   * Image URLs for mosaic slots (board order). Slot 0 is the large tile.
+   * Image URLs for mosaic slots (board order).
    * Empty / missing entries fall back to `colors`.
    */
   images?: readonly (string | null | undefined)[];
+  /** Default asymmetric (marketing). Use `grid` for My Ideas. */
+  layout?: Layout;
   className?: string;
   /** Overall size of the mosaic box */
   sizeClassName?: string;
@@ -68,6 +75,7 @@ function MosaicCell({
 export function VisionBoardMosaic({
   colors,
   images,
+  layout = "asymmetric",
   className = "",
   sizeClassName = "h-[140px] w-[140px]",
 }: Props) {
@@ -78,6 +86,24 @@ export function VisionBoardMosaic({
     const src = images?.[i];
     return typeof src === "string" && src.trim() ? src : null;
   };
+
+  if (layout === "grid") {
+    return (
+      <div
+        className={`grid shrink-0 grid-cols-3 gap-1.5 overflow-hidden rounded-xl ${sizeClassName} ${className}`}
+        aria-hidden
+      >
+        {Array.from({ length: VISION_BOARD_GRID_SLOT_COUNT }, (_, i) => (
+          <MosaicCell
+            key={i}
+            className="aspect-square"
+            color={c(i)}
+            imageSrc={img(i)}
+          />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div

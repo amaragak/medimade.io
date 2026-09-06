@@ -13,7 +13,9 @@ import {
   loadIdeateVisionBoardStore,
   saveIdeateVisionBoardStore,
   saveIdeateVisionBoardStoreLocal,
+  type IdeateVisionBoardStoreV1,
   type VisionBoardItem,
+  type VisionSelfReference,
 } from "@/lib/ideate-vision-board";
 import type { PlanDream } from "@/lib/plan-dreams";
 import type {
@@ -23,7 +25,9 @@ import type {
 } from "@/lib/plan-ideate-store";
 
 /** Bump when demo copy changes so guests get a one-time reseed of missing demos. */
-export const IDEATE_DEMO_SEED_FLAG_KEY = "mm_ideate_demo_seed_v1";
+export const IDEATE_DEMO_SEED_FLAG_KEY = "mm_ideate_demo_seed_v2";
+
+const DEMO_VISION_BASE = "/demo/vision-board";
 
 export const DEMO_IDEATE_DREAM_IDS = [
   "demo-ideate-mornings",
@@ -347,14 +351,100 @@ export function buildDemoIdeateStore(): IdeateStoreV2 {
   };
 }
 
+function buildDemoSelfReference(): VisionSelfReference {
+  return {
+    url: `${DEMO_VISION_BASE}/demo-vision-self.png`,
+    mimeType: "image/png",
+    fileName: "demo-vision-self.png",
+    width: 1024,
+    height: 1024,
+    byteLength: 0,
+    updatedAt: daysAgoIso(1, 12),
+  };
+}
+
 function buildDemoVisionItems(): VisionBoardItem[] {
+  const now = daysAgoIso(1, 12);
   return [
-    { id: "demo-vb-1", color: "#C4A882", label: "Soft morning light" },
-    { id: "demo-vb-2", color: "#8FA89A", label: "Tea by the window" },
-    { id: "demo-vb-3", color: "#A8B5C4", label: "Phone in the hall" },
-    { id: "demo-vb-4", color: "#D4A090", label: "A walk without headphones" },
-    { id: "demo-vb-5", color: "#C9B896", label: "Open doc, fifteen minutes" },
+    {
+      id: "demo-vb-1",
+      color: "#C4A882",
+      label: "Stillness above the peaks",
+      kind: "image",
+      imageUrl: `${DEMO_VISION_BASE}/demo-vision-mountain.png`,
+      prompt: "Meditating on a mountain at sunrise",
+      createdAt: now,
+    },
+    {
+      id: "demo-vb-2",
+      color: "#8FA89A",
+      label: "Strong body, clear mind",
+      kind: "image",
+      imageUrl: `${DEMO_VISION_BASE}/demo-vision-gym.png`,
+      prompt: "Training hard in a bright gym",
+      createdAt: now,
+    },
+    {
+      id: "demo-vb-3",
+      color: "#A8B5C4",
+      label: "Money flowing easily",
+      kind: "image",
+      imageUrl: `${DEMO_VISION_BASE}/demo-vision-wealth.png`,
+      prompt: "Celebrating abundance at the desk",
+      createdAt: now,
+    },
+    {
+      id: "demo-vb-4",
+      color: "#D4A090",
+      label: "City lights, quiet confidence",
+      kind: "image",
+      imageUrl: `${DEMO_VISION_BASE}/demo-vision-city.png`,
+      prompt: "On a rooftop overlooking the city at dusk",
+      createdAt: now,
+    },
+    {
+      id: "demo-vb-5",
+      color: "#C9B896",
+      label: "Playing for a small room",
+      kind: "image",
+      imageUrl: `${DEMO_VISION_BASE}/demo-vision-music.png`,
+      prompt: "Playing guitar on a warm intimate stage",
+      createdAt: now,
+    },
+    {
+      id: "demo-vb-6",
+      color: "#B8A99A",
+      label: "Morning work by the window",
+      kind: "image",
+      imageUrl: `${DEMO_VISION_BASE}/demo-vision-work.png`,
+      prompt: "Calm focused work in morning light",
+      createdAt: now,
+    },
   ];
+}
+
+function buildDemoVisionBoard(): IdeateVisionBoardStoreV1 {
+  return {
+    v: 2,
+    items: buildDemoVisionItems(),
+    selfReference: buildDemoSelfReference(),
+    extraReferences: [],
+  };
+}
+
+function isDemoSelfReference(ref: VisionSelfReference | null | undefined): boolean {
+  if (!ref) return false;
+  return (
+    ref.fileName === "demo-vision-self.png" ||
+    (typeof ref.url === "string" && ref.url.includes("demo-vision-self"))
+  );
+}
+
+function needsDemoVisionRefresh(board: IdeateVisionBoardStoreV1): boolean {
+  if (board.items.length === 0) return true;
+  if (!board.items.every(isDemoVisionItem)) return false;
+  if (!isDemoSelfReference(board.selfReference)) return true;
+  return board.items.some((i) => !i.imageUrl);
 }
 
 function buildDemoReflectionQuestions(): IdeateReflectionQuestion[] {
@@ -468,11 +558,18 @@ function stripDemoCompanionStores(): void {
   try {
     const board = loadIdeateVisionBoardStore();
     const nextItems = board.items.filter((i) => !isDemoVisionItem(i));
-    if (nextItems.length !== board.items.length) {
+    const nextSelf = isDemoSelfReference(board.selfReference)
+      ? null
+      : (board.selfReference ?? null);
+    if (
+      nextItems.length !== board.items.length ||
+      nextSelf !== (board.selfReference ?? null)
+    ) {
       saveIdeateVisionBoardStoreLocal({
         v: 2,
         items: nextItems,
-        selfReference: board.selfReference ?? null,
+        selfReference: nextSelf,
+        extraReferences: board.extraReferences ?? [],
       });
     }
     const qs = loadIdeateReflectionQuestionsStore();
@@ -489,8 +586,8 @@ function seedCompanionStoresIfEmpty(force = false): void {
   if (typeof window === "undefined") return;
   try {
     const board = loadIdeateVisionBoardStore();
-    if (force || board.items.length === 0) {
-      saveIdeateVisionBoardStore({ v: 1, items: buildDemoVisionItems() });
+    if (force || needsDemoVisionRefresh(board)) {
+      saveIdeateVisionBoardStore(buildDemoVisionBoard());
     }
     const qs = loadIdeateReflectionQuestionsStore();
     if (force || qs.questions.length === 0) {
