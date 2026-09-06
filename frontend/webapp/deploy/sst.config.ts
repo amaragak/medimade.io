@@ -27,9 +27,12 @@ export default $config({
     };
   },
   async run() {
-    // CloudFront aliases are global. While Sydney still owns consciously.live,
-    // deploy London with MEDIMADE_SST_ATTACH_DOMAIN=0 (cloudfront.net URL only).
-    // After cutover confirmation: detach alias from Sydney CF, then redeploy with attach=1.
+    // Custom domain + ACM must stay attached on the CloudFront distribution that
+    // DNS points at. Detaching (MEDIMADE_SST_ATTACH_DOMAIN=0) previously left
+    // consciously.live on a cert-less distribution → HTTPS name mismatch and
+    // Chrome Incognito / new-device "doesn't support a secure connection".
+    // Only set MEDIMADE_SST_ATTACH_DOMAIN=0 for a temporary cloudfront.net-only
+    // preview — never leave production DNS pointed at that distribution.
     const attachDomain = process.env.MEDIMADE_SST_ATTACH_DOMAIN !== "0";
     const web = new sst.aws.Nextjs("Web", {
       path: "..",
@@ -39,7 +42,7 @@ export default $config({
             domain: {
               name: "consciously.live",
               aliases: ["www.consciously.live"],
-              // DNS in Cloudflare (not Route 53); point records at CloudFront / ACM as needed.
+              // DNS in Cloudflare (not Route 53); CNAME apex+www → this CF domain.
               dns: false,
               cert: "arn:aws:acm:us-east-1:382309212161:certificate/de288d1f-a1f7-436b-ae16-3f79de3d5d98",
             },

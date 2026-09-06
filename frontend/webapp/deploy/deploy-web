@@ -96,6 +96,12 @@ fi
 
 cd "$DEPLOY_DIR"
 
+if [[ "$STAGE" == "prod" && "${MEDIMADE_SST_ATTACH_DOMAIN:-}" == "0" ]]; then
+  echo "error: MEDIMADE_SST_ATTACH_DOMAIN=0 on prod leaves consciously.live without a valid HTTPS cert on the live CloudFront distribution." >&2
+  echo "        Unset it (or set to 1) so domain+ACM stay attached. Use attach=0 only for temporary cloudfront.net previews with DNS not pointed at that distro." >&2
+  exit 1
+fi
+
 SST_BIN="$DEPLOY_DIR/node_modules/.bin/sst"
 if [ -f "$SST_BIN" ]; then
   exec "$SST_BIN" deploy --stage "$STAGE"
