@@ -1,11 +1,12 @@
+import type { DreamState, PlanDream } from "@/lib/plan-dreams";
+import { ensureGuestDemoIdeateSeeded, withoutDemoIdeateStore } from "@/lib/ideate-demo-seed";
+import { getMedimadeSessionJwt } from "@/lib/auth-session";
+
 /**
  * Ideate hierarchy — projects (PlanDream), subtasks, todos, resistance entries.
- * Persisted locally until a backend exists.
+ * Signed-in: cloud-first via GET/PUT /ideate/store; localStorage is cache only.
+ * Guests: device demos via ensureGuestDemoIdeateSeeded.
  */
-
-import type { DreamState, PlanDream } from "@/lib/plan-dreams";
-import { ensureGuestDemoIdeateSeeded } from "@/lib/ideate-demo-seed";
-import { getMedimadeSessionJwt } from "@/lib/auth-session";
 
 export type { DreamState, PlanDream };
 
@@ -223,7 +224,7 @@ function migrateV1Raw(raw: string | null): IdeateStoreV2 {
   return { v: 2, dreams: [], subtasks: [], todos: [], resistanceEntries: [] };
 }
 
-function readIdeateStoreRaw(): IdeateStoreV2 {
+export function loadIdeateStoreRaw(): IdeateStoreV2 {
   if (typeof window === "undefined") {
     return { v: 2, dreams: [], subtasks: [], todos: [], resistanceEntries: [] };
   }
@@ -271,24 +272,37 @@ function readIdeateStoreRaw(): IdeateStoreV2 {
   }
 }
 
+/**
+ * Guests: seed demos when empty.
+ * Signed-in: never seed — cloud is source of truth; local is cache only.
+ */
 export function loadIdeateStore(): IdeateStoreV2 {
-  const raw = readIdeateStoreRaw();
+  const raw = loadIdeateStoreRaw();
+  if (typeof window !== "undefined" && getMedimadeSessionJwt()) {
+    const cleaned = withoutDemoIdeateStore(raw);
+    if (
+      cleaned.dreams.length !== raw.dreams.length ||
+      cleaned.subtasks.length !== raw.subtasks.length
+    ) {
+      saveIdeateStoreLocal(cleaned);
+    }
+    return cleaned;
+  }
   const next = ensureGuestDemoIdeateSeeded(raw);
   const shouldPersist =
     typeof window !== "undefined" &&
     (next.dreams.length !== raw.dreams.length ||
       next.subtasks.length !== raw.subtasks.length ||
       next.todos.length !== raw.todos.length ||
-      next.dreams.some((d, i) => d.id !== raw.dreams[i]?.id) ||
-      (Boolean(getMedimadeSessionJwt()) &&
-        raw.dreams.some((d) => d.demo === true)));
+      next.dreams.some((d, i) => d.id !== raw.dreams[i]?.id));
   if (shouldPersist) {
-    saveIdeateStore(next);
+    saveIdeateStoreLocal(next);
   }
   return next;
 }
 
-export function saveIdeateStore(store: IdeateStoreV2) {
+/** Write local cache only — does not schedule cloud push. */
+export function saveIdeateStoreLocal(store: IdeateStoreV2) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(
@@ -303,6 +317,14 @@ export function saveIdeateStore(store: IdeateStoreV2) {
     );
   } catch {
     /* ignore */
+  }
+}
+
+/** Persist locally and schedule cloud PUT when signed in. */
+export function saveIdeateStore(store: IdeateStoreV2) {
+  saveIdeateStoreLocal(store);
+  if (typeof window !== "undefined" && getMedimadeSessionJwt()) {
+    void import("@/lib/ideate-cloud").then((m) => m.scheduleIdeateCloudPush());
   }
 }
 

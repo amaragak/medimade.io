@@ -1,12 +1,13 @@
-/**
- * Per-user Ideate reflection questions (added presets + custom).
- * LocalStorage — same convention as other Ideate content until a backend exists.
- */
-
 import {
   IDEATE_REFLECTION_QUESTION_PRESETS,
   type IdeateReflectionQuestionPreset,
 } from "@/lib/ideate-reflection-question-presets";
+import { getMedimadeSessionJwt } from "@/lib/auth-session";
+
+/**
+ * Per-user Ideate reflection questions (added presets + custom).
+ * Signed-in: cloud-first; localStorage is cache. Guests: device only.
+ */
 
 export type IdeateReflectionQuestion = {
   id: string;
@@ -96,6 +97,9 @@ export function saveIdeateReflectionQuestionsStore(
     );
   } catch {
     /* ignore */
+  }
+  if (getMedimadeSessionJwt()) {
+    void import("@/lib/ideate-cloud").then((m) => m.scheduleIdeateCloudPush());
   }
 }
 

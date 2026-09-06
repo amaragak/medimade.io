@@ -382,21 +382,6 @@ function buildDemoReflectionQuestions(): IdeateReflectionQuestion[] {
   ];
 }
 
-function dreamHasPersonalWriting(d: PlanDream): boolean {
-  if (isDemoIdeateDream(d)) return false;
-  const text = [
-    d.title,
-    d.dreamText,
-    d.obstacleText,
-    d.visionText,
-    d.firstThought,
-    d.looseNotes,
-  ]
-    .join(" ")
-    .trim();
-  return text.replace(/\s+/g, " ").length > 2;
-}
-
 function isDemoVisionItem(i: VisionBoardItem): boolean {
   return i.id.startsWith("demo-vb-");
 }
@@ -406,7 +391,7 @@ function isDemoReflectionQuestion(q: IdeateReflectionQuestion): boolean {
 }
 
 /**
- * Guests: seed sample life areas / board / questions when the device is empty.
+ * Guests: always show seeded samples — never leftover personal / signed-in cache.
  * Signed-in: never seed; strip demos from the returned store (caller persists).
  */
 export function ensureGuestDemoIdeateSeeded(
@@ -421,25 +406,59 @@ export function ensureGuestDemoIdeateSeeded(
     return buildDemoIdeateStore();
   }
 
-  const personal = existing.dreams.filter(dreamHasPersonalWriting);
-  if (personal.length > 0) {
-    markDemoSeedFlag();
-    return existing;
-  }
-
-  const hasAllDemos = DEMO_IDEATE_DREAM_IDS.every((id) =>
-    existing.dreams.some((d) => d.id === id),
-  );
-  if (hasAllDemos && isDemoOnlyIdeateStore(existing)) {
+  // Personal rows while logged out are stale device cache — cloud owns real data.
+  // Always overwrite with demos for guests (and persist so the wipe sticks).
+  if (
+    DEMO_IDEATE_DREAM_IDS.every((id) =>
+      existing.dreams.some((d) => d.id === id),
+    ) &&
+    isDemoOnlyIdeateStore(existing)
+  ) {
     markDemoSeedFlag();
     seedCompanionStoresIfEmpty();
     return existing;
   }
 
   const demo = buildDemoIdeateStore();
+  try {
+    window.localStorage.setItem(
+      "mm_plan_dreams_v1",
+      JSON.stringify({
+        v: 2,
+        dreams: demo.dreams,
+        subtasks: demo.subtasks,
+        todos: demo.todos,
+        resistanceEntries: demo.resistanceEntries,
+      }),
+    );
+  } catch {
+    /* */
+  }
   seedCompanionStoresIfEmpty(true);
   markDemoSeedFlag();
   return demo;
+}
+
+/** Reset device Ideate to guest demos (call on sign-out). Sync so UI sees demos immediately. */
+export function resetIdeateLocalToGuestDemos(): void {
+  if (typeof window === "undefined") return;
+  const demo = buildDemoIdeateStore();
+  try {
+    window.localStorage.setItem(
+      "mm_plan_dreams_v1",
+      JSON.stringify({
+        v: 2,
+        dreams: demo.dreams,
+        subtasks: demo.subtasks,
+        todos: demo.todos,
+        resistanceEntries: demo.resistanceEntries,
+      }),
+    );
+  } catch {
+    /* */
+  }
+  seedCompanionStoresIfEmpty(true);
+  markDemoSeedFlag();
 }
 
 function stripDemoCompanionStores(): void {

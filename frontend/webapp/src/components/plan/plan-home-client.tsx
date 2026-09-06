@@ -31,6 +31,7 @@ import {
   VisionBoardMosaic,
   VISION_BOARD_EMPTY_COLORS,
 } from "@/components/plan/vision-board-mosaic";
+import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 
 const SECTION_LABEL =
   "text-sm font-medium uppercase tracking-widest text-[#8A7566]";
@@ -68,7 +69,10 @@ export function PlanHomeClient() {
     setQuestions(loadIdeateReflectionQuestionsStore().questions);
   }, []);
 
+  const { ready: cloudReady, revision } = useIdeateCloud();
+
   useEffect(() => {
+    if (!cloudReady) return;
     const id = requestAnimationFrame(() => refresh());
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
@@ -78,7 +82,7 @@ export function PlanHomeClient() {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("storage", onFocus);
     };
-  }, [refresh]);
+  }, [refresh, cloudReady, revision]);
 
   useEffect(() => {
     if (!addQuestionOpen) return;
@@ -187,6 +191,16 @@ export function PlanHomeClient() {
 
   const resistanceThreads = globalResistanceThreads(loadIdeateStore());
   const itemCount = visionItems.length;
+
+  if (!cloudReady) {
+    return (
+      <div className="min-h-[calc(100vh-3.5rem)] pb-16">
+        <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
+          <p className="text-sm text-muted">Loading…</p>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)] pb-16">

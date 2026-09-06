@@ -24,6 +24,7 @@ import {
   subtasksForProject,
   upsertDream,
 } from "@/lib/plan-ideate-store";
+import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 
 type ProjectTab = "reflect" | "steps";
 
@@ -46,6 +47,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
   const [dream, setDream] = useState<PlanDream | null>(null);
   const [missing, setMissing] = useState(false);
   const [storeTick, setStoreTick] = useState(0);
+  const { ready: cloudReady, revision } = useIdeateCloud();
 
   const load = useCallback(() => {
     const d = loadIdeateStore().dreams.find((x) => x.id === dreamId);
@@ -60,8 +62,9 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
   }, [dreamId]);
 
   useEffect(() => {
+    if (!cloudReady) return;
     load();
-  }, [load]);
+  }, [load, cloudReady, revision]);
 
   useEffect(() => {
     const onStorage = () => load();
@@ -135,20 +138,24 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
     router.push("/meditate/create/from-chat?fromIdeate=1");
   }
 
-  if (missing || !dream) {
+  if (!cloudReady || missing || !dream) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-20 sm:px-6">
         <p className="text-muted">
-          {missing
-            ? "This project isn’t here anymore—or the link is old."
-            : "Loading…"}
+          {!cloudReady
+            ? "Loading…"
+            : missing
+              ? "This project isn’t here anymore—or the link is old."
+              : "Loading…"}
         </p>
-        <Link
-          href="/ideate/my"
-          className="mt-6 inline-block text-sm font-semibold text-accent-link underline-offset-2 hover:underline"
-        >
-          Back to Ideate
-        </Link>
+        {cloudReady && missing ? (
+          <Link
+            href="/ideate/my"
+            className="mt-6 inline-block text-sm font-semibold text-accent-link underline-offset-2 hover:underline"
+          >
+            Back to Ideate
+          </Link>
+        ) : null}
       </div>
     );
   }

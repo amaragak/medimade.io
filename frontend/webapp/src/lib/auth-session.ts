@@ -72,6 +72,18 @@ export function clearMedimadeSession(): void {
     window.localStorage.removeItem(JWT_KEY);
     window.localStorage.removeItem(EMAIL_KEY);
     window.localStorage.removeItem(DISPLAY_NAME_KEY);
+    // Drop signed-in Ideate cache so the next guest load reseeds demos.
+    window.localStorage.removeItem("mm_plan_dreams_v1");
+    window.localStorage.removeItem("mm_ideate_vision_board_v1");
+    window.localStorage.removeItem("mm_ideate_reflection_questions_v1");
+    window.localStorage.removeItem("mm_ideate_demo_seed_v1");
+  } catch {
+    /* */
+  }
+  void import("@/lib/ideate-cloud").then((m) => {
+    m.clearIdeateCloudSessionCache();
+  });
+  try {
     window.dispatchEvent(new Event("medimade-session-changed"));
   } catch {
     /* */

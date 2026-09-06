@@ -22,6 +22,8 @@ export const FISH_AUDIO_SECRET_NAME = "medimade/FISH_AUDIO_API_KEY";
 export const CLAUDE_SECRET_NAME = "medimade/CLAUDE_API_KEY";
 /** OpenAI API key for Whisper journal transcription (`POST /journal/transcribe`). */
 export const OPENAI_SECRET_NAME = "medimade/OPENAI_API_KEY";
+/** Google AI (Gemini) API key for vision-board Nano Banana image generation. */
+export const GOOGLE_AI_SECRET_NAME = "medimade/GOOGLE_AI_API_KEY";
 /** Brevo API key for transactional email (magic-link auth, future notifications). */
 export const BREVO_SECRET_NAME = "medimade/BREVO_API_KEY";
 /** RunPod API key for Orpheus TTS serverless (`nexslerdev/orpheus-fastapi-tts`, `POST /orpheus/tts`). */
@@ -49,6 +51,12 @@ export class MedimadeStack extends cdk.Stack {
       this,
       "OpenAiApiKey",
       OPENAI_SECRET_NAME,
+    );
+
+    const googleAiApiKeySecret = secretsmanager.Secret.fromSecretNameV2(
+      this,
+      "GoogleAiApiKey",
+      GOOGLE_AI_SECRET_NAME,
     );
 
     const brevoApiKeySecret = secretsmanager.Secret.fromSecretNameV2(
@@ -127,6 +135,14 @@ export class MedimadeStack extends cdk.Stack {
 
     /** Journal entries + META row per `ownerId` (opaque client id). Voice binaries stay in S3 via `/journal/voice`. */
     const journalTable = new dynamodb.Table(this, "JournalTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    /** Ideate life areas + vision board metadata + reflection questions per signed-in user. */
+    const ideateTable = new dynamodb.Table(this, "IdeateTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -1230,6 +1246,68 @@ export class MedimadeStack extends cdk.Stack {
       ),
     });
 
+    const visionGenerate = new lambda_nodejs.NodejsFunction(
+      this,
+      "VisionGenerateFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/vision-generate.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(120),
+        memorySize: 1024,
+        environment: {
+          GOOGLE_AI_SECRET_ARN: googleAiApiKeySecret.secretArn,
+          MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+          MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+          VISION_IMAGE_MODEL: "gemini-2.5-flash-image",
+        },
+      },
+    );
+    googleAiApiKeySecret.grantRead(visionGenerate);
+    mediaBucket.grantPut(visionGenerate);
+    authJwtSecret.grantRead(visionGenerate);
+
+    httpApi.addRoutes({
+      path: "/ideate/vision/generate",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "VisionGenerateIntegration",
+        visionGenerate,
+      ),
+    });
+
+    const ideateStore = new lambda_nodejs.NodejsFunction(
+      this,
+      "IdeateStoreFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/ideate-store.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(30),
+        memorySize: 512,
+        environment: {
+          IDEATE_TABLE_NAME: ideateTable.tableName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        },
+      },
+    );
+    ideateTable.grantReadWriteData(ideateStore);
+    authJwtSecret.grantRead(ideateStore);
+
+    httpApi.addRoutes({
+      path: "/ideate/store",
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.PUT,
+        apigwv2.HttpMethod.OPTIONS,
+      ],
+      integration: new integrations.HttpLambdaIntegration(
+        "IdeateStoreIntegration",
+        ideateStore,
+      ),
+    });
+
     const journalInsights = new lambda_nodejs.NodejsFunction(
       this,
       "JournalInsightsFunction",
@@ -1460,6 +1538,11 @@ export class MedimadeStack extends cdk.Stack {
       description:
         "Put your OpenAI API key (Whisper) as the secret string value — used for journal voice transcription",
       value: OPENAI_SECRET_NAME,
+    });
+    new cdk.CfnOutput(this, "GoogleAiSecretName", {
+      description:
+        "Put your Google AI (Gemini) API key as the secret string — Nano Banana vision-board scenes",
+      value: GOOGLE_AI_SECRET_NAME,
     });
     new cdk.CfnOutput(this, "BrevoSecretName", {
       description: "Put your Brevo API key as the secret string value (transactional email)",

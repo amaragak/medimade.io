@@ -131,6 +131,7 @@ Create the Brevo API key secret (same pattern as other secrets):
 | Secret name | Value |
 |-------------|--------|
 | **`medimade/BREVO_API_KEY`** | Your Brevo API key (plain text as the secret string) |
+| **`medimade/GOOGLE_AI_API_KEY`** | Google AI / Gemini API key (Nano Banana vision-board scenes) |
 
 Example:
 
@@ -138,6 +139,13 @@ Example:
 aws secretsmanager create-secret \
   --name medimade/BREVO_API_KEY \
   --secret-string "YOUR_BREVO_KEY" \
+  --profile mm
+```
+
+```bash
+aws secretsmanager create-secret \
+  --name medimade/GOOGLE_AI_API_KEY \
+  --secret-string "YOUR_GOOGLE_AI_KEY" \
   --profile mm
 ```
 

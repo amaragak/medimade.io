@@ -309,6 +309,135 @@ export async function transcribeJournalAudio(params: {
   return { text, storage };
 }
 
+export type VisionGenerateResult = {
+  imageBase64: string;
+  mimeType: string;
+  url?: string;
+  key?: string;
+  model?: string;
+};
+
+/**
+ * Generates a vision-board scene with Gemini Nano Banana, using a self-reference photo.
+ * `POST /ideate/vision/generate`
+ */
+export async function generateVisionBoardScene(params: {
+  prompt: string;
+  referenceBase64: string;
+  mimeType?: string;
+}): Promise<VisionGenerateResult> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const token = sessionTokenForBody();
+  const qs = token ? `?sessionToken=${encodeURIComponent(token)}` : "";
+  const res = await fetch(`${base}/ideate/vision/generate${qs}`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      prompt: params.prompt,
+      referenceBase64: params.referenceBase64,
+      mimeType: params.mimeType,
+      ...(token ? { sessionToken: token } : {}),
+    }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const imageBase64 =
+    typeof data.imageBase64 === "string" ? data.imageBase64 : "";
+  if (!imageBase64) {
+    throw new Error("No image returned");
+  }
+  return {
+    imageBase64,
+    mimeType:
+      typeof data.mimeType === "string" ? data.mimeType : "image/png",
+    ...(typeof data.url === "string" ? { url: data.url } : {}),
+    ...(typeof data.key === "string" ? { key: data.key } : {}),
+    ...(typeof data.model === "string" ? { model: data.model } : {}),
+  };
+}
+
+export type IdeateCloudBundle = {
+  version: 1;
+  updatedAt: string;
+  ideate: unknown;
+  visionBoard: unknown;
+  reflectionQuestions: unknown;
+};
+
+/**
+ * Loads Ideate from `GET /ideate/store`. Guests get `null` (use local demos).
+ */
+export async function fetchIdeateStoreRemote(): Promise<IdeateCloudBundle | null> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await fetch(`${base}/ideate/store`, {
+    headers: medimadeApiAuthHeaders(),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const store = data.store;
+  if (store == null) return null;
+  if (typeof store !== "object") return null;
+  return store as IdeateCloudBundle;
+}
+
+/**
+ * Saves Ideate bundle to `PUT /ideate/store` (requires session JWT).
+ */
+export async function putIdeateStoreRemote(
+  store: IdeateCloudBundle,
+): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await fetch(`${base}/ideate/store`, {
+    method: "PUT",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({ store }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+}
+
 /**
  * Loads journal from `GET /journal/store`.
  * Requires a session JWT — guests use the local demo / device journal only.
