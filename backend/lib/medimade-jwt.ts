@@ -37,7 +37,7 @@ function decodeBase64urlJson<T>(raw: string): T | null {
   }
 }
 
-const EXP_SECONDS = 30 * 24 * 60 * 60;
+const EXP_SECONDS = 60 * 60; // 1 hour access token
 
 export async function signMedimadeJwt(params: {
   sub: string;

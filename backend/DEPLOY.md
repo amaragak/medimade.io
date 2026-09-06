@@ -87,16 +87,22 @@ If `cdk synth` errors about a missing Pedalboard layer, run the step above first
 
 ## Bootstrap (once per account/region)
 
-This project defaults to **`ap-southeast-2`** in `bin/medimade.ts`. Bootstrap that account + region once:
+Primary region is **`eu-west-2` (London)** in `bin/medimade.ts`. Bootstrap that account + region once:
 
 ```bash
-npx cdk bootstrap aws://382309212161/ap-southeast-2 --profile mm
+npx cdk bootstrap aws://382309212161/eu-west-2 --profile mm
 ```
 
-Or derive account from the CLI:
+Sydney (`ap-southeast-2`) may still exist during cutover — do not delete it until London is confirmed. To deploy a specific region:
 
 ```bash
-npx cdk bootstrap aws://$(aws sts get-caller-identity --profile mm --query Account --output text)/ap-southeast-2 --profile mm
+CDK_DEFAULT_REGION=eu-west-2 ./scripts/deploy-back MedimadeBackend --require-approval never --profile mm
+```
+
+Cross-region data copy (Sydney → London, after both stacks exist):
+
+```bash
+AWS_PROFILE=mm ./scripts/migrate-sydney-to-london.sh
 ```
 
 ## Deploy
@@ -118,6 +124,16 @@ Set **`NEXT_PUBLIC_MEDIMADE_CHAT_URL`** in the webapp to **`MedimadeChatUrl`** (
 Public function URLs now require **both** `lambda:InvokeFunctionUrl` and `lambda:InvokeFunction` (URL-only) on the function policy; the stack adds both. If you still see **403 Forbidden**, redeploy and confirm `.env` points at **`MedimadeChatUrl`**, not the old API Gateway `/chat` path.
 
 ### Auth (magic link)
+
+Passwordless email sign-in (Brevo) + short-lived access JWT (1h, memory / cookie) + HttpOnly refresh cookie (30d, hashed in Dynamo).
+
+Security notes:
+- Magic-link tokens are stored as **sha256** in Dynamo (raw token only in email).
+- `/auth/magic-link` is rate-limited per email (1/min) and per IP (10/hour).
+- Access JWT is not kept in `localStorage` (legacy key is cleared).
+- Refresh via `POST /auth/refresh` with credentials; logout via `POST /auth/logout`.
+
+CORS for credentialed cookies uses explicit origins (not `*`).
 
 Magic-link auth requires:
 

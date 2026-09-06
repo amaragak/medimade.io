@@ -83,7 +83,8 @@ export function loadIdeateReflectionQuestionsStore(): IdeateReflectionQuestionsS
   }
 }
 
-export function saveIdeateReflectionQuestionsStore(
+/** Write local cache only — does not schedule cloud push. */
+export function saveIdeateReflectionQuestionsStoreLocal(
   store: IdeateReflectionQuestionsStoreV1,
 ) {
   if (typeof window === "undefined") return;
@@ -98,6 +99,13 @@ export function saveIdeateReflectionQuestionsStore(
   } catch {
     /* ignore */
   }
+}
+
+/** Persist cache and schedule cloud PUT when signed in. */
+export function saveIdeateReflectionQuestionsStore(
+  store: IdeateReflectionQuestionsStoreV1,
+) {
+  saveIdeateReflectionQuestionsStoreLocal(store);
   if (getMedimadeSessionJwt()) {
     void import("@/lib/ideate-cloud").then((m) => m.scheduleIdeateCloudPush());
   }

@@ -3,18 +3,45 @@ import type {
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
 import { verifyMedimadeJwt } from "./medimade-jwt";
+import {
+  ACCESS_COOKIE,
+  corsHeadersForEvent,
+  parseCookieHeader,
+} from "./medimade-auth-tokens";
 
 export function jsonAuth(
   statusCode: number,
   payload: Record<string, unknown>,
+  event?: APIGatewayProxyEventV2,
+  extraHeaders?: Record<string, string | string[]>,
 ): APIGatewayProxyStructuredResultV2 {
+  const cors = event ? corsHeadersForEvent(event) : { "Access-Control-Allow-Origin": "*" };
+  const headers: Record<string, string | string[]> = {
+    "Content-Type": "application/json",
+    ...cors,
+    ...extraHeaders,
+  };
   return {
     statusCode,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-    },
+    headers: headers as APIGatewayProxyStructuredResultV2["headers"],
     body: JSON.stringify(payload),
+  };
+}
+
+export function optionsAuth(
+  event: APIGatewayProxyEventV2,
+): APIGatewayProxyStructuredResultV2 {
+  const cors = corsHeadersForEvent(event);
+  return {
+    statusCode: 204,
+    headers: {
+      ...cors,
+      "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,OPTIONS",
+      "Access-Control-Allow-Headers":
+        "Content-Type,Authorization,X-Medimade-Authorization",
+      "Access-Control-Max-Age": "86400",
+    },
+    body: "",
   };
 }
 
@@ -45,6 +72,12 @@ export function parseBearer(
     headerValueCaseInsensitive(event.headers, "x-medimade-authorization");
   if (fromHeader) {
     const t = stripBearerPrefix(fromHeader);
+    if (t) return t;
+  }
+
+  const fromCookie = parseCookieHeader(event, ACCESS_COOKIE);
+  if (fromCookie) {
+    const t = stripBearerPrefix(fromCookie);
     if (t) return t;
   }
 
@@ -89,12 +122,12 @@ export async function requireUserJson(
 ): Promise<MedimadeAuthUser | APIGatewayProxyStructuredResultV2> {
   const token = parseBearer(event, extraToken);
   if (!token) {
-    return jsonAuth(401, { error: "Authorization Bearer token required" });
+    return jsonAuth(401, { error: "Authorization Bearer token required" }, event);
   }
   try {
     const claims = await verifyMedimadeJwt(token);
     if (!claims?.sub) {
-      return jsonAuth(401, { error: "Invalid or expired session" });
+      return jsonAuth(401, { error: "Invalid or expired session" }, event);
     }
     return {
       sub: claims.sub,
@@ -102,6 +135,6 @@ export async function requireUserJson(
       ...(claims.name ? { name: claims.name } : {}),
     };
   } catch {
-    return jsonAuth(401, { error: "Invalid or expired session" });
+    return jsonAuth(401, { error: "Invalid or expired session" }, event);
   }
 }

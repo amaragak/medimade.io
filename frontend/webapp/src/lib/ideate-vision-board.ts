@@ -1,6 +1,7 @@
 /**
- * Ideate vision board — metadata cache; binaries in IndexedDB / CloudFront URLs.
- * Signed-in writes also schedule cloud PUT via ideate-cloud.
+ * Ideate vision board metadata.
+ * Signed-in: CloudFront urls/keys in the Ideate cloud bundle (localStorage = cache only).
+ * Guests: device-only metadata + IndexedDB binaries.
  */
 
 import { getMedimadeSessionJwt } from "@/lib/auth-session";
@@ -11,9 +12,9 @@ export type VisionBoardItem = {
   color: string;
   label: string;
   kind?: "swatch" | "image";
-  /** IndexedDB media id for generated / uploaded board tiles. */
+  /** Guest-only IndexedDB media id — never written to cloud. */
   mediaId?: string;
-  /** CloudFront URL when uploaded / generated server-side. */
+  /** CloudFront URL (source of truth when signed in). */
   imageUrl?: string;
   mediaKey?: string;
   /** Scene prompt used to generate this tile (if any). */
@@ -22,12 +23,17 @@ export type VisionBoardItem = {
 };
 
 export type VisionSelfReference = {
-  mediaId: string;
+  /** Guest-only IndexedDB id — never written to cloud. */
+  mediaId?: string;
+  /** CloudFront URL (required for signed-in sync). */
+  url?: string;
+  /** S3 object key (required for signed-in sync / generate). */
+  key?: string;
   mimeType: string;
   fileName: string;
   width: number;
   height: number;
-  /** Bytes of the stored (full-res) file — informational. */
+  /** Bytes of the stored file — informational. */
   byteLength: number;
   updatedAt: string;
 };
@@ -77,11 +83,15 @@ function normalizeItem(x: unknown): VisionBoardItem | null {
 function normalizeSelfRef(x: unknown): VisionSelfReference | null {
   if (!x || typeof x !== "object") return null;
   const o = x as Record<string, unknown>;
-  if (typeof o.mediaId !== "string" || typeof o.mimeType !== "string") {
-    return null;
-  }
+  if (typeof o.mimeType !== "string") return null;
+  const mediaId = typeof o.mediaId === "string" ? o.mediaId : undefined;
+  const url = typeof o.url === "string" ? o.url : undefined;
+  const key = typeof o.key === "string" ? o.key : undefined;
+  if (!mediaId && !url) return null;
   return {
-    mediaId: o.mediaId,
+    ...(mediaId ? { mediaId } : {}),
+    ...(url ? { url } : {}),
+    ...(key ? { key } : {}),
     mimeType: o.mimeType,
     fileName: typeof o.fileName === "string" ? o.fileName : "reference.jpg",
     width: typeof o.width === "number" ? o.width : 0,
@@ -122,7 +132,8 @@ export function loadIdeateVisionBoardStore(): IdeateVisionBoardStoreV1 {
   }
 }
 
-export function saveIdeateVisionBoardStore(store: IdeateVisionBoardStoreV1) {
+/** Write local cache only — does not schedule cloud push. */
+export function saveIdeateVisionBoardStoreLocal(store: IdeateVisionBoardStoreV1) {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(
@@ -136,7 +147,12 @@ export function saveIdeateVisionBoardStore(store: IdeateVisionBoardStoreV1) {
   } catch {
     /* ignore */
   }
-  if (getMedimadeSessionJwt()) {
+}
+
+/** Persist cache and schedule cloud PUT when signed in. */
+export function saveIdeateVisionBoardStore(store: IdeateVisionBoardStoreV1) {
+  saveIdeateVisionBoardStoreLocal(store);
+  if (typeof window !== "undefined" && getMedimadeSessionJwt()) {
     void import("@/lib/ideate-cloud").then((m) => m.scheduleIdeateCloudPush());
   }
 }

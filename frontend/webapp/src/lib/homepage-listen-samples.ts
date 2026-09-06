@@ -10,30 +10,32 @@ export type HomepageListenSample = {
   audioUrl: string;
 };
 
+const MEDIA_BASE = (
+  process.env.NEXT_PUBLIC_MEDIMADE_MEDIA_BASE_URL?.replace(/\/$/, "") ||
+  "https://d30tgo2eshgnaf.cloudfront.net"
+).trim();
+
 export const HOMEPAGE_LISTEN_SAMPLES: HomepageListenSample[] = [
   {
     id: "04fa5b91-fa0c-4351-b68d-00ee172e70b0",
     title: "Softening the Grip: A Practice in Self-Compassion",
     category: "Loving-kindness",
     durationSeconds: 95,
-    audioUrl:
-      "https://d2ok8ugk4ei3kf.cloudfront.net/meditations/_/4ad91230-4ad0-4f34-9521-01bb2c32860a.mp3",
+    audioUrl: `${MEDIA_BASE}/meditations/_/4ad91230-4ad0-4f34-9521-01bb2c32860a.mp3`,
   },
   {
     id: "b3f239a6-5528-448e-bb70-409637c4b6c3",
     title: "Following Your Breath Through the Scatter",
     category: "Breath-led",
     durationSeconds: 128,
-    audioUrl:
-      "https://d2ok8ugk4ei3kf.cloudfront.net/meditations/_/0e3a06f4-cbd8-4c33-a067-f1e30c41db72.mp3",
+    audioUrl: `${MEDIA_BASE}/meditations/_/0e3a06f4-cbd8-4c33-a067-f1e30c41db72.mp3`,
   },
   {
     id: "d709dad9-c7d2-40ab-86d3-60e1b38c9d00",
     title: "Full Body Scan: Release Tension and Find Inner Peace",
     category: "Body scan",
     durationSeconds: 243,
-    audioUrl:
-      "https://d2ok8ugk4ei3kf.cloudfront.net/meditations/_/62af7ea0-33ea-43f4-ad46-4aabc748bbe0.mp3",
+    audioUrl: `${MEDIA_BASE}/meditations/_/62af7ea0-33ea-43f4-ad46-4aabc748bbe0.mp3`,
   },
 ];
 

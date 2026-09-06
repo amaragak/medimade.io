@@ -1,18 +1,24 @@
 import type { JournalStoreV2 } from "./journal-storage";
-import { getMedimadeSessionJwt, setMedimadeSession } from "./auth-session";
+import {
+  ensureMedimadeSession,
+  getMedimadeSessionJwt,
+  setMedimadeSession,
+} from "./auth-session";
 import type { GenerationTimings } from "./meditation-analytics";
 import type { MixerFactoryPreset } from "./mixer-factory-presets";
 import { normalizeFactoryPreset } from "./mixer-factory-presets";
 
 export {
   clearMedimadeSession,
+  ensureMedimadeSession,
   getMedimadeSessionDisplayName,
   getMedimadeSessionEmail,
   getMedimadeSessionJwt,
+  isMedimadeSessionActive,
   setMedimadeSession,
 } from "./auth-session";
 
-/** `Authorization: Bearer …` when a session JWT is stored (e.g. after magic-link verify). */
+/** `Authorization: Bearer …` when a session JWT is in memory. */
 export function medimadeApiAuthHeaders(): Record<string, string> {
   const t = getMedimadeSessionJwt();
   return t ? { Authorization: `Bearer ${t}` } : {};
@@ -38,6 +44,47 @@ function meditationAudioAuthFailureMessage(
 
 function medimadeJsonHeaders(): Record<string, string> {
   return { "Content-Type": "application/json", ...medimadeApiAuthHeaders() };
+}
+
+function isAuthSessionPath(url: string): boolean {
+  try {
+    const path = new URL(url).pathname;
+    return (
+      path.endsWith("/auth/refresh") ||
+      path.endsWith("/auth/logout") ||
+      path.endsWith("/auth/magic-link") ||
+      path.endsWith("/auth/magic-link/verify")
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Credentialed fetch so HttpOnly refresh/access cookies are sent to the API.
+ * On 401 (except auth endpoints), rotates the refresh cookie once and retries.
+ */
+export async function medimadeFetch(
+  input: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const res = await fetch(input, {
+    ...init,
+    credentials: "include",
+  });
+  if (res.status !== 401 || isAuthSessionPath(input)) return res;
+
+  const refreshed = await ensureMedimadeSession({ force: true });
+  if (!refreshed) return res;
+
+  const headers = new Headers(init?.headers);
+  const jwt = getMedimadeSessionJwt();
+  if (jwt) headers.set("Authorization", `Bearer ${jwt}`);
+  return fetch(input, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
 }
 
 const MIX_LISTENER_STORAGE_KEY = "medimade.mix-listener-id";
@@ -85,8 +132,9 @@ export async function requestMedimadeMagicLink(email: string): Promise<void> {
   if (!trimmed) throw new Error("Email is required");
   const origin =
     typeof window !== "undefined" ? window.location.origin : undefined;
-  const res = await fetch(`${base}/auth/magic-link`, {
+  const res = await medimadeFetch(`${base}/auth/magic-link`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       email: trimmed,
@@ -138,8 +186,9 @@ async function verifyMedimadeMagicLinkUncached(
 ): Promise<MedimadeMagicLinkVerifyResult> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/auth/magic-link/verify`, {
+  const res = await medimadeFetch(`${base}/auth/magic-link/verify`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: t }),
   });
@@ -178,7 +227,7 @@ export async function saveMedimadeProfileDisplayName(
 ): Promise<{ token: string; displayName: string }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/auth/profile/display-name`, {
+  const res = await medimadeFetch(`${base}/auth/profile/display-name`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ displayName: displayName.trim() }),
@@ -199,6 +248,56 @@ export async function saveMedimadeProfileDisplayName(
     throw new Error(data.detail ?? data.error ?? res.statusText ?? "Could not save name");
   }
   return { token: data.token.trim(), displayName: data.displayName.trim() };
+}
+
+export type MedimadeRefreshResult = {
+  token: string;
+  email: string;
+  displayName: string | null;
+  userId?: string;
+};
+
+/** Exchange HttpOnly refresh cookie for a new access JWT (memory). */
+export async function refreshMedimadeSessionRemote(): Promise<MedimadeRefreshResult | null> {
+  const base = getMedimadeApiBase();
+  if (!base) return null;
+  const res = await medimadeFetch(`${base}/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!res.ok) return null;
+  const data = (await res.json().catch(() => ({}))) as {
+    token?: string;
+    email?: string;
+    displayName?: unknown;
+    userId?: string;
+  };
+  if (typeof data.token !== "string" || !data.token.trim()) return null;
+  return {
+    token: data.token.trim(),
+    email: typeof data.email === "string" ? data.email : "",
+    displayName:
+      typeof data.displayName === "string" && data.displayName.trim()
+        ? data.displayName.trim()
+        : null,
+    userId: typeof data.userId === "string" ? data.userId : undefined,
+  };
+}
+
+/** Clears server refresh session + cookies. Does not touch local UI state. */
+export async function logoutMedimadeSessionRemote(): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) return;
+  try {
+    await medimadeFetch(`${base}/auth/logout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Full URL of the streaming chat Lambda (Function URL), not API Gateway /chat. */
@@ -276,7 +375,7 @@ export async function transcribeJournalAudio(params: {
   }
   const token = sessionTokenForBody();
   const qs = token ? `?sessionToken=${encodeURIComponent(token)}` : "";
-  const res = await fetch(`${base}/journal/transcribe${qs}`, {
+  const res = await medimadeFetch(`${base}/journal/transcribe${qs}`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -328,21 +427,28 @@ export type VisionGenerateResult = {
  */
 export async function generateVisionBoardScene(params: {
   prompt: string;
-  referenceBase64: string;
+  referenceBase64?: string;
+  referenceKey?: string;
   mimeType?: string;
 }): Promise<VisionGenerateResult> {
   const base = getMedimadeApiBase();
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
+  if (!params.referenceBase64 && !params.referenceKey) {
+    throw new Error("Reference photo is required");
+  }
   const token = sessionTokenForBody();
   const qs = token ? `?sessionToken=${encodeURIComponent(token)}` : "";
-  const res = await fetch(`${base}/ideate/vision/generate${qs}`, {
+  const res = await medimadeFetch(`${base}/ideate/vision/generate${qs}`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
       prompt: params.prompt,
-      referenceBase64: params.referenceBase64,
+      ...(params.referenceBase64
+        ? { referenceBase64: params.referenceBase64 }
+        : {}),
+      ...(params.referenceKey ? { referenceKey: params.referenceKey } : {}),
       mimeType: params.mimeType,
       ...(token ? { sessionToken: token } : {}),
     }),
@@ -375,6 +481,62 @@ export async function generateVisionBoardScene(params: {
   };
 }
 
+export type IdeateVisionMediaUploadResult = {
+  key: string;
+  url: string;
+  mimeType?: string;
+  byteLength?: number;
+};
+
+/**
+ * Uploads a vision-board image to `POST /ideate/vision/media` (S3 + CloudFront).
+ * Requires a signed-in session.
+ */
+export async function uploadIdeateVisionMedia(params: {
+  imageBase64: string;
+  mimeType?: string;
+  kind?: "self" | "tile";
+}): Promise<IdeateVisionMediaUploadResult> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await medimadeFetch(`${base}/ideate/vision/media`, {
+    method: "POST",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify({
+      imageBase64: params.imageBase64,
+      mimeType: params.mimeType,
+      kind: params.kind ?? "self",
+    }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const key = typeof data.key === "string" ? data.key : "";
+  const url = typeof data.url === "string" ? data.url : "";
+  if (!key || !url) {
+    throw new Error("Upload response missing key or url");
+  }
+  return {
+    key,
+    url,
+    mimeType: typeof data.mimeType === "string" ? data.mimeType : undefined,
+    byteLength:
+      typeof data.byteLength === "number" ? data.byteLength : undefined,
+  };
+}
+
 export type IdeateCloudBundle = {
   version: 1;
   updatedAt: string;
@@ -391,7 +553,7 @@ export async function fetchIdeateStoreRemote(): Promise<IdeateCloudBundle | null
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
-  const res = await fetch(`${base}/ideate/store`, {
+  const res = await medimadeFetch(`${base}/ideate/store`, {
     headers: medimadeApiAuthHeaders(),
   });
   let data: Record<string, unknown> = {};
@@ -423,7 +585,7 @@ export async function putIdeateStoreRemote(
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
-  const res = await fetch(`${base}/ideate/store`, {
+  const res = await medimadeFetch(`${base}/ideate/store`, {
     method: "PUT",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ store }),
@@ -452,7 +614,7 @@ export async function fetchJournalStoreRemote(): Promise<JournalStoreV2 | null> 
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
-  const res = await fetch(`${base}/journal/store`, { headers: medimadeApiAuthHeaders() });
+  const res = await medimadeFetch(`${base}/journal/store`, { headers: medimadeApiAuthHeaders() });
   let data: Record<string, unknown> = {};
   try {
     data = (await res.json()) as Record<string, unknown>;
@@ -480,7 +642,7 @@ export async function putJournalStoreRemote(store: JournalStoreV2): Promise<void
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
-  const res = await fetch(`${base}/journal/store`, {
+  const res = await medimadeFetch(`${base}/journal/store`, {
     method: "PUT",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ store }),
@@ -511,7 +673,7 @@ export async function uploadJournalVoice(params: {
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
-  const res = await fetch(`${base}/journal/voice`, {
+  const res = await medimadeFetch(`${base}/journal/voice`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -548,7 +710,7 @@ export async function fetchJournalInsightsRemote(): Promise<JournalInsights | nu
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
-  const res = await fetch(`${base}/journal/insights`, {
+  const res = await medimadeFetch(`${base}/journal/insights`, {
     headers: medimadeApiAuthHeaders(),
   });
   let data: Record<string, unknown> = {};
@@ -579,7 +741,7 @@ export async function runJournalInsightsRemote(opts?: {
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
-  const res = await fetch(`${base}/journal/insights`, {
+  const res = await medimadeFetch(`${base}/journal/insights`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -621,7 +783,7 @@ export async function datePdfJournalImport(units: unknown[]): Promise<{
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
-  const res = await fetch(`${base}/journal/import/pdf`, {
+  const res = await medimadeFetch(`${base}/journal/import/pdf`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -675,7 +837,7 @@ export async function ocrJournalPhoto(imageBase64: string): Promise<{
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   }
-  const res = await fetch(`${base}/journal/import/ocr`, {
+  const res = await medimadeFetch(`${base}/journal/import/ocr`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -751,7 +913,7 @@ export async function fetchJournalWeeklyReflectionRemote(opts?: {
     opts?.week?.trim()
       ? `?week=${encodeURIComponent(opts.week.trim())}`
       : "";
-  const res = await fetch(`${base}/journal/weekly-reflection${qs}`, {
+  const res = await medimadeFetch(`${base}/journal/weekly-reflection${qs}`, {
     headers: medimadeApiAuthHeaders(),
   });
   let data: Record<string, unknown> = {};
@@ -786,7 +948,7 @@ export async function listJournalWeeklyLettersRemote(): Promise<{
 }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/journal/weekly-reflection?list=1`, {
+  const res = await medimadeFetch(`${base}/journal/weekly-reflection?list=1`, {
     headers: medimadeApiAuthHeaders(),
   });
   let data: Record<string, unknown> = {};
@@ -834,7 +996,7 @@ export async function runJournalWeeklyReflectionRemote(opts?: {
 }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/journal/weekly-reflection`, {
+  const res = await medimadeFetch(`${base}/journal/weekly-reflection`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -1141,7 +1303,7 @@ export async function applyVoiceFx(params: {
 }): Promise<VoiceFxApiResponse> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/audio/voice-fx`, {
+  const res = await medimadeFetch(`${base}/audio/voice-fx`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1160,7 +1322,7 @@ export async function applyVoiceFx(params: {
 export async function listFishSpeakers(): Promise<FishSpeaker[]> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/fish/speakers`);
+  const res = await medimadeFetch(`${base}/fish/speakers`);
   const data = (await res.json()) as {
     speakers?: FishSpeaker[];
     error?: string;
@@ -1178,7 +1340,7 @@ export async function listFishSpeakers(): Promise<FishSpeaker[]> {
 export async function listOrpheusSpeakers(): Promise<OrpheusSpeaker[]> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/orpheus/speakers`);
+  const res = await medimadeFetch(`${base}/orpheus/speakers`);
   const data = (await res.json()) as {
     voices?: OrpheusSpeaker[];
     error?: string;
@@ -1202,7 +1364,7 @@ export async function fetchOrpheusSpeechPreview(params: {
 }): Promise<Blob> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/orpheus/tts`, {
+  const res = await medimadeFetch(`${base}/orpheus/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1298,7 +1460,7 @@ export async function generateMeditationAudio(params: {
     jobBody.backgroundNoiseGain = params.backgroundNoiseGain;
   }
 
-  const createRes = await fetch(`${base}/meditation/audio/jobs`, {
+  const createRes = await medimadeFetch(`${base}/meditation/audio/jobs`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify(jobBody),
@@ -1336,7 +1498,7 @@ export async function generateMeditationAudio(params: {
       throw new Error("Audio generation timed out");
     }
 
-    const statusRes = await fetch(meditationAudioJobStatusUrl(base, jobId), {
+    const statusRes = await medimadeFetch(meditationAudioJobStatusUrl(base, jobId), {
       headers: medimadeApiAuthHeaders(),
     });
     const statusData = (await statusRes.json()) as {
@@ -1468,7 +1630,7 @@ export async function createMeditationAudioJob(params: {
     jobBody.backgroundNoiseGain = params.backgroundNoiseGain;
   }
 
-  const createRes = await fetch(`${base}/meditation/audio/jobs`, {
+  const createRes = await medimadeFetch(`${base}/meditation/audio/jobs`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify(jobBody),
@@ -1509,7 +1671,7 @@ export async function getMeditationAudioJobStatus(
   const id = jobId.trim();
   if (!id) throw new Error("jobId is required");
 
-  const res = await fetch(meditationAudioJobStatusUrl(base, id), {
+  const res = await medimadeFetch(meditationAudioJobStatusUrl(base, id), {
     headers: medimadeApiAuthHeaders(),
   });
   const data = (await res.json()) as MeditationAudioJobStatus;
@@ -1606,7 +1768,7 @@ export type AdminSoundsList = {
 export async function listAdminSounds(): Promise<AdminSoundsList> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/sounds`, { headers: medimadeApiAuthHeaders() });
+  const res = await medimadeFetch(`${base}/admin/sounds`, { headers: medimadeApiAuthHeaders() });
   const data = (await res.json()) as AdminSoundsList & { error?: string; detail?: string };
   if (!res.ok) {
     throw new Error(data.detail ?? data.error ?? res.statusText);
@@ -1656,7 +1818,7 @@ export async function patchAdminSound(body: {
 }): Promise<{ key: string }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/sounds`, {
+  const res = await medimadeFetch(`${base}/admin/sounds`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify(body),
@@ -1684,7 +1846,7 @@ export async function createAdminSoundUploads(params: {
 }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/sounds`, {
+  const res = await medimadeFetch(`${base}/admin/sounds`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -1812,7 +1974,7 @@ async function completeAdminSoundMultipart(body: {
 }): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/sounds`, {
+  const res = await medimadeFetch(`${base}/admin/sounds`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ completeMultipart: body }),
@@ -1824,7 +1986,7 @@ async function completeAdminSoundMultipart(body: {
 async function abortAdminSoundMultipart(rawKey: string, uploadId: string): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) return;
-  await fetch(`${base}/admin/sounds`, {
+  await medimadeFetch(`${base}/admin/sounds`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ abortMultipart: { rawKey, uploadId } }),
@@ -1835,7 +1997,7 @@ async function abortAdminSoundMultipart(rawKey: string, uploadId: string): Promi
 export async function reprocessAdminSound(key: string): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/sounds`, {
+  const res = await medimadeFetch(`${base}/admin/sounds`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ reprocess: { key } }),
@@ -1850,7 +2012,7 @@ export async function analyseAdminSoundTitles(keys: string[]): Promise<number> {
   let updated = 0;
   for (let i = 0; i < keys.length; i += 40) {
     const slice = keys.slice(i, i + 40);
-    const res = await fetch(`${base}/admin/sounds`, {
+    const res = await medimadeFetch(`${base}/admin/sounds`, {
       method: "POST",
       headers: medimadeJsonHeaders(),
       body: JSON.stringify({ analyseTitles: { keys: slice } }),
@@ -1868,7 +2030,7 @@ export async function suggestAdminSoundCategories(paths: string[]): Promise<numb
   let updated = 0;
   for (let i = 0; i < paths.length; i += 40) {
     const slice = paths.slice(i, i + 40);
-    const res = await fetch(`${base}/admin/sounds`, {
+    const res = await medimadeFetch(`${base}/admin/sounds`, {
       method: "POST",
       headers: medimadeJsonHeaders(),
       body: JSON.stringify({ suggest: { paths: slice } }),
@@ -1925,7 +2087,7 @@ export async function trimAdminSound(body: {
 }): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/sounds/trim`, {
+  const res = await medimadeFetch(`${base}/admin/sounds/trim`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify(body),
@@ -1965,7 +2127,7 @@ export type AdminVoiceState = {
 export async function listAdminVoice(): Promise<AdminVoiceState> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/voice`, { headers: medimadeApiAuthHeaders() });
+  const res = await medimadeFetch(`${base}/admin/voice`, { headers: medimadeApiAuthHeaders() });
   const data = (await res.json()) as AdminVoiceState & { error?: string; detail?: string };
   if (!res.ok) {
     throw new Error(data.detail ?? data.error ?? res.statusText);
@@ -1991,7 +2153,7 @@ export async function patchAdminVoice(body: {
 }): Promise<{ pauses?: AdminPauseBands; speaker?: AdminVoiceSpeaker }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/voice`, {
+  const res = await medimadeFetch(`${base}/admin/voice`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify(body),
@@ -2011,7 +2173,7 @@ export async function patchAdminVoice(body: {
 export async function deleteAdminVoiceSpeaker(modelId: string): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/voice`, {
+  const res = await medimadeFetch(`${base}/admin/voice`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ action: "delete", modelId }),
@@ -2027,7 +2189,7 @@ export async function generateAdminVoiceSample(
 ): Promise<{ sampleUrl?: string | null }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/voice`, {
+  const res = await medimadeFetch(`${base}/admin/voice`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ action: "sample", modelId }),
@@ -2124,7 +2286,7 @@ export type ScriptLabFlow = "by-type" | "guide-chat" | "journal" | "single-promp
 export async function listAdminScriptLab(): Promise<ScriptLabState> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/script-lab`, {
+  const res = await medimadeFetch(`${base}/admin/script-lab`, {
     headers: medimadeApiAuthHeaders(),
   });
   const data = (await res.json()) as ScriptLabState & { error?: string; detail?: string };
@@ -2166,7 +2328,7 @@ export async function listAdminScriptLab(): Promise<ScriptLabState> {
 export async function fetchAdminScriptLabEmbeddingProgress(): Promise<ScriptLabEmbeddingStats> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/script-lab?embeddingProgress=1`, {
+  const res = await medimadeFetch(`${base}/admin/script-lab?embeddingProgress=1`, {
     headers: medimadeApiAuthHeaders(),
   });
   const data = (await res.json()) as {
@@ -2207,7 +2369,7 @@ export async function patchAdminScriptLab(body: {
 }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/script-lab`, {
+  const res = await medimadeFetch(`${base}/admin/script-lab`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify(body),
@@ -2225,7 +2387,7 @@ export async function patchAdminScriptLab(body: {
 export async function exportAdminScriptLab(): Promise<{ segments: unknown[] }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/script-lab?export=segments`, {
+  const res = await medimadeFetch(`${base}/admin/script-lab?export=segments`, {
     headers: medimadeApiAuthHeaders(),
   });
   const data = (await res.json()) as { segments?: unknown[]; error?: string; detail?: string };
@@ -2240,7 +2402,7 @@ export async function importAdminScriptLabTagMetadata(
 }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/script-lab`, {
+  const res = await medimadeFetch(`${base}/admin/script-lab`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ action: "import-tag-metadata", payload }),
@@ -2280,7 +2442,7 @@ export async function postAdminScriptLab(
     );
   }
   const path = scriptLabUrl ? "" : "/admin/script-lab";
-  const res = await fetch(`${base}${path}`, {
+  const res = await medimadeFetch(`${base}${path}`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify(body),
@@ -2296,7 +2458,7 @@ export async function postAdminScriptLab(
 export async function listAdminFactoryMixes(): Promise<MixerFactoryPreset[]> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/factory-mixes`, {
+  const res = await medimadeFetch(`${base}/admin/factory-mixes`, {
     headers: medimadeApiAuthHeaders(),
   });
   const data = (await res.json()) as {
@@ -2317,7 +2479,7 @@ export async function saveAdminFactoryMix(
 ): Promise<MixerFactoryPreset> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/factory-mixes`, {
+  const res = await medimadeFetch(`${base}/admin/factory-mixes`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify(mix),
@@ -2338,7 +2500,7 @@ export async function saveAdminFactoryMix(
 export async function deleteAdminFactoryMix(id: string): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/factory-mixes`, {
+  const res = await medimadeFetch(`${base}/admin/factory-mixes`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ action: "delete", id }),
@@ -2472,7 +2634,7 @@ function normalizeAdminProgram(raw: unknown): AdminProgram | null {
 export async function listAdminPrograms(): Promise<AdminProgram[]> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/programs`, {
+  const res = await medimadeFetch(`${base}/admin/programs`, {
     headers: medimadeApiAuthHeaders(),
   });
   const data = (await res.json()) as {
@@ -2566,7 +2728,7 @@ function normalizeLibraryProgram(raw: unknown): LibraryProgram | null {
 export async function listLibraryPrograms(): Promise<LibraryProgram[]> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/library/programs`);
+  const res = await medimadeFetch(`${base}/library/programs`);
   const data = (await res.json()) as {
     programs?: unknown[];
     error?: string;
@@ -2585,7 +2747,7 @@ export async function saveAdminProgram(
 ): Promise<AdminProgram> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/programs`, {
+  const res = await medimadeFetch(`${base}/admin/programs`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify(program),
@@ -2606,7 +2768,7 @@ export async function saveAdminProgram(
 export async function deleteAdminProgram(id: string): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/programs`, {
+  const res = await medimadeFetch(`${base}/admin/programs`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ action: "delete", id }),
@@ -2625,7 +2787,7 @@ export async function generateAdminProgramDayDescription(params: {
 }): Promise<string> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/admin/programs`, {
+  const res = await medimadeFetch(`${base}/admin/programs`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -2654,7 +2816,7 @@ export const PROGRAM_DAY_DESCRIPTION_MIN_CHARS = 100;
 export async function listBackgroundAudio(): Promise<BackgroundAudioByCategory> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/media/background-audio`, {
+  const res = await medimadeFetch(`${base}/media/background-audio`, {
     cache: "no-store",
   });
   const data = (await res.json()) as {
@@ -2844,7 +3006,7 @@ export async function saveMeditationDraft(params: {
 }): Promise<{ sk: string; id: string; createdAt: string; title: string }> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/library/meditations/draft`, {
+  const res = await medimadeFetch(`${base}/library/meditations/draft`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -2888,7 +3050,7 @@ export async function getMeditationDraft(sk: string): Promise<{
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const q = new URLSearchParams({ sk });
-  const res = await fetch(`${base}/library/meditations/draft?${q.toString()}`, {
+  const res = await medimadeFetch(`${base}/library/meditations/draft?${q.toString()}`, {
     headers: medimadeApiAuthHeaders(),
   });
   const data = (await res.json()) as {
@@ -2934,7 +3096,7 @@ export async function listLibraryMeditations(opts?: {
         return `?${p.toString()}`;
       })()
     : "";
-  const res = await fetch(`${base}/library/meditations${qs}`, {
+  const res = await medimadeFetch(`${base}/library/meditations${qs}`, {
     headers: medimadeApiAuthHeaders(),
   });
   const data = (await res.json()) as {
@@ -2955,7 +3117,7 @@ export async function patchMeditationRating(
 ): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/library/meditations/rating`, {
+  const res = await medimadeFetch(`${base}/library/meditations/rating`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ sk, rating }),
@@ -2973,7 +3135,7 @@ export async function patchMeditationFavourite(
 ): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/library/meditations/favourite`, {
+  const res = await medimadeFetch(`${base}/library/meditations/favourite`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ sk, favourite }),
@@ -3002,7 +3164,7 @@ export async function patchMeditationBackgroundMix(
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const listenerId = getOrCreateMixListenerId();
-  const res = await fetch(`${base}/library/meditations/mix`, {
+  const res = await medimadeFetch(`${base}/library/meditations/mix`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -3026,7 +3188,7 @@ export async function patchMeditationPublic(
 ): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/library/meditations/public`, {
+  const res = await medimadeFetch(`${base}/library/meditations/public`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
@@ -3048,7 +3210,7 @@ export async function patchMeditationArchived(
 ): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
-  const res = await fetch(`${base}/library/meditations/archive`, {
+  const res = await medimadeFetch(`${base}/library/meditations/archive`, {
     method: "PATCH",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({ sk, archived }),

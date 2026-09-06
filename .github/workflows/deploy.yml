@@ -71,7 +71,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-2' }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-2' }}
 
       - name: Decide what to deploy
         id: plan
@@ -117,6 +117,7 @@ jobs:
         run: |
           node backend/scripts/write-webapp-env-from-outputs.mjs \
             --stack MedimadeBackend \
+            --region "${{ vars.AWS_REGION || 'eu-west-2' }}" \
             frontend/webapp/.env \
             frontend/mobile/.env \
             frontend/extension/.env
@@ -136,4 +137,7 @@ jobs:
       - name: Deploy frontend (SST prod)
         if: steps.plan.outputs.frontend == 'true'
         working-directory: frontend/webapp/deploy
+        env:
+          # Keep 0 until consciously.live is detached from the Sydney CloudFront distribution.
+          MEDIMADE_SST_ATTACH_DOMAIN: ${{ vars.MEDIMADE_SST_ATTACH_DOMAIN || '0' }}
         run: ./deploy-web --stage production

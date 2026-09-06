@@ -11,33 +11,31 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "crypto";
 import { signMedimadeJwt } from "../lib/medimade-jwt";
+import { optionsAuth } from "../lib/medimade-auth-http";
+import {
+  corsHeadersForEvent,
+  newOpaqueToken,
+  REFRESH_TOKEN_TTL_SEC,
+  sessionSetCookieHeaders,
+  sha256Hex,
+} from "../lib/medimade-auth-tokens";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 function json(
+  event: APIGatewayProxyEventV2,
   statusCode: number,
   payload: Record<string, unknown>,
+  setCookies?: string[],
 ): APIGatewayProxyStructuredResultV2 {
   return {
     statusCode,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
+      ...corsHeadersForEvent(event),
     },
+    ...(setCookies?.length ? { cookies: setCookies } : {}),
     body: JSON.stringify(payload),
-  };
-}
-
-function options(): APIGatewayProxyStructuredResultV2 {
-  return {
-    statusCode: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type,Authorization",
-      "Access-Control-Max-Age": "86400",
-    },
-    body: "",
   };
 }
 
@@ -66,7 +64,9 @@ async function getOrCreateUserId(usersTable: string, email: string): Promise<str
     return userId;
   } catch (e: unknown) {
     const name =
-      e && typeof e === "object" && "name" in e ? String((e as { name: string }).name) : "";
+      e && typeof e === "object" && "name" in e
+        ? String((e as { name: string }).name)
+        : "";
     if (name !== "ConditionalCheckFailedException") {
       throw e;
     }
@@ -81,55 +81,109 @@ async function getOrCreateUserId(usersTable: string, email: string): Promise<str
   }
 }
 
+async function issueSession(params: {
+  event: APIGatewayProxyEventV2;
+  userId: string;
+  email: string;
+  displayName: string | null;
+  needsProfileName: boolean;
+}): Promise<APIGatewayProxyStructuredResultV2> {
+  const refreshTable = process.env.REFRESH_TABLE_NAME?.trim();
+  if (!refreshTable) {
+    return json(params.event, 500, { error: "REFRESH_TABLE_NAME is not set" });
+  }
+
+  const accessToken = await signMedimadeJwt({
+    sub: params.userId,
+    email: params.email,
+    name: params.displayName ?? undefined,
+  });
+  const refreshToken = newOpaqueToken(32);
+  const refreshHash = sha256Hex(refreshToken);
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  await ddb.send(
+    new PutCommand({
+      TableName: refreshTable,
+      Item: {
+        tokenHash: refreshHash,
+        userId: params.userId,
+        email: params.email,
+        ...(params.displayName ? { displayName: params.displayName } : {}),
+        createdAt: new Date().toISOString(),
+        ttl: nowSec + REFRESH_TOKEN_TTL_SEC,
+      },
+    }),
+  );
+
+  return json(
+    params.event,
+    200,
+    {
+      token: accessToken,
+      userId: params.userId,
+      email: params.email,
+      needsProfileName: params.needsProfileName,
+      displayName: params.displayName,
+    },
+    sessionSetCookieHeaders({ accessToken, refreshToken }),
+  );
+}
+
 export async function handler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
   const method = event.requestContext.http.method;
-  if (method === "OPTIONS") return options();
-  if (method !== "POST") return json(405, { error: "Method not allowed" });
+  if (method === "OPTIONS") return optionsAuth(event);
+  if (method !== "POST") return json(event, 405, { error: "Method not allowed" });
 
   const magicTable = process.env.MAGIC_LINK_TABLE_NAME?.trim();
   const usersTable = process.env.USERS_TABLE_NAME?.trim();
   if (!magicTable || !usersTable) {
-    return json(500, { error: "Auth tables are not configured" });
+    return json(event, 500, { error: "Auth tables are not configured" });
   }
 
   let body: { token?: unknown };
   try {
     body = JSON.parse(event.body || "{}") as { token?: unknown };
   } catch {
-    return json(400, { error: "Invalid JSON body" });
+    return json(event, 400, { error: "Invalid JSON body" });
   }
-  const token =
+  const rawToken =
     typeof body.token === "string" && body.token.trim() ? body.token.trim() : null;
-  if (!token) {
-    return json(400, { error: "`token` is required" });
+  if (!rawToken) {
+    return json(event, 400, { error: "`token` is required" });
   }
 
+  const tokenHash = sha256Hex(rawToken);
   let email: string | null = null;
   try {
     const got = await ddb.send(
-      new GetCommand({ TableName: magicTable, Key: { token } }),
+      new GetCommand({ TableName: magicTable, Key: { token: tokenHash } }),
     );
-    const item = got.Item as { email?: string; ttl?: number } | undefined;
-    if (!item?.email || typeof item.email !== "string") {
-      return json(400, { error: "Invalid or expired sign-in link" });
+    const item = got.Item as { email?: string; ttl?: number; kind?: string } | undefined;
+    if (!item?.email || typeof item.email !== "string" || item.kind === "rate") {
+      return json(event, 400, { error: "Invalid or expired sign-in link" });
     }
     const ttl =
       typeof item.ttl === "number" && Number.isFinite(item.ttl) ? item.ttl : 0;
     if (ttl < Math.floor(Date.now() / 1000)) {
-      await ddb.send(new DeleteCommand({ TableName: magicTable, Key: { token } }));
-      return json(400, { error: "Sign-in link expired" });
+      await ddb.send(
+        new DeleteCommand({ TableName: magicTable, Key: { token: tokenHash } }),
+      );
+      return json(event, 400, { error: "Sign-in link expired" });
     }
     email = item.email.trim().toLowerCase();
-    await ddb.send(new DeleteCommand({ TableName: magicTable, Key: { token } }));
+    await ddb.send(
+      new DeleteCommand({ TableName: magicTable, Key: { token: tokenHash } }),
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Token lookup failed";
-    return json(500, { error: msg });
+    return json(event, 500, { error: msg });
   }
 
   if (!email) {
-    return json(400, { error: "Invalid or expired sign-in link" });
+    return json(event, 400, { error: "Invalid or expired sign-in link" });
   }
 
   let userId: string;
@@ -137,7 +191,7 @@ export async function handler(
     userId = await getOrCreateUserId(usersTable, email);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "User lookup failed";
-    return json(500, { error: msg });
+    return json(event, 500, { error: msg });
   }
 
   let displayName: string | null = null;
@@ -151,28 +205,19 @@ export async function handler(
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "User profile read failed";
-    return json(500, { error: msg });
+    return json(event, 500, { error: msg });
   }
 
-  const needsProfileName = !displayName;
-
-  let jwt: string;
   try {
-    jwt = await signMedimadeJwt({
-      sub: userId,
+    return await issueSession({
+      event,
+      userId,
       email,
-      name: displayName ?? undefined,
+      displayName,
+      needsProfileName: !displayName,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not mint session";
-    return json(500, { error: msg });
+    return json(event, 500, { error: msg });
   }
-
-  return json(200, {
-    token: jwt,
-    userId,
-    email,
-    needsProfileName,
-    ...(displayName ? { displayName } : {}),
-  });
 }

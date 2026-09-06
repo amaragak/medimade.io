@@ -21,18 +21,28 @@ import {
   visionMediaToBase64,
   visionMediaToObjectUrl,
 } from "@/lib/ideate-vision-media";
+import { flushIdeateCloudNow } from "@/lib/ideate-cloud";
 import {
   generateVisionBoardScene,
   getMedimadeApiBase,
+  uploadIdeateVisionMedia,
 } from "@/lib/medimade-api";
 import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 
 const SECTION_LABEL =
   "text-sm font-medium uppercase tracking-widest text-[#8A7566]";
 
+function newTileId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `tile_${crypto.randomUUID()}`;
+  }
+  return `tile_${Date.now().toString(16)}`;
+}
+
 /**
  * Vision board — same content shell as My Ideas (`max-w-6xl`).
- * Route: /ideate/my/vision-board
+ * Signed-in: S3 + Ideate cloud store only (no IndexedDB).
+ * Guests: device IndexedDB only.
  */
 export function IdeateVisionBoardClient() {
   const [items, setItems] = useState<VisionBoardItem[]>([]);
@@ -46,13 +56,13 @@ export function IdeateVisionBoardClient() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const previewUrlRef = useRef<string | null>(null);
   const tileUrlsRef = useRef<Record<string, string>>({});
-  const { ready: cloudReady, revision } = useIdeateCloud();
+  const { ready: cloudReady, signedIn, revision } = useIdeateCloud();
 
   const revokePreview = useCallback(() => {
-    if (previewUrlRef.current) {
+    if (previewUrlRef.current?.startsWith("blob:")) {
       URL.revokeObjectURL(previewUrlRef.current);
-      previewUrlRef.current = null;
     }
+    previewUrlRef.current = null;
     setSelfPreviewUrl(null);
   }, []);
 
@@ -62,29 +72,48 @@ export function IdeateVisionBoardClient() {
     setSelfRef(store.selfReference ?? null);
 
     revokePreview();
-    if (store.selfReference?.mediaId) {
-      const rec = await getVisionMedia(store.selfReference.mediaId);
-      if (rec) {
-        const url = visionMediaToObjectUrl(rec);
-        previewUrlRef.current = url;
-        setSelfPreviewUrl(url);
+    if (signedIn) {
+      // Cloud-first: only CloudFront URLs. Ignore orphan IndexedDB mediaIds.
+      if (store.selfReference?.url) {
+        setSelfPreviewUrl(store.selfReference.url);
       }
-    }
+      const nextTiles: Record<string, string> = {};
+      for (const item of store.items) {
+        if (item.imageUrl) nextTiles[item.id] = item.imageUrl;
+      }
+      tileUrlsRef.current = nextTiles;
+      setTileUrls(nextTiles);
+    } else {
+      if (store.selfReference?.url) {
+        setSelfPreviewUrl(store.selfReference.url);
+      } else if (store.selfReference?.mediaId) {
+        const rec = await getVisionMedia(store.selfReference.mediaId);
+        if (rec) {
+          const url = visionMediaToObjectUrl(rec);
+          previewUrlRef.current = url;
+          setSelfPreviewUrl(url);
+        }
+      }
 
-    const nextTiles: Record<string, string> = {};
-    for (const item of store.items) {
-      if (!item.mediaId) continue;
-      const rec = await getVisionMedia(item.mediaId);
-      if (!rec) continue;
-      nextTiles[item.id] = visionMediaToObjectUrl(rec);
+      const nextTiles: Record<string, string> = {};
+      for (const item of store.items) {
+        if (item.imageUrl) {
+          nextTiles[item.id] = item.imageUrl;
+          continue;
+        }
+        if (!item.mediaId) continue;
+        const rec = await getVisionMedia(item.mediaId);
+        if (!rec) continue;
+        nextTiles[item.id] = visionMediaToObjectUrl(rec);
+      }
+      for (const u of Object.values(tileUrlsRef.current)) {
+        if (u.startsWith("blob:")) URL.revokeObjectURL(u);
+      }
+      tileUrlsRef.current = nextTiles;
+      setTileUrls(nextTiles);
     }
-    for (const u of Object.values(tileUrlsRef.current)) {
-      URL.revokeObjectURL(u);
-    }
-    tileUrlsRef.current = nextTiles;
-    setTileUrls(nextTiles);
     setHydrated(true);
-  }, [revokePreview]);
+  }, [revokePreview, signedIn]);
 
   useEffect(() => {
     if (!cloudReady) return;
@@ -98,12 +127,24 @@ export function IdeateVisionBoardClient() {
 
   useEffect(() => {
     return () => {
-      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+      if (previewUrlRef.current?.startsWith("blob:")) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
       for (const u of Object.values(tileUrlsRef.current)) {
-        URL.revokeObjectURL(u);
+        if (u.startsWith("blob:")) URL.revokeObjectURL(u);
       }
     };
   }, []);
+
+  const persistBoard = useCallback(
+    async (store: ReturnType<typeof loadIdeateVisionBoardStore>) => {
+      saveIdeateVisionBoardStore(store);
+      if (signedIn) {
+        await flushIdeateCloudNow();
+      }
+    },
+    [signedIn],
+  );
 
   const onPickReference = useCallback(
     async (file: File | null) => {
@@ -114,39 +155,76 @@ export function IdeateVisionBoardClient() {
         if (!file.type.startsWith("image/")) {
           throw new Error("Choose a photo (JPEG, PNG, or HEIC).");
         }
-        // Keep a high-res copy for future generations; also measure natural size.
-        const fullBuf = await blobToArrayBuffer(file);
+        if (signedIn && !getMedimadeApiBase()) {
+          throw new Error("API URL is not configured.");
+        }
+
         const probe = await createImageBitmap(file);
         const width = probe.width;
         const height = probe.height;
         probe.close();
 
-        const mediaId = newVisionMediaId("self");
         const prev = loadIdeateVisionBoardStore().selfReference;
-        if (prev?.mediaId) await deleteVisionMedia(prev.mediaId);
 
-        await putVisionMedia({
-          id: mediaId,
-          mimeType: file.type || "image/jpeg",
-          bytes: fullBuf,
-          updatedAt: new Date().toISOString(),
-        });
+        if (signedIn) {
+          // Cloud is the only store: upload to S3, then PUT Ideate store.
+          const prepared = await resizeImageFileForApi(file, 2048, 0.92);
+          const apiBuf = await blobToArrayBuffer(prepared.blob);
+          const imageBase64 = await visionMediaToBase64({
+            id: "tmp",
+            mimeType: prepared.mimeType,
+            bytes: apiBuf,
+            updatedAt: new Date().toISOString(),
+          });
+          const uploaded = await uploadIdeateVisionMedia({
+            imageBase64,
+            mimeType: prepared.mimeType,
+            kind: "self",
+          });
 
-        const meta: VisionSelfReference = {
-          mediaId,
-          mimeType: file.type || "image/jpeg",
-          fileName: file.name || "reference.jpg",
-          width,
-          height,
-          byteLength: fullBuf.byteLength,
-          updatedAt: new Date().toISOString(),
-        };
-        const store = loadIdeateVisionBoardStore();
-        saveIdeateVisionBoardStore({
-          ...store,
-          v: 2,
-          selfReference: meta,
-        });
+          const meta: VisionSelfReference = {
+            url: uploaded.url,
+            key: uploaded.key,
+            mimeType: prepared.mimeType,
+            fileName: file.name || "reference.jpg",
+            width: prepared.width || width,
+            height: prepared.height || height,
+            byteLength: uploaded.byteLength ?? apiBuf.byteLength,
+            updatedAt: new Date().toISOString(),
+          };
+          const store = loadIdeateVisionBoardStore();
+          await persistBoard({
+            ...store,
+            v: 2,
+            selfReference: meta,
+          });
+        } else {
+          // Guest: device only.
+          const fullBuf = await blobToArrayBuffer(file);
+          const mediaId = newVisionMediaId("self");
+          if (prev?.mediaId) await deleteVisionMedia(prev.mediaId);
+          await putVisionMedia({
+            id: mediaId,
+            mimeType: file.type || "image/jpeg",
+            bytes: fullBuf,
+            updatedAt: new Date().toISOString(),
+          });
+          const meta: VisionSelfReference = {
+            mediaId,
+            mimeType: file.type || "image/jpeg",
+            fileName: file.name || "reference.jpg",
+            width,
+            height,
+            byteLength: fullBuf.byteLength,
+            updatedAt: new Date().toISOString(),
+          };
+          const store = loadIdeateVisionBoardStore();
+          await persistBoard({
+            ...store,
+            v: 2,
+            selfReference: meta,
+          });
+        }
         await refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not save that photo");
@@ -155,22 +233,22 @@ export function IdeateVisionBoardClient() {
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
     },
-    [refresh],
+    [persistBoard, refresh, signedIn],
   );
 
   const clearReference = useCallback(async () => {
     setError(null);
     const store = loadIdeateVisionBoardStore();
-    if (store.selfReference?.mediaId) {
+    if (!signedIn && store.selfReference?.mediaId) {
       await deleteVisionMedia(store.selfReference.mediaId);
     }
-    saveIdeateVisionBoardStore({
+    await persistBoard({
       ...store,
       v: 2,
       selfReference: null,
     });
     await refresh();
-  }, [refresh]);
+  }, [persistBoard, refresh, signedIn]);
 
   const onGenerate = useCallback(async () => {
     setError(null);
@@ -185,60 +263,90 @@ export function IdeateVisionBoardClient() {
     }
     const store = loadIdeateVisionBoardStore();
     const refMeta = store.selfReference;
-    if (!refMeta?.mediaId) {
+    if (signedIn) {
+      if (!refMeta?.key) {
+        setError("Upload a clear photo of yourself first.");
+        return;
+      }
+    } else if (!refMeta?.mediaId) {
       setError("Upload a clear photo of yourself first.");
       return;
     }
+
     setBusy("gen");
     try {
-      const rec = await getVisionMedia(refMeta.mediaId);
-      if (!rec) throw new Error("Reference photo is missing — upload it again.");
+      let result;
+      if (signedIn && refMeta?.key) {
+        result = await generateVisionBoardScene({
+          prompt,
+          referenceKey: refMeta.key,
+          mimeType: refMeta.mimeType,
+        });
+      } else {
+        const rec = await getVisionMedia(refMeta!.mediaId!);
+        if (!rec) throw new Error("Reference photo is missing — upload it again.");
+        const blob = new Blob([rec.bytes], { type: rec.mimeType });
+        const prepared = await resizeImageFileForApi(blob, 1536, 0.9);
+        const apiBuf = await blobToArrayBuffer(prepared.blob);
+        const referenceBase64 = await visionMediaToBase64({
+          id: "tmp",
+          mimeType: prepared.mimeType,
+          bytes: apiBuf,
+          updatedAt: new Date().toISOString(),
+        });
+        result = await generateVisionBoardScene({
+          prompt,
+          referenceBase64,
+          mimeType: prepared.mimeType,
+        });
+      }
 
-      // Downscale for the API while keeping the full-res original in IndexedDB.
-      const blob = new Blob([rec.bytes], { type: rec.mimeType });
-      const prepared = await resizeImageFileForApi(blob, 1536, 0.9);
-      const apiBuf = await blobToArrayBuffer(prepared.blob);
-      const apiRec = {
-        id: "tmp",
-        mimeType: prepared.mimeType,
-        bytes: apiBuf,
-        updatedAt: new Date().toISOString(),
-      };
-      const referenceBase64 = await visionMediaToBase64(apiRec);
-
-      const result = await generateVisionBoardScene({
-        prompt,
-        referenceBase64,
-        mimeType: prepared.mimeType,
-      });
-
-      const outBytes = Uint8Array.from(atob(result.imageBase64), (c) =>
-        c.charCodeAt(0),
-      );
-      const mediaId = newVisionMediaId("scene");
-      await putVisionMedia({
-        id: mediaId,
-        mimeType: result.mimeType,
-        bytes: outBytes.buffer.slice(
-          outBytes.byteOffset,
-          outBytes.byteOffset + outBytes.byteLength,
-        ),
-        updatedAt: new Date().toISOString(),
-      });
-
-      const item: VisionBoardItem = {
-        id: mediaId.replace(/^scene_/, "tile_"),
-        color: pickVisionSwatchColor(prompt),
-        label: prompt.length > 48 ? `${prompt.slice(0, 45)}…` : prompt,
-        kind: "image",
-        mediaId,
-        ...(result.url ? { imageUrl: result.url } : {}),
-        ...(result.key ? { mediaKey: result.key } : {}),
-        prompt,
-        createdAt: new Date().toISOString(),
-      };
-      const next = upsertVisionBoardItem(loadIdeateVisionBoardStore(), item);
-      saveIdeateVisionBoardStore(next);
+      if (signedIn) {
+        if (!result.url) {
+          throw new Error("Generated image did not sync to the cloud.");
+        }
+        const item: VisionBoardItem = {
+          id: newTileId(),
+          color: pickVisionSwatchColor(prompt),
+          label: prompt.length > 48 ? `${prompt.slice(0, 45)}…` : prompt,
+          kind: "image",
+          imageUrl: result.url,
+          ...(result.key ? { mediaKey: result.key } : {}),
+          prompt,
+          createdAt: new Date().toISOString(),
+        };
+        await persistBoard(
+          upsertVisionBoardItem(loadIdeateVisionBoardStore(), item),
+        );
+      } else {
+        const outBytes = Uint8Array.from(atob(result.imageBase64), (c) =>
+          c.charCodeAt(0),
+        );
+        const mediaId = newVisionMediaId("scene");
+        await putVisionMedia({
+          id: mediaId,
+          mimeType: result.mimeType,
+          bytes: outBytes.buffer.slice(
+            outBytes.byteOffset,
+            outBytes.byteOffset + outBytes.byteLength,
+          ),
+          updatedAt: new Date().toISOString(),
+        });
+        const item: VisionBoardItem = {
+          id: mediaId.replace(/^scene_/, "tile_"),
+          color: pickVisionSwatchColor(prompt),
+          label: prompt.length > 48 ? `${prompt.slice(0, 45)}…` : prompt,
+          kind: "image",
+          mediaId,
+          ...(result.url ? { imageUrl: result.url } : {}),
+          ...(result.key ? { mediaKey: result.key } : {}),
+          prompt,
+          createdAt: new Date().toISOString(),
+        };
+        await persistBoard(
+          upsertVisionBoardItem(loadIdeateVisionBoardStore(), item),
+        );
+      }
       setScenePrompt("");
       await refresh();
     } catch (e) {
@@ -246,22 +354,27 @@ export function IdeateVisionBoardClient() {
     } finally {
       setBusy(null);
     }
-  }, [refresh, scenePrompt]);
+  }, [persistBoard, refresh, scenePrompt, signedIn]);
 
   const onRemoveTile = useCallback(
     async (item: VisionBoardItem) => {
-      if (item.mediaId) await deleteVisionMedia(item.mediaId);
-      const next = removeVisionBoardItem(loadIdeateVisionBoardStore(), item.id);
-      saveIdeateVisionBoardStore(next);
+      if (!signedIn && item.mediaId) await deleteVisionMedia(item.mediaId);
+      await persistBoard(
+        removeVisionBoardItem(loadIdeateVisionBoardStore(), item.id),
+      );
       await refresh();
     },
-    [refresh],
+    [persistBoard, refresh, signedIn],
   );
 
   const megapixels =
     selfRef && selfRef.width && selfRef.height
       ? ((selfRef.width * selfRef.height) / 1_000_000).toFixed(1)
       : null;
+
+  const hasReference = signedIn
+    ? Boolean(selfRef?.url && selfRef?.key)
+    : Boolean(selfRef?.mediaId || selfRef?.url);
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)] pb-16">
@@ -281,13 +394,12 @@ export function IdeateVisionBoardClient() {
           yourself, then generate scenes with you in them.
         </p>
 
-        {/* —— Self reference —— */}
         <div className="mt-10">
           <p className={SECTION_LABEL}>Your reference photo</p>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
-            A high-resolution photo of your face (and upper body if you can). We
-            keep it on this device and send a resized copy when generating with
-            Nano Banana so you stay recognizable in each scene.
+            A clear photo of your face (and upper body if you can). When
+            you&apos;re signed in it lives in your account and shows on every
+            device.
           </p>
 
           <div className="mt-5 flex flex-col gap-5 sm:flex-row sm:items-start">
@@ -307,16 +419,13 @@ export function IdeateVisionBoardClient() {
             </div>
 
             <div className="min-w-0 flex-1">
-              {selfRef ? (
+              {selfRef && hasReference ? (
                 <p className="text-sm text-muted">
                   {selfRef.fileName}
                   {selfRef.width && selfRef.height
                     ? ` · ${selfRef.width}×${selfRef.height}`
                     : ""}
                   {megapixels ? ` · ${megapixels} MP` : ""}
-                  {selfRef.byteLength
-                    ? ` · ${Math.round(selfRef.byteLength / 1024)} KB stored`
-                    : ""}
                 </p>
               ) : (
                 <p className="text-sm text-muted">
@@ -334,11 +443,11 @@ export function IdeateVisionBoardClient() {
                 >
                   {busy === "ref"
                     ? "Saving…"
-                    : selfRef
+                    : hasReference
                       ? "Replace photo"
                       : "Upload photo"}
                 </button>
-                {selfRef ? (
+                {hasReference ? (
                   <button
                     type="button"
                     disabled={busy !== null}
@@ -363,7 +472,6 @@ export function IdeateVisionBoardClient() {
           </div>
         </div>
 
-        {/* —— Generate scene —— */}
         <div className="mt-12">
           <p className={SECTION_LABEL}>Place yourself in a scene</p>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
@@ -381,7 +489,7 @@ export function IdeateVisionBoardClient() {
           <div className="mt-3">
             <button
               type="button"
-              disabled={busy !== null || !selfRef}
+              disabled={busy !== null || !hasReference}
               onClick={() => void onGenerate()}
               className="cursor-pointer rounded-full bg-[#1E2530] px-5 py-2.5 text-sm font-semibold text-[#FAF8F3] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-foreground dark:text-background"
             >
@@ -396,7 +504,6 @@ export function IdeateVisionBoardClient() {
           </p>
         ) : null}
 
-        {/* —— Board —— */}
         <div className="mt-14">
           <p className={SECTION_LABEL}>On the board</p>
           {!hydrated ? (
@@ -414,9 +521,7 @@ export function IdeateVisionBoardClient() {
                   <li
                     key={item.id}
                     className="group relative aspect-square overflow-hidden rounded-2xl border border-[#E5DFD0] dark:border-border"
-                    style={
-                      src ? undefined : { backgroundColor: item.color }
-                    }
+                    style={src ? undefined : { backgroundColor: item.color }}
                     title={item.label || undefined}
                   >
                     {src ? (

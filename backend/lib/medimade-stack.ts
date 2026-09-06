@@ -201,9 +201,17 @@ export class MedimadeStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
-    /** One-time magic-link tokens (TTL on `ttl`). */
+    /** One-time magic-link tokens (TTL on `ttl`). PK value is sha256(token) or rate-limit key. */
     const magicLinkTable = new dynamodb.Table(this, "MedimadeMagicLinkTable", {
       partitionKey: { name: "token", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      timeToLiveAttribute: "ttl",
+    });
+
+    /** Opaque refresh sessions (TTL on `ttl`). PK is sha256(refreshToken). */
+    const refreshTable = new dynamodb.Table(this, "MedimadeRefreshTable", {
+      partitionKey: { name: "tokenHash", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       timeToLiveAttribute: "ttl",
@@ -233,7 +241,7 @@ export class MedimadeStack extends cdk.Stack {
         BREVO_SECRET_NAME: BREVO_SECRET_NAME,
       },
     });
-    magicLinkTable.grantWriteData(authMagicRequest);
+    magicLinkTable.grantReadWriteData(authMagicRequest);
     brevoApiKeySecret.grantRead(authMagicRequest);
 
     const authMagicVerify = new lambda_nodejs.NodejsFunction(this, "AuthMagicVerifyFunction", {
@@ -245,12 +253,43 @@ export class MedimadeStack extends cdk.Stack {
       environment: {
         MAGIC_LINK_TABLE_NAME: magicLinkTable.tableName,
         USERS_TABLE_NAME: usersTable.tableName,
+        REFRESH_TABLE_NAME: refreshTable.tableName,
         AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        AUTH_WEBAPP_ORIGIN: authWebappOrigin,
       },
     });
     magicLinkTable.grantReadWriteData(authMagicVerify);
     usersTable.grantReadWriteData(authMagicVerify);
+    refreshTable.grantReadWriteData(authMagicVerify);
     authJwtSecret.grantRead(authMagicVerify);
+
+    const authRefresh = new lambda_nodejs.NodejsFunction(this, "AuthRefreshFunction", {
+      entry: path.join(__dirname, "../lambdas/auth-refresh.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(15),
+      memorySize: 256,
+      environment: {
+        REFRESH_TABLE_NAME: refreshTable.tableName,
+        AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        AUTH_WEBAPP_ORIGIN: authWebappOrigin,
+      },
+    });
+    refreshTable.grantReadWriteData(authRefresh);
+    authJwtSecret.grantRead(authRefresh);
+
+    const authLogout = new lambda_nodejs.NodejsFunction(this, "AuthLogoutFunction", {
+      entry: path.join(__dirname, "../lambdas/auth-logout.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 256,
+      environment: {
+        REFRESH_TABLE_NAME: refreshTable.tableName,
+        AUTH_WEBAPP_ORIGIN: authWebappOrigin,
+      },
+    });
+    refreshTable.grantReadWriteData(authLogout);
 
     const authProfileDisplayName = new lambda_nodejs.NodejsFunction(
       this,
@@ -263,18 +302,32 @@ export class MedimadeStack extends cdk.Stack {
         memorySize: 256,
         environment: {
           USERS_TABLE_NAME: usersTable.tableName,
+          REFRESH_TABLE_NAME: refreshTable.tableName,
           AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+          AUTH_WEBAPP_ORIGIN: authWebappOrigin,
         },
       },
     );
     usersTable.grantReadWriteData(authProfileDisplayName);
+    refreshTable.grantReadWriteData(authProfileDisplayName);
     authJwtSecret.grantRead(authProfileDisplayName);
 
     // ffmpeg: Fish TTS proxy loudnorm + meditation bed mixing (account-local layer).
+    // Sydney keeps the original ServerlessRepo layer; London uses a copied layer.
+    const ffmpegLayerArnByRegion: Record<string, string> = {
+      "ap-southeast-2":
+        "arn:aws:lambda:ap-southeast-2:382309212161:layer:serverlessrepo-soundws-audio-tools-lambda-layer-LambdaLayer:1",
+      "eu-west-2":
+        "arn:aws:lambda:eu-west-2:382309212161:layer:medimade-ffmpeg-audio-tools:1",
+    };
+    const ffmpegLayerArn =
+      process.env.MEDIMADE_FFMPEG_LAYER_ARN?.trim() ||
+      ffmpegLayerArnByRegion[this.region] ||
+      ffmpegLayerArnByRegion["eu-west-2"]!;
     const ffmpegLayer = LayerVersion.fromLayerVersionArn(
       this,
       "FfmpegLayer",
-      "arn:aws:lambda:ap-southeast-2:382309212161:layer:serverlessrepo-soundws-audio-tools-lambda-layer-LambdaLayer:1",
+      ffmpegLayerArn,
     );
 
     // Background-audio ingest: S3 trigger normalizes uploads from background-audio-raw/ into background-audio/
@@ -388,7 +441,17 @@ export class MedimadeStack extends cdk.Stack {
           apigwv2.CorsHttpMethod.PATCH,
           apigwv2.CorsHttpMethod.OPTIONS,
         ],
-        allowOrigins: ["*"],
+        // Credentials require explicit origins (no *).
+        allowOrigins: [
+          "https://consciously.live",
+          "https://www.consciously.live",
+          "https://d2nu9q5wynnhfv.cloudfront.net",
+          "http://localhost:3000",
+          "http://127.0.0.1:3000",
+          "http://localhost:3001",
+          "http://127.0.0.1:3001",
+        ],
+        allowCredentials: true,
         maxAge: cdk.Duration.days(1),
       },
     });
@@ -434,6 +497,22 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "AuthMagicVerifyIntegration",
         authMagicVerify,
+      ),
+    });
+    httpApi.addRoutes({
+      path: "/auth/refresh",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "AuthRefreshIntegration",
+        authRefresh,
+      ),
+    });
+    httpApi.addRoutes({
+      path: "/auth/logout",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "AuthLogoutIntegration",
+        authLogout,
       ),
     });
     httpApi.addRoutes({
@@ -1265,7 +1344,7 @@ export class MedimadeStack extends cdk.Stack {
       },
     );
     googleAiApiKeySecret.grantRead(visionGenerate);
-    mediaBucket.grantPut(visionGenerate);
+    mediaBucket.grantReadWrite(visionGenerate);
     authJwtSecret.grantRead(visionGenerate);
 
     httpApi.addRoutes({
@@ -1274,6 +1353,34 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "VisionGenerateIntegration",
         visionGenerate,
+      ),
+    });
+
+    const visionMediaUpload = new lambda_nodejs.NodejsFunction(
+      this,
+      "VisionMediaUploadFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/vision-media-upload.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(30),
+        memorySize: 512,
+        environment: {
+          MEDIA_BUCKET_NAME: mediaBucket.bucketName,
+          MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        },
+      },
+    );
+    mediaBucket.grantPut(visionMediaUpload);
+    authJwtSecret.grantRead(visionMediaUpload);
+
+    httpApi.addRoutes({
+      path: "/ideate/vision/media",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "VisionMediaUploadIntegration",
+        visionMediaUpload,
       ),
     });
 

@@ -17,19 +17,19 @@ const args = process.argv.slice(2);
  * @param {string} stackName
  * @returns {Record<string, Record<string, string>>}
  */
-function outputsFromCloudFormation(stackName) {
-  const raw = execFileSync(
-    "aws",
-    [
-      "cloudformation",
-      "describe-stacks",
-      "--stack-name",
-      stackName,
-      "--output",
-      "json",
-    ],
-    { encoding: "utf8" },
-  );
+function outputsFromCloudFormation(stackName, region) {
+  const args = [
+    "cloudformation",
+    "describe-stacks",
+    "--stack-name",
+    stackName,
+    "--output",
+    "json",
+  ];
+  if (region) {
+    args.push("--region", region);
+  }
+  const raw = execFileSync("aws", args, { encoding: "utf8" });
   const stacks = JSON.parse(raw).Stacks ?? [];
   const stack = stacks[0];
   if (!stack) {
@@ -55,17 +55,25 @@ let mobileEnv;
 let extensionEnv;
 
 if (args[0] === "--stack") {
-  const stackName = args[1]?.trim();
-  webappEnv = args[2];
-  mobileEnv = args[3];
-  extensionEnv = args[4];
+  /** @type {string | undefined} */
+  let region;
+  /** @type {string[]} */
+  const rest = args.slice(1);
+  if (rest[0] === "--region") {
+    region = rest[1]?.trim();
+    rest.splice(0, 2);
+  }
+  const stackName = rest[0]?.trim();
+  webappEnv = rest[1];
+  mobileEnv = rest[2];
+  extensionEnv = rest[3];
   if (!stackName || !webappEnv) {
     console.error(
-      "Usage: node write-webapp-env-from-outputs.mjs --stack <StackName> <webapp/.env> [mobile/.env] [extension/.env]",
+      "Usage: node write-webapp-env-from-outputs.mjs --stack <StackName> [--region <region>] <webapp/.env> [mobile/.env] [extension/.env]",
     );
     process.exit(1);
   }
-  o = outputsFromCloudFormation(stackName);
+  o = outputsFromCloudFormation(stackName, region);
 } else {
   const outputsPath = args[0];
   webappEnv = args[1];

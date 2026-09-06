@@ -220,7 +220,9 @@ export function SiteHeader() {
         getMedimadeSessionDisplayName()?.trim() || email || null,
       );
     };
-    sync();
+    void import("@/lib/auth-session").then((m) =>
+      m.ensureMedimadeSession().finally(sync),
+    );
     window.addEventListener("medimade-session-changed", sync);
     return () => window.removeEventListener("medimade-session-changed", sync);
   }, []);

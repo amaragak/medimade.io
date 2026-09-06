@@ -3,13 +3,27 @@ import type {
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  PutCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { randomBytes } from "crypto";
 import { sendEmailBrevo } from "../lib/medimade-email";
+import {
+  corsHeadersForEvent,
+  sha256Hex,
+} from "../lib/medimade-auth-tokens";
+import { optionsAuth } from "../lib/medimade-auth-http";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
+const EMAIL_COOLDOWN_SEC = 60;
+const IP_WINDOW_SEC = 60 * 60;
+const IP_MAX_PER_WINDOW = 10;
+
 function json(
+  event: APIGatewayProxyEventV2,
   statusCode: number,
   payload: Record<string, unknown>,
 ): APIGatewayProxyStructuredResultV2 {
@@ -17,22 +31,9 @@ function json(
     statusCode,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
+      ...corsHeadersForEvent(event),
     },
     body: JSON.stringify(payload),
-  };
-}
-
-function options(): APIGatewayProxyStructuredResultV2 {
-  return {
-    statusCode: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type,Authorization",
-      "Access-Control-Max-Age": "86400",
-    },
-    body: "",
   };
 }
 
@@ -66,7 +67,10 @@ function resolveWebappOrigin(
 
   const host = url.hostname.toLowerCase();
   const isLocal =
-    host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1";
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "[::1]" ||
+    host === "::1";
   if (isLocal && (url.protocol === "http:" || url.protocol === "https:")) {
     return url.origin;
   }
@@ -75,19 +79,75 @@ function resolveWebappOrigin(
   return fallback;
 }
 
+function clientIp(event: APIGatewayProxyEventV2): string {
+  return event.requestContext.http.sourceIp?.trim() || "unknown";
+}
+
+async function rateLimited(
+  table: string,
+  key: string,
+  windowSec: number,
+  maxCount: number,
+): Promise<boolean> {
+  const now = Math.floor(Date.now() / 1000);
+  const got = await ddb.send(
+    new GetCommand({ TableName: table, Key: { token: key } }),
+  );
+  const item = got.Item as
+    | { count?: number; windowStart?: number; ttl?: number }
+    | undefined;
+  if (
+    item &&
+    typeof item.windowStart === "number" &&
+    now - item.windowStart < windowSec
+  ) {
+    const count = typeof item.count === "number" ? item.count : 0;
+    if (count >= maxCount) return true;
+    await ddb.send(
+      new PutCommand({
+        TableName: table,
+        Item: {
+          token: key,
+          kind: "rate",
+          count: count + 1,
+          windowStart: item.windowStart,
+          ttl: item.windowStart + windowSec + 60,
+        },
+      }),
+    );
+    return false;
+  }
+  await ddb.send(
+    new PutCommand({
+      TableName: table,
+      Item: {
+        token: key,
+        kind: "rate",
+        count: 1,
+        windowStart: now,
+        ttl: now + windowSec + 60,
+      },
+    }),
+  );
+  return false;
+}
+
 export async function handler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
   const method = event.requestContext.http.method;
-  if (method === "OPTIONS") return options();
-  if (method !== "POST") return json(405, { error: "Method not allowed" });
+  if (method === "OPTIONS") return optionsAuth(event);
+  if (method !== "POST") return json(event, 405, { error: "Method not allowed" });
 
   const table = process.env.MAGIC_LINK_TABLE_NAME?.trim();
   const from = process.env.AUTH_EMAIL_FROM?.trim();
-  const configuredOrigin = process.env.AUTH_WEBAPP_ORIGIN?.trim().replace(/\/$/, "");
+  const configuredOrigin = process.env.AUTH_WEBAPP_ORIGIN?.trim().replace(
+    /\/$/,
+    "",
+  );
   const brevoSecret = process.env.BREVO_SECRET_NAME?.trim();
   if (!table || !from || !configuredOrigin || !brevoSecret) {
-    return json(500, {
+    return json(event, 500, {
       error:
         "Auth email is not configured (set MAGIC_LINK_TABLE_NAME, AUTH_EMAIL_FROM, AUTH_WEBAPP_ORIGIN, BREVO_SECRET_NAME on the Lambda)",
     });
@@ -95,18 +155,45 @@ export async function handler(
 
   let body: { email?: unknown; origin?: unknown };
   try {
-    body = JSON.parse(event.body || "{}") as { email?: unknown; origin?: unknown };
+    body = JSON.parse(event.body || "{}") as {
+      email?: unknown;
+      origin?: unknown;
+    };
   } catch {
-    return json(400, { error: "Invalid JSON body" });
+    return json(event, 400, { error: "Invalid JSON body" });
   }
   const email = typeof body.email === "string" ? normalizeEmail(body.email) : null;
   if (!email) {
-    return json(400, { error: "Valid `email` is required" });
+    return json(event, 400, { error: "Valid `email` is required" });
+  }
+
+  // Always-ok responses after validation so callers cannot probe rate state easily.
+  const ok = () => json(event, 200, { ok: true });
+
+  try {
+    const emailLimited = await rateLimited(
+      table,
+      `rl:email:${email}`,
+      EMAIL_COOLDOWN_SEC,
+      1,
+    );
+    const ipLimited = await rateLimited(
+      table,
+      `rl:ip:${clientIp(event)}`,
+      IP_WINDOW_SEC,
+      IP_MAX_PER_WINDOW,
+    );
+    if (emailLimited || ipLimited) {
+      return ok();
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Rate limit check failed";
+    return json(event, 500, { error: msg });
   }
 
   const webOrigin = resolveWebappOrigin(configuredOrigin, body.origin);
-
-  const token = randomBytes(24).toString("hex");
+  const rawToken = randomBytes(32).toString("base64url");
+  const tokenHash = sha256Hex(rawToken);
   const nowSec = Math.floor(Date.now() / 1000);
   const ttl = nowSec + 15 * 60;
 
@@ -115,7 +202,8 @@ export async function handler(
       new PutCommand({
         TableName: table,
         Item: {
-          token,
+          token: tokenHash,
+          kind: "magic",
           email,
           ttl,
           createdAt: new Date().toISOString(),
@@ -124,10 +212,10 @@ export async function handler(
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not store magic link";
-    return json(500, { error: msg });
+    return json(event, 500, { error: msg });
   }
 
-  const link = `${webOrigin}/auth/verify?token=${encodeURIComponent(token)}`;
+  const link = `${webOrigin}/auth/verify?token=${encodeURIComponent(rawToken)}`;
   const subject = "Sign in to medimade.io";
   const text = `Open this link to sign in (expires in 15 minutes):\n\n${link}\n\nIf you did not request this, you can ignore this email.`;
 
@@ -141,12 +229,12 @@ export async function handler(
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Brevo send failed";
-    return json(502, {
+    return json(event, 502, {
       error:
         "Could not send sign-in email (Brevo). Check BREVO API key secret and that the sender email is allowed in Brevo.",
       detail: String(msg).slice(0, 800),
     });
   }
 
-  return json(200, { ok: true });
+  return ok();
 }

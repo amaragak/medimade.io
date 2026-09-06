@@ -60,7 +60,9 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
         return next;
       });
     };
-    syncAuth();
+    void import("@/lib/auth-session").then((m) =>
+      m.ensureMedimadeSession().finally(syncAuth),
+    );
     window.addEventListener("medimade-session-changed", syncAuth);
     return () => window.removeEventListener("medimade-session-changed", syncAuth);
   }, []);
@@ -69,6 +71,7 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     setReady(false);
     void (async () => {
+      await import("@/lib/auth-session").then((m) => m.ensureMedimadeSession());
       const jwt = Boolean(getMedimadeSessionJwt());
       setSignedIn(jwt);
       if (jwt) {

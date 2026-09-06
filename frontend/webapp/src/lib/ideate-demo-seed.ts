@@ -6,11 +6,13 @@ import { getMedimadeSessionJwt } from "@/lib/auth-session";
 import {
   loadIdeateReflectionQuestionsStore,
   saveIdeateReflectionQuestionsStore,
+  saveIdeateReflectionQuestionsStoreLocal,
   type IdeateReflectionQuestion,
 } from "@/lib/ideate-reflection-questions";
 import {
   loadIdeateVisionBoardStore,
   saveIdeateVisionBoardStore,
+  saveIdeateVisionBoardStoreLocal,
   type VisionBoardItem,
 } from "@/lib/ideate-vision-board";
 import type { PlanDream } from "@/lib/plan-dreams";
@@ -467,12 +469,16 @@ function stripDemoCompanionStores(): void {
     const board = loadIdeateVisionBoardStore();
     const nextItems = board.items.filter((i) => !isDemoVisionItem(i));
     if (nextItems.length !== board.items.length) {
-      saveIdeateVisionBoardStore({ v: 1, items: nextItems });
+      saveIdeateVisionBoardStoreLocal({
+        v: 2,
+        items: nextItems,
+        selfReference: board.selfReference ?? null,
+      });
     }
     const qs = loadIdeateReflectionQuestionsStore();
     const nextQs = qs.questions.filter((q) => !isDemoReflectionQuestion(q));
     if (nextQs.length !== qs.questions.length) {
-      saveIdeateReflectionQuestionsStore({ v: 1, questions: nextQs });
+      saveIdeateReflectionQuestionsStoreLocal({ v: 1, questions: nextQs });
     }
   } catch {
     /* */

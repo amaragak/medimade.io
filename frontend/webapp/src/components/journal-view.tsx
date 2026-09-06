@@ -309,7 +309,9 @@ export function JournalView() {
       });
       setAuthReady(true);
     };
-    sync();
+    void import("@/lib/auth-session").then((m) =>
+      m.ensureMedimadeSession().finally(sync),
+    );
     window.addEventListener("medimade-session-changed", sync);
     return () => window.removeEventListener("medimade-session-changed", sync);
   }, []);

@@ -11,7 +11,11 @@ import {
   GetSecretValueCommand,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
 import { optionalUserJson } from "../lib/medimade-auth-http";
 
@@ -77,6 +81,7 @@ export async function handler(
   let body: {
     prompt?: unknown;
     referenceBase64?: unknown;
+    referenceKey?: unknown;
     mimeType?: unknown;
     sessionToken?: unknown;
   };
@@ -98,8 +103,46 @@ export async function handler(
     return json(400, { error: "Write a short scene description first." });
   }
 
-  const b64 =
+  const bucket = process.env.MEDIA_BUCKET_NAME?.trim();
+  const referenceKey =
+    typeof body.referenceKey === "string" ? body.referenceKey.trim() : "";
+  let b64 =
     typeof body.referenceBase64 === "string" ? body.referenceBase64.trim() : "";
+  let mime =
+    typeof body.mimeType === "string" && body.mimeType.trim()
+      ? body.mimeType.trim().split(";")[0]!.toLowerCase()
+      : "image/jpeg";
+
+  if (!b64 && referenceKey) {
+    if (!bucket) {
+      return json(500, { error: "MEDIA_BUCKET_NAME is not set" });
+    }
+    if (!referenceKey.startsWith(`ideate/vision/${userId}/`)) {
+      return json(403, { error: "Reference key does not belong to this user" });
+    }
+    try {
+      const obj = await s3.send(
+        new GetObjectCommand({ Bucket: bucket, Key: referenceKey }),
+      );
+      const bytes = await obj.Body?.transformToByteArray();
+      if (!bytes) {
+        return json(404, { error: "Reference photo not found in storage" });
+      }
+      const refBufFromKey = Buffer.from(bytes);
+      if (refBufFromKey.length < 64 || refBufFromKey.length > MAX_REF_BYTES) {
+        return json(400, {
+          error: `Reference image must be between 64 bytes and ${MAX_REF_BYTES} bytes`,
+        });
+      }
+      b64 = refBufFromKey.toString("base64");
+      if (obj.ContentType?.startsWith("image/")) {
+        mime = obj.ContentType.split(";")[0]!.toLowerCase();
+      }
+    } catch {
+      return json(404, { error: "Could not load reference photo from storage" });
+    }
+  }
+
   if (!b64) {
     return json(400, {
       error: "Upload a reference photo of yourself before generating a scene.",
@@ -118,10 +161,6 @@ export async function handler(
     });
   }
 
-  const mime =
-    typeof body.mimeType === "string" && body.mimeType.trim()
-      ? body.mimeType.trim().split(";")[0]!.toLowerCase()
-      : "image/jpeg";
   if (!mime.startsWith("image/")) {
     return json(400, { error: "Reference must be an image" });
   }
@@ -226,7 +265,6 @@ export async function handler(
   }
 
   const outBuf = Buffer.from(outB64, "base64");
-  const bucket = process.env.MEDIA_BUCKET_NAME?.trim();
   const cfDomain = process.env.MEDIA_CLOUDFRONT_DOMAIN?.trim();
   let urlOut: string | undefined;
   let key: string | undefined;

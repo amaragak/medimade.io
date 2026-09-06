@@ -1,6 +1,6 @@
 /**
  * Cloud-first Ideate sync for signed-in users.
- * Guests stay on device demos; localStorage is only a cache after GET.
+ * Guests stay on device demos; localStorage is only a cache after GET / before PUT.
  */
 
 import { getMedimadeSessionJwt } from "@/lib/auth-session";
@@ -8,13 +8,15 @@ import type { IdeateStoreV2 } from "@/lib/plan-ideate-store";
 import { withoutDemoIdeateStore } from "@/lib/ideate-demo-seed";
 import {
   loadIdeateReflectionQuestionsStore,
-  saveIdeateReflectionQuestionsStore,
+  saveIdeateReflectionQuestionsStoreLocal,
   type IdeateReflectionQuestionsStoreV1,
 } from "@/lib/ideate-reflection-questions";
 import {
   loadIdeateVisionBoardStore,
-  saveIdeateVisionBoardStore,
+  saveIdeateVisionBoardStoreLocal,
   type IdeateVisionBoardStoreV1,
+  type VisionBoardItem,
+  type VisionSelfReference,
 } from "@/lib/ideate-vision-board";
 import {
   fetchIdeateStoreRemote,
@@ -31,7 +33,8 @@ export type { IdeateCloudBundle };
 
 let pulledThisSession = false;
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
-let skipNextPush = false;
+let suppressCloudPushDepth = 0;
+let pushInFlight: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
 export function wasIdeateStorePulledThisSession(): boolean {
@@ -63,19 +66,52 @@ function isSignedIn(): boolean {
   return Boolean(getMedimadeSessionJwt());
 }
 
+function withCloudPushSuppressed(fn: () => void): void {
+  suppressCloudPushDepth += 1;
+  try {
+    fn();
+  } finally {
+    suppressCloudPushDepth -= 1;
+  }
+}
+
+/** Cloud never stores device IndexedDB ids — only CloudFront url/key. */
+function cloudSelfReference(
+  ref: VisionSelfReference | null | undefined,
+): VisionSelfReference | null {
+  if (!ref?.url || !ref.key) return null;
+  if (String(ref.mediaId || "").startsWith("demo-")) return null;
+  return {
+    url: ref.url,
+    key: ref.key,
+    mimeType: ref.mimeType,
+    fileName: ref.fileName,
+    width: ref.width,
+    height: ref.height,
+    byteLength: ref.byteLength,
+    updatedAt: ref.updatedAt,
+  };
+}
+
+function cloudVisionItem(item: VisionBoardItem): VisionBoardItem | null {
+  if (item.id.startsWith("demo-vb-") || item.id.startsWith("demo-")) return null;
+  const { mediaId: _drop, ...rest } = item;
+  void _drop;
+  // Prefer cloud URL tiles; drop device-only tiles that never uploaded.
+  if (rest.kind === "image" && !rest.imageUrl) return null;
+  return rest;
+}
+
 function stripVisionForCloud(
   board: IdeateVisionBoardStoreV1,
 ): IdeateVisionBoardStoreV1 {
   return {
     v: 2,
-    items: board.items.filter(
-      (i) => !i.id.startsWith("demo-vb-") && !i.id.startsWith("demo-"),
-    ),
-    selfReference:
-      board.selfReference &&
-      !String(board.selfReference.mediaId || "").startsWith("demo-")
-        ? board.selfReference
-        : null,
+    items: board.items
+      .map(cloudVisionItem)
+      .filter((i): i is VisionBoardItem => Boolean(i))
+      .slice(0, 48),
+    selfReference: cloudSelfReference(board.selfReference),
   };
 }
 
@@ -102,40 +138,41 @@ export function buildIdeateCloudBundle(): IdeateCloudBundle {
 }
 
 export function applyIdeateCloudBundle(bundle: IdeateCloudBundle): void {
-  skipNextPush = true;
-  const ideate = withoutDemoIdeateStore(
-    (bundle.ideate as IdeateStoreV2) ?? {
-      v: 2,
-      dreams: [],
-      subtasks: [],
-      todos: [],
-      resistanceEntries: [],
-    },
-  );
-  saveIdeateStoreLocal(ideate);
+  withCloudPushSuppressed(() => {
+    const ideate = withoutDemoIdeateStore(
+      (bundle.ideate as IdeateStoreV2) ?? {
+        v: 2,
+        dreams: [],
+        subtasks: [],
+        todos: [],
+        resistanceEntries: [],
+      },
+    );
+    saveIdeateStoreLocal(ideate);
 
-  const vision = stripVisionForCloud(
-    (bundle.visionBoard as IdeateVisionBoardStoreV1) ?? {
-      v: 2,
-      items: [],
-      selfReference: null,
-    },
-  );
-  saveIdeateVisionBoardStore(vision);
+    const vision = stripVisionForCloud(
+      (bundle.visionBoard as IdeateVisionBoardStoreV1) ?? {
+        v: 2,
+        items: [],
+        selfReference: null,
+      },
+    );
+    saveIdeateVisionBoardStoreLocal(vision);
 
-  const qs = stripQuestionsForCloud(
-    (bundle.reflectionQuestions as IdeateReflectionQuestionsStoreV1) ?? {
-      v: 1,
-      questions: [],
-    },
-  );
-  saveIdeateReflectionQuestionsStore(qs);
+    const qs = stripQuestionsForCloud(
+      (bundle.reflectionQuestions as IdeateReflectionQuestionsStoreV1) ?? {
+        v: 1,
+        questions: [],
+      },
+    );
+    saveIdeateReflectionQuestionsStoreLocal(qs);
+  });
   notifyIdeateCloud();
 }
 
 /**
  * Pull cloud Ideate once per session when signed in.
- * Returns whether remote data was applied (or empty cloud left local cache).
+ * Cloud always wins — empty cloud replaces local cache with blanks (no demos).
  */
 export async function pullIdeateStoreFromCloud(): Promise<{
   applied: boolean;
@@ -153,30 +190,38 @@ export async function pullIdeateStoreFromCloud(): Promise<{
     const remote = await fetchIdeateStoreRemote();
     markIdeateStorePulledThisSession();
     if (!remote) {
-      // Empty cloud: wipe demos from local cache; keep personal if any, else blank.
-      const cleaned = withoutDemoIdeateStore(loadIdeateStoreRaw());
-      skipNextPush = true;
-      saveIdeateStoreLocal(cleaned);
-      const board = stripVisionForCloud(loadIdeateVisionBoardStore());
-      saveIdeateVisionBoardStore(board);
-      const qs = stripQuestionsForCloud(loadIdeateReflectionQuestionsStore());
-      saveIdeateReflectionQuestionsStore(qs);
+      withCloudPushSuppressed(() => {
+        saveIdeateStoreLocal({
+          v: 2,
+          dreams: [],
+          subtasks: [],
+          todos: [],
+          resistanceEntries: [],
+        });
+        saveIdeateVisionBoardStoreLocal({
+          v: 2,
+          items: [],
+          selfReference: null,
+        });
+        saveIdeateReflectionQuestionsStoreLocal({ v: 1, questions: [] });
+      });
       notifyIdeateCloud();
-      // Upload existing personal local writing if present.
-      if (cleaned.dreams.length > 0) {
-        skipNextPush = false;
-        scheduleIdeateCloudPush(0);
-      }
       return { applied: true, empty: true };
     }
     applyIdeateCloudBundle(remote);
     return { applied: true, empty: false };
   } catch {
     markIdeateStorePulledThisSession();
-    // Offline: strip demos only.
-    const cleaned = withoutDemoIdeateStore(loadIdeateStoreRaw());
-    skipNextPush = true;
-    saveIdeateStoreLocal(cleaned);
+    // Offline: keep whatever cache exists; strip demos only.
+    withCloudPushSuppressed(() => {
+      saveIdeateStoreLocal(withoutDemoIdeateStore(loadIdeateStoreRaw()));
+      saveIdeateVisionBoardStoreLocal(
+        stripVisionForCloud(loadIdeateVisionBoardStore()),
+      );
+      saveIdeateReflectionQuestionsStoreLocal(
+        stripQuestionsForCloud(loadIdeateReflectionQuestionsStore()),
+      );
+    });
     notifyIdeateCloud();
     return { applied: false, empty: false };
   }
@@ -185,16 +230,31 @@ export async function pullIdeateStoreFromCloud(): Promise<{
 export function scheduleIdeateCloudPush(delayMs = 1200): void {
   if (!isSignedIn() || !getMedimadeApiBase()) return;
   if (!pulledThisSession) return;
-  if (skipNextPush) {
-    skipNextPush = false;
-    return;
-  }
+  if (suppressCloudPushDepth > 0) return;
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
     pushTimer = null;
-    const bundle = buildIdeateCloudBundle();
-    void putIdeateStoreRemote(bundle).catch(() => {
+    void flushIdeateCloudNow().catch(() => {
       /* offline */
     });
   }, delayMs);
+}
+
+/** Immediate cloud PUT — use after vision uploads so other devices see them. */
+export async function flushIdeateCloudNow(): Promise<void> {
+  if (!isSignedIn() || !getMedimadeApiBase()) return;
+  if (!pulledThisSession) return;
+  if (suppressCloudPushDepth > 0) return;
+  if (pushTimer) {
+    clearTimeout(pushTimer);
+    pushTimer = null;
+  }
+  if (pushInFlight) {
+    await pushInFlight;
+  }
+  const bundle = buildIdeateCloudBundle();
+  pushInFlight = putIdeateStoreRemote(bundle).finally(() => {
+    pushInFlight = null;
+  });
+  await pushInFlight;
 }

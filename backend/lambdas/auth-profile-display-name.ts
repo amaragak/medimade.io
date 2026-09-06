@@ -3,36 +3,40 @@ import type {
   APIGatewayProxyStructuredResultV2,
 } from "aws-lambda";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
-import { jsonAuth, requireUserJson } from "../lib/medimade-auth-http";
+import {
+  DynamoDBDocumentClient,
+  UpdateCommand,
+  GetCommand,
+  PutCommand,
+} from "@aws-sdk/lib-dynamodb";
+import { jsonAuth, optionsAuth, requireUserJson } from "../lib/medimade-auth-http";
 import { signMedimadeJwt } from "../lib/medimade-jwt";
+import {
+  buildSetCookie,
+  ACCESS_COOKIE,
+  ACCESS_TOKEN_TTL_SEC,
+  corsHeadersForEvent,
+  parseCookieHeader,
+  REFRESH_COOKIE,
+  sha256Hex,
+} from "../lib/medimade-auth-tokens";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 function json(
+  event: APIGatewayProxyEventV2,
   statusCode: number,
   payload: Record<string, unknown>,
+  setCookies?: string[],
 ): APIGatewayProxyStructuredResultV2 {
   return {
     statusCode,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
+      ...corsHeadersForEvent(event),
     },
+    ...(setCookies?.length ? { cookies: setCookies } : {}),
     body: JSON.stringify(payload),
-  };
-}
-
-function options(): APIGatewayProxyStructuredResultV2 {
-  return {
-    statusCode: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type,Authorization",
-      "Access-Control-Max-Age": "86400",
-    },
-    body: "",
   };
 }
 
@@ -47,12 +51,12 @@ export async function handler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
   const method = event.requestContext.http.method;
-  if (method === "OPTIONS") return options();
-  if (method !== "POST") return json(405, { error: "Method not allowed" });
+  if (method === "OPTIONS") return optionsAuth(event);
+  if (method !== "POST") return json(event, 405, { error: "Method not allowed" });
 
   const usersTable = process.env.USERS_TABLE_NAME?.trim();
   if (!usersTable) {
-    return json(500, { error: "USERS_TABLE_NAME is not configured" });
+    return json(event, 500, { error: "USERS_TABLE_NAME is not configured" });
   }
 
   const u = await requireUserJson(event);
@@ -60,18 +64,18 @@ export async function handler(
   const auth = u;
   const email = auth.email?.trim().toLowerCase();
   if (!email) {
-    return jsonAuth(401, { error: "Session is missing email" });
+    return jsonAuth(401, { error: "Session is missing email" }, event);
   }
 
   let body: { displayName?: unknown };
   try {
     body = JSON.parse(event.body || "{}") as { displayName?: unknown };
   } catch {
-    return json(400, { error: "Invalid JSON body" });
+    return json(event, 400, { error: "Invalid JSON body" });
   }
   const displayName = normalizeDisplayName(body.displayName);
   if (!displayName) {
-    return json(400, {
+    return json(event, 400, {
       error: "displayName must be a non-empty string up to 80 characters",
     });
   }
@@ -82,8 +86,7 @@ export async function handler(
       new UpdateCommand({
         TableName: usersTable,
         Key: { email },
-        UpdateExpression:
-          "SET #dn = :dn, #ua = :ua",
+        UpdateExpression: "SET #dn = :dn, #ua = :ua",
         ExpressionAttributeNames: {
           "#dn": "displayName",
           "#ua": "updatedAt",
@@ -96,7 +99,31 @@ export async function handler(
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not save name";
-    return json(500, { error: msg });
+    return json(event, 500, { error: msg });
+  }
+
+  const refreshTable = process.env.REFRESH_TABLE_NAME?.trim();
+  const refreshRaw = parseCookieHeader(event, REFRESH_COOKIE);
+  if (refreshTable && refreshRaw) {
+    try {
+      const tokenHash = sha256Hex(refreshRaw);
+      const got = await ddb.send(
+        new GetCommand({ TableName: refreshTable, Key: { tokenHash } }),
+      );
+      if (got.Item) {
+        await ddb.send(
+          new PutCommand({
+            TableName: refreshTable,
+            Item: {
+              ...got.Item,
+              displayName,
+            },
+          }),
+        );
+      }
+    } catch {
+      /* non-fatal */
+    }
   }
 
   let jwt: string;
@@ -108,8 +135,10 @@ export async function handler(
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Could not mint session";
-    return json(500, { error: msg });
+    return json(event, 500, { error: msg });
   }
 
-  return json(200, { token: jwt, displayName });
+  return json(event, 200, { token: jwt, displayName }, [
+    buildSetCookie(ACCESS_COOKIE, jwt, ACCESS_TOKEN_TTL_SEC),
+  ]);
 }
