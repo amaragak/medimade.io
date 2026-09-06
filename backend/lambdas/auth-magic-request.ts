@@ -43,6 +43,38 @@ function normalizeEmail(raw: string): string | null {
   return e;
 }
 
+/**
+ * Prefer the browser origin when the request is from local dev
+ * (localhost / 127.0.0.1, any port). Otherwise use the deployed AUTH_WEBAPP_ORIGIN.
+ */
+function resolveWebappOrigin(
+  configured: string,
+  requested: unknown,
+): string {
+  const fallback = configured.replace(/\/$/, "");
+  if (typeof requested !== "string" || !requested.trim()) return fallback;
+
+  let url: URL;
+  try {
+    url = new URL(requested.trim());
+  } catch {
+    return fallback;
+  }
+
+  if (url.username || url.password || url.search || url.hash) return fallback;
+  if (url.pathname && url.pathname !== "/") return fallback;
+
+  const host = url.hostname.toLowerCase();
+  const isLocal =
+    host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1";
+  if (isLocal && (url.protocol === "http:" || url.protocol === "https:")) {
+    return url.origin;
+  }
+
+  if (url.origin === fallback) return fallback;
+  return fallback;
+}
+
 export async function handler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
@@ -52,18 +84,18 @@ export async function handler(
 
   const table = process.env.MAGIC_LINK_TABLE_NAME?.trim();
   const from = process.env.AUTH_EMAIL_FROM?.trim();
-  const webOrigin = process.env.AUTH_WEBAPP_ORIGIN?.trim().replace(/\/$/, "");
+  const configuredOrigin = process.env.AUTH_WEBAPP_ORIGIN?.trim().replace(/\/$/, "");
   const brevoSecret = process.env.BREVO_SECRET_NAME?.trim();
-  if (!table || !from || !webOrigin || !brevoSecret) {
+  if (!table || !from || !configuredOrigin || !brevoSecret) {
     return json(500, {
       error:
         "Auth email is not configured (set MAGIC_LINK_TABLE_NAME, AUTH_EMAIL_FROM, AUTH_WEBAPP_ORIGIN, BREVO_SECRET_NAME on the Lambda)",
     });
   }
 
-  let body: { email?: unknown };
+  let body: { email?: unknown; origin?: unknown };
   try {
-    body = JSON.parse(event.body || "{}") as { email?: unknown };
+    body = JSON.parse(event.body || "{}") as { email?: unknown; origin?: unknown };
   } catch {
     return json(400, { error: "Invalid JSON body" });
   }
@@ -71,6 +103,8 @@ export async function handler(
   if (!email) {
     return json(400, { error: "Valid `email` is required" });
   }
+
+  const webOrigin = resolveWebappOrigin(configuredOrigin, body.origin);
 
   const token = randomBytes(24).toString("hex");
   const nowSec = Math.floor(Date.now() / 1000);

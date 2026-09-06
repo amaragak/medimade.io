@@ -83,10 +83,15 @@ export async function requestMedimadeMagicLink(email: string): Promise<void> {
   if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
   const trimmed = email.trim().toLowerCase();
   if (!trimmed) throw new Error("Email is required");
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : undefined;
   const res = await fetch(`${base}/auth/magic-link`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: trimmed }),
+    body: JSON.stringify({
+      email: trimmed,
+      ...(origin ? { origin } : {}),
+    }),
   });
   const data = (await res.json().catch(() => ({}))) as {
     error?: string;

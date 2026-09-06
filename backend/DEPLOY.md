@@ -124,7 +124,7 @@ Magic-link auth requires:
 - A Brevo transactional email setup (API key in Secrets Manager).
 - CDK context values:
   - **`authEmailFrom`**: the sender email address (must be allowed in Brevo, e.g. `noreply@yourdomain.com`)
-  - **`authWebappOrigin`**: where users land after clicking the email link (e.g. `http://localhost:3000` for dev, or your deployed webapp origin)
+  - **`authWebappOrigin`**: default where users land after clicking the email link (production origin). Local `localhost` / `127.0.0.1` (any port) is accepted from the browser automatically when requesting a magic link.
 
 Create the Brevo API key secret (same pattern as other secrets):
 
