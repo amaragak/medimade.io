@@ -4,6 +4,8 @@
  */
 
 import type { DreamState, PlanDream } from "@/lib/plan-dreams";
+import { ensureGuestDemoIdeateSeeded } from "@/lib/ideate-demo-seed";
+import { getMedimadeSessionJwt } from "@/lib/auth-session";
 
 export type { DreamState, PlanDream };
 
@@ -99,6 +101,7 @@ function normalizeDream(d: PlanDream): PlanDream {
       typeof (d as PlanDream & { completedAt?: unknown }).completedAt === "string"
         ? (d as PlanDream & { completedAt: string }).completedAt
         : null,
+    ...(d.demo === true ? { demo: true as const } : { demo: undefined }),
   };
 }
 
@@ -220,7 +223,7 @@ function migrateV1Raw(raw: string | null): IdeateStoreV2 {
   return { v: 2, dreams: [], subtasks: [], todos: [], resistanceEntries: [] };
 }
 
-export function loadIdeateStore(): IdeateStoreV2 {
+function readIdeateStoreRaw(): IdeateStoreV2 {
   if (typeof window === "undefined") {
     return { v: 2, dreams: [], subtasks: [], todos: [], resistanceEntries: [] };
   }
@@ -266,6 +269,23 @@ export function loadIdeateStore(): IdeateStoreV2 {
   } catch {
     return migrateV1Raw(null);
   }
+}
+
+export function loadIdeateStore(): IdeateStoreV2 {
+  const raw = readIdeateStoreRaw();
+  const next = ensureGuestDemoIdeateSeeded(raw);
+  const shouldPersist =
+    typeof window !== "undefined" &&
+    (next.dreams.length !== raw.dreams.length ||
+      next.subtasks.length !== raw.subtasks.length ||
+      next.todos.length !== raw.todos.length ||
+      next.dreams.some((d, i) => d.id !== raw.dreams[i]?.id) ||
+      (Boolean(getMedimadeSessionJwt()) &&
+        raw.dreams.some((d) => d.demo === true)));
+  if (shouldPersist) {
+    saveIdeateStore(next);
+  }
+  return next;
 }
 
 export function saveIdeateStore(store: IdeateStoreV2) {

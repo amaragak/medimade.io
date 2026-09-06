@@ -1,14 +1,15 @@
 "use client";
 
 /**
- * PROTOTYPE STUBS for the life-area detail Reflect tab.
- * Journal matching and meditation-history linkage are not real yet —
- * sections below use clearly labeled mock data so layout/feel can be
- * evaluated. Replace when backends exist.
+ * Surfaced journal + meditation context for a life area.
+ * Guest demos show curated sample links; personal areas stay empty until
+ * real matching exists.
  */
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { isDemoIdeateDream } from "@/lib/ideate-demo-seed";
+import type { PlanDream } from "@/lib/plan-dreams";
 
 function formatStubDate(iso: string): string {
   try {
@@ -24,55 +25,108 @@ function formatStubDate(iso: string): string {
   }
 }
 
-/**
- * PROTOTYPE MOCK — journal entries that “relate” to this life area.
- * Real matching (keyword/tag/embedding) is out of scope for this pass.
- */
-const MOCK_JOURNAL_ENTRIES = [
+const DEMO_CONTEXT: Record<
+  string,
   {
-    id: "mock_j1",
-    date: "2026-08-02T20:00:00.000Z",
-    title: "Waking up already behind",
+    journal: { id: string; date: string; title: string; href: string }[];
+    meditations: {
+      id: string;
+      title: string;
+      type: string;
+      date: string;
+    }[];
+  }
+> = {
+  "demo-ideate-mornings": {
+    journal: [
+      {
+        id: "demo-j-morning",
+        date: "2026-08-02T20:00:00.000Z",
+        title: "A quieter morning",
+        href: "/journal/my",
+      },
+      {
+        id: "demo-j-quiet",
+        date: "2026-07-19T09:15:00.000Z",
+        title: "Quiet for twenty minutes",
+        href: "/journal/my",
+      },
+    ],
+    meditations: [
+      {
+        id: "demo-m1",
+        title: "Soft morning light",
+        type: "Visualisation",
+        date: "2026-08-11T14:00:00.000Z",
+      },
+      {
+        id: "demo-m2",
+        title: "Phone stays in the hall",
+        type: "Manifestation",
+        date: "2026-07-22T16:30:00.000Z",
+      },
+    ],
   },
-  {
-    id: "mock_j2",
-    date: "2026-07-19T09:15:00.000Z",
-    title: "Quiet for twenty minutes",
+  "demo-ideate-project": {
+    journal: [
+      {
+        id: "demo-j-resist",
+        date: "2026-07-28T21:00:00.000Z",
+        title: "What I keep putting off",
+        href: "/journal/my",
+      },
+    ],
+    meditations: [
+      {
+        id: "demo-m3",
+        title: "Fifteen minutes only",
+        type: "Focus",
+        date: "2026-07-30T16:00:00.000Z",
+      },
+    ],
   },
-  {
-    id: "mock_j3",
-    date: "2026-06-28T21:40:00.000Z",
-    title: "Fear of falling behind",
+  "demo-ideate-body": {
+    journal: [
+      {
+        id: "demo-j-grat",
+        date: "2026-07-15T07:00:00.000Z",
+        title: "Three things",
+        href: "/journal/my/gratitudes",
+      },
+    ],
+    meditations: [
+      {
+        id: "demo-m4",
+        title: "Shoulders down before work",
+        type: "Body scan",
+        date: "2026-07-04T10:00:00.000Z",
+      },
+    ],
   },
-] as const;
+};
 
-/**
- * PROTOTYPE MOCK — meditations “generated from this area.”
- * Real generation-history linkage to a life area is not wired yet.
- */
-const MOCK_AREA_MEDITATIONS = [
-  {
-    id: "mock_m1",
-    title: "Soft morning light",
-    type: "Visualisation",
-    date: "2026-08-11T14:00:00.000Z",
-  },
-  {
-    id: "mock_m2",
-    title: "Phone stays in the hall",
-    type: "Manifestation",
-    date: "2026-07-22T16:30:00.000Z",
-  },
-  {
-    id: "mock_m3",
-    title: "Shoulders down before work",
-    type: "Body scan",
-    date: "2026-07-04T10:00:00.000Z",
-  },
-] as const;
+type Props = {
+  dream: PlanDream;
+};
 
 /** Unified surfaced-context panel — journal + meditations side by side. */
-export function PlanSurfacedContextPanel() {
+export function PlanSurfacedContextPanel({ dream }: Props) {
+  const demo = isDemoIdeateDream(dream);
+  const pack = DEMO_CONTEXT[dream.id];
+  const journal = pack?.journal ?? [];
+  const meditations = pack?.meditations ?? [];
+
+  if (!demo) {
+    return (
+      <section className="mt-12 rounded-[14px] bg-[#F5F1E7] px-8 py-7 dark:bg-accent-soft/20">
+        <p className="text-sm leading-relaxed text-muted">
+          Related journal pages and meditations will show up here as you write
+          and create — nothing linked to this life area yet.
+        </p>
+      </section>
+    );
+  }
+
   return (
     <section className="mt-12 rounded-[14px] bg-[#F5F1E7] px-8 py-7 dark:bg-accent-soft/20">
       <div className="grid gap-8 md:grid-cols-2 md:gap-10">
@@ -80,63 +134,71 @@ export function PlanSurfacedContextPanel() {
           <h2 className="text-sm font-medium uppercase tracking-widest text-[#8A7566]">
             From your journal
           </h2>
-          <ul className="mt-3 space-y-2">
-            {MOCK_JOURNAL_ENTRIES.map((e) => (
-              <li key={e.id}>
-                <Link
-                  href="/journal/my"
-                  className="flex items-baseline justify-between gap-3 rounded-lg bg-card px-3 py-2.5 transition-opacity hover:opacity-80"
-                >
-                  <span className="min-w-0 truncate text-sm font-medium text-[#1E2530] dark:text-foreground">
-                    {e.title}
-                  </span>
-                  <span className="shrink-0 text-xs text-muted">
-                    {formatStubDate(e.date)}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          {journal.length === 0 ? (
+            <p className="mt-3 text-sm italic text-[#A39C8C]">Nothing linked yet.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {journal.map((e) => (
+                <li key={e.id}>
+                  <Link
+                    href={e.href}
+                    className="flex items-baseline justify-between gap-3 rounded-lg bg-card px-3 py-2.5 transition-opacity hover:opacity-80"
+                  >
+                    <span className="min-w-0 truncate text-sm font-medium text-[#1E2530] dark:text-foreground">
+                      {e.title}
+                    </span>
+                    <span className="shrink-0 text-xs text-muted">
+                      {formatStubDate(e.date)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
         <div>
           <h2 className="text-sm font-medium uppercase tracking-widest text-[#8A7566]">
             Meditations from this area
           </h2>
-          <ul className="mt-3 space-y-2">
-            {MOCK_AREA_MEDITATIONS.map((m) => (
-              <li
-                key={m.id}
-                className="flex items-center gap-2 rounded-lg bg-card px-3 py-2.5"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-[#1E2530] dark:text-foreground">
-                    {m.title}
-                  </p>
-                  <p className="mt-0.5 text-xs text-muted">
-                    {m.type} · {formatStubDate(m.date)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  disabled
-                  title="Prototype — play not wired"
-                  className="flex h-8 w-8 shrink-0 cursor-not-allowed items-center justify-center rounded-full border border-[#E5DFD0] text-muted opacity-60 dark:border-border"
-                  aria-label={`Play ${m.title} (prototype)`}
+          {meditations.length === 0 ? (
+            <p className="mt-3 text-sm italic text-[#A39C8C]">None yet.</p>
+          ) : (
+            <ul className="mt-3 space-y-2">
+              {meditations.map((m) => (
+                <li
+                  key={m.id}
+                  className="flex items-center gap-2 rounded-lg bg-card px-3 py-2.5"
                 >
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    aria-hidden
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-[#1E2530] dark:text-foreground">
+                      {m.title}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted">
+                      {m.type} · {formatStubDate(m.date)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled
+                    title="Sample — play not wired"
+                    className="flex h-8 w-8 shrink-0 cursor-not-allowed items-center justify-center rounded-full border border-[#E5DFD0] text-muted opacity-60 dark:border-border"
+                    aria-label={`${m.title} (sample)`}
                   >
-                    <path d="M8 5v14l11-7z" />
-                  </svg>
-                </button>
-              </li>
-            ))}
-          </ul>
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      aria-hidden
+                    >
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
     </section>

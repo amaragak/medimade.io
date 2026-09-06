@@ -7,18 +7,11 @@
 
 import { useCallback, useRef, useState } from "react";
 import { IconRefresh } from "@tabler/icons-react";
+import {
+  DEMO_IDEATE_INSIGHTS,
+  isDemoIdeateDream,
+} from "@/lib/ideate-demo-seed";
 import type { DrvTimelineEntry, PlanDream } from "@/lib/plan-dreams";
-
-/**
- * PROTOTYPE MOCK — short cross-section observations.
- * Replace with real generation that reads main answers, running thoughts,
- * and recurring resistance. Keep 1–2 lines; never auto-regenerate.
- */
-const MOCK_SYNTHESIS = [
-  "The dream keeps circling quieter mornings, while resistance names the phone-first habit — and the vision lands on stillness before the day begins.",
-  "Across dream, resistance, and vision there's the same pull: reclaim the start of the day without fixing everything else first.",
-  "What repeats isn't the goal itself — it's protecting a small morning window from the noise that rushes in.",
-];
 
 function entriesFingerprint(entries: DrvTimelineEntry[] | undefined): string {
   return (entries ?? [])
@@ -39,13 +32,30 @@ export function insightsContentFingerprint(dream: PlanDream): string {
   ].join("\n---\n");
 }
 
+function insightsForDream(dream: PlanDream): string[] {
+  if (isDemoIdeateDream(dream) && DEMO_IDEATE_INSIGHTS[dream.id]?.length) {
+    return DEMO_IDEATE_INSIGHTS[dream.id]!;
+  }
+  const hasWriting = [dream.dreamText, dream.obstacleText, dream.visionText]
+    .some((t) => t.trim().length > 20);
+  if (!hasWriting) {
+    return [
+      "Add a few lines to dream, resistance, or vision — then refresh for a short reflection.",
+    ];
+  }
+  return [
+    "Your words are here. Refresh later for a fuller synthesis — for now, notice what repeats across the three sections.",
+  ];
+}
+
 type Props = {
   dream: PlanDream;
 };
 
 export function PlanInsightsPanel({ dream }: Props) {
+  const linesRef = useRef(insightsForDream(dream));
   const mockIndexRef = useRef(0);
-  const [text, setText] = useState(MOCK_SYNTHESIS[0]!);
+  const [text, setText] = useState(() => linesRef.current[0]!);
   const [fingerprintAtRefresh, setFingerprintAtRefresh] = useState(() =>
     insightsContentFingerprint(dream),
   );
@@ -54,10 +64,10 @@ export function PlanInsightsPanel({ dream }: Props) {
   const isStale = currentFingerprint !== fingerprintAtRefresh;
 
   const refresh = useCallback(() => {
-    // Manual only — bump mock index so refresh is visibly intentional.
-    mockIndexRef.current =
-      (mockIndexRef.current + 1) % MOCK_SYNTHESIS.length;
-    setText(MOCK_SYNTHESIS[mockIndexRef.current]!);
+    const lines = insightsForDream(dream);
+    linesRef.current = lines;
+    mockIndexRef.current = (mockIndexRef.current + 1) % lines.length;
+    setText(lines[mockIndexRef.current]!);
     setFingerprintAtRefresh(insightsContentFingerprint(dream));
   }, [dream]);
 

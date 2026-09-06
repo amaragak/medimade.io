@@ -245,11 +245,13 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
                   dreamEntries={dream.dreamEntries ?? []}
                   obstacleEntries={dream.obstacleEntries ?? []}
                   visionEntries={dream.visionEntries ?? []}
+                  showRecurringResistanceNote={
+                    dream.id === "demo-ideate-mornings"
+                  }
                   onPatch={(p) => patch(p)}
                 />
 
-                {/* PROTOTYPE — mock journal + meditation history in one panel */}
-                <PlanSurfacedContextPanel />
+                <PlanSurfacedContextPanel dream={dream} />
 
                 <PlanLooseNotesScratchpad
                   value={dream.looseNotes ?? ""}

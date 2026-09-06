@@ -46,6 +46,8 @@ export type PlanDream = {
   visionEntries: DrvTimelineEntry[];
   /** Free-text scratchpad — not part of DRV. */
   looseNotes: string;
+  /** Guest sample — device-only; stripped after sign-in. */
+  demo?: boolean;
   meditationsGenerated: number;
   /** Set when user manually marks project complete */
   completedAt: string | null;
@@ -175,10 +177,12 @@ function normalizeDreams(raw: unknown[]): PlanDream[] {
       visionEntries: normalizeTimeline(d.visionEntries),
       looseNotes: typeof d.looseNotes === "string" ? d.looseNotes : "",
       meditationsGenerated:
-        typeof d.meditationsGenerated === "number" && Number.isFinite(d.meditationsGenerated)
+        typeof d.meditationsGenerated === "number" &&
+        Number.isFinite(d.meditationsGenerated)
           ? Math.max(0, Math.floor(d.meditationsGenerated))
           : 0,
       completedAt: typeof d.completedAt === "string" ? d.completedAt : null,
+      ...(d.demo === true ? { demo: true as const } : {}),
     });
   }
   return out;

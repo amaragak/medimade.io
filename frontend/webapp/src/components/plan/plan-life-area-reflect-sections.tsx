@@ -55,61 +55,6 @@ const SECTION_META: Record<
   },
 };
 
-/**
- * PROTOTYPE MOCK — sample running thoughts when a section has none yet.
- * Remove once real thoughts are enough to evaluate the list UI.
- */
-const MOCK_THOUGHTS: Record<SectionKind, DrvTimelineEntry[]> = {
-  dream: [
-    {
-      id: "mock_rt_d1",
-      createdAt: "2026-07-03T18:20:00.000Z",
-      text: "Still the same pull toward quieter mornings — less about the hour, more about not checking my phone first.",
-      coachReply: "",
-    },
-    {
-      id: "mock_rt_d2",
-      createdAt: "2026-06-12T10:00:00.000Z",
-      text: "I want mornings that feel like mine again.",
-      coachReply: "",
-    },
-  ],
-  resistance: [
-    {
-      id: "mock_rt_r1",
-      createdAt: "2026-08-10T08:40:00.000Z",
-      text: "Same fear of falling behind — it showed up again when I tried to leave my phone in another room.",
-      coachReply: "",
-    },
-    {
-      id: "mock_rt_r2",
-      createdAt: "2026-07-21T21:10:00.000Z",
-      text: "Fear that if I protect the morning, I'll fall behind at work and someone will notice.",
-      coachReply: "",
-    },
-    {
-      id: "mock_rt_r3",
-      createdAt: "2026-06-18T09:00:00.000Z",
-      text: "I keep saying I'll start tomorrow — then scroll until the calm window is gone.",
-      coachReply: "",
-    },
-  ],
-  vision: [
-    {
-      id: "mock_rt_v1",
-      createdAt: "2026-08-05T07:30:00.000Z",
-      text: "Soft light on the floorboards. Phone still charging in the hallway. My shoulders are down.",
-      coachReply: "",
-    },
-    {
-      id: "mock_rt_v2",
-      createdAt: "2026-07-01T11:00:00.000Z",
-      text: "Kitchen table, tea, three lines in a notebook before anyone needs me.",
-      coachReply: "",
-    },
-  ],
-};
-
 function formatEntryDate(iso: string): string {
   try {
     const d = new Date(iso);
@@ -255,8 +200,6 @@ function LifeAreaSection({
 }) {
   const meta = SECTION_META[kind];
   const { Icon } = meta;
-  const displayThoughts =
-    thoughts.length > 0 ? thoughts : MOCK_THOUGHTS[kind];
 
   return (
     <section
@@ -290,7 +233,7 @@ function LifeAreaSection({
       />
 
       <RunningThoughtsList
-        entries={displayThoughts}
+        entries={thoughts}
         onAdd={onAddThought}
       />
 
@@ -306,6 +249,8 @@ type Props = {
   dreamEntries: DrvTimelineEntry[];
   obstacleEntries: DrvTimelineEntry[];
   visionEntries: DrvTimelineEntry[];
+  /** Show the soft “this has come up before” note (guest demo mornings). */
+  showRecurringResistanceNote?: boolean;
   onPatch: (partial: {
     dreamText?: string;
     obstacleText?: string;
@@ -338,6 +283,7 @@ export function PlanLifeAreaReflectSections({
   dreamEntries,
   obstacleEntries,
   visionEntries,
+  showRecurringResistanceNote = false,
   onPatch,
 }: Props) {
   return (
@@ -362,17 +308,15 @@ export function PlanLifeAreaReflectSections({
           onPatch({ obstacleEntries: appendThought(obstacleEntries, text) })
         }
         afterThoughts={
-          /**
-           * PROTOTYPE MOCK — recurring resistance callout.
-           * Real pattern-detection across thoughts is not wired yet.
-           */
-          <div className="mt-5 rounded-[10px] bg-[#FBF6EA] px-4 py-3 text-sm leading-relaxed text-[#1E2530] dark:bg-accent-soft/25 dark:text-foreground">
-            This has come up before —{" "}
-            <span className="font-medium text-[#B8703A]">
-              fear of falling behind
-            </span>
-            , noted 3 times.
-          </div>
+          showRecurringResistanceNote ? (
+            <div className="mt-5 rounded-[10px] bg-[#FBF6EA] px-4 py-3 text-sm leading-relaxed text-[#1E2530] dark:bg-accent-soft/25 dark:text-foreground">
+              This has come up before —{" "}
+              <span className="font-medium text-[#B8703A]">
+                fear of falling behind
+              </span>
+              , noted 3 times.
+            </div>
+          ) : null
         }
       />
 
