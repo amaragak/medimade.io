@@ -69,6 +69,7 @@ export async function handler(
 
   const raw = bodyRefresh || parseCookieHeader(event, REFRESH_COOKIE);
   if (!raw) {
+    // Nothing to present — clear stale client cookies if any.
     return json(event, 401, { error: "No refresh session" }, sessionClearCookieHeaders());
   }
 
@@ -85,16 +86,20 @@ export async function handler(
       new GetCommand({ TableName: refreshTable, Key: { tokenHash } }),
     );
     row = (got.Item as RefreshRow | undefined) ?? null;
-    await ddb.send(
-      new DeleteCommand({ TableName: refreshTable, Key: { tokenHash } }),
-    );
+    if (row) {
+      await ddb.send(
+        new DeleteCommand({ TableName: refreshTable, Key: { tokenHash } }),
+      );
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Refresh lookup failed";
     return json(event, 500, { error: msg });
   }
 
   if (!row?.userId || !row.email) {
-    return json(event, 401, { error: "Invalid refresh session" }, sessionClearCookieHeaders());
+    // Likely a parallel refresh already rotated this token. Do NOT clear cookies —
+    // another response may have just set a newer mm_refresh; wiping would sign the user out.
+    return json(event, 401, { error: "Invalid refresh session" });
   }
   const ttl = typeof row.ttl === "number" ? row.ttl : 0;
   if (ttl < Math.floor(Date.now() / 1000)) {

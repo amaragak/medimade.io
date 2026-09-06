@@ -216,13 +216,13 @@ export async function handler(
   }
 
   const link = `${webOrigin}/auth/verify?token=${encodeURIComponent(rawToken)}`;
-  const subject = "Sign in to medimade.io";
+  const subject = "Sign in to Consciously";
   const text = `Open this link to sign in (expires in 15 minutes):\n\n${link}\n\nIf you did not request this, you can ignore this email.`;
 
   try {
     await sendEmailBrevo({
       fromEmail: from,
-      fromName: "medimade.io",
+      fromName: "Consciously",
       toEmail: email,
       subject,
       text,

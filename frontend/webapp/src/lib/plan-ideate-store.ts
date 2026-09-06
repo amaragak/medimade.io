@@ -4,7 +4,7 @@ import { getMedimadeSessionJwt } from "@/lib/auth-session";
 
 /**
  * Ideate hierarchy — projects (PlanDream), subtasks, todos, resistance entries.
- * Signed-in: cloud-first via GET/PUT /ideate/store; localStorage is cache only.
+ * Signed-in: in-memory working copy + cloud GET/PUT (never localStorage).
  * Guests: device demos via ensureGuestDemoIdeateSeeded.
  */
 
@@ -71,6 +71,32 @@ export type IdeateStoreV2 = {
 };
 
 const LS_KEY = "mm_plan_dreams_v1";
+
+/** Signed-in session copy — never written to localStorage. */
+let memoryStore: IdeateStoreV2 | null = null;
+
+function emptyIdeateStore(): IdeateStoreV2 {
+  return { v: 2, dreams: [], subtasks: [], todos: [], resistanceEntries: [] };
+}
+
+function isSignedIn(): boolean {
+  return Boolean(getMedimadeSessionJwt());
+}
+
+function removeIdeateLs(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(LS_KEY);
+  } catch {
+    /* */
+  }
+}
+
+/** Drop signed-in memory + any leftover localStorage Ideate store. */
+export function clearIdeateStoreDeviceData(): void {
+  memoryStore = null;
+  removeIdeateLs();
+}
 
 function safeIso(): string {
   try {
@@ -226,7 +252,10 @@ function migrateV1Raw(raw: string | null): IdeateStoreV2 {
 
 export function loadIdeateStoreRaw(): IdeateStoreV2 {
   if (typeof window === "undefined") {
-    return { v: 2, dreams: [], subtasks: [], todos: [], resistanceEntries: [] };
+    return emptyIdeateStore();
+  }
+  if (isSignedIn()) {
+    return memoryStore ? structuredClone(memoryStore) : emptyIdeateStore();
   }
   try {
     const raw = window.localStorage.getItem(LS_KEY);
@@ -274,11 +303,11 @@ export function loadIdeateStoreRaw(): IdeateStoreV2 {
 
 /**
  * Guests: seed demos when empty.
- * Signed-in: never seed — cloud is source of truth; local is cache only.
+ * Signed-in: never seed — cloud is source of truth; memory is the working copy.
  */
 export function loadIdeateStore(): IdeateStoreV2 {
   const raw = loadIdeateStoreRaw();
-  if (typeof window !== "undefined" && getMedimadeSessionJwt()) {
+  if (typeof window !== "undefined" && isSignedIn()) {
     const cleaned = withoutDemoIdeateStore(raw);
     if (
       cleaned.dreams.length !== raw.dreams.length ||
@@ -301,29 +330,36 @@ export function loadIdeateStore(): IdeateStoreV2 {
   return next;
 }
 
-/** Write local cache only — does not schedule cloud push. */
+/**
+ * Persist working copy: memory only when signed in (never localStorage);
+ * guests use localStorage.
+ */
 export function saveIdeateStoreLocal(store: IdeateStoreV2) {
   if (typeof window === "undefined") return;
+  const normalized: IdeateStoreV2 = {
+    v: 2,
+    dreams: store.dreams.slice(0, 200),
+    subtasks: store.subtasks.slice(0, 500),
+    todos: store.todos.slice(0, 2000),
+    resistanceEntries: store.resistanceEntries.slice(0, 1000),
+  };
+  if (isSignedIn()) {
+    memoryStore = structuredClone(normalized);
+    removeIdeateLs();
+    return;
+  }
+  memoryStore = null;
   try {
-    window.localStorage.setItem(
-      LS_KEY,
-      JSON.stringify({
-        v: 2,
-        dreams: store.dreams.slice(0, 200),
-        subtasks: store.subtasks.slice(0, 500),
-        todos: store.todos.slice(0, 2000),
-        resistanceEntries: store.resistanceEntries.slice(0, 1000),
-      }),
-    );
+    window.localStorage.setItem(LS_KEY, JSON.stringify(normalized));
   } catch {
     /* ignore */
   }
 }
 
-/** Persist locally and schedule cloud PUT when signed in. */
+/** Persist and schedule cloud PUT when signed in. */
 export function saveIdeateStore(store: IdeateStoreV2) {
   saveIdeateStoreLocal(store);
-  if (typeof window !== "undefined" && getMedimadeSessionJwt()) {
+  if (typeof window !== "undefined" && isSignedIn()) {
     void import("@/lib/ideate-cloud").then((m) => m.scheduleIdeateCloudPush());
   }
 }

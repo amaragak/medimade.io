@@ -6,7 +6,7 @@ import { getMedimadeSessionJwt } from "@/lib/auth-session";
 
 /**
  * Per-user Ideate reflection questions (added presets + custom).
- * Signed-in: cloud-first; localStorage is cache. Guests: device only.
+ * Signed-in: in-memory + cloud PUT (never localStorage). Guests: device only.
  */
 
 export type IdeateReflectionQuestion = {
@@ -27,6 +27,32 @@ export type IdeateReflectionQuestionsStoreV1 = {
 };
 
 const LS_KEY = "mm_ideate_reflection_questions_v1";
+
+/** Signed-in session copy — never written to localStorage. */
+let memoryStore: IdeateReflectionQuestionsStoreV1 | null = null;
+
+function emptyQuestions(): IdeateReflectionQuestionsStoreV1 {
+  return { v: 1, questions: [] };
+}
+
+function isSignedIn(): boolean {
+  return Boolean(getMedimadeSessionJwt());
+}
+
+function removeQuestionsLs(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(LS_KEY);
+  } catch {
+    /* */
+  }
+}
+
+/** Drop signed-in memory + any leftover localStorage questions. */
+export function clearIdeateReflectionQuestionsDeviceData(): void {
+  memoryStore = null;
+  removeQuestionsLs();
+}
 
 function safeIso(): string {
   try {
@@ -63,13 +89,16 @@ function normalizeQuestion(x: unknown): IdeateReflectionQuestion | null {
 }
 
 export function loadIdeateReflectionQuestionsStore(): IdeateReflectionQuestionsStoreV1 {
-  if (typeof window === "undefined") return { v: 1, questions: [] };
+  if (typeof window === "undefined") return emptyQuestions();
+  if (isSignedIn()) {
+    return memoryStore ? structuredClone(memoryStore) : emptyQuestions();
+  }
   try {
     const raw = window.localStorage.getItem(LS_KEY);
-    if (!raw) return { v: 1, questions: [] };
+    if (!raw) return emptyQuestions();
     const parsed = JSON.parse(raw) as { v?: number; questions?: unknown[] };
     if (parsed?.v !== 1 || !Array.isArray(parsed.questions)) {
-      return { v: 1, questions: [] };
+      return emptyQuestions();
     }
     return {
       v: 1,
@@ -79,34 +108,41 @@ export function loadIdeateReflectionQuestionsStore(): IdeateReflectionQuestionsS
         .slice(0, 50),
     };
   } catch {
-    return { v: 1, questions: [] };
+    return emptyQuestions();
   }
 }
 
-/** Write local cache only — does not schedule cloud push. */
+/**
+ * Persist working copy: memory only when signed in (never localStorage);
+ * guests use localStorage.
+ */
 export function saveIdeateReflectionQuestionsStoreLocal(
   store: IdeateReflectionQuestionsStoreV1,
 ) {
   if (typeof window === "undefined") return;
+  const normalized: IdeateReflectionQuestionsStoreV1 = {
+    v: 1,
+    questions: store.questions.slice(0, 50),
+  };
+  if (isSignedIn()) {
+    memoryStore = structuredClone(normalized);
+    removeQuestionsLs();
+    return;
+  }
+  memoryStore = null;
   try {
-    window.localStorage.setItem(
-      LS_KEY,
-      JSON.stringify({
-        v: 1,
-        questions: store.questions.slice(0, 50),
-      } satisfies IdeateReflectionQuestionsStoreV1),
-    );
+    window.localStorage.setItem(LS_KEY, JSON.stringify(normalized));
   } catch {
     /* ignore */
   }
 }
 
-/** Persist cache and schedule cloud PUT when signed in. */
+/** Persist and schedule cloud PUT when signed in. */
 export function saveIdeateReflectionQuestionsStore(
   store: IdeateReflectionQuestionsStoreV1,
 ) {
   saveIdeateReflectionQuestionsStoreLocal(store);
-  if (getMedimadeSessionJwt()) {
+  if (isSignedIn()) {
     void import("@/lib/ideate-cloud").then((m) => m.scheduleIdeateCloudPush());
   }
 }

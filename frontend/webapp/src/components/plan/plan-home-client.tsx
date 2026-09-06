@@ -19,6 +19,10 @@ import {
   type VisionBoardItem,
 } from "@/lib/ideate-vision-board";
 import {
+  getVisionMedia,
+  visionMediaToObjectUrl,
+} from "@/lib/ideate-vision-media";
+import {
   addCustomQuestion,
   addPresetQuestion,
   availablePresets,
@@ -28,8 +32,17 @@ import {
   type IdeateReflectionQuestion,
 } from "@/lib/ideate-reflection-questions";
 import {
+  addIdeateValue,
+  loadIdeateValuesStore,
+  patchIdeateValue,
+  removeIdeateValue,
+  saveIdeateValuesStore,
+  type IdeateValue,
+} from "@/lib/ideate-values";
+import {
   VisionBoardMosaic,
   VISION_BOARD_EMPTY_COLORS,
+  VISION_BOARD_MOSAIC_SLOT_COUNT,
 } from "@/components/plan/vision-board-mosaic";
 import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 
@@ -47,10 +60,33 @@ function mosaicColors(items: VisionBoardItem[]): readonly string[] {
   return items.map((i) => i.color);
 }
 
+function mosaicImages(
+  items: VisionBoardItem[],
+  resolved: Record<string, string>,
+): string[] {
+  const urls: string[] = [];
+  for (const item of items) {
+    if (urls.length >= VISION_BOARD_MOSAIC_SLOT_COUNT) break;
+    const src =
+      (typeof item.imageUrl === "string" && item.imageUrl.trim()
+        ? item.imageUrl
+        : null) ||
+      resolved[item.id] ||
+      null;
+    if (src) urls.push(src);
+  }
+  return urls;
+}
+
 export function PlanHomeClient() {
   const [dreams, setDreams] = useState<PlanDream[]>([]);
   const [visionItems, setVisionItems] = useState<VisionBoardItem[]>([]);
+  const [visionTileUrls, setVisionTileUrls] = useState<Record<string, string>>(
+    {},
+  );
+  const visionBlobUrlsRef = useRef<Record<string, string>>({});
   const [questions, setQuestions] = useState<IdeateReflectionQuestion[]>([]);
+  const [values, setValues] = useState<IdeateValue[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDream, setNewDream] = useState("");
@@ -61,12 +97,40 @@ export function PlanHomeClient() {
   const [writingCustom, setWritingCustom] = useState(false);
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
   const [draftAnswer, setDraftAnswer] = useState("");
+  const [addingValue, setAddingValue] = useState(false);
+  const [valueDraft, setValueDraft] = useState("");
+  const [editingValueId, setEditingValueId] = useState<string | null>(null);
+  const [editValueDraft, setEditValueDraft] = useState("");
   const addPickerRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(() => {
     setDreams(loadPlanDreamsStore().dreams);
     setVisionItems(loadIdeateVisionBoardStore().items);
     setQuestions(loadIdeateReflectionQuestionsStore().questions);
+    setValues(loadIdeateValuesStore().values);
+  }, []);
+
+  const resolveVisionTiles = useCallback(async (items: VisionBoardItem[]) => {
+    const next: Record<string, string> = {};
+    for (const item of items) {
+      if (typeof item.imageUrl === "string" && item.imageUrl.trim()) {
+        next[item.id] = item.imageUrl;
+        continue;
+      }
+      if (!item.mediaId) continue;
+      try {
+        const rec = await getVisionMedia(item.mediaId);
+        if (!rec) continue;
+        next[item.id] = visionMediaToObjectUrl(rec);
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const u of Object.values(visionBlobUrlsRef.current)) {
+      if (u.startsWith("blob:")) URL.revokeObjectURL(u);
+    }
+    visionBlobUrlsRef.current = next;
+    setVisionTileUrls(next);
   }, []);
 
   const { ready: cloudReady, revision } = useIdeateCloud();
@@ -83,6 +147,19 @@ export function PlanHomeClient() {
       window.removeEventListener("storage", onFocus);
     };
   }, [refresh, cloudReady, revision]);
+
+  useEffect(() => {
+    void resolveVisionTiles(visionItems);
+  }, [visionItems, resolveVisionTiles]);
+
+  useEffect(() => {
+    return () => {
+      for (const u of Object.values(visionBlobUrlsRef.current)) {
+        if (u.startsWith("blob:")) URL.revokeObjectURL(u);
+      }
+      visionBlobUrlsRef.current = {};
+    };
+  }, []);
 
   useEffect(() => {
     if (!addQuestionOpen) return;
@@ -149,6 +226,43 @@ export function PlanHomeClient() {
   function persistQuestions(next: IdeateReflectionQuestion[]) {
     saveIdeateReflectionQuestionsStore({ v: 1, questions: next });
     setQuestions(next);
+  }
+
+  function persistValues(next: IdeateValue[]) {
+    saveIdeateValuesStore({ v: 1, values: next });
+    setValues(next);
+  }
+
+  function handleAddValue() {
+    const next = addIdeateValue({ v: 1, values }, valueDraft);
+    if (next.values.length === values.length) return;
+    persistValues(next.values);
+    setValueDraft("");
+    setAddingValue(false);
+  }
+
+  function openEditValue(v: IdeateValue) {
+    setEditingValueId(v.id);
+    setEditValueDraft(v.text);
+    setAddingValue(false);
+    setValueDraft("");
+  }
+
+  function saveEditValue() {
+    if (!editingValueId) return;
+    const next = patchIdeateValue({ v: 1, values }, editingValueId, editValueDraft);
+    persistValues(next.values);
+    setEditingValueId(null);
+    setEditValueDraft("");
+  }
+
+  function handleRemoveValue(id: string) {
+    const next = removeIdeateValue({ v: 1, values }, id);
+    persistValues(next.values);
+    if (editingValueId === id) {
+      setEditingValueId(null);
+      setEditValueDraft("");
+    }
   }
 
   function handleAddPreset(presetId: string, openAfter = false) {
@@ -221,13 +335,14 @@ export function PlanHomeClient() {
           <p className={SECTION_LABEL}>Your dream</p>
           <Link
             href="/ideate/my/vision-board"
-            className="mt-3 flex w-full flex-col gap-6 rounded-2xl border border-[#E5DFD0] bg-card p-6 shadow-sm transition-colors hover:border-accent/35 hover:bg-accent-soft/10 sm:flex-row sm:items-center sm:gap-8 sm:p-8"
+            className="mt-3 flex w-full flex-col gap-6 rounded-2xl border border-[#E5DFD0] bg-card p-6 shadow-sm transition-colors hover:border-accent/35 hover:bg-accent-soft/10 sm:flex-row sm:items-center sm:gap-10 sm:p-8 md:gap-12"
           >
             <VisionBoardMosaic
               colors={mosaicColors(visionItems)}
-              sizeClassName="h-[180px] w-full sm:h-[200px] sm:w-[200px] md:h-[220px] md:w-[220px]"
+              images={mosaicImages(visionItems, visionTileUrls)}
+              sizeClassName="h-[200px] w-full sm:h-[280px] sm:w-[300px] md:h-[320px] md:w-[360px]"
             />
-            <div className="min-w-0 flex-1 text-left">
+            <div className="min-w-0 flex-1 text-left sm:pl-2 md:pl-4">
               <h2 className="font-display text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
                 Vision board
               </h2>
@@ -411,7 +526,140 @@ export function PlanHomeClient() {
           </div>
         </div>
 
-        {/* —— Section C: Life areas —— */}
+        {/* —— Section C: Values —— */}
+        <div className="mt-14">
+          <p className={SECTION_LABEL}>Your values</p>
+          <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted">
+            Name what matters — one value at a time.
+          </p>
+
+          {values.length === 0 && !addingValue ? (
+            <p className="mt-5 max-w-md text-sm italic text-[#A39C8C]">
+              No values yet — add one when you&apos;re ready.
+            </p>
+          ) : (
+            <ul className="mt-5 divide-y divide-border/70 border-y border-border/70">
+              {values.map((v) => (
+                <li key={v.id} className="py-3">
+                  {editingValueId === v.id ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        saveEditValue();
+                      }}
+                      className="flex flex-col gap-2 sm:flex-row sm:items-center"
+                    >
+                      <label className="sr-only" htmlFor={`ideate-value-edit-${v.id}`}>
+                        Edit value
+                      </label>
+                      <input
+                        id={`ideate-value-edit-${v.id}`}
+                        autoFocus
+                        value={editValueDraft}
+                        onChange={(e) => setEditValueDraft(e.target.value)}
+                        maxLength={120}
+                        className="w-full flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
+                      />
+                      <div className="flex shrink-0 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingValueId(null);
+                            setEditValueDraft("");
+                          }}
+                          className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={!editValueDraft.trim()}
+                          className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="flex items-baseline justify-between gap-4">
+                      <button
+                        type="button"
+                        onClick={() => openEditValue(v)}
+                        className="min-w-0 flex-1 cursor-pointer text-left font-display text-lg font-medium tracking-tight text-[#1E2530] transition-opacity hover:opacity-80 dark:text-foreground"
+                      >
+                        {v.text}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveValue(v.id)}
+                        className="shrink-0 cursor-pointer text-sm text-[#A39C8C] transition-colors hover:text-foreground"
+                        aria-label={`Remove ${v.text}`}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {addingValue ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleAddValue();
+              }}
+              className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center"
+            >
+              <label className="sr-only" htmlFor="ideate-value-new">
+                New value
+              </label>
+              <input
+                id="ideate-value-new"
+                autoFocus
+                value={valueDraft}
+                onChange={(e) => setValueDraft(e.target.value)}
+                placeholder="e.g. Honesty, Presence, Craft"
+                maxLength={120}
+                className="w-full flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
+              />
+              <div className="flex shrink-0 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingValue(false);
+                    setValueDraft("");
+                  }}
+                  className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!valueDraft.trim()}
+                  className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
+                >
+                  Add
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setAddingValue(true);
+                setEditingValueId(null);
+                setEditValueDraft("");
+              }}
+              className="mt-4 cursor-pointer text-sm font-medium text-[#B8703A] transition-opacity hover:opacity-80"
+            >
+              + Add a value
+            </button>
+          )}
+        </div>
+
+        {/* —— Section D: Life areas —— */}
         <div className="mt-14">
           <p className={SECTION_LABEL}>Your life areas</p>
           {sortedDreams.length === 0 ? (

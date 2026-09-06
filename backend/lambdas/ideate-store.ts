@@ -1,5 +1,5 @@
 /**
- * Cloud Ideate store — dreams / vision board metadata / reflection questions.
+ * Cloud Ideate store — dreams / vision board / reflection questions / values.
  * Mirror journal: GET optional (null for guests), PUT requires JWT.
  */
 
@@ -57,6 +57,7 @@ type IdeateCloudBundle = {
   ideate: unknown;
   visionBoard: unknown;
   reflectionQuestions: unknown;
+  values: unknown;
 };
 
 function isBundle(x: unknown): x is IdeateCloudBundle {
@@ -129,7 +130,9 @@ function stripDemoDreams(ideate: unknown): unknown {
 }
 
 function stripDemoVision(vision: unknown): unknown {
-  if (!vision || typeof vision !== "object") return { v: 2, items: [], selfReference: null };
+  if (!vision || typeof vision !== "object") {
+    return { v: 2, items: [], selfReference: null, extraReferences: [] };
+  }
   const o = vision as Record<string, unknown>;
   const items = Array.isArray(o.items)
     ? o.items.filter((i) => {
@@ -143,7 +146,16 @@ function stripDemoVision(vision: unknown): unknown {
     const mid = (selfReference as { mediaId?: unknown }).mediaId;
     if (typeof mid === "string" && mid.startsWith("demo-")) selfReference = null;
   }
-  return { v: 2, items: items.slice(0, 48), selfReference };
+  const extraReferences = Array.isArray(o.extraReferences)
+    ? o.extraReferences
+        .filter((r) => {
+          if (!r || typeof r !== "object") return false;
+          const id = (r as { id?: unknown }).id;
+          return typeof id === "string" && !id.startsWith("demo-");
+        })
+        .slice(0, 3)
+    : [];
+  return { v: 2, items: items.slice(0, 48), selfReference, extraReferences };
 }
 
 function stripDemoQuestions(qs: unknown): unknown {
@@ -157,6 +169,21 @@ function stripDemoQuestions(qs: unknown): unknown {
       })
     : [];
   return { v: 1, questions: questions.slice(0, 50) };
+}
+
+function stripValues(values: unknown): unknown {
+  if (!values || typeof values !== "object") return { v: 1, values: [] };
+  const o = values as Record<string, unknown>;
+  const list = Array.isArray(o.values)
+    ? o.values.filter((v) => {
+        if (!v || typeof v !== "object") return false;
+        const r = v as { id?: unknown; text?: unknown };
+        if (typeof r.id !== "string" || typeof r.text !== "string") return false;
+        if (r.id.startsWith("demo-val-")) return false;
+        return r.text.trim().length > 0;
+      })
+    : [];
+  return { v: 1, values: list.slice(0, 40) };
 }
 
 export async function handler(
@@ -219,6 +246,27 @@ export async function handler(
       return json(400, { error: "`store` object is required" });
     }
     const o = incoming as Record<string, unknown>;
+
+    let existingValues: unknown = { v: 1, values: [] };
+    try {
+      const existingOut = await ddb.send(
+        new GetCommand({
+          TableName: table,
+          Key: { pk: ownerId, sk: SK_STORE },
+        }),
+      );
+      const existingRow = existingOut.Item as { store?: unknown } | undefined;
+      if (
+        existingRow?.store &&
+        typeof existingRow.store === "object" &&
+        "values" in (existingRow.store as object)
+      ) {
+        existingValues = (existingRow.store as { values?: unknown }).values;
+      }
+    } catch {
+      /* fall through with empty values */
+    }
+
     const bundle: IdeateCloudBundle = {
       version: 1,
       updatedAt:
@@ -228,6 +276,8 @@ export async function handler(
       ideate: stripDemoDreams(o.ideate),
       visionBoard: stripDemoVision(o.visionBoard),
       reflectionQuestions: stripDemoQuestions(o.reflectionQuestions),
+      // Older clients omit `values` — keep whatever is already stored.
+      values: "values" in o ? stripValues(o.values) : stripValues(existingValues),
     };
 
     const encoded = JSON.stringify(bundle);

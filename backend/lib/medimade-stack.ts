@@ -219,10 +219,13 @@ export class MedimadeStack extends cdk.Stack {
 
     const authWebappOrigin =
       (this.node.tryGetContext("authWebappOrigin") as string | undefined)?.trim() ||
-      "http://localhost:3000";
+      "https://consciously.live";
     const authEmailFrom =
       (this.node.tryGetContext("authEmailFrom") as string | undefined)?.trim() ||
-      "medimadeaws@gmail.com";
+      process.env.MEDIMADE_AUTH_EMAIL_FROM?.trim() ||
+      process.env.AUTH_EMAIL_FROM?.trim() ||
+      // Must be a Brevo-verified sender on the account that owns medimade/BREVO_API_KEY.
+      "alexjm1234567@gmail.com";
     const adminEmails =
       (this.node.tryGetContext("adminEmails") as string | undefined)?.trim() ||
       process.env.ADMIN_EMAILS?.trim() ||
@@ -1332,18 +1335,20 @@ export class MedimadeStack extends cdk.Stack {
         entry: path.join(__dirname, "../lambdas/vision-generate.ts"),
         handler: "handler",
         runtime: lambda.Runtime.NODEJS_20_X,
-        timeout: cdk.Duration.seconds(120),
+        timeout: cdk.Duration.seconds(180),
         memorySize: 1024,
         environment: {
           GOOGLE_AI_SECRET_ARN: googleAiApiKeySecret.secretArn,
+          CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,
           MEDIA_BUCKET_NAME: mediaBucket.bucketName,
           MEDIA_CLOUDFRONT_DOMAIN: mediaDistribution.domainName,
           AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
-          VISION_IMAGE_MODEL: "gemini-2.5-flash-image",
+          VISION_IMAGE_MODEL: "gemini-3-pro-image",
         },
       },
     );
     googleAiApiKeySecret.grantRead(visionGenerate);
+    claudeApiKeySecret.grantRead(visionGenerate);
     mediaBucket.grantReadWrite(visionGenerate);
     authJwtSecret.grantRead(visionGenerate);
 

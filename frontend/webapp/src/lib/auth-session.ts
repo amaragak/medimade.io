@@ -9,12 +9,30 @@ const ACTIVE_KEY = "mm_session_active_v1";
 /** Legacy — cleared on read so XSS cannot keep stealing long-lived tokens. */
 const LEGACY_JWT_KEY = "mm_session_jwt_v1";
 
+/** Survive HMR so parallel refresh rotations cannot race across module instances. */
+const REFRESH_LOCK_KEY = "__mm_ensure_session_inflight__";
+
 let memoryAccessJwt: string | null = null;
 let refreshInFlight: Promise<boolean> | null = null;
 let accessRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 /** Refresh ~10 minutes before the 1h access JWT expires. */
 const ACCESS_REFRESH_AFTER_MS = 50 * 60 * 1000;
+
+type RefreshLockHolder = { promise: Promise<boolean> };
+
+function getRefreshLock(): RefreshLockHolder | null {
+  if (typeof window === "undefined") return null;
+  const w = window as unknown as Record<string, RefreshLockHolder | undefined>;
+  return w[REFRESH_LOCK_KEY] ?? null;
+}
+
+function setRefreshLock(holder: RefreshLockHolder | null): void {
+  if (typeof window === "undefined") return;
+  const w = window as unknown as Record<string, RefreshLockHolder | undefined>;
+  if (holder) w[REFRESH_LOCK_KEY] = holder;
+  else delete w[REFRESH_LOCK_KEY];
+}
 
 function clearAccessRefreshTimer(): void {
   if (accessRefreshTimer) {
@@ -122,32 +140,32 @@ export function clearMedimadeSession(): void {
     window.localStorage.removeItem(EMAIL_KEY);
     window.localStorage.removeItem(DISPLAY_NAME_KEY);
     window.localStorage.removeItem(ACTIVE_KEY);
-    window.localStorage.removeItem("mm_plan_dreams_v1");
-    window.localStorage.removeItem("mm_ideate_vision_board_v1");
-    window.localStorage.removeItem("mm_ideate_reflection_questions_v1");
-    window.localStorage.removeItem("mm_ideate_demo_seed_v1");
   } catch {
     /* */
   }
-  void import("@/lib/ideate-cloud").then((m) => {
-    m.clearIdeateCloudSessionCache();
-  });
+  // Wipe before notifying UI so a fast re-login cannot revive stale memory.
+  void import("@/lib/ideate-cloud")
+    .then((m) => {
+      m.wipeIdeateDeviceData();
+    })
+    .finally(() => {
+      try {
+        window.dispatchEvent(new Event("medimade-session-changed"));
+      } catch {
+        /* */
+      }
+    });
   // Best-effort server logout (clears HttpOnly refresh cookie).
   void import("@/lib/medimade-api")
     .then((m) => m.logoutMedimadeSessionRemote())
     .catch(() => {
       /* */
     });
-  try {
-    window.dispatchEvent(new Event("medimade-session-changed"));
-  } catch {
-    /* */
-  }
 }
 
 /**
  * Restore memory access JWT from HttpOnly refresh cookie after reload.
- * Safe to call often — coalesces concurrent calls.
+ * Safe to call often — coalesces concurrent calls (including across HMR).
  * Pass `{ force: true }` to ignore a (possibly expired) in-memory access JWT.
  */
 export async function ensureMedimadeSession(opts?: {
@@ -157,31 +175,65 @@ export async function ensureMedimadeSession(opts?: {
   clearLegacyJwtFromStorage();
   if (!opts?.force && memoryAccessJwt) return true;
   if (!isMedimadeSessionActive() && !getMedimadeSessionEmail()) return false;
+
+  const existingLock = getRefreshLock();
+  if (existingLock) return existingLock.promise;
   if (refreshInFlight) return refreshInFlight;
 
+  const previousJwt = memoryAccessJwt;
   if (opts?.force) memoryAccessJwt = null;
 
-  refreshInFlight = (async () => {
+  const run = (async () => {
     try {
       const { refreshMedimadeSessionRemote } = await import("@/lib/medimade-api");
       const result = await refreshMedimadeSessionRemote();
       if (!result?.token) {
-        memoryAccessJwt = null;
-        try {
-          window.localStorage.removeItem(ACTIVE_KEY);
-        } catch {
-          /* */
+        // Explicit auth rejection. If a forced refresh failed but we still had a
+        // usable access JWT, keep it — don't wipe the session on a race/blip.
+        if (previousJwt && opts?.force) {
+          memoryAccessJwt = previousJwt;
+          return true;
         }
+        endSessionAfterRefreshFailure();
         return false;
       }
       setMedimadeSession(result.token, result.email, result.displayName);
       return true;
     } catch {
-      return false;
+      // Network / transient — do not wipe the session.
+      if (previousJwt) memoryAccessJwt = previousJwt;
+      return Boolean(memoryAccessJwt);
     } finally {
       refreshInFlight = null;
+      setRefreshLock(null);
     }
   })();
 
-  return refreshInFlight;
+  refreshInFlight = run;
+  setRefreshLock({ promise: run });
+  return run;
+}
+
+function endSessionAfterRefreshFailure(): void {
+  memoryAccessJwt = null;
+  clearAccessRefreshTimer();
+  try {
+    window.localStorage.removeItem(ACTIVE_KEY);
+    window.localStorage.removeItem(EMAIL_KEY);
+    window.localStorage.removeItem(DISPLAY_NAME_KEY);
+    window.localStorage.removeItem(LEGACY_JWT_KEY);
+  } catch {
+    /* */
+  }
+  void import("@/lib/ideate-cloud")
+    .then((m) => {
+      m.wipeIdeateDeviceData();
+    })
+    .finally(() => {
+      try {
+        window.dispatchEvent(new Event("medimade-session-changed"));
+      } catch {
+        /* */
+      }
+    });
 }

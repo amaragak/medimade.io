@@ -1,21 +1,31 @@
 /**
  * Cloud-first Ideate sync for signed-in users.
- * Guests stay on device demos; localStorage is only a cache after GET / before PUT.
+ * Guests stay on device demos. Signed-in working copies live in memory only
+ * (never durable localStorage) between cloud GET and PUT.
  */
 
 import { getMedimadeSessionJwt } from "@/lib/auth-session";
 import type { IdeateStoreV2 } from "@/lib/plan-ideate-store";
 import { withoutDemoIdeateStore } from "@/lib/ideate-demo-seed";
 import {
+  clearIdeateReflectionQuestionsDeviceData,
   loadIdeateReflectionQuestionsStore,
   saveIdeateReflectionQuestionsStoreLocal,
   type IdeateReflectionQuestionsStoreV1,
 } from "@/lib/ideate-reflection-questions";
 import {
+  clearIdeateValuesDeviceData,
+  loadIdeateValuesStore,
+  saveIdeateValuesStoreLocal,
+  type IdeateValuesStoreV1,
+} from "@/lib/ideate-values";
+import {
+  clearIdeateVisionBoardDeviceData,
   loadIdeateVisionBoardStore,
   saveIdeateVisionBoardStoreLocal,
   type IdeateVisionBoardStoreV1,
   type VisionBoardItem,
+  type VisionExtraReference,
   type VisionSelfReference,
 } from "@/lib/ideate-vision-board";
 import {
@@ -25,6 +35,7 @@ import {
   type IdeateCloudBundle,
 } from "@/lib/medimade-api";
 import {
+  clearIdeateStoreDeviceData,
   loadIdeateStoreRaw,
   saveIdeateStoreLocal,
 } from "@/lib/plan-ideate-store";
@@ -51,6 +62,26 @@ export function clearIdeateCloudSessionCache(): void {
     clearTimeout(pushTimer);
     pushTimer = null;
   }
+}
+
+/**
+ * Wipe signed-in Ideate working copies + any leftover localStorage keys.
+ * Call on logout and when refresh fails so cloud data never stays on device.
+ */
+export function wipeIdeateDeviceData(): void {
+  clearIdeateCloudSessionCache();
+  clearIdeateStoreDeviceData();
+  clearIdeateVisionBoardDeviceData();
+  clearIdeateReflectionQuestionsDeviceData();
+  clearIdeateValuesDeviceData();
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.removeItem("mm_ideate_demo_seed_v1");
+    } catch {
+      /* */
+    }
+  }
+  notifyIdeateCloud();
 }
 
 export function subscribeIdeateCloud(listener: () => void): () => void {
@@ -93,6 +124,18 @@ function cloudSelfReference(
   };
 }
 
+function cloudExtraReference(
+  ref: VisionExtraReference,
+): VisionExtraReference | null {
+  const base = cloudSelfReference(ref);
+  if (!base) return null;
+  return {
+    ...base,
+    id: ref.id,
+    description: String(ref.description || "").slice(0, 280),
+  };
+}
+
 function cloudVisionItem(item: VisionBoardItem): VisionBoardItem | null {
   if (item.id.startsWith("demo-vb-") || item.id.startsWith("demo-")) return null;
   const { mediaId: _drop, ...rest } = item;
@@ -112,6 +155,10 @@ function stripVisionForCloud(
       .filter((i): i is VisionBoardItem => Boolean(i))
       .slice(0, 48),
     selfReference: cloudSelfReference(board.selfReference),
+    extraReferences: (board.extraReferences ?? [])
+      .map(cloudExtraReference)
+      .filter((r): r is VisionExtraReference => Boolean(r))
+      .slice(0, 3),
   };
 }
 
@@ -121,6 +168,15 @@ function stripQuestionsForCloud(
   return {
     v: 1,
     questions: qs.questions.filter((q) => !q.id.startsWith("demo-rq-")),
+  };
+}
+
+function stripValuesForCloud(store: IdeateValuesStoreV1): IdeateValuesStoreV1 {
+  return {
+    v: 1,
+    values: store.values
+      .filter((v) => !v.id.startsWith("demo-val-"))
+      .slice(0, 40),
   };
 }
 
@@ -134,6 +190,7 @@ export function buildIdeateCloudBundle(): IdeateCloudBundle {
     reflectionQuestions: stripQuestionsForCloud(
       loadIdeateReflectionQuestionsStore(),
     ),
+    values: stripValuesForCloud(loadIdeateValuesStore()),
   };
 }
 
@@ -155,6 +212,7 @@ export function applyIdeateCloudBundle(bundle: IdeateCloudBundle): void {
         v: 2,
         items: [],
         selfReference: null,
+        extraReferences: [],
       },
     );
     saveIdeateVisionBoardStoreLocal(vision);
@@ -166,13 +224,18 @@ export function applyIdeateCloudBundle(bundle: IdeateCloudBundle): void {
       },
     );
     saveIdeateReflectionQuestionsStoreLocal(qs);
+
+    const values = stripValuesForCloud(
+      (bundle.values as IdeateValuesStoreV1) ?? { v: 1, values: [] },
+    );
+    saveIdeateValuesStoreLocal(values);
   });
   notifyIdeateCloud();
 }
 
 /**
  * Pull cloud Ideate once per session when signed in.
- * Cloud always wins — empty cloud replaces local cache with blanks (no demos).
+ * Cloud always wins — empty cloud replaces the in-memory working copy with blanks.
  */
 export async function pullIdeateStoreFromCloud(): Promise<{
   applied: boolean;
@@ -202,6 +265,7 @@ export async function pullIdeateStoreFromCloud(): Promise<{
           v: 2,
           items: [],
           selfReference: null,
+          extraReferences: [],
         });
         saveIdeateReflectionQuestionsStoreLocal({ v: 1, questions: [] });
       });
@@ -212,7 +276,7 @@ export async function pullIdeateStoreFromCloud(): Promise<{
     return { applied: true, empty: false };
   } catch {
     markIdeateStorePulledThisSession();
-    // Offline: keep whatever cache exists; strip demos only.
+    // Offline: keep in-memory working copy if any; strip demos only.
     withCloudPushSuppressed(() => {
       saveIdeateStoreLocal(withoutDemoIdeateStore(loadIdeateStoreRaw()));
       saveIdeateVisionBoardStoreLocal(

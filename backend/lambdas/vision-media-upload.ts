@@ -109,7 +109,9 @@ export async function handler(
   }
 
   const kind =
-    body.kind === "tile" || body.kind === "self" ? body.kind : "self";
+    body.kind === "tile" || body.kind === "self" || body.kind === "extra"
+      ? body.kind
+      : "self";
   const ext = extFromMime(mimeType);
   const key = `ideate/vision/${userId}/${kind}/${randomUUID()}.${ext}`;
 

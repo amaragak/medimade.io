@@ -13,6 +13,7 @@ import {
   clearIdeateCloudSessionCache,
   pullIdeateStoreFromCloud,
   subscribeIdeateCloud,
+  wipeIdeateDeviceData,
 } from "@/lib/ideate-cloud";
 
 type IdeateCloudContextValue = {
@@ -54,6 +55,7 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
       setSignedIn((prev) => {
         if (prev !== next) {
           clearIdeateCloudSessionCache();
+          if (!next) wipeIdeateDeviceData();
           setAuthEpoch((e) => e + 1);
           setReady(false);
         }

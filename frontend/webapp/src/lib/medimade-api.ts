@@ -261,11 +261,20 @@ export type MedimadeRefreshResult = {
 export async function refreshMedimadeSessionRemote(): Promise<MedimadeRefreshResult | null> {
   const base = getMedimadeApiBase();
   if (!base) return null;
-  const res = await medimadeFetch(`${base}/auth/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: "{}",
-  });
+
+  const attempt = async (): Promise<Response> =>
+    medimadeFetch(`${base}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+  let res = await attempt();
+  // Parallel refresh can 401 on a just-rotated token; retry once so the newer cookie wins.
+  if (res.status === 401) {
+    await new Promise((r) => setTimeout(r, 150));
+    res = await attempt();
+  }
   if (!res.ok) return null;
   const data = (await res.json().catch(() => ({}))) as {
     token?: string;
@@ -416,20 +425,33 @@ export async function transcribeJournalAudio(params: {
 export type VisionGenerateResult = {
   imageBase64: string;
   mimeType: string;
+  /** Final prompt used (after optional Haiku refine). */
+  prompt?: string;
   url?: string;
   key?: string;
   model?: string;
 };
 
 /**
- * Generates a vision-board scene with Gemini Nano Banana, using a self-reference photo.
+ * Generates a vision-board scene with Gemini Nano Banana Pro, using a self-reference photo.
+ * Optional `changeRequest` is merged with `prompt` via Haiku before generation.
  * `POST /ideate/vision/generate`
  */
 export async function generateVisionBoardScene(params: {
   prompt: string;
+  changeRequest?: string;
+  /** Default true. Set false to regenerate from an already-polished stored prompt. */
+  polishPrompt?: boolean;
   referenceBase64?: string;
   referenceKey?: string;
   mimeType?: string;
+  /** Optional supporting refs (people/pets/places) with descriptions. */
+  extraReferences?: Array<{
+    description: string;
+    referenceKey?: string;
+    referenceBase64?: string;
+    mimeType?: string;
+  }>;
 }): Promise<VisionGenerateResult> {
   const base = getMedimadeApiBase();
   if (!base) {
@@ -440,16 +462,30 @@ export async function generateVisionBoardScene(params: {
   }
   const token = sessionTokenForBody();
   const qs = token ? `?sessionToken=${encodeURIComponent(token)}` : "";
+  const extras = (params.extraReferences ?? [])
+    .filter((e) => e.description.trim() && (e.referenceKey || e.referenceBase64))
+    .slice(0, 3)
+    .map((e) => ({
+      description: e.description.trim().slice(0, 280),
+      ...(e.referenceKey ? { referenceKey: e.referenceKey } : {}),
+      ...(e.referenceBase64 ? { referenceBase64: e.referenceBase64 } : {}),
+      ...(e.mimeType ? { mimeType: e.mimeType } : {}),
+    }));
   const res = await medimadeFetch(`${base}/ideate/vision/generate${qs}`, {
     method: "POST",
     headers: medimadeJsonHeaders(),
     body: JSON.stringify({
       prompt: params.prompt,
+      ...(params.changeRequest?.trim()
+        ? { changeRequest: params.changeRequest.trim() }
+        : {}),
+      ...(params.polishPrompt === false ? { polishPrompt: false } : {}),
       ...(params.referenceBase64
         ? { referenceBase64: params.referenceBase64 }
         : {}),
       ...(params.referenceKey ? { referenceKey: params.referenceKey } : {}),
       mimeType: params.mimeType,
+      ...(extras.length ? { extraReferences: extras } : {}),
       ...(token ? { sessionToken: token } : {}),
     }),
   });
@@ -475,6 +511,7 @@ export async function generateVisionBoardScene(params: {
     imageBase64,
     mimeType:
       typeof data.mimeType === "string" ? data.mimeType : "image/png",
+    ...(typeof data.prompt === "string" ? { prompt: data.prompt } : {}),
     ...(typeof data.url === "string" ? { url: data.url } : {}),
     ...(typeof data.key === "string" ? { key: data.key } : {}),
     ...(typeof data.model === "string" ? { model: data.model } : {}),
@@ -495,7 +532,7 @@ export type IdeateVisionMediaUploadResult = {
 export async function uploadIdeateVisionMedia(params: {
   imageBase64: string;
   mimeType?: string;
-  kind?: "self" | "tile";
+  kind?: "self" | "tile" | "extra";
 }): Promise<IdeateVisionMediaUploadResult> {
   const base = getMedimadeApiBase();
   if (!base) {
@@ -543,6 +580,8 @@ export type IdeateCloudBundle = {
   ideate: unknown;
   visionBoard: unknown;
   reflectionQuestions: unknown;
+  /** Optional for older cloud rows; client treats missing as empty. */
+  values?: unknown;
 };
 
 /**
