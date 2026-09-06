@@ -340,11 +340,34 @@ export function buildDemoJournalStore(): JournalStoreV2 {
   };
 }
 
-function isDemoOnlyStore(store: JournalStoreV2): boolean {
+export function isDemoJournalEntry(e: JournalEntry): boolean {
+  return e.sourceMetadata?.demo === true;
+}
+
+export function isDemoOnlyStore(store: JournalStoreV2): boolean {
   return (
     store.entries.length > 0 &&
-    store.entries.every((e) => e.sourceMetadata?.demo === true)
+    store.entries.every((e) => isDemoJournalEntry(e))
   );
+}
+
+/** Drop seeded guest samples — never treat them as personal or cloud data. */
+export function withoutDemoJournalEntries(store: JournalStoreV2): JournalStoreV2 {
+  const entries = store.entries.filter((e) => !isDemoJournalEntry(e));
+  const activeEntryId =
+    store.activeEntryId && entries.some((e) => e.id === store.activeEntryId)
+      ? store.activeEntryId
+      : (entries[0]?.id ?? null);
+  return {
+    version: 2,
+    activeEntryId,
+    entries,
+    ...(store.folders?.length ? { folders: store.folders } : {}),
+  };
+}
+
+export function emptyJournalStore(): JournalStoreV2 {
+  return { version: 2, activeEntryId: null, entries: [] };
 }
 
 function demoSeedFlagSet(): boolean {
@@ -378,7 +401,7 @@ export function ensureGuestDemoJournalSeeded(
     (typeof window !== "undefined" ? loadJournalStoreRaw() : buildDemoJournalStore());
   const personalMeaningful = current.entries.filter(
     (e) =>
-      e.sourceMetadata?.demo !== true && journalEntryHasMeaningfulContent(e),
+      !isDemoJournalEntry(e) && journalEntryHasMeaningfulContent(e),
   );
   if (personalMeaningful.length > 0) {
     markDemoSeedFlag();
@@ -402,10 +425,13 @@ export function ensureGuestDemoJournalSeeded(
   return demo;
 }
 
-/** Read local store without side-effect seeding (used by ensureGuest…). */
-function loadJournalStoreRaw(): JournalStoreV2 {
+/**
+ * Read localStorage only — no demo seeding. Use for signed-in cloud cache
+ * and guest reads that must not rewrite the store.
+ */
+export function loadJournalStoreRaw(): JournalStoreV2 {
   if (typeof window === "undefined") {
-    return buildDemoJournalStore();
+    return emptyJournalStore();
   }
   try {
     const raw = window.localStorage.getItem(STORE_KEY);
@@ -437,9 +463,13 @@ function loadJournalStoreRaw(): JournalStoreV2 {
   } catch {
     /* */
   }
-  return { version: 2, activeEntryId: null, entries: [] };
+  return emptyJournalStore();
 }
 
+/**
+ * Guest device journal: seeds demo samples when empty.
+ * Signed-in flows must use `loadJournalStoreRaw` + cloud GET instead.
+ */
 export function loadJournalStore(): JournalStoreV2 {
   if (typeof window === "undefined") {
     return buildDemoJournalStore();
@@ -471,7 +501,7 @@ export function loadJournalStore(): JournalStoreV2 {
         // were handled above; if they only have blanks, still seed.
         if (!demoSeedFlagSet()) {
           const personal = normalized.entries.filter(
-            (e) => e.sourceMetadata?.demo !== true,
+            (e) => !isDemoJournalEntry(e),
           );
           if (
             personal.length === 0 ||
@@ -502,11 +532,7 @@ export function loadJournalStore(): JournalStoreV2 {
   } catch {
     /* */
   }
-  return ensureGuestDemoJournalSeeded({
-    version: 2,
-    activeEntryId: null,
-    entries: [],
-  });
+  return ensureGuestDemoJournalSeeded(emptyJournalStore());
 }
 
 function escapeLegacyPlain(s: string): string {
@@ -612,24 +638,24 @@ function normalizeEntry(e: JournalEntry): JournalEntry {
   };
 }
 
-/** Keep device-only entries when a cloud copy would otherwise replace them. */
+/**
+ * Apply cloud store as source of truth. Does not re-attach guest demos or
+ * other local-only rows (offline/local-first can return later).
+ */
 export function mergeRemoteJournalKeepingLocalOnly(
   remote: JournalStoreV2,
-  localEntries: JournalEntry[],
+  _localEntries: JournalEntry[],
 ): JournalStoreV2 {
-  const byId = new Map<string, JournalEntry>();
-  for (const e of remote.entries) byId.set(e.id, e);
-  for (const e of localEntries) {
-    if (e.localOnly) byId.set(e.id, e);
-  }
   return {
-    ...remote,
-    entries: Array.from(byId.values()),
+    version: 2,
+    activeEntryId: remote.activeEntryId,
+    entries: remote.entries.map(normalizeEntry),
+    ...(remote.folders?.length ? { folders: remote.folders } : {}),
   };
 }
 
 export function entriesForCloudPut(entries: JournalEntry[]): JournalEntry[] {
-  return entries.filter((e) => !e.localOnly);
+  return entries.filter((e) => !e.localOnly && !isDemoJournalEntry(e));
 }
 
 /** Consecutive local calendar days with a meaningful entry, ending today or yesterday. */
@@ -789,18 +815,23 @@ function maxJournalEntryUpdatedAt(entries: JournalEntry[]): number {
 }
 
 /**
- * Prefer cloud copy when it is newer, or when local is a single empty stub and
- * cloud has data (same rules as the Journal page).
+ * Prefer cloud when it has entries. Guest demos / empty stubs never beat remote.
+ * Signed-in JournalView always applies remote; this remains for other callers.
  */
 export function shouldPreferRemoteJournalStore(
   remote: JournalStoreV2,
   localEntries: JournalEntry[],
 ): boolean {
   if (!remote.entries?.length) return false;
+  const localPersonal = localEntries.filter((e) => !isDemoJournalEntry(e));
+  if (localPersonal.length === 0) return true;
+  if (isDemoOnlyStore({ version: 2, activeEntryId: null, entries: localEntries })) {
+    return true;
+  }
   const remoteMax = maxJournalEntryUpdatedAt(remote.entries);
-  const localMax = maxJournalEntryUpdatedAt(localEntries);
-  if (remoteMax > localMax) return true;
-  const localMeaningful = localEntries.filter(journalEntryHasMeaningfulContent);
+  const localMax = maxJournalEntryUpdatedAt(localPersonal);
+  if (remoteMax >= localMax) return true;
+  const localMeaningful = localPersonal.filter(journalEntryHasMeaningfulContent);
   if (
     localMeaningful.length === 0 &&
     remote.entries.some(journalEntryHasMeaningfulContent)

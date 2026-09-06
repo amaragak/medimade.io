@@ -15,10 +15,6 @@ type Props = {
   onClose: () => void;
   entries: JournalEntry[];
   store: JournalStoreV2;
-  keepLocalOnly: boolean;
-  onKeepLocalOnlyChange: (on: boolean) => void;
-  entryLocalOnly?: boolean;
-  onEntryLocalOnlyChange?: (on: boolean) => void;
 };
 
 export function JournalSettingsDialog({
@@ -26,10 +22,6 @@ export function JournalSettingsDialog({
   onClose,
   entries,
   store,
-  keepLocalOnly,
-  onKeepLocalOnlyChange,
-  entryLocalOnly,
-  onEntryLocalOnlyChange,
 }: Props) {
   useEffect(() => {
     if (!open) return;
@@ -72,42 +64,6 @@ export function JournalSettingsDialog({
         </div>
 
         <section className="mt-5">
-          <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
-            Sync
-          </h3>
-          <label className="mt-2 flex cursor-pointer items-start gap-2.5 text-sm text-foreground">
-            <input
-              type="checkbox"
-              checked={keepLocalOnly}
-              onChange={(ev) => onKeepLocalOnlyChange(ev.target.checked)}
-              className="mt-0.5 h-4 w-4 accent-[var(--selected)]"
-            />
-            <span>
-              Don’t sync this journal
-              <span className="mt-0.5 block text-xs font-normal text-muted">
-                Stays on this device only.
-              </span>
-            </span>
-          </label>
-          {onEntryLocalOnlyChange ? (
-            <label className="mt-3 flex cursor-pointer items-start gap-2.5 text-sm text-foreground">
-              <input
-                type="checkbox"
-                checked={Boolean(entryLocalOnly)}
-                onChange={(ev) => onEntryLocalOnlyChange(ev.target.checked)}
-                className="mt-0.5 h-4 w-4 accent-[var(--selected)]"
-              />
-              <span>
-                Don’t sync this entry
-                <span className="mt-0.5 block text-xs font-normal text-muted">
-                  Other entries can still sync.
-                </span>
-              </span>
-            </label>
-          ) : null}
-        </section>
-
-        <section className="mt-6">
           <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted">
             Privacy
           </h3>

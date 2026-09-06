@@ -49,6 +49,7 @@ import {
   getMeditationDraft,
   getMedimadeApiBase,
   getMedimadeMediaBaseUrl,
+  getMedimadeSessionJwt,
   fetchJournalStoreRemote,
   listBackgroundAudio,
   listFishSpeakers,
@@ -112,10 +113,11 @@ import {
   isGratitudeEntry,
   journalEntryPlainForHandoff,
   loadJournalStore,
+  loadJournalStoreRaw,
   parseJournalMeditationPayload,
   peekJournalMeditationHandoffJson,
   saveJournalStore,
-  shouldPreferRemoteJournalStore,
+  withoutDemoJournalEntries,
   type JournalEntry,
   type JournalFolder,
 } from "@/lib/journal-storage";
@@ -1798,27 +1800,27 @@ export function CreateWorkspace({
   useEffect(() => {
     if (typeof window === "undefined") return;
     let cancelled = false;
-    const local = loadJournalStore();
+    const signedIn = Boolean(getMedimadeSessionJwt());
+    // Guests may see demos; signed-in users only use a non-seeding local cache
+    // until cloud responds.
+    const local = signedIn
+      ? withoutDemoJournalEntries(loadJournalStoreRaw())
+      : loadJournalStore();
     setJournalPickerEntries(local.entries);
     setJournalPickerFolders(local.folders ?? []);
 
     const base = getMedimadeApiBase();
-    if (!base) {
+    if (!base || !signedIn) {
       setJournalPickerListReady(true);
       return;
     }
     void (async () => {
       try {
         const remote = await fetchJournalStoreRemote();
-        if (cancelled || !remote) return;
-        setJournalPickerEntries((prev) => {
-          if (shouldPreferRemoteJournalStore(remote, prev)) {
-            saveJournalStore(remote);
-            setJournalPickerFolders(remote.folders ?? []);
-            return remote.entries;
-          }
-          return prev;
-        });
+        if (cancelled || !remote?.entries?.length) return;
+        saveJournalStore(remote);
+        setJournalPickerFolders(remote.folders ?? []);
+        setJournalPickerEntries(remote.entries);
       } catch {
         /* offline or no journal yet */
       } finally {

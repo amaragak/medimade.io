@@ -41,9 +41,11 @@ import {
   formatJournalEntryDate,
   gratitudeLinesToHtml,
   groupJournalEntriesForSidebar,
+  isDemoJournalEntry,
+  isDemoOnlyStore,
   isGratitudeEntry,
   journalWritingStreakDays,
-  loadJournalStore,
+  loadJournalStoreRaw,
   localDateKey,
   localDateKeyFromIso,
   mergeRemoteJournalKeepingLocalOnly,
@@ -51,17 +53,13 @@ import {
   newJournalEntry,
   newJournalFolder,
   saveJournalStore,
-  shouldPreferRemoteJournalStore,
   stripHtmlToText,
+  withoutDemoJournalEntries,
   type JournalEntry,
   type JournalFolder,
   type JournalGratitudeLines,
   type JournalStoreV2,
 } from "@/lib/journal-storage";
-import {
-  isJournalLocalOnlyMode,
-  setJournalLocalOnlyMode,
-} from "@/lib/journal-prefs";
 
 type JournalMainTab = "journal" | "gratitude";
 type JournalSection = JournalMainTab | "insights";
@@ -220,7 +218,8 @@ function JumpToDayPopover({
 }
 
 export function JournalView() {
-  const [signedIn, setSignedIn] = useState(() => Boolean(getMedimadeSessionJwt()));
+  const [signedIn, setSignedIn] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [folders, setFolders] = useState<JournalFolder[]>([]);
@@ -265,7 +264,6 @@ export function JournalView() {
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [jumpDate, setJumpDate] = useState("");
-  const [keepLocalOnly, setKeepLocalOnly] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importBatchId, setImportBatchId] = useState<string | null>(null);
@@ -299,12 +297,21 @@ export function JournalView() {
   }, [section]);
 
   useEffect(() => {
-    const on = () => {
-      clearJournalRemoteSessionCache();
-      setSignedIn(Boolean(getMedimadeSessionJwt()));
+    const sync = () => {
+      const next = Boolean(getMedimadeSessionJwt());
+      setSignedIn((prev) => {
+        if (prev !== next) {
+          clearJournalRemoteSessionCache();
+          setRemoteJournalChecked(false);
+          setHydrated(false);
+        }
+        return next;
+      });
+      setAuthReady(true);
     };
-    window.addEventListener("medimade-session-changed", on);
-    return () => window.removeEventListener("medimade-session-changed", on);
+    sync();
+    window.addEventListener("medimade-session-changed", sync);
+    return () => window.removeEventListener("medimade-session-changed", sync);
   }, []);
 
   useEffect(() => {
@@ -382,8 +389,11 @@ export function JournalView() {
   );
 
   useEffect(() => {
+    if (!authReady) return;
+    // Guests: demo samples on device. Signed-in: localStorage is only a cache —
+    // strip demos and wait for GET /journal/store (cloud is source of truth).
     const store = signedIn
-      ? loadJournalStore()
+      ? withoutDemoJournalEntries(loadJournalStoreRaw())
       : ensureGuestDemoJournalSeeded();
     const nextActive = activeIdForJournalTab(
       store.entries,
@@ -398,16 +408,19 @@ export function JournalView() {
     latestTitleRef.current = active?.title ?? "";
     latestGratitudeRef.current = active?.gratitude ?? emptyGratitudeLines();
     setGratitudeDraft(latestGratitudeRef.current);
-    setKeepLocalOnly(isJournalLocalOnlyMode());
     setHydrated(true);
-  }, [signedIn]);
+    if (signedIn) {
+      // Don't allow a previous guest "checked" skip to fire an empty PUT.
+      setRemoteJournalChecked(false);
+    }
+  }, [authReady, signedIn]);
 
   /** Pull cloud journal when signed in (guests stay on local demo / device pages). */
   useEffect(() => {
     if (!hydrated) return;
     let cancelled = false;
     const base = getMedimadeApiBase();
-    if (!signedIn || !base || isJournalLocalOnlyMode()) {
+    if (!signedIn || !base) {
       setRemoteJournalChecked(true);
       return;
     }
@@ -421,11 +434,15 @@ export function JournalView() {
         if (cancelled) return;
         const localEntries = entriesRef.current;
         const localIsDemoOnly =
-          localEntries.length > 0 &&
-          localEntries.every((e) => e.sourceMetadata?.demo === true);
+          localEntries.length === 0 || isDemoOnlyStore({
+            version: 2,
+            activeEntryId: null,
+            entries: localEntries,
+          });
 
         if (!remote?.entries?.length) {
-          if (localIsDemoOnly) {
+          // Empty cloud account: start a blank personal page (never keep demos).
+          if (localIsDemoOnly || localEntries.some(isDemoJournalEntry)) {
             const blank = newJournalEntry();
             skipCloudPushRef.current = true;
             entriesRef.current = [blank];
@@ -438,22 +455,19 @@ export function JournalView() {
             latestGratitudeRef.current = emptyGratitudeLines();
             setGratitudeDraft(latestGratitudeRef.current);
             persist([blank], blank.id, []);
+          } else {
+            // Cache already has personal rows with empty remote — keep showing
+            // them and let the push effect upload (first sync of this device).
+            skipCloudPushRef.current = false;
           }
           return;
         }
 
-        if (
-          !shouldPreferRemoteJournalStore(remote, localEntries) &&
-          !localIsDemoOnly
-        ) {
-          return;
-        }
+        // Cloud wins: replace device cache (including any leftover demos).
         skipCloudPushRef.current = true;
         const merged = mergeRemoteJournalKeepingLocalOnly(
           remote,
-          localIsDemoOnly
-            ? localEntries.filter((e) => e.sourceMetadata?.demo !== true)
-            : localEntries,
+          localEntries,
         );
         const preferred =
           merged.activeEntryId &&
@@ -474,7 +488,22 @@ export function JournalView() {
         setGratitudeDraft(latestGratitudeRef.current);
         persist(merged.entries, nextActive, merged.folders ?? []);
       } catch {
-        /* offline or not deployed yet */
+        /* offline — keep non-demo local cache if any */
+        const cleaned = withoutDemoJournalEntries({
+          version: 2,
+          activeEntryId: activeIdRef.current,
+          entries: entriesRef.current,
+          ...(foldersRef.current.length
+            ? { folders: foldersRef.current }
+            : {}),
+        });
+        if (cleaned.entries.length !== entriesRef.current.length) {
+          skipCloudPushRef.current = true;
+          entriesRef.current = cleaned.entries;
+          setEntries(cleaned.entries);
+          setActiveEntryId(cleaned.activeEntryId);
+          persist(cleaned.entries, cleaned.activeEntryId, foldersRef.current);
+        }
       } finally {
         if (!cancelled) {
           markJournalStorePulledThisSession();
@@ -485,7 +514,7 @@ export function JournalView() {
     return () => {
       cancelled = true;
     };
-  }, [hydrated, persist, keepLocalOnly, signedIn]);
+  }, [hydrated, persist, signedIn]);
 
   const cloudPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -497,14 +526,20 @@ export function JournalView() {
       skipCloudPushRef.current = false;
       return;
     }
-    if (isJournalLocalOnlyMode()) return;
     const base = getMedimadeApiBase();
     if (!base) return;
     if (!getMedimadeSessionJwt()) return;
+    const cloudEntries = entriesForCloudPut(entries);
+    // Never push an empty body while demos are still on screen (would wipe cloud).
+    if (
+      cloudEntries.length === 0 &&
+      entries.some(isDemoJournalEntry)
+    ) {
+      return;
+    }
     if (cloudPushTimerRef.current) clearTimeout(cloudPushTimerRef.current);
     cloudPushTimerRef.current = setTimeout(() => {
       cloudPushTimerRef.current = null;
-      const cloudEntries = entriesForCloudPut(entries);
       const store: JournalStoreV2 = {
         version: 2,
         activeEntryId: cloudEntries.some((e) => e.id === activeEntryId)
@@ -523,7 +558,7 @@ export function JournalView() {
         cloudPushTimerRef.current = null;
       }
     };
-  }, [signedIn, hydrated, remoteJournalChecked, entries, activeEntryId, keepLocalOnly, folders]);
+  }, [signedIn, hydrated, remoteJournalChecked, entries, activeEntryId, folders]);
 
   const flushSaveSync = useCallback(() => {
     if (saveTimerRef.current) {
@@ -1801,17 +1836,6 @@ export function JournalView() {
         entries,
         ...(folders.length ? { folders } : {}),
       }}
-      keepLocalOnly={keepLocalOnly}
-      onKeepLocalOnlyChange={(on) => {
-        setKeepLocalOnly(on);
-        setJournalLocalOnlyMode(on);
-      }}
-      entryLocalOnly={activeEntry?.localOnly}
-      onEntryLocalOnlyChange={
-        activeEntry
-          ? (on) => patchActive({ localOnly: on })
-          : undefined
-      }
     />
     <JournalImportDialog
       open={importOpen}

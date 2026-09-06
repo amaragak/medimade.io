@@ -8,11 +8,11 @@ import {
   runJournalInsightsRemote,
 } from "@/lib/medimade-api";
 import { setCachedJournalInsights } from "@/lib/journal-remote-cache";
-import { loadJournalStore } from "@/lib/journal-storage";
+import { loadJournalStoreRaw } from "@/lib/journal-storage";
 
 function maxUpdatedAtIso(): string | null {
   try {
-    const store = loadJournalStore();
+    const store = loadJournalStoreRaw();
     if (!store.entries.length) return null;
     let max = 0;
     for (const e of store.entries) {
