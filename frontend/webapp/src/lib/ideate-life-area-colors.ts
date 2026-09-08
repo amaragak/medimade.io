@@ -40,12 +40,9 @@ export function lifeAreaCardBackgroundDark(creationIndex: number): string {
 }
 
 /** Inline CSS vars so `.dark .life-area-card` can swap fill without a JS theme hook. */
-export function lifeAreaCardBgVars(creationIndex: number): {
-  ["--life-area-bg"]: string;
-  ["--life-area-bg-dark"]: string;
-} {
+export function lifeAreaCardBgVars(creationIndex: number): React.CSSProperties {
   return {
-    "--life-area-bg": lifeAreaCardBackground(creationIndex),
-    "--life-area-bg-dark": lifeAreaCardBackgroundDark(creationIndex),
+    ["--life-area-bg" as string]: lifeAreaCardBackground(creationIndex),
+    ["--life-area-bg-dark" as string]: lifeAreaCardBackgroundDark(creationIndex),
   };
 }
