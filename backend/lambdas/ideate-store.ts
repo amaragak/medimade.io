@@ -60,6 +60,7 @@ type IdeateCloudBundle = {
   values: unknown;
   regrets?: unknown;
   quotes?: unknown;
+  manifesto?: unknown;
 };
 
 function isBundle(x: unknown): x is IdeateCloudBundle {
@@ -222,6 +223,22 @@ function stripQuotes(quotes: unknown): unknown {
   return { v: 1, quotes: list.slice(0, 40) };
 }
 
+function stripManifesto(manifesto: unknown): unknown {
+  if (!manifesto || typeof manifesto !== "object") {
+    return { v: 1, text: "", updatedAt: new Date().toISOString() };
+  }
+  const o = manifesto as Record<string, unknown>;
+  const text = typeof o.text === "string" ? o.text.trim().slice(0, 400) : "";
+  return {
+    v: 1,
+    text,
+    updatedAt:
+      typeof o.updatedAt === "string" && o.updatedAt.trim()
+        ? o.updatedAt.trim()
+        : new Date().toISOString(),
+  };
+}
+
 export async function handler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
@@ -286,6 +303,11 @@ export async function handler(
     let existingValues: unknown = { v: 1, values: [] };
     let existingRegrets: unknown = { v: 1, regrets: [] };
     let existingQuotes: unknown = { v: 1, quotes: [] };
+    let existingManifesto: unknown = {
+      v: 1,
+      text: "",
+      updatedAt: new Date().toISOString(),
+    };
     try {
       const existingOut = await ddb.send(
         new GetCommand({
@@ -302,10 +324,12 @@ export async function handler(
           values?: unknown;
           regrets?: unknown;
           quotes?: unknown;
+          manifesto?: unknown;
         };
         if ("values" in es) existingValues = es.values;
         if ("regrets" in es) existingRegrets = es.regrets;
         if ("quotes" in es) existingQuotes = es.quotes;
+        if ("manifesto" in es) existingManifesto = es.manifesto;
       }
     } catch {
       /* fall through */
@@ -320,12 +344,16 @@ export async function handler(
       ideate: stripDemoDreams(o.ideate),
       visionBoard: stripDemoVision(o.visionBoard),
       reflectionQuestions: stripDemoQuestions(o.reflectionQuestions),
-      // Older clients omit `values` / `regrets` / `quotes` — keep whatever is already stored.
+      // Older clients omit fields — keep whatever is already stored.
       values: "values" in o ? stripValues(o.values) : stripValues(existingValues),
       regrets:
         "regrets" in o ? stripRegrets(o.regrets) : stripRegrets(existingRegrets),
       quotes:
         "quotes" in o ? stripQuotes(o.quotes) : stripQuotes(existingQuotes),
+      manifesto:
+        "manifesto" in o
+          ? stripManifesto(o.manifesto)
+          : stripManifesto(existingManifesto),
     };
 
     const encoded = JSON.stringify(bundle);

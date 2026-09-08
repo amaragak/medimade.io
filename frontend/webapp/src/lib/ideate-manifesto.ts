@@ -1,20 +1,130 @@
 /**
- * One-sentence Dream manifesto distilled from values (+ life area titles).
- * Cached on device by fingerprint; regenerated via Haiku when inputs change.
+ * Ideate manifesto — one sentence. Persisted; only changes on edit or regenerate.
+ * Signed-in: in-memory + cloud bundle. Guests: device localStorage.
  */
 
+import { isMedimadeSessionActive } from "@/lib/auth-session";
 import { CLAUDE_HAIKU_45_MODEL_ID } from "@/lib/claude-pricing";
 import { streamMedimadeChat } from "@/lib/medimade-api";
 
 const LS_KEY = "mm_ideate_manifesto_v1";
 const MAX_WORDS = 25;
 
-export type IdeateManifestoCacheV1 = {
+export type IdeateManifestoStoreV1 = {
   v: 1;
-  fingerprint: string;
   text: string;
   updatedAt: string;
 };
+
+/** @deprecated shape — migrated on read */
+type LegacyManifestoCacheV1 = {
+  v: 1;
+  fingerprint?: string;
+  text: string;
+  updatedAt: string;
+};
+
+let memoryStore: IdeateManifestoStoreV1 | null = null;
+
+function isSignedIn(): boolean {
+  return isMedimadeSessionActive();
+}
+
+function safeIso(): string {
+  try {
+    return new Date().toISOString();
+  } catch {
+    return "1970-01-01T00:00:00.000Z";
+  }
+}
+
+function emptyStore(): IdeateManifestoStoreV1 {
+  return { v: 1, text: "", updatedAt: safeIso() };
+}
+
+function normalizeStore(x: unknown): IdeateManifestoStoreV1 | null {
+  if (!x || typeof x !== "object") return null;
+  const o = x as LegacyManifestoCacheV1;
+  if (o.v !== 1 || typeof o.text !== "string") return null;
+  const text = sanitizeManifesto(o.text);
+  return {
+    v: 1,
+    text,
+    updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : safeIso(),
+  };
+}
+
+function removeManifestoLs(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(LS_KEY);
+  } catch {
+    /* */
+  }
+}
+
+export function clearIdeateManifestoDeviceData(): void {
+  memoryStore = null;
+  removeManifestoLs();
+}
+
+export function clearIdeateManifestoMemoryOnly(): void {
+  memoryStore = null;
+}
+
+/** @deprecated — use clearIdeateManifestoDeviceData */
+export function clearIdeateManifestoCache(): void {
+  clearIdeateManifestoDeviceData();
+}
+
+export function loadIdeateManifestoStore(): IdeateManifestoStoreV1 {
+  if (typeof window === "undefined") return emptyStore();
+  if (isSignedIn()) {
+    return memoryStore ? structuredClone(memoryStore) : emptyStore();
+  }
+  try {
+    const raw = window.localStorage.getItem(LS_KEY);
+    if (!raw) return emptyStore();
+    const parsed = normalizeStore(JSON.parse(raw) as unknown);
+    return parsed ?? emptyStore();
+  } catch {
+    return emptyStore();
+  }
+}
+
+export function saveIdeateManifestoStoreLocal(store: IdeateManifestoStoreV1) {
+  if (typeof window === "undefined") return;
+  const normalized = normalizeStore(store) ?? emptyStore();
+  if (isSignedIn()) {
+    memoryStore = structuredClone(normalized);
+    removeManifestoLs();
+    return;
+  }
+  memoryStore = null;
+  try {
+    window.localStorage.setItem(LS_KEY, JSON.stringify(normalized));
+  } catch {
+    /* */
+  }
+}
+
+export function saveIdeateManifestoStore(store: IdeateManifestoStoreV1) {
+  saveIdeateManifestoStoreLocal(store);
+  if (isSignedIn()) {
+    void import("@/lib/ideate-cloud").then((m) => m.scheduleIdeateCloudPush());
+  }
+}
+
+/** Any stored text, regardless of values fingerprint. */
+export function loadStoredManifesto(): string | null {
+  const text = loadIdeateManifestoStore().text.trim();
+  return text || null;
+}
+
+/** @deprecated fingerprint gate — prefer loadStoredManifesto */
+export function loadCachedManifesto(_fingerprint?: string): string | null {
+  return loadStoredManifesto();
+}
 
 export function manifestoFingerprint(
   values: string[],
@@ -31,50 +141,6 @@ export function manifestoFingerprint(
   return JSON.stringify({ v, a });
 }
 
-function readCache(): IdeateManifestoCacheV1 | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(LS_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as IdeateManifestoCacheV1;
-    if (
-      parsed?.v !== 1 ||
-      typeof parsed.fingerprint !== "string" ||
-      typeof parsed.text !== "string"
-    ) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function writeCache(next: IdeateManifestoCacheV1): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(LS_KEY, JSON.stringify(next));
-  } catch {
-    /* */
-  }
-}
-
-export function clearIdeateManifestoCache(): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(LS_KEY);
-  } catch {
-    /* */
-  }
-}
-
-export function loadCachedManifesto(fingerprint: string): string | null {
-  const cached = readCache();
-  if (!cached || cached.fingerprint !== fingerprint) return null;
-  const text = sanitizeManifesto(cached.text);
-  return text || null;
-}
-
 function clipWords(text: string, maxWords: number): string {
   const words = text.trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
   if (words.length <= maxWords) return words.join(" ");
@@ -82,14 +148,11 @@ function clipWords(text: string, maxWords: number): string {
 }
 
 /** Strip quotes / markdown italic markers models sometimes wrap around the sentence. */
-function sanitizeManifesto(text: string): string {
+export function sanitizeManifesto(text: string): string {
   let t = text.trim().replace(/\s+/g, " ");
   t = t.replace(/^["“”'`]+|["“”'`]+$/g, "").trim();
-  // *sentence* or **sentence**
   t = t.replace(/^\*{1,2}\s*([\s\S]*?)\s*\*{1,2}$/u, "$1").trim();
-  // _sentence_
   t = t.replace(/^_\s*([\s\S]*?)\s*_$/u, "$1").trim();
-  // Leftover edge asterisks
   t = t.replace(/^\*+\s*|\s*\*+$/g, "").trim();
   return t;
 }
@@ -123,10 +186,20 @@ function buildPrompt(values: string[], lifeAreaTitles: string[]): string {
   );
 }
 
+function persistText(text: string): string {
+  const cleaned = clipWords(sanitizeManifesto(text), MAX_WORDS);
+  if (!cleaned) return loadStoredManifesto() ?? "";
+  saveIdeateManifestoStore({
+    v: 1,
+    text: cleaned,
+    updatedAt: safeIso(),
+  });
+  return cleaned;
+}
+
 /**
- * Return cached manifesto or generate (Haiku). Falls back to a local sentence if the
- * chat call fails (e.g. guest / offline).
- * Pass `force: true` to bypass cache and regenerate.
+ * Return stored manifesto, or generate once when none exists.
+ * Pass `force: true` only for explicit regenerate.
  */
 export async function ensureIdeateManifesto(opts: {
   values: string[];
@@ -136,9 +209,8 @@ export async function ensureIdeateManifesto(opts: {
   const values = opts.values.map((t) => t.trim()).filter(Boolean);
   if (values.length === 0) return "";
 
-  const fingerprint = manifestoFingerprint(values, opts.lifeAreaTitles);
   if (!opts.force) {
-    const cached = loadCachedManifesto(fingerprint);
+    const cached = loadStoredManifesto();
     if (cached) return cached;
   }
 
@@ -149,7 +221,9 @@ export async function ensureIdeateManifesto(opts: {
         meditationStyle: "General",
         journalMode: true,
         claudeModel: CLAUDE_HAIKU_45_MODEL_ID,
-        messages: [{ role: "user", content: buildPrompt(values, opts.lifeAreaTitles) }],
+        messages: [
+          { role: "user", content: buildPrompt(values, opts.lifeAreaTitles) },
+        ],
       },
       () => {
         /* ignore stream deltas — we only need the final sentence */
@@ -164,31 +238,16 @@ export async function ensureIdeateManifesto(opts: {
     MAX_WORDS,
   );
   if (!text) text = localFallback(values);
-
-  writeCache({
-    v: 1,
-    fingerprint,
-    text,
-    updatedAt: new Date().toISOString(),
-  });
-  return text;
+  return persistText(text);
 }
 
-/** Persist a manually edited manifesto for the current values fingerprint. */
+/** Persist a manually edited manifesto. */
 export function saveIdeateManifestoManual(opts: {
   values: string[];
   lifeAreaTitles: string[];
   text: string;
 }): string {
   const values = opts.values.map((t) => t.trim()).filter(Boolean);
-  const fingerprint = manifestoFingerprint(values, opts.lifeAreaTitles);
-  const text = clipWords(sanitizeManifesto(opts.text), MAX_WORDS);
-  if (!text) return loadCachedManifesto(fingerprint) ?? "";
-  writeCache({
-    v: 1,
-    fingerprint,
-    text,
-    updatedAt: new Date().toISOString(),
-  });
-  return text;
+  if (values.length === 0) return "";
+  return persistText(opts.text);
 }

@@ -640,6 +640,8 @@ export type IdeateCloudBundle = {
   regrets?: unknown;
   /** Optional — meaningful quotes. */
   quotes?: unknown;
+  /** Optional — persisted manifesto sentence. */
+  manifesto?: unknown;
 };
 
 export type FamousAuthorQuotesResult = {

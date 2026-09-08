@@ -79,8 +79,7 @@ import { isMedimadeSessionActive } from "@/lib/auth-session";
 import { lifeAreaCardBgVars } from "@/lib/ideate-life-area-colors";
 import {
   ensureIdeateManifesto,
-  manifestoFingerprint,
-  loadCachedManifesto,
+  loadStoredManifesto,
   saveIdeateManifestoManual,
 } from "@/lib/ideate-manifesto";
 import {
@@ -418,13 +417,18 @@ export function PlanHomeClient() {
       setEditingManifesto(false);
       return;
     }
-    const fp = manifestoFingerprint(valueTexts, lifeAreaTitles);
-    const cached = loadCachedManifesto(fp);
-    if (cached) {
-      setManifesto(cached);
+    const stored = loadStoredManifesto();
+    if (stored) {
+      setManifesto(stored);
       setManifestoLoading(false);
       return;
     }
+    // Signed-in: wait for cloud pull so we don't regenerate over a stored sentence.
+    if (sessionActive && !cloudReady) {
+      setManifestoLoading(true);
+      return;
+    }
+    // First-time only — never regenerate on refresh / input churn.
     const req = ++manifestoReqRef.current;
     setManifestoLoading(true);
     void ensureIdeateManifesto({
@@ -435,7 +439,7 @@ export function PlanHomeClient() {
       setManifesto(text);
       setManifestoLoading(false);
     });
-  }, [valueTexts, lifeAreaTitles]);
+  }, [valueTexts, lifeAreaTitles, cloudReady, revision, sessionActive]);
 
   function beginEditManifesto() {
     if (!manifesto || manifestoRefreshing) return;

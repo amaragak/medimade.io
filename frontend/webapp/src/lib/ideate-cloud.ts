@@ -10,7 +10,13 @@ import {
   resetIdeateLocalToGuestDemos,
   withoutDemoIdeateStore,
 } from "@/lib/ideate-demo-seed";
-import { clearIdeateManifestoCache } from "@/lib/ideate-manifesto";
+import {
+  clearIdeateManifestoDeviceData,
+  clearIdeateManifestoMemoryOnly,
+  loadIdeateManifestoStore,
+  saveIdeateManifestoStoreLocal,
+  type IdeateManifestoStoreV1,
+} from "@/lib/ideate-manifesto";
 import {
   clearIdeateStoreDeviceData,
   clearIdeateStoreMemoryOnly,
@@ -99,7 +105,7 @@ export function clearIdeateSignedInWorkingCopy(): void {
   clearIdeateValuesMemoryOnly();
   clearIdeateRegretsMemoryOnly();
   clearIdeateQuotesMemoryOnly();
-  clearIdeateManifestoCache();
+  clearIdeateManifestoMemoryOnly();
   if (typeof window !== "undefined") {
     try {
       window.localStorage.removeItem("mm_ideate_demo_seed_v1");
@@ -125,7 +131,7 @@ export function wipeIdeateDeviceData(): void {
   clearIdeateValuesDeviceData();
   clearIdeateRegretsDeviceData();
   clearIdeateQuotesDeviceData();
-  clearIdeateManifestoCache();
+  clearIdeateManifestoDeviceData();
   if (typeof window !== "undefined") {
     try {
       window.localStorage.removeItem("mm_ideate_demo_seed_v1");
@@ -257,6 +263,20 @@ function stripQuotesForCloud(store: IdeateQuotesStoreV1): IdeateQuotesStoreV1 {
   };
 }
 
+function stripManifestoForCloud(
+  store: IdeateManifestoStoreV1,
+): IdeateManifestoStoreV1 {
+  const text = typeof store.text === "string" ? store.text.trim() : "";
+  return {
+    v: 1,
+    text,
+    updatedAt:
+      typeof store.updatedAt === "string" && store.updatedAt.trim()
+        ? store.updatedAt
+        : new Date().toISOString(),
+  };
+}
+
 export function buildIdeateCloudBundle(): IdeateCloudBundle {
   const ideate = withoutDemoIdeateStore(loadIdeateStoreRaw());
   return {
@@ -270,6 +290,7 @@ export function buildIdeateCloudBundle(): IdeateCloudBundle {
     values: stripValuesForCloud(loadIdeateValuesStore()),
     regrets: stripRegretsForCloud(loadIdeateRegretsStore()),
     quotes: stripQuotesForCloud(loadIdeateQuotesStore()),
+    manifesto: stripManifestoForCloud(loadIdeateManifestoStore()),
   };
 }
 
@@ -342,6 +363,13 @@ function snapshotDeviceIdeatePersonal(): IdeateCloudBundle | null {
       : { v: 1, quotes: [] }) as IdeateQuotesStoreV1,
   );
 
+  const manifestoRaw = readJsonLs("mm_ideate_manifesto_v1");
+  const manifesto = stripManifestoForCloud(
+    (manifestoRaw && typeof manifestoRaw === "object"
+      ? manifestoRaw
+      : { v: 1, text: "", updatedAt: new Date().toISOString() }) as IdeateManifestoStoreV1,
+  );
+
   const bundle: IdeateCloudBundle = {
     version: 1,
     updatedAt: new Date().toISOString(),
@@ -351,6 +379,7 @@ function snapshotDeviceIdeatePersonal(): IdeateCloudBundle | null {
     values,
     regrets,
     quotes,
+    manifesto,
   };
   return ideateBundleHasContent(bundle) ? bundle : null;
 }
@@ -365,6 +394,7 @@ function ideateBundleHasContent(bundle: IdeateCloudBundle): boolean {
   const values = bundle.values as IdeateValuesStoreV1 | null | undefined;
   const regrets = bundle.regrets as IdeateRegretsStoreV1 | null | undefined;
   const quotes = bundle.quotes as IdeateQuotesStoreV1 | null | undefined;
+  const manifesto = bundle.manifesto as IdeateManifestoStoreV1 | null | undefined;
   if ((ideate?.dreams?.length ?? 0) > 0) return true;
   if ((vision?.items?.length ?? 0) > 0) return true;
   if (vision?.selfReference?.url || vision?.selfReference?.key) return true;
@@ -372,6 +402,7 @@ function ideateBundleHasContent(bundle: IdeateCloudBundle): boolean {
   if ((values?.values?.length ?? 0) > 0) return true;
   if ((regrets?.regrets?.length ?? 0) > 0) return true;
   if ((quotes?.quotes?.length ?? 0) > 0) return true;
+  if ((manifesto?.text?.trim().length ?? 0) > 0) return true;
   return false;
 }
 
@@ -384,6 +415,7 @@ function removeIdeateLocalStorageKeys(): void {
     window.localStorage.removeItem("mm_ideate_values_v1");
     window.localStorage.removeItem("mm_ideate_regrets_v1");
     window.localStorage.removeItem("mm_ideate_quotes_v1");
+    window.localStorage.removeItem("mm_ideate_manifesto_v1");
   } catch {
     /* */
   }
@@ -428,6 +460,15 @@ export function applyIdeateCloudBundle(bundle: IdeateCloudBundle): void {
       (bundle.quotes as IdeateQuotesStoreV1) ?? { v: 1, quotes: [] },
     );
     saveIdeateQuotesStoreLocal(quotes);
+
+    const manifesto = stripManifestoForCloud(
+      (bundle.manifesto as IdeateManifestoStoreV1) ?? {
+        v: 1,
+        text: "",
+        updatedAt: new Date().toISOString(),
+      },
+    );
+    saveIdeateManifestoStoreLocal(manifesto);
   });
   notifyIdeateCloud();
 }
@@ -493,6 +534,11 @@ export async function pullIdeateStoreFromCloud(opts?: {
       saveIdeateValuesStoreLocal({ v: 1, values: [] });
       saveIdeateRegretsStoreLocal({ v: 1, regrets: [] });
       saveIdeateQuotesStoreLocal({ v: 1, quotes: [] });
+      saveIdeateManifestoStoreLocal({
+        v: 1,
+        text: "",
+        updatedAt: new Date().toISOString(),
+      });
     });
     notifyIdeateCloud();
     return { applied: true, empty: true };
@@ -513,6 +559,9 @@ export async function pullIdeateStoreFromCloud(opts?: {
       saveIdeateValuesStoreLocal(stripValuesForCloud(loadIdeateValuesStore()));
       saveIdeateRegretsStoreLocal(stripRegretsForCloud(loadIdeateRegretsStore()));
       saveIdeateQuotesStoreLocal(stripQuotesForCloud(loadIdeateQuotesStore()));
+      saveIdeateManifestoStoreLocal(
+        stripManifestoForCloud(loadIdeateManifestoStore()),
+      );
     });
     notifyIdeateCloud();
     return { applied: false, empty: false };
