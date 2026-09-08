@@ -138,6 +138,9 @@ jobs:
         if: steps.plan.outputs.frontend == 'true'
         working-directory: frontend/webapp/deploy
         env:
-          # Keep 0 until consciously.live is detached from the Sydney CloudFront distribution.
-          MEDIMADE_SST_ATTACH_DOMAIN: ${{ vars.MEDIMADE_SST_ATTACH_DOMAIN || '0' }}
+          # Prod must keep consciously.live + ACM on the live CloudFront distro.
+          # Default attach=1. Set repo Actions var MEDIMADE_SST_ATTACH_DOMAIN=0 only
+          # for temporary cloudfront.net previews (DNS must not point at that distro).
+          # Note: vars.* is repository/org Actions Variables — not Environment vars/secrets.
+          MEDIMADE_SST_ATTACH_DOMAIN: ${{ vars.MEDIMADE_SST_ATTACH_DOMAIN || '1' }}
         run: ./deploy-web --stage production

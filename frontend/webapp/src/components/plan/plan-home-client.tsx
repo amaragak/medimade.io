@@ -9,13 +9,12 @@ import {
   loadPlanDreamsStore,
   savePlanDreamsStore,
   upsertPlanDream,
-  addLifeAreaCheckIn,
-  latestLifeAreaCheckIn,
   type PlanDream,
 } from "@/lib/plan-dreams";
 import { PlanResistanceThreadBanner } from "@/components/plan/plan-resistance-thread-banner";
 import { IdeateCollapsibleSection } from "@/components/plan/ideate-collapsible-section";
-import { loadIdeateStore, upsertDream, saveIdeateStore } from "@/lib/plan-ideate-store";
+import { LifeAreaColorPicker } from "@/components/plan/life-area-color-picker";
+import { loadIdeateStore } from "@/lib/plan-ideate-store";
 import { globalResistanceThreads } from "@/lib/plan-resistance-threads";
 import {
   loadIdeateVisionBoardStore,
@@ -68,6 +67,8 @@ import {
 import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 import { ensureGuestCompanionDemos } from "@/lib/ideate-demo-seed";
 import { isMedimadeSessionActive } from "@/lib/auth-session";
+import { getLifeAreaColor } from "@/lib/ideate-life-area-colors";
+import type { LifeAreaColorId } from "@/lib/ideate-life-area-colors";
 import {
   ensureIdeateManifesto,
   manifestoFingerprint,
@@ -108,21 +109,6 @@ function formatIndex(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-function formatUpdatedAt(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "—";
-    return d.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
-    return "—";
-  }
-}
-
 export function PlanHomeClient() {
   const router = useRouter();
   const [dreams, setDreams] = useState<PlanDream[]>([]);
@@ -150,6 +136,7 @@ export function PlanHomeClient() {
   const [newDream, setNewDream] = useState("");
   const [newObstacle, setNewObstacle] = useState("");
   const [newVision, setNewVision] = useState("");
+  const [newCardColor, setNewCardColor] = useState<LifeAreaColorId | null>(null);
   const [addQuestionOpen, setAddQuestionOpen] = useState(false);
   const [customDraft, setCustomDraft] = useState("");
   const [writingCustom, setWritingCustom] = useState(false);
@@ -162,8 +149,6 @@ export function PlanHomeClient() {
   const [addingRegret, setAddingRegret] = useState(false);
   const [regretDraft, setRegretDraft] = useState("");
   const [regretCategoryDraft, setRegretCategoryDraft] = useState("");
-  const [checkInDreamId, setCheckInDreamId] = useState<string | null>(null);
-  const [checkInDraft, setCheckInDraft] = useState("");
   const [scrollHintVisible, setScrollHintVisible] = useState(true);
   const addPickerRef = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLElement>(null);
@@ -415,12 +400,14 @@ export function PlanHomeClient() {
       dreamText: opts?.skipReflections ? "" : newDream,
       obstacleText: opts?.skipReflections ? "" : newObstacle,
       visionText: opts?.skipReflections ? "" : newVision,
+      cardColor: newCardColor,
     });
     savePlanDreamsStore(upsertPlanDream(store, dream));
     setNewTitle("");
     setNewDream("");
     setNewObstacle("");
     setNewVision("");
+    setNewCardColor(null);
     setModalOpen(false);
     refresh();
   }
@@ -462,49 +449,6 @@ export function PlanHomeClient() {
 
   function handleRemoveRegret(id: string) {
     persistRegrets(removeIdeateRegret({ v: 1, regrets }, id).regrets);
-  }
-
-  function saveCheckIn() {
-    if (!checkInDreamId) return;
-    const note = checkInDraft.trim();
-    if (!note) return;
-    const store = loadIdeateStore();
-    const dream = store.dreams.find((d) => d.id === checkInDreamId);
-    if (!dream) return;
-    const nextDream = addLifeAreaCheckIn(dream, note);
-    saveIdeateStore(upsertDream(store, nextDream));
-    setCheckInDraft("");
-    setCheckInDreamId(null);
-    refresh();
-    router.push(`/ideate/goal/${encodeURIComponent(nextDream.id)}`);
-  }
-
-  function startMeditateOnArea(dream: PlanDream) {
-    const checkIn = latestLifeAreaCheckIn(dream);
-    const handoff: PlanCreateHandoffV2 = {
-      v: 2,
-      goalTitle: dream.title.trim() || "Untitled",
-      visionText: dream.visionText.trim(),
-      dreamText: dream.dreamText.trim() || dream.firstThought.trim(),
-      obstacleText: dream.obstacleText.trim(),
-      project: {
-        dreamText: dream.dreamText.trim() || dream.firstThought.trim(),
-        resistanceText: dream.obstacleText.trim(),
-        visionText: dream.visionText.trim(),
-      },
-      activeResistanceThemes: checkIn
-        ? [
-            {
-              category: "check_in",
-              sampleText: checkIn.note,
-              level: "project",
-              occurrences: 1,
-            },
-          ]
-        : [],
-    };
-    writePlanCreateHandoff(handoff);
-    router.push("/meditate/create/from-chat?fromDream=1");
   }
 
   function exploreRegretInIdeate(regret: IdeateRegret) {
@@ -631,13 +575,6 @@ export function PlanHomeClient() {
     regrets.length === 0
       ? "No entries yet"
       : regrets[0]!.statement.trim() || "Untitled";
-  const lifeAreasSummary =
-    sortedDreams.length === 0
-      ? "No life areas yet"
-      : sortedDreams
-          .map((d) => d.title.trim() || "Untitled")
-          .slice(0, 4)
-          .join(" · ");
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)] pb-20">
@@ -804,6 +741,68 @@ export function PlanHomeClient() {
             <PlanResistanceThreadBanner theme={resistanceThreads[0]} />
           </div>
         ) : null}
+
+        {/* —— Life areas —— */}
+        <section className="pt-6 sm:pt-8" aria-label="Your life areas">
+          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {sortedDreams.map((d) => {
+              const snippet = lifeAreaSnippet(d);
+              const color = getLifeAreaColor(d.cardColor);
+              return (
+                <li key={d.id} className="min-w-0">
+                  <Link
+                    href={`/ideate/goal/${encodeURIComponent(d.id)}`}
+                    className={`group flex aspect-square cursor-pointer flex-col rounded-2xl border p-4 shadow-sm transition-[transform,border-color] duration-150 hover:-translate-y-0.5 sm:p-5 ${
+                      color
+                        ? ""
+                        : "border-border bg-card hover:border-accent/80"
+                    }`}
+                    style={
+                      color
+                        ? {
+                            backgroundColor: color.wash,
+                            borderColor: color.border,
+                          }
+                        : undefined
+                    }
+                    onMouseEnter={(e) => {
+                      if (!color) return;
+                      e.currentTarget.style.borderColor = color.borderHover;
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!color) return;
+                      e.currentTarget.style.borderColor = color.border;
+                    }}
+                  >
+                    <h3 className="shrink-0 font-display text-lg font-medium leading-snug tracking-tight text-foreground sm:text-xl">
+                      {d.title.trim() || "Untitled"}
+                    </h3>
+                    <p
+                      className={`mt-2 line-clamp-3 min-h-0 font-sans text-sm leading-relaxed ${
+                        snippet ? "text-muted" : "italic text-faint"
+                      }`}
+                    >
+                      {snippet ?? "Nothing written yet"}
+                    </p>
+                  </Link>
+                </li>
+              );
+            })}
+
+            <li className="min-w-0">
+              <button
+                type="button"
+                onClick={() => setModalOpen(true)}
+                aria-label="Add a life area"
+                className="flex aspect-square w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card text-muted shadow-sm transition-colors hover:border-accent/80 hover:text-foreground"
+              >
+                <span className="font-sans text-3xl font-light leading-none" aria-hidden>
+                  +
+                </span>
+              </button>
+            </li>
+          </ul>
+        </section>
 
         {/* —— Values —— */}
         <IdeateCollapsibleSection
@@ -1241,139 +1240,16 @@ export function PlanHomeClient() {
             </button>
           )}
         </IdeateCollapsibleSection>
-
-        {/* —— Life areas —— */}
-        <IdeateCollapsibleSection
-          eyebrow="Your life areas"
-          summary={lifeAreasSummary}
-          collapsed={collapsed.lifeAreas}
-          onToggle={() => toggleSection("lifeAreas")}
-        >
-          {sortedDreams.length === 0 ? (
-            <p className="font-sans text-sm italic text-faint">
-              No life areas yet — add one below when you&apos;re ready.
-            </p>
-          ) : (
-            <ul>
-              {sortedDreams.map((d, i) => {
-                const snippet = lifeAreaSnippet(d);
-                const checkIn = latestLifeAreaCheckIn(d);
-                const checkingIn = checkInDreamId === d.id;
-                return (
-                  <li
-                    key={d.id}
-                    className={`border-b-[0.5px] border-border py-7 ${
-                      i === 0 ? "border-t-0 pt-2" : ""
-                    }`}
-                  >
-                    <div className="grid gap-4 sm:grid-cols-[1fr_2fr] sm:gap-10">
-                      <h3 className="font-display text-xl font-normal leading-[1.3] text-foreground">
-                        {d.title.trim() || "Untitled"}
-                      </h3>
-                      <div className="min-w-0">
-                        <p
-                          className={`font-sans text-sm leading-[1.7] ${
-                            snippet ? "text-muted" : "italic text-faint"
-                          }`}
-                        >
-                          {snippet ?? "Nothing written yet"}
-                        </p>
-                        <p className="mt-2 font-sans text-xs text-muted">
-                          {checkIn
-                            ? `Last check-in: ${formatUpdatedAt(checkIn.createdAt)} · ${checkIn.note}`
-                            : "No check-in yet — how's it going?"}
-                        </p>
-                        {checkingIn ? (
-                          <form
-                            className="mt-3 flex flex-col gap-2"
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              saveCheckIn();
-                            }}
-                          >
-                            <input
-                              autoFocus
-                              value={checkInDraft}
-                              onChange={(e) => setCheckInDraft(e.target.value)}
-                              placeholder="Did you open the doc this week?"
-                              maxLength={280}
-                              className="w-full rounded-lg border border-border bg-background px-3 py-2 font-sans text-sm outline-none ring-accent/30 focus:ring-2"
-                            />
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCheckInDreamId(null);
-                                  setCheckInDraft("");
-                                }}
-                                className="rounded-full px-3 py-1.5 text-xs font-medium text-muted"
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                type="submit"
-                                disabled={!checkInDraft.trim()}
-                                className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
-                              >
-                                Save & open
-                              </button>
-                            </div>
-                          </form>
-                        ) : (
-                          <p className="mt-2 font-sans text-[13px] font-medium text-accent-link">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setCheckInDreamId(d.id);
-                                setCheckInDraft("");
-                              }}
-                              className="cursor-pointer hover:opacity-80"
-                            >
-                              Check in →
-                            </button>
-                            <span className="mx-1.5 text-muted" aria-hidden>
-                              ·
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => startMeditateOnArea(d)}
-                              className="cursor-pointer hover:opacity-80"
-                            >
-                              Meditate on this →
-                            </button>
-                            <span className="mx-1.5 text-muted" aria-hidden>
-                              ·
-                            </span>
-                            <Link
-                              href={`/ideate/goal/${encodeURIComponent(d.id)}`}
-                              className="hover:opacity-80"
-                            >
-                              Open area →
-                            </Link>
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="mt-5 cursor-pointer font-sans text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
-          >
-            + Add a life area
-          </button>
-        </IdeateCollapsibleSection>
       </section>
 
       {modalOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-overlay/45 p-4 backdrop-blur-[2px] sm:items-center"
           role="presentation"
-          onClick={() => setModalOpen(false)}
+          onClick={() => {
+            setModalOpen(false);
+            setNewCardColor(null);
+          }}
         >
           <div
             role="dialog"
@@ -1401,6 +1277,16 @@ export function PlanHomeClient() {
                 className="mt-1.5 w-full rounded-xl border border-[#E5DFD0] bg-card px-3 py-2.5 text-sm outline-none ring-accent/30 focus:ring-2 dark:border-border"
               />
             </label>
+
+            <div className="mt-5">
+              <p className="text-sm font-medium text-foreground">Colour</p>
+              <div className="mt-2.5">
+                <LifeAreaColorPicker
+                  value={newCardColor}
+                  onChange={setNewCardColor}
+                />
+              </div>
+            </div>
 
             <div className="mt-5 space-y-4">
               <label className="block">

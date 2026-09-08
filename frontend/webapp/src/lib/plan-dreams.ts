@@ -6,6 +6,7 @@ import {
   loadIdeateStore,
   saveIdeateStore,
 } from "@/lib/plan-ideate-store";
+import { isLifeAreaColorId } from "@/lib/ideate-life-area-colors";
 
 export type DreamState =
   | "germinating"
@@ -55,6 +56,8 @@ export type PlanDream = {
   looseNotes: string;
   /** Outer check-ins — newest first. */
   checkIns: LifeAreaCheckIn[];
+  /** Optional muted card colour id (see ideate-life-area-colors). */
+  cardColor: string | null;
   /** Guest sample — device-only; stripped after sign-in. */
   demo?: boolean;
   meditationsGenerated: number;
@@ -92,6 +95,7 @@ export function createPlanDream(input: {
   dreamText?: string;
   obstacleText?: string;
   visionText?: string;
+  cardColor?: string | null;
 }): PlanDream {
   const first = (input.firstThought ?? "").trim();
   const dreamText = (input.dreamText ?? first).trim();
@@ -115,6 +119,7 @@ export function createPlanDream(input: {
     visionEntries: [],
     looseNotes: "",
     checkIns: [],
+    cardColor: isLifeAreaColorId(input.cardColor) ? input.cardColor : null,
     meditationsGenerated: 0,
     completedAt: null,
   };
@@ -208,6 +213,7 @@ function normalizeDreams(raw: unknown[]): PlanDream[] {
       visionEntries: normalizeTimeline(d.visionEntries),
       looseNotes: typeof d.looseNotes === "string" ? d.looseNotes : "",
       checkIns: normalizeCheckIns(d.checkIns),
+      cardColor: isLifeAreaColorId(d.cardColor) ? d.cardColor : null,
       meditationsGenerated:
         typeof d.meditationsGenerated === "number" &&
         Number.isFinite(d.meditationsGenerated)
@@ -293,6 +299,7 @@ function migrateLegacyPlanIfNeeded(): PlanDreamsStoreV1 {
         visionEntries: [],
         looseNotes: "",
         checkIns: [],
+        cardColor: null,
         meditationsGenerated: 0,
         completedAt: null,
       });

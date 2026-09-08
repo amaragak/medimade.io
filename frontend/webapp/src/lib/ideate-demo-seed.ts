@@ -104,13 +104,19 @@ function isCompanionSeedStale(): boolean {
 }
 
 function dreamBase(
-  partial: Omit<PlanDream, "meditationsGenerated" | "completedAt" | "checkIns"> &
-    Partial<Pick<PlanDream, "meditationsGenerated" | "completedAt" | "checkIns">>,
+  partial: Omit<
+    PlanDream,
+    "meditationsGenerated" | "completedAt" | "checkIns" | "cardColor"
+  > &
+    Partial<
+      Pick<PlanDream, "meditationsGenerated" | "completedAt" | "checkIns" | "cardColor">
+    >,
 ): PlanDream {
   return {
     meditationsGenerated: 0,
     completedAt: null,
     checkIns: [],
+    cardColor: null,
     ...partial,
     demo: true,
   };

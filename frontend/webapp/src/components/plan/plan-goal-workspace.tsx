@@ -26,6 +26,11 @@ import {
 } from "@/lib/plan-ideate-store";
 import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 import { isMedimadeSessionActive } from "@/lib/auth-session";
+import { LifeAreaColorPicker } from "@/components/plan/life-area-color-picker";
+import {
+  isLifeAreaColorId,
+  type LifeAreaColorId,
+} from "@/lib/ideate-life-area-colors";
 
 type ProjectTab = "reflect" | "steps";
 
@@ -185,6 +190,16 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
               <p className="mt-2 text-sm text-muted">
                 A quiet place to think—with a little help when you want it.
               </p>
+              <div className="mt-4">
+                <LifeAreaColorPicker
+                  value={
+                    isLifeAreaColorId(dream.cardColor) ? dream.cardColor : null
+                  }
+                  onChange={(id: LifeAreaColorId | null) =>
+                    patch({ cardColor: id })
+                  }
+                />
+              </div>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1.5">
               <button
