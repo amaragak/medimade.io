@@ -6,7 +6,6 @@ import {
   loadIdeateStore,
   saveIdeateStore,
 } from "@/lib/plan-ideate-store";
-import { isLifeAreaColorId } from "@/lib/ideate-life-area-colors";
 
 export type DreamState =
   | "germinating"
@@ -56,7 +55,7 @@ export type PlanDream = {
   looseNotes: string;
   /** Outer check-ins — newest first. */
   checkIns: LifeAreaCheckIn[];
-  /** Optional muted card colour id (see ideate-life-area-colors). */
+  /** @deprecated Unused — card colour is assigned from a fixed palette by creation order. */
   cardColor: string | null;
   /** Guest sample — device-only; stripped after sign-in. */
   demo?: boolean;
@@ -95,7 +94,6 @@ export function createPlanDream(input: {
   dreamText?: string;
   obstacleText?: string;
   visionText?: string;
-  cardColor?: string | null;
 }): PlanDream {
   const first = (input.firstThought ?? "").trim();
   const dreamText = (input.dreamText ?? first).trim();
@@ -119,7 +117,7 @@ export function createPlanDream(input: {
     visionEntries: [],
     looseNotes: "",
     checkIns: [],
-    cardColor: isLifeAreaColorId(input.cardColor) ? input.cardColor : null,
+    cardColor: null,
     meditationsGenerated: 0,
     completedAt: null,
   };
@@ -213,7 +211,10 @@ function normalizeDreams(raw: unknown[]): PlanDream[] {
       visionEntries: normalizeTimeline(d.visionEntries),
       looseNotes: typeof d.looseNotes === "string" ? d.looseNotes : "",
       checkIns: normalizeCheckIns(d.checkIns),
-      cardColor: isLifeAreaColorId(d.cardColor) ? d.cardColor : null,
+      cardColor:
+        typeof d.cardColor === "string" && d.cardColor.trim()
+          ? d.cardColor.trim()
+          : null,
       meditationsGenerated:
         typeof d.meditationsGenerated === "number" &&
         Number.isFinite(d.meditationsGenerated)

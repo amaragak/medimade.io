@@ -1,7 +1,6 @@
 import type { DreamState, PlanDream } from "@/lib/plan-dreams";
 import { ensureGuestDemoIdeateSeeded, withoutDemoIdeateStore } from "@/lib/ideate-demo-seed";
 import { isMedimadeSessionActive } from "@/lib/auth-session";
-import { isLifeAreaColorId } from "@/lib/ideate-life-area-colors";
 
 /**
  * Ideate hierarchy — projects (PlanDream), subtasks, todos, resistance entries.
@@ -131,7 +130,10 @@ function normalizeDream(d: PlanDream): PlanDream {
     visionEntries: Array.isArray(d.visionEntries) ? d.visionEntries : [],
     looseNotes: typeof d.looseNotes === "string" ? d.looseNotes : "",
     checkIns: Array.isArray(d.checkIns) ? d.checkIns.slice(0, 40) : [],
-    cardColor: isLifeAreaColorId(d.cardColor) ? d.cardColor : null,
+    cardColor:
+      typeof d.cardColor === "string" && d.cardColor.trim()
+        ? d.cardColor.trim()
+        : null,
     completedAt:
       typeof (d as PlanDream & { completedAt?: unknown }).completedAt === "string"
         ? (d as PlanDream & { completedAt: string }).completedAt

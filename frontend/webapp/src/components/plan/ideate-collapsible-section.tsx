@@ -32,7 +32,7 @@ export function IdeateCollapsibleSection({
         }`}
       >
         <div className="flex min-w-0 items-center gap-4">
-          <p className="shrink-0 font-sans text-[15px] font-medium uppercase tracking-[0.08em] text-muted">
+          <p className="shrink-0 font-sans text-[15px] font-medium uppercase tracking-[0.08em] text-[#1E2530] dark:text-foreground">
             {eyebrow}
           </p>
           {collapsed ? (
@@ -66,7 +66,7 @@ export function IdeateCollapsibleSection({
         <div
           className={`min-h-0 ${collapsed ? "overflow-hidden" : "overflow-visible"}`}
         >
-          <div className={collapsed ? "" : "pt-3"}>{children}</div>
+          <div className={collapsed ? "" : "pt-4"}>{children}</div>
         </div>
       </div>
     </section>

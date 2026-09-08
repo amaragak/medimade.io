@@ -13,7 +13,6 @@ import {
 } from "@/lib/plan-dreams";
 import { PlanResistanceThreadBanner } from "@/components/plan/plan-resistance-thread-banner";
 import { IdeateCollapsibleSection } from "@/components/plan/ideate-collapsible-section";
-import { LifeAreaColorPicker } from "@/components/plan/life-area-color-picker";
 import { loadIdeateStore } from "@/lib/plan-ideate-store";
 import { globalResistanceThreads } from "@/lib/plan-resistance-threads";
 import {
@@ -67,8 +66,7 @@ import {
 import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 import { ensureGuestCompanionDemos } from "@/lib/ideate-demo-seed";
 import { isMedimadeSessionActive } from "@/lib/auth-session";
-import { getLifeAreaColor } from "@/lib/ideate-life-area-colors";
-import type { LifeAreaColorId } from "@/lib/ideate-life-area-colors";
+import { lifeAreaCardBackground } from "@/lib/ideate-life-area-colors";
 import {
   ensureIdeateManifesto,
   manifestoFingerprint,
@@ -109,6 +107,21 @@ function formatIndex(n: number): string {
   return String(n).padStart(2, "0");
 }
 
+function formatCheckInDate(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return "—";
+  }
+}
+
 export function PlanHomeClient() {
   const router = useRouter();
   const [dreams, setDreams] = useState<PlanDream[]>([]);
@@ -136,7 +149,6 @@ export function PlanHomeClient() {
   const [newDream, setNewDream] = useState("");
   const [newObstacle, setNewObstacle] = useState("");
   const [newVision, setNewVision] = useState("");
-  const [newCardColor, setNewCardColor] = useState<LifeAreaColorId | null>(null);
   const [addQuestionOpen, setAddQuestionOpen] = useState(false);
   const [customDraft, setCustomDraft] = useState("");
   const [writingCustom, setWritingCustom] = useState(false);
@@ -303,6 +315,17 @@ export function PlanHomeClient() {
     [dreams],
   );
 
+  /** Oldest-first index for cycling the fixed sandy palette. */
+  const lifeAreaCreationIndex = useMemo(() => {
+    const byAge = [...dreams].sort(
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+    const map = new Map<string, number>();
+    byAge.forEach((d, i) => map.set(d.id, i));
+    return map;
+  }, [dreams]);
+
   const unusedPresets = useMemo(
     () => availablePresets({ v: 1, questions }),
     [questions],
@@ -400,14 +423,12 @@ export function PlanHomeClient() {
       dreamText: opts?.skipReflections ? "" : newDream,
       obstacleText: opts?.skipReflections ? "" : newObstacle,
       visionText: opts?.skipReflections ? "" : newVision,
-      cardColor: newCardColor,
     });
     savePlanDreamsStore(upsertPlanDream(store, dream));
     setNewTitle("");
     setNewDream("");
     setNewObstacle("");
     setNewVision("");
-    setNewCardColor(null);
     setModalOpen(false);
     refresh();
   }
@@ -578,13 +599,13 @@ export function PlanHomeClient() {
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)] pb-20">
-      {/* Vision board hero — homepage mandala, full bleed, no vignette */}
+      {/* Vision board hero — homepage mandala + vignette */}
       <section
         ref={heroRef}
         className="home-hero w-full"
         aria-label="Vision board"
       >
-        <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
+        <div className="mx-auto max-w-6xl px-4 py-3 sm:px-6 sm:py-4">
           <div className="relative w-full">
             <div
               className="w-full"
@@ -743,46 +764,51 @@ export function PlanHomeClient() {
         ) : null}
 
         {/* —— Life areas —— */}
-        <section className="pt-6 sm:pt-8" aria-label="Your life areas">
-          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <section className="pt-8 sm:pt-10" aria-labelledby="ideate-life-areas-heading">
+          <h2
+            id="ideate-life-areas-heading"
+            className="mb-1.5 font-sans text-[15px] font-medium uppercase tracking-[0.08em] text-[#1E2530] dark:text-foreground"
+          >
+            Your life areas
+          </h2>
+          <p className="mb-5 max-w-xl font-sans text-sm text-muted sm:mb-6">
+            Add the areas of your life you want to grow.
+          </p>
+          <ul className="grid grid-cols-2 gap-[10px] sm:grid-cols-4">
             {sortedDreams.map((d) => {
               const snippet = lifeAreaSnippet(d);
-              const color = getLifeAreaColor(d.cardColor);
+              const bg = lifeAreaCardBackground(
+                lifeAreaCreationIndex.get(d.id) ?? 0,
+              );
+              const lastInteracted = formatCheckInDate(
+                d.updatedAt || d.createdAt,
+              );
               return (
                 <li key={d.id} className="min-w-0">
                   <Link
                     href={`/ideate/goal/${encodeURIComponent(d.id)}`}
-                    className={`group flex aspect-square cursor-pointer flex-col rounded-2xl border p-4 shadow-sm transition-[transform,border-color] duration-150 hover:-translate-y-0.5 sm:p-5 ${
-                      color
-                        ? ""
-                        : "border-border bg-card hover:border-accent/80"
-                    }`}
-                    style={
-                      color
-                        ? {
-                            backgroundColor: color.wash,
-                            borderColor: color.border,
-                          }
-                        : undefined
-                    }
-                    onMouseEnter={(e) => {
-                      if (!color) return;
-                      e.currentTarget.style.borderColor = color.borderHover;
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!color) return;
-                      e.currentTarget.style.borderColor = color.border;
-                    }}
+                    className="flex aspect-square cursor-pointer flex-col rounded-[4px] p-[22px] shadow-[0_4px_14px_rgba(0,0,0,0.06)] transition-[transform,box-shadow] duration-150 hover:-translate-y-[3px] hover:shadow-[0_10px_28px_rgba(0,0,0,0.09)]"
+                    style={{ backgroundColor: bg }}
                   >
-                    <h3 className="shrink-0 font-display text-lg font-medium leading-snug tracking-tight text-foreground sm:text-xl">
+                    <h3 className="shrink-0 font-display text-xl font-medium leading-snug tracking-tight text-[#1E2530] sm:text-[1.375rem]">
                       {d.title.trim() || "Untitled"}
                     </h3>
                     <p
-                      className={`mt-2 line-clamp-3 min-h-0 font-sans text-sm leading-relaxed ${
-                        snippet ? "text-muted" : "italic text-faint"
+                      className={`mt-2 line-clamp-3 min-h-0 flex-1 font-sans text-sm leading-relaxed ${
+                        snippet ? "" : "italic"
                       }`}
+                      style={{ color: "rgba(60,35,15,0.6)" }}
                     >
                       {snippet ?? "Nothing written yet"}
+                    </p>
+                    <p
+                      className="mt-auto shrink-0 pt-3 font-sans leading-snug"
+                      style={{
+                        color: "rgba(60,35,15,0.4)",
+                        fontSize: "11px",
+                      }}
+                    >
+                      Last interacted on {lastInteracted}
                     </p>
                   </Link>
                 </li>
@@ -794,9 +820,22 @@ export function PlanHomeClient() {
                 type="button"
                 onClick={() => setModalOpen(true)}
                 aria-label="Add a life area"
-                className="flex aspect-square w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-card text-muted shadow-sm transition-colors hover:border-accent/80 hover:text-foreground"
+                className="flex aspect-square w-full cursor-pointer flex-col items-center justify-center rounded-[4px] border-2 border-dashed bg-transparent transition-colors"
+                style={{
+                  borderColor: "rgba(180,140,80,0.35)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "rgba(180,140,80,0.6)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "rgba(180,140,80,0.35)";
+                }}
               >
-                <span className="font-sans text-3xl font-light leading-none" aria-hidden>
+                <span
+                  className="font-sans font-light leading-none"
+                  style={{ color: "rgba(180,140,80,0.45)", fontSize: "36px" }}
+                  aria-hidden
+                >
                   +
                 </span>
               </button>
@@ -820,8 +859,8 @@ export function PlanHomeClient() {
               {values.map((v, i) => (
                 <li
                   key={v.id}
-                  className={`group border-b-[0.5px] border-border py-6 ${
-                    i === 0 ? "border-t-0 pt-2" : ""
+                  className={`group border-b-[0.5px] border-border py-4 ${
+                    i === 0 ? "border-t-0" : ""
                   }`}
                 >
                   {editingValueId === v.id ? (
@@ -969,8 +1008,8 @@ export function PlanHomeClient() {
               return (
                 <li
                   key={q.id}
-                  className={`group border-b-[0.5px] border-border py-7 ${
-                    i === 0 ? "border-t-0 pt-2" : ""
+                  className={`group border-l-2 border-[#F0A855] pl-5 ${
+                    i === questionCells.length - 1 ? "mb-0" : "mb-5"
                   }`}
                 >
                   <div className="flex items-start gap-4">
@@ -979,15 +1018,15 @@ export function PlanHomeClient() {
                       onClick={openOrAdd}
                       className="min-w-0 flex-1 cursor-pointer text-left"
                     >
-                      <span className="block font-display text-[18px] font-normal leading-[1.4] text-foreground">
+                      <span className="block font-display text-[19px] font-normal leading-[1.4] text-foreground">
                         {q.text}
                       </span>
                       {answer ? (
-                        <span className="mt-[0.6rem] block whitespace-pre-wrap font-sans text-sm font-normal leading-[1.6] text-muted">
+                        <span className="mt-2 block whitespace-pre-wrap font-sans text-base font-normal leading-[1.6] text-muted">
                           {answer}
                         </span>
                       ) : (
-                        <span className="mt-[0.6rem] block font-sans text-sm font-medium text-accent-link">
+                        <span className="mt-2 block font-sans text-base font-medium text-accent-link">
                           Add your answer →
                         </span>
                       )}
@@ -995,7 +1034,7 @@ export function PlanHomeClient() {
                     <button
                       type="button"
                       onClick={openOrAdd}
-                      className="mt-1 shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                      className="mt-0.5 shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
                     >
                       Edit
                     </button>
@@ -1129,7 +1168,7 @@ export function PlanHomeClient() {
           collapsed={collapsed.regrets}
           onToggle={() => toggleSection("regrets")}
         >
-          <p className="mb-10 max-w-2xl font-sans text-sm font-normal text-muted">
+          <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
             Imagine yourself at 80, looking back. What would you regret not
             having tried?
           </p>
@@ -1143,35 +1182,31 @@ export function PlanHomeClient() {
               {regrets.map((r, i) => (
                 <li
                   key={r.id}
-                  className={`group border-b-[0.5px] border-border py-6 ${
-                    i === 0 ? "border-t-0 pt-2" : ""
+                  className={`group relative border-b-[0.5px] border-border py-4 ${
+                    i === 0 ? "border-t-0" : ""
                   }`}
                 >
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-8">
-                    <span className="min-w-[6.5rem] shrink-0 font-sans text-[11px] font-medium uppercase tracking-[0.08em] text-muted">
-                      {r.category?.trim() || "—"}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-display text-[22px] font-normal leading-[1.3] text-foreground">
-                        {r.statement}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => exploreRegretInIdeate(r)}
-                        className="mt-2 cursor-pointer font-sans text-[13px] font-medium text-accent-link opacity-0 transition-opacity group-hover:opacity-100"
-                      >
-                        Explore in Ideate →
-                      </button>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveRegret(r.id)}
-                      className="shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
-                      aria-label="Remove regret"
-                    >
-                      Remove
-                    </button>
-                  </div>
+                  <p className="mb-1.5 font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-muted">
+                    {r.category?.trim() || "—"}
+                  </p>
+                  <p className="font-display text-[20px] font-normal leading-[1.35] text-foreground">
+                    {r.statement}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => exploreRegretInIdeate(r)}
+                    className="mt-2 cursor-pointer font-sans text-[13px] font-medium text-accent-link opacity-0 transition-opacity group-hover:opacity-100"
+                  >
+                    Explore in Ideate →
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveRegret(r.id)}
+                    className="absolute right-0 top-4 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                    aria-label="Remove regret"
+                  >
+                    Remove
+                  </button>
                 </li>
               ))}
             </ul>
@@ -1248,7 +1283,6 @@ export function PlanHomeClient() {
           role="presentation"
           onClick={() => {
             setModalOpen(false);
-            setNewCardColor(null);
           }}
         >
           <div
@@ -1277,16 +1311,6 @@ export function PlanHomeClient() {
                 className="mt-1.5 w-full rounded-xl border border-[#E5DFD0] bg-card px-3 py-2.5 text-sm outline-none ring-accent/30 focus:ring-2 dark:border-border"
               />
             </label>
-
-            <div className="mt-5">
-              <p className="text-sm font-medium text-foreground">Colour</p>
-              <div className="mt-2.5">
-                <LifeAreaColorPicker
-                  value={newCardColor}
-                  onChange={setNewCardColor}
-                />
-              </div>
-            </div>
 
             <div className="mt-5 space-y-4">
               <label className="block">
