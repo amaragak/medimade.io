@@ -67,10 +67,13 @@ export async function handler(
     /* ignore */
   }
 
-  const raw = bodyRefresh || parseCookieHeader(event, REFRESH_COOKIE);
+  const cookieRaw = parseCookieHeader(event, REFRESH_COOKIE);
+  // Prefer cookie when present (freshest after rotation); body is localhost / ITP fallback.
+  const raw = cookieRaw || bodyRefresh;
   if (!raw) {
-    // Nothing to present — clear stale client cookies if any.
-    return json(event, 401, { error: "No refresh session" }, sessionClearCookieHeaders());
+    // Cookie may be blocked/omitted by the browser — do NOT clear cookies here.
+    // Clearing would permanently destroy a valid refresh cookie the browser still holds.
+    return json(event, 401, { error: "No refresh session", code: "missing" });
   }
 
   const tokenHash = sha256Hex(raw);
@@ -86,11 +89,6 @@ export async function handler(
       new GetCommand({ TableName: refreshTable, Key: { tokenHash } }),
     );
     row = (got.Item as RefreshRow | undefined) ?? null;
-    if (row) {
-      await ddb.send(
-        new DeleteCommand({ TableName: refreshTable, Key: { tokenHash } }),
-      );
-    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Refresh lookup failed";
     return json(event, 500, { error: msg });
@@ -99,11 +97,27 @@ export async function handler(
   if (!row?.userId || !row.email) {
     // Likely a parallel refresh already rotated this token. Do NOT clear cookies —
     // another response may have just set a newer mm_refresh; wiping would sign the user out.
-    return json(event, 401, { error: "Invalid refresh session" });
+    return json(event, 401, {
+      error: "Invalid refresh session",
+      code: "invalid",
+    });
   }
   const ttl = typeof row.ttl === "number" ? row.ttl : 0;
   if (ttl < Math.floor(Date.now() / 1000)) {
-    return json(event, 401, { error: "Refresh session expired" }, sessionClearCookieHeaders());
+    // Truly expired — safe to clear.
+    try {
+      await ddb.send(
+        new DeleteCommand({ TableName: refreshTable, Key: { tokenHash } }),
+      );
+    } catch {
+      /* */
+    }
+    return json(
+      event,
+      401,
+      { error: "Refresh session expired", code: "expired" },
+      sessionClearCookieHeaders(),
+    );
   }
 
   const displayName =
@@ -120,6 +134,9 @@ export async function handler(
     const refreshToken = newOpaqueToken(32);
     const newHash = sha256Hex(refreshToken);
     const nowSec = Math.floor(Date.now() / 1000);
+
+    // Write the new refresh token BEFORE deleting the old one so a failed Put
+    // cannot leave the user with no valid refresh row.
     await ddb.send(
       new PutCommand({
         TableName: refreshTable,
@@ -133,11 +150,20 @@ export async function handler(
         },
       }),
     );
+    try {
+      await ddb.send(
+        new DeleteCommand({ TableName: refreshTable, Key: { tokenHash } }),
+      );
+    } catch {
+      /* old row may already be gone from a parallel rotate */
+    }
+
     return json(
       event,
       200,
       {
         token: accessToken,
+        refreshToken,
         userId: row.userId,
         email: row.email,
         displayName,

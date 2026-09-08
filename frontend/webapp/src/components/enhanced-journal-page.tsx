@@ -87,7 +87,7 @@ export function EnhancedJournalPage() {
               href="/journal/my"
               className="inline-flex items-center justify-center rounded-full accent-fill-gradient px-7 py-3 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
             >
-              My Journal
+              Journal
             </Link>
           </div>
         </div>

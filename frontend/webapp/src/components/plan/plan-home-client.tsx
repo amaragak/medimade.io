@@ -2,17 +2,20 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IconEye, IconSparkles, IconWind } from "@tabler/icons-react";
+import { IconChevronDown, IconEye, IconLoader2, IconPencil, IconRefresh, IconSparkles, IconWind } from "@tabler/icons-react";
 import {
   createPlanDream,
   dreamExcerpt,
   loadPlanDreamsStore,
   savePlanDreamsStore,
   upsertPlanDream,
+  addLifeAreaCheckIn,
+  latestLifeAreaCheckIn,
   type PlanDream,
 } from "@/lib/plan-dreams";
 import { PlanResistanceThreadBanner } from "@/components/plan/plan-resistance-thread-banner";
-import { loadIdeateStore } from "@/lib/plan-ideate-store";
+import { IdeateCollapsibleSection } from "@/components/plan/ideate-collapsible-section";
+import { loadIdeateStore, upsertDream, saveIdeateStore } from "@/lib/plan-ideate-store";
 import { globalResistanceThreads } from "@/lib/plan-resistance-threads";
 import {
   loadIdeateVisionBoardStore,
@@ -40,14 +43,37 @@ import {
   type IdeateValue,
 } from "@/lib/ideate-values";
 import {
+  addIdeateRegret,
+  loadIdeateRegretsStore,
+  removeIdeateRegret,
+  saveIdeateRegretsStore,
+  type IdeateRegret,
+} from "@/lib/ideate-regrets";
+import {
+  loadIdeateSectionCollapse,
+  saveIdeateSectionCollapse,
+  type IdeateCollapsibleSectionId,
+  type IdeateSectionCollapseState,
+} from "@/lib/ideate-section-collapse";
+import {
+  writePlanCreateHandoff,
+  type PlanCreateHandoffV2,
+} from "@/lib/plan-create-handoff";
+import { useRouter } from "next/navigation";
+import {
   VisionBoardMosaic,
   VISION_BOARD_EMPTY_COLORS,
   VISION_BOARD_GRID_SLOT_COUNT,
 } from "@/components/plan/vision-board-mosaic";
 import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
-
-const SECTION_LABEL =
-  "text-sm font-medium uppercase tracking-widest text-[#8A7566]";
+import { ensureGuestCompanionDemos } from "@/lib/ideate-demo-seed";
+import { isMedimadeSessionActive } from "@/lib/auth-session";
+import {
+  ensureIdeateManifesto,
+  manifestoFingerprint,
+  loadCachedManifesto,
+  saveIdeateManifestoManual,
+} from "@/lib/ideate-manifesto";
 
 function lifeAreaSnippet(d: PlanDream): string | null {
   const raw = (d.dreamText || d.firstThought || d.visionText || "").trim();
@@ -78,7 +104,27 @@ function mosaicImages(
   return urls;
 }
 
+function formatIndex(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function formatUpdatedAt(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return "—";
+  }
+}
+
 export function PlanHomeClient() {
+  const router = useRouter();
   const [dreams, setDreams] = useState<PlanDream[]>([]);
   const [visionItems, setVisionItems] = useState<VisionBoardItem[]>([]);
   const [visionTileUrls, setVisionTileUrls] = useState<Record<string, string>>(
@@ -87,6 +133,18 @@ export function PlanHomeClient() {
   const visionBlobUrlsRef = useRef<Record<string, string>>({});
   const [questions, setQuestions] = useState<IdeateReflectionQuestion[]>([]);
   const [values, setValues] = useState<IdeateValue[]>([]);
+  const [regrets, setRegrets] = useState<IdeateRegret[]>([]);
+  const [collapsed, setCollapsed] = useState<IdeateSectionCollapseState>({
+    values: false,
+    questions: false,
+    regrets: false,
+    lifeAreas: false,
+  });
+  const [manifesto, setManifesto] = useState<string>("");
+  const [manifestoLoading, setManifestoLoading] = useState(false);
+  const [editingManifesto, setEditingManifesto] = useState(false);
+  const [manifestoDraft, setManifestoDraft] = useState("");
+  const [manifestoRefreshing, setManifestoRefreshing] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDream, setNewDream] = useState("");
@@ -101,13 +159,67 @@ export function PlanHomeClient() {
   const [valueDraft, setValueDraft] = useState("");
   const [editingValueId, setEditingValueId] = useState<string | null>(null);
   const [editValueDraft, setEditValueDraft] = useState("");
+  const [addingRegret, setAddingRegret] = useState(false);
+  const [regretDraft, setRegretDraft] = useState("");
+  const [regretCategoryDraft, setRegretCategoryDraft] = useState("");
+  const [checkInDreamId, setCheckInDreamId] = useState<string | null>(null);
+  const [checkInDraft, setCheckInDraft] = useState("");
+  const [scrollHintVisible, setScrollHintVisible] = useState(true);
   const addPickerRef = useRef<HTMLDivElement>(null);
+  const heroRef = useRef<HTMLElement>(null);
+  const manifestoReqRef = useRef(0);
 
   const refresh = useCallback(() => {
+    // Guests only — never reseed demos over a signed-in account.
+    if (!isMedimadeSessionActive()) {
+      ensureGuestCompanionDemos();
+    }
     setDreams(loadPlanDreamsStore().dreams);
     setVisionItems(loadIdeateVisionBoardStore().items);
     setQuestions(loadIdeateReflectionQuestionsStore().questions);
     setValues(loadIdeateValuesStore().values);
+    setRegrets(loadIdeateRegretsStore().regrets);
+  }, []);
+
+  useEffect(() => {
+    setCollapsed(loadIdeateSectionCollapse());
+  }, []);
+
+  const toggleSection = useCallback((id: IdeateCollapsibleSectionId) => {
+    setCollapsed((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      saveIdeateSectionCollapse(next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    const hero = heroRef.current;
+    if (!hero) return;
+
+    let scrollRoot: HTMLElement | Window = window;
+    let node: HTMLElement | null = hero.parentElement;
+    while (node) {
+      const { overflowY } = getComputedStyle(node);
+      if (overflowY === "auto" || overflowY === "scroll") {
+        scrollRoot = node;
+        break;
+      }
+      node = node.parentElement;
+    }
+
+    const onScroll = () => {
+      const scrollTop =
+        scrollRoot === window
+          ? window.scrollY
+          : (scrollRoot as HTMLElement).scrollTop;
+      if (scrollTop >= hero.offsetHeight) {
+        setScrollHintVisible(false);
+      }
+    };
+
+    scrollRoot.addEventListener("scroll", onScroll, { passive: true });
+    return () => scrollRoot.removeEventListener("scroll", onScroll);
   }, []);
 
   const resolveVisionTiles = useCallback(async (items: VisionBoardItem[]) => {
@@ -133,7 +245,15 @@ export function PlanHomeClient() {
     setVisionTileUrls(next);
   }, []);
 
-  const { ready: cloudReady, revision } = useIdeateCloud();
+  const { ready: cloudReady, revision, signedIn } = useIdeateCloud();
+  const sessionActive = isMedimadeSessionActive();
+
+  // Guests never wait on the cloud provider — missing provider used to brick /ideate/my
+  // on eternal "Loading…". Seed + paint from local demos immediately.
+  useEffect(() => {
+    if (sessionActive) return;
+    refresh();
+  }, [refresh, sessionActive]);
 
   useEffect(() => {
     if (!cloudReady) return;
@@ -146,7 +266,7 @@ export function PlanHomeClient() {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener("storage", onFocus);
     };
-  }, [refresh, cloudReady, revision]);
+  }, [refresh, cloudReady, revision, signedIn]);
 
   useEffect(() => {
     void resolveVisionTiles(visionItems);
@@ -177,9 +297,13 @@ export function PlanHomeClient() {
         setCustomDraft("");
       }
     }
-    document.addEventListener("mousedown", onDoc);
+    // Defer so the opening click doesn't immediately close the picker.
+    const t = window.setTimeout(() => {
+      document.addEventListener("mousedown", onDoc);
+    }, 0);
     document.addEventListener("keydown", onKey);
     return () => {
+      window.clearTimeout(t);
       document.removeEventListener("mousedown", onDoc);
       document.removeEventListener("keydown", onKey);
     };
@@ -203,6 +327,84 @@ export function PlanHomeClient() {
     () => questions.find((q) => q.id === activeQuestionId) ?? null,
     [questions, activeQuestionId],
   );
+
+  const valueTexts = useMemo(
+    () => values.map((v) => v.text.trim()).filter(Boolean),
+    [values],
+  );
+
+  const lifeAreaTitles = useMemo(
+    () => sortedDreams.map((d) => d.title.trim()).filter(Boolean),
+    [sortedDreams],
+  );
+
+  useEffect(() => {
+    if (valueTexts.length === 0) {
+      setManifesto("");
+      setManifestoLoading(false);
+      setEditingManifesto(false);
+      return;
+    }
+    const fp = manifestoFingerprint(valueTexts, lifeAreaTitles);
+    const cached = loadCachedManifesto(fp);
+    if (cached) {
+      setManifesto(cached);
+      setManifestoLoading(false);
+      return;
+    }
+    const req = ++manifestoReqRef.current;
+    setManifestoLoading(true);
+    void ensureIdeateManifesto({
+      values: valueTexts,
+      lifeAreaTitles,
+    }).then((text) => {
+      if (manifestoReqRef.current !== req) return;
+      setManifesto(text);
+      setManifestoLoading(false);
+    });
+  }, [valueTexts, lifeAreaTitles]);
+
+  function beginEditManifesto() {
+    if (!manifesto || manifestoRefreshing) return;
+    setManifestoDraft(manifesto);
+    setEditingManifesto(true);
+  }
+
+  function cancelEditManifesto() {
+    setEditingManifesto(false);
+    setManifestoDraft("");
+  }
+
+  function saveEditManifesto() {
+    if (valueTexts.length === 0) return;
+    const text = saveIdeateManifestoManual({
+      values: valueTexts,
+      lifeAreaTitles,
+      text: manifestoDraft,
+    });
+    if (text) setManifesto(text);
+    setEditingManifesto(false);
+    setManifestoDraft("");
+  }
+
+  function refreshManifesto() {
+    if (valueTexts.length === 0 || manifestoRefreshing || editingManifesto) return;
+    const req = ++manifestoReqRef.current;
+    setManifestoRefreshing(true);
+    void ensureIdeateManifesto({
+      values: valueTexts,
+      lifeAreaTitles,
+      force: true,
+    })
+      .then((text) => {
+        if (manifestoReqRef.current !== req) return;
+        setManifesto(text);
+      })
+      .finally(() => {
+        if (manifestoReqRef.current !== req) return;
+        setManifestoRefreshing(false);
+      });
+  }
 
   function addDream(opts?: { skipReflections?: boolean }) {
     const title = newTitle.trim();
@@ -233,12 +435,95 @@ export function PlanHomeClient() {
     setValues(next);
   }
 
+  function persistRegrets(next: IdeateRegret[]) {
+    saveIdeateRegretsStore({ v: 1, regrets: next });
+    setRegrets(next);
+  }
+
   function handleAddValue() {
     const next = addIdeateValue({ v: 1, values }, valueDraft);
     if (next.values.length === values.length) return;
     persistValues(next.values);
     setValueDraft("");
     setAddingValue(false);
+  }
+
+  function handleAddRegret() {
+    const next = addIdeateRegret(
+      { v: 1, regrets },
+      { statement: regretDraft, category: regretCategoryDraft },
+    );
+    if (next.regrets.length === regrets.length) return;
+    persistRegrets(next.regrets);
+    setRegretDraft("");
+    setRegretCategoryDraft("");
+    setAddingRegret(false);
+  }
+
+  function handleRemoveRegret(id: string) {
+    persistRegrets(removeIdeateRegret({ v: 1, regrets }, id).regrets);
+  }
+
+  function saveCheckIn() {
+    if (!checkInDreamId) return;
+    const note = checkInDraft.trim();
+    if (!note) return;
+    const store = loadIdeateStore();
+    const dream = store.dreams.find((d) => d.id === checkInDreamId);
+    if (!dream) return;
+    const nextDream = addLifeAreaCheckIn(dream, note);
+    saveIdeateStore(upsertDream(store, nextDream));
+    setCheckInDraft("");
+    setCheckInDreamId(null);
+    refresh();
+    router.push(`/ideate/goal/${encodeURIComponent(nextDream.id)}`);
+  }
+
+  function startMeditateOnArea(dream: PlanDream) {
+    const checkIn = latestLifeAreaCheckIn(dream);
+    const handoff: PlanCreateHandoffV2 = {
+      v: 2,
+      goalTitle: dream.title.trim() || "Untitled",
+      visionText: dream.visionText.trim(),
+      dreamText: dream.dreamText.trim() || dream.firstThought.trim(),
+      obstacleText: dream.obstacleText.trim(),
+      project: {
+        dreamText: dream.dreamText.trim() || dream.firstThought.trim(),
+        resistanceText: dream.obstacleText.trim(),
+        visionText: dream.visionText.trim(),
+      },
+      activeResistanceThemes: checkIn
+        ? [
+            {
+              category: "check_in",
+              sampleText: checkIn.note,
+              level: "project",
+              occurrences: 1,
+            },
+          ]
+        : [],
+    };
+    writePlanCreateHandoff(handoff);
+    router.push("/meditate/create/from-chat?fromDream=1");
+  }
+
+  function exploreRegretInIdeate(regret: IdeateRegret) {
+    const store = loadPlanDreamsStore();
+    const match =
+      store.dreams.find(
+        (d) =>
+          regret.category &&
+          d.title.toLowerCase().includes(regret.category.toLowerCase()),
+      ) ?? store.dreams[0];
+    if (match) {
+      router.push(
+        `/ideate/goal/${encodeURIComponent(match.id)}?focus=regret&note=${encodeURIComponent(regret.statement.slice(0, 120))}`,
+      );
+      return;
+    }
+    setModalOpen(true);
+    setNewTitle(regret.category?.trim() || "Regret to minimise");
+    setNewDream(regret.statement);
   }
 
   function openEditValue(v: IdeateValue) {
@@ -250,7 +535,11 @@ export function PlanHomeClient() {
 
   function saveEditValue() {
     if (!editingValueId) return;
-    const next = patchIdeateValue({ v: 1, values }, editingValueId, editValueDraft);
+    const next = patchIdeateValue(
+      { v: 1, values },
+      editingValueId,
+      editValueDraft,
+    );
     persistValues(next.values);
     setEditingValueId(null);
     setEditValueDraft("");
@@ -304,9 +593,19 @@ export function PlanHomeClient() {
   }
 
   const resistanceThreads = globalResistanceThreads(loadIdeateStore());
-  const itemCount = visionItems.length;
+  const questionCells =
+    questions.length > 0
+      ? questions
+      : unusedPresets.slice(0, 4).map((p) => ({
+          id: `preset-preview-${p.id}`,
+          text: p.text,
+          description: p.description,
+          answer: "",
+          presetId: p.id,
+          isPreview: true as const,
+        }));
 
-  if (!cloudReady) {
+  if (sessionActive && !cloudReady) {
     return (
       <div className="min-h-[calc(100vh-3.5rem)] pb-16">
         <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
@@ -316,242 +615,407 @@ export function PlanHomeClient() {
     );
   }
 
+  const valuesSummary =
+    values.length === 0
+      ? "No values yet"
+      : values
+          .map((v) => v.text.trim())
+          .filter(Boolean)
+          .slice(0, 3)
+          .join(" · ");
+  const questionsSummary =
+    questions.length === 0
+      ? "No questions yet"
+      : questions[0]!.text.trim() || "Untitled question";
+  const regretsSummary =
+    regrets.length === 0
+      ? "No entries yet"
+      : regrets[0]!.statement.trim() || "Untitled";
+  const lifeAreasSummary =
+    sortedDreams.length === 0
+      ? "No life areas yet"
+      : sortedDreams
+          .map((d) => d.title.trim() || "Untitled")
+          .slice(0, 4)
+          .join(" · ");
+
   return (
-    <div className="min-h-[calc(100vh-3.5rem)] pb-16">
-      <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
-        {/* Utilitarian page label — no marketing pitch (that lives on /dream) */}
-        <h1 className="font-display text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
-          My Dreams
-        </h1>
-
-        {resistanceThreads[0] ? (
-          <div className="mt-6 max-w-2xl">
-            <PlanResistanceThreadBanner theme={resistanceThreads[0]} />
-          </div>
-        ) : null}
-
-        {/* —— Section A: Vision board + values —— */}
-        <div className="mt-8">
-          <p className={SECTION_LABEL}>Your dream</p>
-          <div className="mt-3 grid gap-8 rounded-2xl border border-[#E5DFD0] bg-card p-6 shadow-sm sm:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] sm:items-start sm:gap-10 sm:p-8">
-            <div className="min-w-0">
-              <Link
-                href="/dream/my/vision-board"
-                className="group relative block overflow-hidden rounded-xl outline-none ring-accent/30 transition-[box-shadow] focus-visible:ring-2"
-                aria-label={
-                  itemCount === 0
-                    ? "Open vision board — no pieces yet"
-                    : `Open vision board — ${itemCount} ${itemCount === 1 ? "piece" : "pieces"}`
-                }
-              >
-                <VisionBoardMosaic
-                  layout="grid"
-                  colors={mosaicColors(visionItems)}
-                  images={mosaicImages(visionItems, visionTileUrls)}
-                  sizeClassName="w-full"
-                />
-                <span className="absolute bottom-3 right-3 rounded-full accent-fill-gradient px-3.5 py-1.5 text-sm font-semibold text-[#1E2530] shadow-sm transition-opacity group-hover:opacity-90">
-                  Open Vision Board →
-                </span>
-              </Link>
+    <div className="min-h-[calc(100vh-3.5rem)] pb-20">
+      {/* Vision board hero — homepage mandala, full bleed, no vignette */}
+      <section
+        ref={heroRef}
+        className="home-hero w-full"
+        aria-label="Vision board"
+      >
+        <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
+          <div className="relative w-full">
+            <div
+              className="w-full"
+              style={{
+                filter:
+                  "grayscale(18%) sepia(12%) contrast(0.93) brightness(0.9) saturate(0.85)",
+              }}
+            >
+              <VisionBoardMosaic
+                layout="grid"
+                colors={mosaicColors(visionItems)}
+                images={mosaicImages(visionItems, visionTileUrls)}
+                sizeClassName="w-full"
+                gapClassName="gap-2.5 sm:gap-3"
+                radiusClassName="rounded-none"
+                cellRadiusClassName="rounded-md shadow-[0_10px_28px_rgb(30_37_48_/_0.32),0_2px_8px_rgb(30_37_48_/_0.18)]"
+              />
             </div>
 
-            <div className="min-w-0 sm:border-l sm:border-[#E5DFD0]/80 sm:pl-8 dark:sm:border-border">
-              <p className={SECTION_LABEL}>Your values</p>
-              <p className="mt-2 text-sm leading-relaxed text-muted">
-                Name what matters — one value at a time.
-              </p>
-
-              {values.length === 0 && !addingValue ? (
-                <p className="mt-5 text-sm italic text-[#A39C8C]">
-                  No values yet — add one when you&apos;re ready.
+            <div className="absolute left-1/2 top-1/2 z-[2] w-[min(100%,34rem)] -translate-x-1/2 -translate-y-1/2 px-6 text-center sm:w-[min(100%,38rem)]">
+              <div
+                className="pointer-events-none absolute -inset-x-4 -inset-y-5 -z-10 overflow-hidden rounded-2xl sm:-inset-x-5 sm:-inset-y-6"
+                style={{
+                  background:
+                    "radial-gradient(ellipse 85% 80% at center, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.42) 45%, rgba(0,0,0,0.18) 72%, transparent 100%)",
+                  backdropFilter: "blur(8px)",
+                  WebkitBackdropFilter: "blur(8px)",
+                  maskImage:
+                    "radial-gradient(ellipse 85% 80% at center, #000 0%, #000 45%, rgba(0,0,0,0.65) 72%, transparent 100%)",
+                  WebkitMaskImage:
+                    "radial-gradient(ellipse 85% 80% at center, #000 0%, #000 45%, rgba(0,0,0,0.65) 72%, transparent 100%)",
+                }}
+                aria-hidden
+              />
+              {valueTexts.length === 0 ? (
+                <p className="font-display text-[23px] font-normal italic leading-[1.45] text-white/80">
+                  Add a few values below — we&apos;ll distil what you stand for
+                  into one sentence.
                 </p>
-              ) : (
-                <ul className="mt-4 divide-y divide-border/70 border-y border-border/70">
-                  {values.map((v) => (
-                    <li key={v.id} className="py-2.5">
-                      {editingValueId === v.id ? (
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            saveEditValue();
-                          }}
-                          className="flex flex-col gap-2"
-                        >
-                          <label
-                            className="sr-only"
-                            htmlFor={`ideate-value-edit-${v.id}`}
-                          >
-                            Edit value
-                          </label>
-                          <input
-                            id={`ideate-value-edit-${v.id}`}
-                            autoFocus
-                            value={editValueDraft}
-                            onChange={(e) => setEditValueDraft(e.target.value)}
-                            maxLength={120}
-                            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
-                          />
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingValueId(null);
-                                setEditValueDraft("");
-                              }}
-                              className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
-                            >
-                              Cancel
-                            </button>
-                            <button
-                              type="submit"
-                              disabled={!editValueDraft.trim()}
-                              className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
-                            >
-                              Save
-                            </button>
-                          </div>
-                        </form>
-                      ) : (
-                        <div className="flex items-baseline justify-between gap-3">
-                          <button
-                            type="button"
-                            onClick={() => openEditValue(v)}
-                            className="min-w-0 flex-1 cursor-pointer text-left font-display text-lg font-medium tracking-tight text-[#1E2530] transition-opacity hover:opacity-80 dark:text-foreground"
-                          >
-                            {v.text}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveValue(v.id)}
-                            className="shrink-0 cursor-pointer text-sm text-[#A39C8C] transition-colors hover:text-foreground"
-                            aria-label={`Remove ${v.text}`}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {addingValue ? (
+              ) : manifestoLoading && !manifesto ? (
+                <p className="font-display text-[23px] font-normal italic leading-[1.45] text-white/80">
+                  Distilling…
+                </p>
+              ) : editingManifesto ? (
                 <form
+                  className="flex flex-col items-center gap-3"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    handleAddValue();
+                    saveEditManifesto();
                   }}
-                  className="mt-3 flex flex-col gap-2"
                 >
-                  <label className="sr-only" htmlFor="ideate-value-new">
-                    New value
+                  <label className="sr-only" htmlFor="ideate-manifesto-edit">
+                    Edit manifesto
                   </label>
-                  <input
-                    id="ideate-value-new"
+                  <textarea
+                    id="ideate-manifesto-edit"
                     autoFocus
-                    value={valueDraft}
-                    onChange={(e) => setValueDraft(e.target.value)}
-                    placeholder="e.g. Honesty, Presence, Craft"
-                    maxLength={120}
-                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/30 focus:ring-2"
+                    rows={3}
+                    value={manifestoDraft}
+                    onChange={(e) => setManifestoDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        cancelEditManifesto();
+                      }
+                    }}
+                    className="w-full resize-none rounded-xl border border-white/35 bg-black/35 px-3 py-2.5 text-center font-display text-[23px] font-normal italic leading-[1.45] text-white outline-none ring-white/25 focus:ring-2"
                   />
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        setAddingValue(false);
-                        setValueDraft("");
-                      }}
-                      className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                      onClick={cancelEditManifesto}
+                      className="cursor-pointer rounded-full px-3 py-1.5 text-xs font-medium text-white/70 hover:text-white"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      disabled={!valueDraft.trim()}
-                      className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
+                      disabled={!manifestoDraft.trim()}
+                      className="cursor-pointer rounded-full border border-white bg-black px-3.5 py-1.5 text-xs font-semibold text-white disabled:opacity-40"
                     >
-                      Add
+                      Save
                     </button>
                   </div>
                 </form>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddingValue(true);
-                    setEditingValueId(null);
-                    setEditValueDraft("");
-                  }}
-                  className="mt-3 cursor-pointer text-sm font-medium text-[#B8703A] transition-opacity hover:opacity-80"
-                >
-                  + Add a value
-                </button>
+                <div className="group/manifesto relative">
+                  <p
+                    className={`font-display text-[23px] font-normal italic leading-[1.45] text-white transition-opacity ${
+                      manifestoRefreshing ? "opacity-60" : ""
+                    }`}
+                  >
+                    {manifesto}
+                  </p>
+                  <div className="pointer-events-none absolute -right-1 -top-1 flex items-center gap-1 opacity-0 transition-opacity group-hover/manifesto:pointer-events-auto group-hover/manifesto:opacity-100 group-focus-within/manifesto:pointer-events-auto group-focus-within/manifesto:opacity-100 sm:-right-2 sm:-top-2">
+                    <button
+                      type="button"
+                      onClick={beginEditManifesto}
+                      aria-label="Edit manifesto"
+                      title="Edit"
+                      className="pointer-events-auto inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-white/40 bg-black/55 text-white/90 backdrop-blur-sm transition-colors hover:border-white hover:bg-black/75 hover:text-white"
+                    >
+                      <IconPencil size={14} stroke={1.75} aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={refreshManifesto}
+                      disabled={manifestoRefreshing}
+                      aria-label="Regenerate manifesto"
+                      title="Regenerate"
+                      className="pointer-events-auto inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-white/40 bg-black/55 text-white/90 backdrop-blur-sm transition-colors hover:border-white hover:bg-black/75 hover:text-white disabled:cursor-wait disabled:opacity-70"
+                    >
+                      {manifestoRefreshing ? (
+                        <IconLoader2
+                          size={14}
+                          stroke={1.75}
+                          className="animate-spin"
+                          aria-hidden
+                        />
+                      ) : (
+                        <IconRefresh size={14} stroke={1.75} aria-hidden />
+                      )}
+                    </button>
+                  </div>
+                </div>
               )}
+
+              <Link
+                href="/ideate/my/vision-board"
+                className="mt-6 inline-flex items-center justify-center rounded-full border border-white bg-black px-5 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+              >
+                Open vision board →
+              </Link>
+            </div>
+
+            <div
+              className="absolute bottom-3 left-1/2 z-[1] -translate-x-1/2 transition-opacity duration-300"
+              style={{ opacity: scrollHintVisible ? 1 : 0 }}
+              aria-hidden={!scrollHintVisible}
+            >
+              <IconChevronDown
+                size={18}
+                stroke={1.75}
+                className="ideate-scroll-hint text-white/70"
+              />
             </div>
           </div>
         </div>
+      </section>
 
-        {/* —— Section B: Reflection questions —— */}
-        <div className="mt-14">
-          <p className={SECTION_LABEL}>Sit with a question</p>
-          <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted">
-            Optional prompts beside the board — pick one that catches, or write
-            your own.
-          </p>
-          {questions.length === 0 ? (
-            <ul className="mt-6 grid grid-cols-1 gap-x-10 gap-y-6 sm:grid-cols-2">
-              {unusedPresets.slice(0, 3).map((p) => (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    onClick={() => handleAddPreset(p.id, true)}
-                    className="w-full cursor-pointer text-left transition-opacity hover:opacity-80"
-                  >
-                    <span className="block text-base font-medium leading-snug text-[#1E2530] dark:text-foreground">
-                      {p.text}
-                    </span>
-                    <span className="mt-1 block text-sm leading-relaxed text-[#A39C8C]">
-                      {p.description}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+      <section className="mx-auto max-w-6xl px-4 sm:px-6">
+        {resistanceThreads[0] ? (
+          <div className="pt-10">
+            <PlanResistanceThreadBanner theme={resistanceThreads[0]} />
+          </div>
+        ) : null}
+
+        {/* —— Values —— */}
+        <IdeateCollapsibleSection
+          eyebrow="Values"
+          summary={valuesSummary}
+          collapsed={collapsed.values}
+          onToggle={() => toggleSection("values")}
+        >
+          {values.length === 0 && !addingValue ? (
+            <p className="font-sans text-sm italic text-faint">
+              No values yet — add one when you&apos;re ready.
+            </p>
           ) : (
-            <ul className="mt-5 grid grid-cols-1 gap-x-10 gap-y-6 sm:grid-cols-2">
-              {questions.map((q) => (
-                <li key={q.id}>
-                  <button
-                    type="button"
-                    onClick={() => openQuestion(q)}
-                    className="w-full cursor-pointer text-left transition-opacity hover:opacity-80"
-                  >
-                    <span className="block text-base font-medium leading-snug text-[#1E2530] dark:text-foreground">
-                      {q.text}
-                    </span>
-                    <span className="mt-1 block text-sm leading-relaxed text-[#A39C8C]">
-                      {q.answer.trim()
-                        ? q.answer.replace(/\s+/g, " ").slice(0, 80) +
-                          (q.answer.trim().length > 80 ? "…" : "")
-                        : q.description}
-                    </span>
-                  </button>
+            <ul>
+              {values.map((v, i) => (
+                <li
+                  key={v.id}
+                  className={`group border-b-[0.5px] border-border py-6 ${
+                    i === 0 ? "border-t-0 pt-2" : ""
+                  }`}
+                >
+                  {editingValueId === v.id ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        saveEditValue();
+                      }}
+                      className="flex flex-col gap-2"
+                    >
+                      <label
+                        className="sr-only"
+                        htmlFor={`ideate-value-edit-${v.id}`}
+                      >
+                        Edit value
+                      </label>
+                      <input
+                        id={`ideate-value-edit-${v.id}`}
+                        autoFocus
+                        value={editValueDraft}
+                        onChange={(e) => setEditValueDraft(e.target.value)}
+                        maxLength={120}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 font-display text-2xl outline-none ring-accent/30 focus:ring-2"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingValueId(null);
+                            setEditValueDraft("");
+                          }}
+                          className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={!editValueDraft.trim()}
+                          className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="flex items-start gap-4">
+                      <span className="mt-1.5 min-w-6 shrink-0 font-sans text-xs text-muted">
+                        {formatIndex(i + 1)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => openEditValue(v)}
+                        className="min-w-0 flex-1 cursor-pointer text-left font-display text-[26px] font-normal leading-[1.2] text-foreground transition-opacity hover:opacity-80"
+                      >
+                        {v.text}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveValue(v.id)}
+                        className="mt-1.5 shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                        aria-label={`Remove ${v.text}`}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
           )}
 
-          <div className="relative mt-5" ref={addPickerRef}>
+          {addingValue ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleAddValue();
+              }}
+              className="mt-4 flex flex-col gap-2"
+            >
+              <label className="sr-only" htmlFor="ideate-value-new">
+                New value
+              </label>
+              <input
+                id="ideate-value-new"
+                autoFocus
+                value={valueDraft}
+                onChange={(e) => setValueDraft(e.target.value)}
+                placeholder="e.g. Honesty, Presence, Craft"
+                maxLength={120}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 font-display text-xl outline-none ring-accent/30 focus:ring-2"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingValue(false);
+                    setValueDraft("");
+                  }}
+                  className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!valueDraft.trim()}
+                  className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
+                >
+                  Add
+                </button>
+              </div>
+            </form>
+          ) : (
             <button
               type="button"
               onClick={() => {
+                setAddingValue(true);
+                setEditingValueId(null);
+                setEditValueDraft("");
+              }}
+              className="mt-5 cursor-pointer font-sans text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
+            >
+              + Add a value
+            </button>
+          )}
+        </IdeateCollapsibleSection>
+
+        {/* —— Questions —— */}
+        <IdeateCollapsibleSection
+          eyebrow="Questions to yourself"
+          summary={questionsSummary}
+          collapsed={collapsed.questions}
+          onToggle={() => toggleSection("questions")}
+        >
+          <ul>
+            {questionCells.map((q, i) => {
+              const isPreview = "isPreview" in q && q.isPreview;
+              const answer = !isPreview ? q.answer.trim() : "";
+              const openOrAdd = () => {
+                if (isPreview && "presetId" in q && q.presetId) {
+                  handleAddPreset(q.presetId, true);
+                  return;
+                }
+                openQuestion(q as IdeateReflectionQuestion);
+              };
+              return (
+                <li
+                  key={q.id}
+                  className={`group border-b-[0.5px] border-border py-7 ${
+                    i === 0 ? "border-t-0 pt-2" : ""
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <button
+                      type="button"
+                      onClick={openOrAdd}
+                      className="min-w-0 flex-1 cursor-pointer text-left"
+                    >
+                      <span className="block font-display text-[18px] font-normal leading-[1.4] text-foreground">
+                        {q.text}
+                      </span>
+                      {answer ? (
+                        <span className="mt-[0.6rem] block whitespace-pre-wrap font-sans text-sm font-normal leading-[1.6] text-muted">
+                          {answer}
+                        </span>
+                      ) : (
+                        <span className="mt-[0.6rem] block font-sans text-sm font-medium text-accent-link">
+                          Add your answer →
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openOrAdd}
+                      className="mt-1 shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="relative mt-5" ref={addPickerRef}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
                 setAddQuestionOpen((o) => !o);
                 setWritingCustom(false);
                 setCustomDraft("");
               }}
-              className="cursor-pointer text-sm font-medium text-[#B8703A] transition-opacity hover:opacity-80"
+              className="cursor-pointer font-sans text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
             >
               {questions.length === 0 ? "+ Add another" : "+ Add a question"}
             </button>
@@ -623,7 +1087,7 @@ export function PlanHomeClient() {
                         <button
                           type="submit"
                           disabled={!customDraft.trim()}
-                          className="rounded-full accent-fill-gradient px-3 py-1 text-xs font-semibold text-on-accent disabled:opacity-40"
+                          className="rounded-full accent-fill-gradient px-3 py-1 text-xs font-medium text-on-accent disabled:opacity-40"
                         >
                           Add
                         </button>
@@ -657,38 +1121,239 @@ export function PlanHomeClient() {
               </div>
             ) : null}
           </div>
-        </div>
+        </IdeateCollapsibleSection>
 
-        {/* —— Section C: Life areas —— */}
-        <div className="mt-14">
-          <p className={SECTION_LABEL}>Your life areas</p>
+        {/* —— Regrets —— */}
+        <IdeateCollapsibleSection
+          eyebrow="Regret minimisation"
+          summary={regretsSummary}
+          collapsed={collapsed.regrets}
+          onToggle={() => toggleSection("regrets")}
+        >
+          <p className="mb-10 max-w-2xl font-sans text-sm font-normal text-muted">
+            Imagine yourself at 80, looking back. What would you regret not
+            having tried?
+          </p>
+
+          {regrets.length === 0 && !addingRegret ? (
+            <p className="font-sans text-sm italic text-faint">
+              No regrets captured yet — add one when you&apos;re ready.
+            </p>
+          ) : (
+            <ul>
+              {regrets.map((r, i) => (
+                <li
+                  key={r.id}
+                  className={`group border-b-[0.5px] border-border py-6 ${
+                    i === 0 ? "border-t-0 pt-2" : ""
+                  }`}
+                >
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-8">
+                    <span className="min-w-[6.5rem] shrink-0 font-sans text-[11px] font-medium uppercase tracking-[0.08em] text-muted">
+                      {r.category?.trim() || "—"}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-display text-[22px] font-normal leading-[1.3] text-foreground">
+                        {r.statement}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => exploreRegretInIdeate(r)}
+                        className="mt-2 cursor-pointer font-sans text-[13px] font-medium text-accent-link opacity-0 transition-opacity group-hover:opacity-100"
+                      >
+                        Explore in Ideate →
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveRegret(r.id)}
+                      className="shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                      aria-label="Remove regret"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {addingRegret ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleAddRegret();
+              }}
+              className="mt-4 flex flex-col gap-2"
+            >
+              <label className="sr-only" htmlFor="ideate-regret-cat">
+                Category
+              </label>
+              <input
+                id="ideate-regret-cat"
+                value={regretCategoryDraft}
+                onChange={(e) => setRegretCategoryDraft(e.target.value)}
+                placeholder="Category (optional) — Work, Creative…"
+                maxLength={40}
+                className="w-full max-w-xs rounded-lg border border-border bg-background px-3 py-2 font-sans text-sm outline-none ring-accent/30 focus:ring-2"
+              />
+              <label className="sr-only" htmlFor="ideate-regret-new">
+                Regret statement
+              </label>
+              <textarea
+                id="ideate-regret-new"
+                autoFocus
+                value={regretDraft}
+                onChange={(e) => setRegretDraft(e.target.value)}
+                placeholder="What would you regret not having tried?"
+                rows={3}
+                maxLength={280}
+                className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 font-display text-xl outline-none ring-accent/30 focus:ring-2"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingRegret(false);
+                    setRegretDraft("");
+                    setRegretCategoryDraft("");
+                  }}
+                  className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!regretDraft.trim()}
+                  className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
+                >
+                  Add
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setAddingRegret(true)}
+              className="mt-5 cursor-pointer font-sans text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
+            >
+              + Add an entry
+            </button>
+          )}
+        </IdeateCollapsibleSection>
+
+        {/* —— Life areas —— */}
+        <IdeateCollapsibleSection
+          eyebrow="Your life areas"
+          summary={lifeAreasSummary}
+          collapsed={collapsed.lifeAreas}
+          onToggle={() => toggleSection("lifeAreas")}
+        >
           {sortedDreams.length === 0 ? (
-            <p className="mt-5 max-w-md text-sm italic text-[#A39C8C]">
+            <p className="font-sans text-sm italic text-faint">
               No life areas yet — add one below when you&apos;re ready.
             </p>
           ) : (
-            <ul className="mt-4 divide-y divide-border/70 border-y border-border/70">
-              {sortedDreams.map((d) => {
+            <ul>
+              {sortedDreams.map((d, i) => {
                 const snippet = lifeAreaSnippet(d);
+                const checkIn = latestLifeAreaCheckIn(d);
+                const checkingIn = checkInDreamId === d.id;
                 return (
-                  <li key={d.id}>
-                    <Link
-                      href={`/dream/goal/${encodeURIComponent(d.id)}`}
-                      className="flex items-baseline justify-between gap-4 py-4 transition-opacity hover:opacity-80"
-                    >
-                      <span className="min-w-0 font-display text-lg font-medium tracking-tight text-[#1E2530] dark:text-foreground">
+                  <li
+                    key={d.id}
+                    className={`border-b-[0.5px] border-border py-7 ${
+                      i === 0 ? "border-t-0 pt-2" : ""
+                    }`}
+                  >
+                    <div className="grid gap-4 sm:grid-cols-[1fr_2fr] sm:gap-10">
+                      <h3 className="font-display text-xl font-normal leading-[1.3] text-foreground">
                         {d.title.trim() || "Untitled"}
-                      </span>
-                      <span
-                        className={`max-w-[55%] shrink-0 truncate text-right text-sm ${
-                          snippet
-                            ? "text-muted"
-                            : "italic text-[#A39C8C]"
-                        }`}
-                      >
-                        {snippet ?? "Nothing written yet"}
-                      </span>
-                    </Link>
+                      </h3>
+                      <div className="min-w-0">
+                        <p
+                          className={`font-sans text-sm leading-[1.7] ${
+                            snippet ? "text-muted" : "italic text-faint"
+                          }`}
+                        >
+                          {snippet ?? "Nothing written yet"}
+                        </p>
+                        <p className="mt-2 font-sans text-xs text-muted">
+                          {checkIn
+                            ? `Last check-in: ${formatUpdatedAt(checkIn.createdAt)} · ${checkIn.note}`
+                            : "No check-in yet — how's it going?"}
+                        </p>
+                        {checkingIn ? (
+                          <form
+                            className="mt-3 flex flex-col gap-2"
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              saveCheckIn();
+                            }}
+                          >
+                            <input
+                              autoFocus
+                              value={checkInDraft}
+                              onChange={(e) => setCheckInDraft(e.target.value)}
+                              placeholder="Did you open the doc this week?"
+                              maxLength={280}
+                              className="w-full rounded-lg border border-border bg-background px-3 py-2 font-sans text-sm outline-none ring-accent/30 focus:ring-2"
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCheckInDreamId(null);
+                                  setCheckInDraft("");
+                                }}
+                                className="rounded-full px-3 py-1.5 text-xs font-medium text-muted"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="submit"
+                                disabled={!checkInDraft.trim()}
+                                className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
+                              >
+                                Save & open
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
+                          <p className="mt-2 font-sans text-[13px] font-medium text-accent-link">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCheckInDreamId(d.id);
+                                setCheckInDraft("");
+                              }}
+                              className="cursor-pointer hover:opacity-80"
+                            >
+                              Check in →
+                            </button>
+                            <span className="mx-1.5 text-muted" aria-hidden>
+                              ·
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => startMeditateOnArea(d)}
+                              className="cursor-pointer hover:opacity-80"
+                            >
+                              Meditate on this →
+                            </button>
+                            <span className="mx-1.5 text-muted" aria-hidden>
+                              ·
+                            </span>
+                            <Link
+                              href={`/ideate/goal/${encodeURIComponent(d.id)}`}
+                              className="hover:opacity-80"
+                            >
+                              Open area →
+                            </Link>
+                          </p>
+                        )}
+                      </div>
+                    </div>
                   </li>
                 );
               })}
@@ -697,11 +1362,11 @@ export function PlanHomeClient() {
           <button
             type="button"
             onClick={() => setModalOpen(true)}
-            className="mt-4 cursor-pointer text-sm font-medium text-[#B8703A] transition-opacity hover:opacity-80"
+            className="mt-5 cursor-pointer font-sans text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
           >
             + Add a life area
           </button>
-        </div>
+        </IdeateCollapsibleSection>
       </section>
 
       {modalOpen ? (
@@ -800,7 +1465,7 @@ export function PlanHomeClient() {
                 type="button"
                 disabled={!newTitle.trim()}
                 onClick={() => addDream()}
-                className="cursor-pointer rounded-full bg-[#F0A855] px-5 py-2.5 text-sm font-semibold text-[#1E2530] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                className="cursor-pointer rounded-full bg-[#F0A855] px-5 py-2.5 text-sm font-medium text-[#1E2530] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Create
               </button>
@@ -857,7 +1522,7 @@ export function PlanHomeClient() {
               <button
                 type="button"
                 onClick={() => saveActiveAnswer()}
-                className="rounded-full accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+                className="rounded-full accent-fill-gradient px-4 py-2 text-sm font-medium text-on-accent transition-opacity hover:opacity-90"
               >
                 Save
               </button>

@@ -63,7 +63,7 @@ const LIFE_AREA_BREAKDOWN = [
 ] as const;
 
 /**
- * Dream marketing page at `/dream`. App lives at `/dream/my`.
+ * Ideate marketing page at `/ideate`. App lives at `/ideate/my`.
  */
 export function EnhancedIdeatePage() {
   return (
@@ -111,7 +111,7 @@ export function EnhancedIdeatePage() {
               pull the threads together.
             </p>
             <Link
-              href="/dream/my"
+              href="/ideate/my"
               className="mt-6 inline-flex items-center rounded-full bg-[#1E2530] px-5 py-2.5 text-sm font-semibold text-[#FAF8F3] transition-opacity hover:opacity-90 dark:bg-marketing-ink dark:text-home-hero-bg"
             >
               Open life areas →
@@ -172,7 +172,7 @@ export function EnhancedIdeatePage() {
               quiet mosaic beside your goals.
             </p>
             <Link
-              href="/dream/my/vision-board"
+              href="/ideate/my/vision-board"
               className="mt-6 inline-flex items-center rounded-full bg-[#1E2530] px-5 py-2.5 text-sm font-semibold text-[#FAF8F3] transition-opacity hover:opacity-90 dark:bg-marketing-ink dark:text-home-hero-bg"
             >
               Open vision board →
@@ -211,10 +211,10 @@ export function EnhancedIdeatePage() {
           </h2>
           <div className="mt-8">
             <Link
-              href="/dream/my"
+              href="/ideate/my"
               className="inline-flex items-center justify-center rounded-full accent-fill-gradient px-7 py-3 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
             >
-              My Dreams
+              Ideate
             </Link>
           </div>
         </div>

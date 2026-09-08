@@ -1,6 +1,6 @@
 import type { DreamState, PlanDream } from "@/lib/plan-dreams";
 import { ensureGuestDemoIdeateSeeded, withoutDemoIdeateStore } from "@/lib/ideate-demo-seed";
-import { getMedimadeSessionJwt } from "@/lib/auth-session";
+import { isMedimadeSessionActive } from "@/lib/auth-session";
 
 /**
  * Ideate hierarchy — projects (PlanDream), subtasks, todos, resistance entries.
@@ -80,7 +80,7 @@ function emptyIdeateStore(): IdeateStoreV2 {
 }
 
 function isSignedIn(): boolean {
-  return Boolean(getMedimadeSessionJwt());
+  return isMedimadeSessionActive();
 }
 
 function removeIdeateLs(): void {
@@ -96,6 +96,11 @@ function removeIdeateLs(): void {
 export function clearIdeateStoreDeviceData(): void {
   memoryStore = null;
   removeIdeateLs();
+}
+
+/** Clear in-memory working copy only — keep localStorage for cloud migration. */
+export function clearIdeateStoreMemoryOnly(): void {
+  memoryStore = null;
 }
 
 function safeIso(): string {
@@ -124,6 +129,7 @@ function normalizeDream(d: PlanDream): PlanDream {
     obstacleEntries: Array.isArray(d.obstacleEntries) ? d.obstacleEntries : [],
     visionEntries: Array.isArray(d.visionEntries) ? d.visionEntries : [],
     looseNotes: typeof d.looseNotes === "string" ? d.looseNotes : "",
+    checkIns: Array.isArray(d.checkIns) ? d.checkIns.slice(0, 40) : [],
     completedAt:
       typeof (d as PlanDream & { completedAt?: unknown }).completedAt === "string"
         ? (d as PlanDream & { completedAt: string }).completedAt

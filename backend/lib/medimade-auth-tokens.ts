@@ -138,7 +138,11 @@ export function buildSetCookie(
     // Cross-site API (consciously.live / localhost → execute-api) needs None+Secure.
     secure ? "SameSite=None" : "SameSite=Lax",
   ];
-  if (secure) parts.push("Secure");
+  if (secure) {
+    parts.push("Secure");
+    // CHIPS: keep the refresh cookie available as a third-party cookie on the API host.
+    parts.push("Partitioned");
+  }
   return parts.join("; ");
 }
 
@@ -151,7 +155,10 @@ export function clearCookie(name: string): string {
     "HttpOnly",
     secure ? "SameSite=None" : "SameSite=Lax",
   ];
-  if (secure) parts.push("Secure");
+  if (secure) {
+    parts.push("Secure");
+    parts.push("Partitioned");
+  }
   return parts.join("; ");
 }
 

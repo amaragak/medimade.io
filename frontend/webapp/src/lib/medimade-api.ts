@@ -152,6 +152,7 @@ export async function requestMedimadeMagicLink(email: string): Promise<void> {
 
 export type MedimadeMagicLinkVerifyResult = {
   token: string;
+  refreshToken?: string;
   userId: string;
   email: string;
   needsProfileName: boolean;
@@ -194,6 +195,7 @@ async function verifyMedimadeMagicLinkUncached(
   });
   const data = (await res.json().catch(() => ({}))) as {
     token?: string;
+    refreshToken?: string;
     userId?: string;
     email?: string;
     needsProfileName?: unknown;
@@ -214,6 +216,10 @@ async function verifyMedimadeMagicLinkUncached(
       : !displayName;
   return {
     token: data.token.trim(),
+    refreshToken:
+      typeof data.refreshToken === "string" && data.refreshToken.trim()
+        ? data.refreshToken.trim()
+        : undefined,
     userId: typeof data.userId === "string" ? data.userId : "",
     email: typeof data.email === "string" ? data.email : "",
     needsProfileName,
@@ -251,58 +257,106 @@ export async function saveMedimadeProfileDisplayName(
 }
 
 export type MedimadeRefreshResult = {
-  token: string;
-  email: string;
-  displayName: string | null;
+  status: "ok" | "missing" | "invalid" | "expired" | "error";
+  token?: string;
+  refreshToken?: string;
+  email?: string;
+  displayName?: string | null;
   userId?: string;
 };
 
-/** Exchange HttpOnly refresh cookie for a new access JWT (memory). */
-export async function refreshMedimadeSessionRemote(): Promise<MedimadeRefreshResult | null> {
+/** Exchange refresh cookie or durable local refresh token for a new access JWT. */
+export async function refreshMedimadeSessionRemote(): Promise<MedimadeRefreshResult> {
   const base = getMedimadeApiBase();
-  if (!base) return null;
+  if (!base) return { status: "error" };
 
-  const attempt = async (): Promise<Response> =>
-    medimadeFetch(`${base}/auth/refresh`, {
+  const { getMedimadeRefreshToken, setMedimadeRefreshToken } = await import(
+    "@/lib/auth-session"
+  );
+
+  const attempt = async (refreshToken: string | null): Promise<Response> =>
+    fetch(`${base}/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(refreshToken ? { refreshToken } : {}),
+      credentials: "include",
     });
 
-  let res = await attempt();
-  // Parallel refresh can 401 on a just-rotated token; retry once so the newer cookie wins.
-  if (res.status === 401) {
-    await new Promise((r) => setTimeout(r, 150));
-    res = await attempt();
+  let storedRefresh = getMedimadeRefreshToken();
+  // Cookie first (empty body), then durable local refresh if cookies are blocked.
+  let res = await attempt(null);
+  if (res.status === 401 && storedRefresh) {
+    res = await attempt(storedRefresh);
   }
-  if (!res.ok) return null;
-  const data = (await res.json().catch(() => ({}))) as {
+  // Parallel refresh can 401 on a just-rotated token; retry once so the newer
+  // cookie / localStorage refresh (updated by another tab) can win.
+  if (res.status === 401) {
+    await new Promise((r) => setTimeout(r, 200));
+    storedRefresh = getMedimadeRefreshToken();
+    res = await attempt(null);
+    if (res.status === 401 && storedRefresh) {
+      res = await attempt(storedRefresh);
+    }
+  }
+
+  let data: {
     token?: string;
+    refreshToken?: string;
     email?: string;
     displayName?: unknown;
     userId?: string;
-  };
-  if (typeof data.token !== "string" || !data.token.trim()) return null;
-  return {
-    token: data.token.trim(),
-    email: typeof data.email === "string" ? data.email : "",
-    displayName:
-      typeof data.displayName === "string" && data.displayName.trim()
-        ? data.displayName.trim()
-        : null,
-    userId: typeof data.userId === "string" ? data.userId : undefined,
-  };
+    code?: string;
+    error?: string;
+  } = {};
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    /* */
+  }
+
+  if (res.ok && typeof data.token === "string" && data.token.trim()) {
+    const nextRefresh =
+      typeof data.refreshToken === "string" && data.refreshToken.trim()
+        ? data.refreshToken.trim()
+        : undefined;
+    if (nextRefresh) setMedimadeRefreshToken(nextRefresh);
+    return {
+      status: "ok",
+      token: data.token.trim(),
+      refreshToken: nextRefresh,
+      email: typeof data.email === "string" ? data.email : "",
+      displayName:
+        typeof data.displayName === "string" && data.displayName.trim()
+          ? data.displayName.trim()
+          : null,
+      userId: typeof data.userId === "string" ? data.userId : undefined,
+    };
+  }
+
+  const code =
+    typeof data.code === "string"
+      ? data.code
+      : res.status === 401
+        ? "invalid"
+        : "error";
+  if (code === "expired") return { status: "expired" };
+  if (code === "missing") return { status: "missing" };
+  if (code === "invalid") return { status: "invalid" };
+  return { status: "error" };
 }
 
 /** Clears server refresh session + cookies. Does not touch local UI state. */
-export async function logoutMedimadeSessionRemote(): Promise<void> {
+export async function logoutMedimadeSessionRemote(
+  refreshToken?: string | null,
+): Promise<void> {
   const base = getMedimadeApiBase();
   if (!base) return;
   try {
+    const token = refreshToken?.trim() || null;
     await medimadeFetch(`${base}/auth/logout`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(token ? { refreshToken: token } : {}),
     });
   } catch {
     /* ignore */
@@ -582,6 +636,8 @@ export type IdeateCloudBundle = {
   reflectionQuestions: unknown;
   /** Optional for older cloud rows; client treats missing as empty. */
   values?: unknown;
+  /** Optional — regret minimisation entries. */
+  regrets?: unknown;
 };
 
 /**

@@ -2,7 +2,7 @@ import {
   IDEATE_REFLECTION_QUESTION_PRESETS,
   type IdeateReflectionQuestionPreset,
 } from "@/lib/ideate-reflection-question-presets";
-import { getMedimadeSessionJwt } from "@/lib/auth-session";
+import { isMedimadeSessionActive } from "@/lib/auth-session";
 
 /**
  * Per-user Ideate reflection questions (added presets + custom).
@@ -36,7 +36,7 @@ function emptyQuestions(): IdeateReflectionQuestionsStoreV1 {
 }
 
 function isSignedIn(): boolean {
-  return Boolean(getMedimadeSessionJwt());
+  return isMedimadeSessionActive();
 }
 
 function removeQuestionsLs(): void {
@@ -52,6 +52,11 @@ function removeQuestionsLs(): void {
 export function clearIdeateReflectionQuestionsDeviceData(): void {
   memoryStore = null;
   removeQuestionsLs();
+}
+
+/** Clear in-memory questions only — keep localStorage for cloud migration. */
+export function clearIdeateReflectionQuestionsMemoryOnly(): void {
+  memoryStore = null;
 }
 
 function safeIso(): string {

@@ -22,6 +22,13 @@ export type DrvTimelineEntry = {
   coachReply: string;
 };
 
+/** Outer-world progress notes on a life area (feedback loop). */
+export type LifeAreaCheckIn = {
+  id: string;
+  note: string;
+  createdAt: string;
+};
+
 export type PlanDream = {
   id: string;
   title: string;
@@ -46,6 +53,8 @@ export type PlanDream = {
   visionEntries: DrvTimelineEntry[];
   /** Free-text scratchpad — not part of DRV. */
   looseNotes: string;
+  /** Outer check-ins — newest first. */
+  checkIns: LifeAreaCheckIn[];
   /** Guest sample — device-only; stripped after sign-in. */
   demo?: boolean;
   meditationsGenerated: number;
@@ -105,6 +114,7 @@ export function createPlanDream(input: {
     obstacleEntries: [],
     visionEntries: [],
     looseNotes: "",
+    checkIns: [],
     meditationsGenerated: 0,
     completedAt: null,
   };
@@ -148,6 +158,27 @@ function normalizeTimeline(raw: unknown): DrvTimelineEntry[] {
     .slice(0, 100);
 }
 
+function normalizeCheckIn(x: unknown): LifeAreaCheckIn | null {
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  if (typeof o.id !== "string" || typeof o.note !== "string") return null;
+  const note = o.note.trim().slice(0, 280);
+  if (!note) return null;
+  return {
+    id: o.id,
+    note,
+    createdAt: typeof o.createdAt === "string" ? o.createdAt : safeIso(),
+  };
+}
+
+function normalizeCheckIns(raw: unknown): LifeAreaCheckIn[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(normalizeCheckIn)
+    .filter((e): e is LifeAreaCheckIn => Boolean(e))
+    .slice(0, 40);
+}
+
 function normalizeDreams(raw: unknown[]): PlanDream[] {
   const out: PlanDream[] = [];
   for (const x of raw) {
@@ -176,6 +207,7 @@ function normalizeDreams(raw: unknown[]): PlanDream[] {
       obstacleEntries: normalizeTimeline(d.obstacleEntries),
       visionEntries: normalizeTimeline(d.visionEntries),
       looseNotes: typeof d.looseNotes === "string" ? d.looseNotes : "",
+      checkIns: normalizeCheckIns(d.checkIns),
       meditationsGenerated:
         typeof d.meditationsGenerated === "number" &&
         Number.isFinite(d.meditationsGenerated)
@@ -186,6 +218,35 @@ function normalizeDreams(raw: unknown[]): PlanDream[] {
     });
   }
   return out;
+}
+
+export function addLifeAreaCheckIn(
+  dream: PlanDream,
+  note: string,
+): PlanDream {
+  const trimmed = note.trim().slice(0, 280);
+  if (!trimmed) return dream;
+  const now = safeIso();
+  const entry: LifeAreaCheckIn = {
+    id:
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          `checkin_${(crypto as any).randomUUID()}`
+        : `checkin_${Date.now().toString(16)}`,
+    note: trimmed,
+    createdAt: now,
+  };
+  return {
+    ...dream,
+    checkIns: [entry, ...(dream.checkIns ?? [])].slice(0, 40),
+    updatedAt: now,
+  };
+}
+
+export function latestLifeAreaCheckIn(
+  dream: PlanDream,
+): LifeAreaCheckIn | null {
+  return dream.checkIns?.[0] ?? null;
 }
 
 function normalizeState(x: unknown): DreamState {
@@ -231,6 +292,7 @@ function migrateLegacyPlanIfNeeded(): PlanDreamsStoreV1 {
         obstacleEntries: [],
         visionEntries: [],
         looseNotes: "",
+        checkIns: [],
         meditationsGenerated: 0,
         completedAt: null,
       });

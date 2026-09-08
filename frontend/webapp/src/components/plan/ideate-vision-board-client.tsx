@@ -4,14 +4,18 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   applyVisionBoardRefinement,
+  getComposeSlotIds,
   loadIdeateVisionBoardStore,
   MAX_VISION_EXTRA_REFERENCES,
   pickVisionSwatchColor,
+  placeVisionItemInComposeSlot,
   removeVisionBoardItem,
   restoreVisionBoardVersion,
   saveIdeateVisionBoardStore,
   upsertVisionBoardItem,
+  visionItemHasImage,
   visionLabelFromPrompt,
+  VISION_COMPOSE_SLOT_COUNT,
   type VisionBoardItem,
   type VisionExtraReference,
   type VisionSelfReference,
@@ -36,6 +40,8 @@ import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 
 const SECTION_LABEL =
   "text-sm font-medium uppercase tracking-widest text-[#8A7566]";
+
+const VISION_TILE_DRAG_MIME = "application/x-ideate-vision-tile";
 
 type TileMenu = "actions" | "refine" | "versions";
 
@@ -89,6 +95,8 @@ export function IdeateVisionBoardClient() {
   const [menuTileId, setMenuTileId] = useState<string | null>(null);
   const [menuMode, setMenuMode] = useState<TileMenu>("actions");
   const [refineDraft, setRefineDraft] = useState("");
+  const [composeDragOver, setComposeDragOver] = useState<number | null>(null);
+  const [draggingTileId, setDraggingTileId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const extraFileInputRef = useRef<HTMLInputElement | null>(null);
   const boardFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -194,14 +202,14 @@ export function IdeateVisionBoardClient() {
   }, [revokePreview, signedIn]);
 
   useEffect(() => {
-    if (!cloudReady) return;
+    if (!cloudReady && signedIn) return;
     const id = requestAnimationFrame(() => {
       void refresh();
     });
     return () => {
       cancelAnimationFrame(id);
     };
-  }, [refresh, cloudReady, revision]);
+  }, [refresh, cloudReady, revision, signedIn]);
 
   useEffect(() => {
     return () => {
@@ -938,6 +946,19 @@ export function IdeateVisionBoardClient() {
     [closeTileMenu, persistBoard, refresh],
   );
 
+  const onPlaceInCompose = useCallback(
+    async (itemId: string, slotIndex: number) => {
+      const next = placeVisionItemInComposeSlot(
+        loadIdeateVisionBoardStore(),
+        itemId,
+        slotIndex,
+      );
+      await persistBoard(next);
+      setItems(next.items);
+    },
+    [persistBoard],
+  );
+
   const megapixels =
     selfRef && selfRef.width && selfRef.height
       ? ((selfRef.width * selfRef.height) / 1_000_000).toFixed(1)
@@ -947,295 +968,420 @@ export function IdeateVisionBoardClient() {
     ? Boolean(selfRef?.url && (selfRef?.key || visionKeyFromUrl(selfRef?.url)))
     : Boolean(selfRef?.mediaId || selfRef?.url);
 
+  const composeSlotIds = getComposeSlotIds(items);
+  const composeSlotIdSet = new Set(
+    composeSlotIds.filter((id): id is string => Boolean(id)),
+  );
+
   return (
     <div className="min-h-[calc(100vh-3.5rem)] pb-16">
       <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
         <Link
-          href="/dream/my"
+          href="/ideate/my"
           className="text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
         >
-          ← My Dreams
+          ← Ideate
         </Link>
 
         <h1 className="mt-6 font-display text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
           Vision board
         </h1>
         <p className="mt-2 max-w-2xl text-base leading-relaxed text-muted">
-          Generate scenes you&apos;re moving toward — with you in them.
+          Compose the mosaic that opens Ideate. Drag images from your library
+          into slots, or generate new ones below.
         </p>
 
-        <div className="mt-8 grid gap-10 lg:grid-cols-[minmax(0,1fr)_15.5rem] lg:items-start xl:grid-cols-[minmax(0,1fr)_17rem] xl:gap-12">
-          {/* Primary: board + generate */}
-          <div className="min-w-0 order-1">
-            <div>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className={SECTION_LABEL}>On the board</p>
-                <button
-                  type="button"
-                  disabled={busy !== null || refiningId !== null}
-                  onClick={() => boardFileInputRef.current?.click()}
-                  className="cursor-pointer rounded-full border border-border px-3.5 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-[#F5F1E7]/80 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-accent-soft/20"
-                >
-                  {busy === "upload" ? "Uploading…" : "Upload image"}
-                </button>
-                <input
-                  ref={boardFileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) =>
-                    void onUploadBoardImage(e.target.files?.[0] ?? null)
-                  }
-                />
+        {/* Compose grid — page hero */}
+        <div
+          className="mt-8 grid w-full grid-cols-3 gap-1"
+          style={{ gridTemplateColumns: "repeat(3, 1fr)" }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+              setComposeDragOver(null);
+            }
+          }}
+        >
+          {Array.from({ length: VISION_COMPOSE_SLOT_COUNT }, (_, slotIndex) => {
+            const id = composeSlotIds[slotIndex];
+            const item = id ? (items.find((x) => x.id === id) ?? null) : null;
+            const src = item
+              ? item.imageUrl || tileUrls[item.id] || null
+              : null;
+            const isOver = composeDragOver === slotIndex;
+            const isDraggingHere =
+              draggingTileId != null && draggingTileId === id;
+            return (
+              <div
+                key={`compose-slot-${slotIndex}`}
+                className={`group relative aspect-[4/3] overflow-hidden rounded-[8px] transition-[outline-color] ${
+                  src
+                    ? "bg-surface-2"
+                    : "border border-dashed border-[#D4CBB8] bg-[#F5F1E7] dark:border-border dark:bg-accent-soft/20"
+                } ${
+                  isOver
+                    ? "outline outline-2 outline-offset-[-2px] outline-[#F0A855]"
+                    : ""
+                } ${isDraggingHere ? "opacity-50" : ""}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setComposeDragOver(slotIndex);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setComposeDragOver(null);
+                  setDraggingTileId(null);
+                  const dropped =
+                    e.dataTransfer.getData(VISION_TILE_DRAG_MIME) ||
+                    e.dataTransfer.getData("text/plain");
+                  if (!dropped) return;
+                  void onPlaceInCompose(dropped, slotIndex);
+                }}
+              >
+                {src ? (
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={src}
+                      alt={item?.label || `Mosaic slot ${slotIndex + 1}`}
+                      className="absolute inset-0 h-full w-full object-cover object-[center_20%]"
+                      draggable={Boolean(id)}
+                      onDragStart={(e) => {
+                        if (!id) {
+                          e.preventDefault();
+                          return;
+                        }
+                        e.dataTransfer.setData(VISION_TILE_DRAG_MIME, id);
+                        e.dataTransfer.setData("text/plain", id);
+                        e.dataTransfer.effectAllowed = "move";
+                        setDraggingTileId(id);
+                      }}
+                      onDragEnd={() => {
+                        setDraggingTileId(null);
+                        setComposeDragOver(null);
+                      }}
+                    />
+                    <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/25 group-hover:opacity-100">
+                      <span className="font-sans text-[11px] font-medium tracking-wide text-white">
+                        Drag to swap
+                      </span>
+                    </span>
+                  </>
+                ) : (
+                  <span className="absolute inset-0 flex items-center justify-center font-sans text-3xl font-medium text-[#8A8272]/55">
+                    {slotIndex + 1}
+                  </span>
+                )}
               </div>
-              {!hydrated ? (
-                <p className="mt-5 text-sm text-muted">Loading…</p>
-              ) : items.length === 0 ? (
-                <p className="mt-5 max-w-md text-sm italic text-[#A39C8C]">
-                  Nothing on the board yet — generate or upload an image to
-                  begin.
-                </p>
-              ) : (
-                <ul
-                  ref={boardRef}
-                  className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4"
-                >
-                  {items.map((item) => {
-                    const src = item.imageUrl || tileUrls[item.id];
-                    const open = menuTileId === item.id;
-                    const versionCount = item.versions?.length ?? 0;
-                    const isImage = Boolean(
-                      src && (item.kind === "image" || item.prompt),
-                    );
-                    const canAiEdit = Boolean(item.prompt?.trim());
-                    return (
-                      <li
-                        key={item.id}
-                        className="group relative aspect-square overflow-visible"
-                      >
-                        <button
-                          type="button"
-                          disabled={!isImage || refiningId === item.id}
-                          onClick={() => {
-                            if (!isImage) return;
-                            if (open) {
-                              closeTileMenu();
-                              return;
-                            }
-                            setMenuTileId(item.id);
-                            setMenuMode("actions");
-                            setRefineDraft("");
-                            setError(null);
-                          }}
-                          className="relative block h-full w-full overflow-hidden rounded-2xl border border-[#E5DFD0] text-left dark:border-border disabled:cursor-default"
-                          style={
-                            src ? undefined : { backgroundColor: item.color }
+            );
+          })}
+        </div>
+
+        {/* Library + References */}
+        <div className="mt-10 grid grid-cols-1 items-start gap-10 lg:grid-cols-[minmax(0,65fr)_minmax(0,32fr)] lg:gap-[3%]">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className={SECTION_LABEL}>Library</p>
+              <button
+                type="button"
+                disabled={busy !== null || refiningId !== null}
+                onClick={() => boardFileInputRef.current?.click()}
+                className="cursor-pointer rounded-full border border-border px-3.5 py-1.5 text-xs font-semibold text-foreground transition-colors hover:bg-[#F5F1E7]/80 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-accent-soft/20"
+              >
+                {busy === "upload" ? "Uploading…" : "Upload image"}
+              </button>
+              <input
+                ref={boardFileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) =>
+                  void onUploadBoardImage(e.target.files?.[0] ?? null)
+                }
+              />
+            </div>
+            {!hydrated ? (
+              <p className="mt-5 text-sm text-muted">Loading…</p>
+            ) : items.length === 0 ? (
+              <p className="mt-5 max-w-md text-sm italic text-[#A39C8C]">
+                Nothing in your library yet — generate or upload an image to
+                begin.
+              </p>
+            ) : (
+              <ul
+                ref={boardRef}
+                className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"
+              >
+                {items.map((item) => {
+                  const src = item.imageUrl || tileUrls[item.id];
+                  const open = menuTileId === item.id;
+                  const versionCount = item.versions?.length ?? 0;
+                  const isImage = Boolean(
+                    src &&
+                      (item.kind === "image" ||
+                        item.prompt ||
+                        visionItemHasImage(item)),
+                  );
+                  const canAiEdit = Boolean(item.prompt?.trim());
+                  const onMosaic = composeSlotIdSet.has(item.id);
+                  return (
+                    <li
+                      key={item.id}
+                      className={`group relative aspect-square overflow-visible ${
+                        draggingTileId === item.id ? "opacity-50" : ""
+                      }`}
+                      draggable={isImage}
+                      onDragStart={(e) => {
+                        if (!isImage) {
+                          e.preventDefault();
+                          return;
+                        }
+                        e.dataTransfer.setData(VISION_TILE_DRAG_MIME, item.id);
+                        e.dataTransfer.setData("text/plain", item.id);
+                        e.dataTransfer.effectAllowed = "move";
+                        setDraggingTileId(item.id);
+                        closeTileMenu();
+                      }}
+                      onDragEnd={() => {
+                        setDraggingTileId(null);
+                        setComposeDragOver(null);
+                      }}
+                    >
+                      <button
+                        type="button"
+                        disabled={!isImage || refiningId === item.id}
+                        onClick={() => {
+                          if (!isImage) return;
+                          if (open) {
+                            closeTileMenu();
+                            return;
                           }
-                          title={item.label || undefined}
-                          aria-expanded={open}
-                          aria-haspopup="menu"
+                          setMenuTileId(item.id);
+                          setMenuMode("actions");
+                          setRefineDraft("");
+                          setError(null);
+                        }}
+                        className="relative block h-full w-full cursor-grab overflow-hidden rounded-[8px] border border-[#E5DFD0] text-left active:cursor-grabbing dark:border-border disabled:cursor-default"
+                        style={
+                          src ? undefined : { backgroundColor: item.color }
+                        }
+                        title={
+                          isImage
+                            ? `${item.label || "Tile"} — drag onto the mosaic`
+                            : item.label || undefined
+                        }
+                        aria-expanded={open}
+                        aria-haspopup="menu"
+                      >
+                        {src ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={src}
+                            alt={item.label || "Vision board tile"}
+                            className="pointer-events-none h-full w-full object-cover"
+                            draggable={false}
+                          />
+                        ) : (
+                          <span className="sr-only">{item.label}</span>
+                        )}
+                        <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-opacity group-hover:bg-black/20 group-hover:opacity-100">
+                          <span className="font-sans text-[11px] font-medium text-white">
+                            Drag
+                          </span>
+                        </span>
+                        {onMosaic ? (
+                          <span className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-[#EDE4D4]/95 px-1.5 py-0.5 font-sans text-[11px] font-medium text-[#5C5346] dark:bg-[#2A3340] dark:text-[#E8E0D4]">
+                            On mosaic
+                          </span>
+                        ) : null}
+                        {refiningId === item.id ? (
+                          <span className="ideate-frosted-overlay absolute inset-1 flex items-center justify-center text-xs font-medium text-white">
+                            Updating…
+                          </span>
+                        ) : null}
+                        {versionCount > 0 && refiningId !== item.id ? (
+                          <span className="ideate-frosted-overlay ideate-frosted-overlay--chip absolute left-2 top-2 text-[10px] font-medium text-white">
+                            {versionCount + 1}v
+                          </span>
+                        ) : null}
+                      </button>
+
+                      {open ? (
+                        <div
+                          role="menu"
+                          className="absolute left-1/2 top-[calc(100%+0.4rem)] z-20 w-[min(18rem,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-[#E5DFD0] bg-[#FAF8F3] p-2 shadow-[0_12px_40px_rgba(30,37,48,0.18)] dark:border-border dark:bg-card"
                         >
-                          {src ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={src}
-                              alt={item.label || "Vision board tile"}
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <span className="sr-only">{item.label}</span>
-                          )}
-                          {refiningId === item.id ? (
-                            <span className="absolute inset-0 flex items-center justify-center bg-black/45 text-xs font-medium text-white">
-                              Updating…
-                            </span>
-                          ) : null}
-                          {versionCount > 0 && refiningId !== item.id ? (
-                            <span className="absolute left-2 top-2 rounded-full bg-black/45 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                              {versionCount + 1}v
-                            </span>
-                          ) : null}
-                        </button>
-
-                        {open ? (
-                          <div
-                            role="menu"
-                            className="absolute left-1/2 top-[calc(100%+0.4rem)] z-20 w-[min(18rem,calc(100vw-2rem))] -translate-x-1/2 rounded-xl border border-[#E5DFD0] bg-[#FAF8F3] p-2 shadow-[0_12px_40px_rgba(30,37,48,0.18)] dark:border-border dark:bg-card"
-                          >
-                            {menuMode === "actions" ? (
-                              <div className="flex flex-col gap-0.5">
-                                {canAiEdit ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      role="menuitem"
-                                      disabled={refiningId !== null}
-                                      className="cursor-pointer rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-[#EFEBE3] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-accent-soft/30"
-                                      onClick={() => void onRegenerateTile(item)}
-                                    >
-                                      {refiningId === item.id
-                                        ? "Regenerating…"
-                                        : "Regenerate"}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      role="menuitem"
-                                      className="cursor-pointer rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-[#EFEBE3] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-accent-soft/30"
-                                      onClick={() => setMenuMode("refine")}
-                                    >
-                                      Refine
-                                    </button>
-                                    {versionCount > 0 ? (
-                                      <button
-                                        type="button"
-                                        role="menuitem"
-                                        className="cursor-pointer rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-[#EFEBE3] dark:hover:bg-accent-soft/30"
-                                        onClick={() => setMenuMode("versions")}
-                                      >
-                                        Versions ({versionCount})
-                                      </button>
-                                    ) : null}
-                                  </>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  className="cursor-pointer rounded-lg px-3 py-2 text-left text-sm font-medium text-[#A65252] transition-colors hover:bg-[#F3E4E0]"
-                                  onClick={() => void onRemoveTile(item)}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            ) : null}
-
-                            {menuMode === "refine" ? (
-                              <div className="space-y-2 p-1">
-                                <p className="px-1 text-xs font-medium uppercase tracking-wide text-muted">
-                                  How would you like to change this image?
-                                </p>
-                                <textarea
-                                  value={refineDraft}
-                                  onChange={(e) =>
-                                    setRefineDraft(e.target.value)
-                                  }
-                                  rows={3}
-                                  autoFocus
-                                  placeholder="e.g. warmer light, standing instead of sitting, softer background"
-                                  className="w-full resize-y rounded-lg border border-[#E5DFD0] bg-card px-3 py-2 text-sm leading-relaxed outline-none ring-accent/25 focus:ring-2 dark:border-border"
-                                />
-                                <div className="flex items-center justify-between gap-2">
+                          {menuMode === "actions" ? (
+                            <div className="flex flex-col gap-0.5">
+                              {canAiEdit ? (
+                                <>
                                   <button
                                     type="button"
-                                    className="cursor-pointer rounded-lg px-2 py-1.5 text-sm text-muted hover:text-foreground"
-                                    onClick={() => setMenuMode("actions")}
-                                  >
-                                    Back
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={
-                                      refiningId !== null ||
-                                      refineDraft.trim().length < 2
-                                    }
-                                    className="cursor-pointer rounded-full bg-[#1E2530] px-3.5 py-1.5 text-sm font-semibold text-[#FAF8F3] disabled:opacity-40 dark:bg-foreground dark:text-background"
-                                    onClick={() => void onRefineTile(item)}
+                                    role="menuitem"
+                                    disabled={refiningId !== null}
+                                    className="cursor-pointer rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-[#EFEBE3] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-accent-soft/30"
+                                    onClick={() => void onRegenerateTile(item)}
                                   >
                                     {refiningId === item.id
-                                      ? "Working…"
+                                      ? "Regenerating…"
                                       : "Regenerate"}
                                   </button>
-                                </div>
-                              </div>
-                            ) : null}
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="cursor-pointer rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-[#EFEBE3] disabled:cursor-not-allowed disabled:opacity-40 dark:hover:bg-accent-soft/30"
+                                    onClick={() => setMenuMode("refine")}
+                                  >
+                                    Refine
+                                  </button>
+                                  {versionCount > 0 ? (
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="cursor-pointer rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-[#EFEBE3] dark:hover:bg-accent-soft/30"
+                                      onClick={() => setMenuMode("versions")}
+                                    >
+                                      Versions ({versionCount})
+                                    </button>
+                                  ) : null}
+                                </>
+                              ) : null}
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="cursor-pointer rounded-lg px-3 py-2 text-left text-sm font-medium text-[#A65252] transition-colors hover:bg-[#F3E4E0]"
+                                onClick={() => void onRemoveTile(item)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          ) : null}
 
-                            {menuMode === "versions" && versionCount > 0 ? (
-                              <div className="max-h-56 space-y-1 overflow-y-auto p-1">
+                          {menuMode === "refine" ? (
+                            <div className="space-y-2 p-1">
+                              <p className="px-1 text-xs font-medium uppercase tracking-wide text-muted">
+                                How would you like to change this image?
+                              </p>
+                              <textarea
+                                value={refineDraft}
+                                onChange={(e) => setRefineDraft(e.target.value)}
+                                rows={3}
+                                autoFocus
+                                placeholder="e.g. warmer light, standing instead of sitting, softer background"
+                                className="w-full resize-y rounded-lg border border-[#E5DFD0] bg-card px-3 py-2 text-sm leading-relaxed outline-none ring-accent/25 focus:ring-2 dark:border-border"
+                              />
+                              <div className="flex items-center justify-between gap-2">
                                 <button
                                   type="button"
-                                  className="mb-1 cursor-pointer rounded-lg px-2 py-1 text-sm text-muted hover:text-foreground"
+                                  className="cursor-pointer rounded-lg px-2 py-1.5 text-sm text-muted hover:text-foreground"
                                   onClick={() => setMenuMode("actions")}
                                 >
-                                  ← Back
+                                  Back
                                 </button>
-                                <p className="px-1 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
-                                  Current
-                                </p>
-                                <div className="flex items-center gap-2 rounded-lg bg-[#EFEBE3]/70 px-2 py-1.5 dark:bg-accent-soft/20">
-                                  {src ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img
-                                      src={src}
-                                      alt=""
-                                      className="h-10 w-10 shrink-0 rounded-md object-cover"
-                                    />
-                                  ) : null}
-                                  <p className="min-w-0 flex-1 truncate text-xs text-foreground">
-                                    {item.label || item.prompt || "Current"}
-                                  </p>
-                                </div>
-                                <p className="px-1 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted">
-                                  Earlier
-                                </p>
-                                {[...(item.versions ?? [])]
-                                  .reverse()
-                                  .map((v) => {
-                                    const vSrc = v.imageUrl || tileUrls[v.id];
-                                    return (
-                                      <button
-                                        key={v.id}
-                                        type="button"
-                                        className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-[#EFEBE3] dark:hover:bg-accent-soft/30"
-                                        onClick={() =>
-                                          void onRestoreVersion(item, v.id)
-                                        }
-                                      >
-                                        {vSrc ? (
-                                          // eslint-disable-next-line @next/next/no-img-element
-                                          <img
-                                            src={vSrc}
-                                            alt=""
-                                            className="h-10 w-10 shrink-0 rounded-md object-cover"
-                                          />
-                                        ) : (
-                                          <span
-                                            className="h-10 w-10 shrink-0 rounded-md"
-                                            style={{
-                                              backgroundColor: item.color,
-                                            }}
-                                          />
-                                        )}
-                                        <span className="min-w-0 flex-1">
-                                          <span className="block truncate text-xs font-medium text-foreground">
-                                            {visionLabelFromPrompt(v.prompt) ||
-                                              "Earlier version"}
-                                          </span>
-                                          {v.changeRequest ? (
-                                            <span className="block truncate text-[11px] text-muted">
-                                              via “{v.changeRequest}”
-                                            </span>
-                                          ) : null}
-                                        </span>
-                                      </button>
-                                    );
-                                  })}
+                                <button
+                                  type="button"
+                                  disabled={
+                                    refiningId !== null ||
+                                    refineDraft.trim().length < 2
+                                  }
+                                  className="cursor-pointer rounded-full bg-[#1E2530] px-3.5 py-1.5 text-sm font-semibold text-[#FAF8F3] disabled:opacity-40 dark:bg-foreground dark:text-background"
+                                  onClick={() => void onRefineTile(item)}
+                                >
+                                  {refiningId === item.id
+                                    ? "Working…"
+                                    : "Regenerate"}
+                                </button>
                               </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
+                            </div>
+                          ) : null}
+
+                          {menuMode === "versions" && versionCount > 0 ? (
+                            <div className="max-h-56 space-y-1 overflow-y-auto p-1">
+                              <button
+                                type="button"
+                                className="mb-1 cursor-pointer rounded-lg px-2 py-1 text-sm text-muted hover:text-foreground"
+                                onClick={() => setMenuMode("actions")}
+                              >
+                                ← Back
+                              </button>
+                              <p className="px-1 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted">
+                                Current
+                              </p>
+                              <div className="flex items-center gap-2 rounded-lg bg-[#EFEBE3]/70 px-2 py-1.5 dark:bg-accent-soft/20">
+                                {src ? (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img
+                                    src={src}
+                                    alt=""
+                                    className="h-10 w-10 shrink-0 rounded-md object-cover"
+                                  />
+                                ) : null}
+                                <p className="min-w-0 flex-1 truncate text-xs text-foreground">
+                                  {item.label || item.prompt || "Current"}
+                                </p>
+                              </div>
+                              <p className="px-1 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-muted">
+                                Earlier
+                              </p>
+                              {[...(item.versions ?? [])]
+                                .reverse()
+                                .map((v) => {
+                                  const vSrc = v.imageUrl || tileUrls[v.id];
+                                  return (
+                                    <button
+                                      key={v.id}
+                                      type="button"
+                                      className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-[#EFEBE3] dark:hover:bg-accent-soft/30"
+                                      onClick={() =>
+                                        void onRestoreVersion(item, v.id)
+                                      }
+                                    >
+                                      {vSrc ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img
+                                          src={vSrc}
+                                          alt=""
+                                          className="h-10 w-10 shrink-0 rounded-md object-cover"
+                                        />
+                                      ) : (
+                                        <span
+                                          className="h-10 w-10 shrink-0 rounded-md"
+                                          style={{
+                                            backgroundColor: item.color,
+                                          }}
+                                        />
+                                      )}
+                                      <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-xs font-medium text-foreground">
+                                          {visionLabelFromPrompt(v.prompt) ||
+                                            "Earlier version"}
+                                        </span>
+                                        {v.changeRequest ? (
+                                          <span className="block truncate text-[11px] text-muted">
+                                            via “{v.changeRequest}”
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
 
             <div className="mt-8">
               <p className={SECTION_LABEL}>New image</p>
-              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
+              <p className="mt-2 text-sm leading-relaxed text-muted">
                 Describe the scene. Mention people or pets by the labels in
                 References if you&apos;ve added them.
               </p>
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-stretch">
+              <div className="mt-4 flex w-full flex-col gap-3 sm:flex-row sm:items-stretch">
                 <input
                   type="text"
                   value={scenePrompt}
@@ -1258,7 +1404,9 @@ export function IdeateVisionBoardClient() {
                 />
                 <button
                   type="button"
-                  disabled={busy !== null || refiningId !== null || !hasReference}
+                  disabled={
+                    busy !== null || refiningId !== null || !hasReference
+                  }
                   onClick={() => void onGenerate()}
                   className="shrink-0 cursor-pointer rounded-full bg-[#1E2530] px-5 py-2.5 text-sm font-semibold text-[#FAF8F3] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-foreground dark:text-background"
                 >
@@ -1267,7 +1415,7 @@ export function IdeateVisionBoardClient() {
               </div>
               {!hasReference ? (
                 <p className="mt-2 text-xs text-muted lg:hidden">
-                  Add your photo in References below first.
+                  Add your photo in References first.
                 </p>
               ) : null}
               {error ? (
@@ -1278,88 +1426,87 @@ export function IdeateVisionBoardClient() {
             </div>
           </div>
 
-          {/* Secondary: references */}
-          <aside className="order-2 min-w-0 space-y-8 lg:sticky lg:top-20">
-            <div>
-              <p className={SECTION_LABEL}>References</p>
-              <p className="mt-2 text-xs leading-relaxed text-muted">
-                Your likeness first. Optional extras below — label them so
-                scenes can use them.
-              </p>
+          <aside className="min-w-0 lg:sticky lg:top-20">
+            <p className={SECTION_LABEL}>References</p>
+            <p className="mt-2 font-sans text-[13px] leading-relaxed text-muted">
+              Your likeness first. Optional extras below — label them so scenes
+              can use them.
+            </p>
 
-              <div className="mt-4">
-                <p className="text-xs font-medium text-foreground">You</p>
-                <div className="mt-2 relative aspect-[3/4] w-full max-w-[11rem] overflow-hidden rounded-xl border border-[#E5DFD0] bg-[#F5F1E7] dark:border-border dark:bg-accent-soft/20">
-                  {selfPreviewUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={selfPreviewUrl}
-                      alt="Your reference"
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full items-center justify-center px-3 text-center text-xs text-muted">
-                      {hydrated ? "No photo yet" : "…"}
-                    </div>
-                  )}
-                </div>
-                {selfRef && hasReference ? (
-                  <p className="mt-2 text-[11px] leading-snug text-muted">
-                    {selfRef.fileName}
-                    {megapixels ? ` · ${megapixels} MP` : ""}
-                  </p>
+            <div className="mt-5">
+              <p className="font-sans text-[13px] font-medium text-foreground">
+                You
+              </p>
+              <div className="mt-2 relative aspect-[3/4] w-full overflow-hidden rounded-[8px] border border-[#E5DFD0] bg-[#F5F1E7] dark:border-border dark:bg-accent-soft/20">
+                {selfPreviewUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={selfPreviewUrl}
+                    alt="Your reference"
+                    className="h-full w-full object-cover"
+                  />
                 ) : (
-                  <p className="mt-2 text-[11px] leading-snug text-muted">
-                    Clear, front-facing light works best.
-                  </p>
+                  <div className="flex h-full items-center justify-center px-3 text-center text-xs text-muted">
+                    {hydrated ? "No photo yet" : "…"}
+                  </div>
                 )}
-                <div className="mt-3 flex flex-wrap gap-2">
+              </div>
+              {selfRef && hasReference ? (
+                <p className="mt-2 font-sans text-[12px] leading-snug text-muted">
+                  {selfRef.fileName}
+                  {megapixels ? ` · ${megapixels} MP` : ""}
+                </p>
+              ) : (
+                <p className="mt-2 font-sans text-[12px] leading-snug text-muted">
+                  Clear, front-facing light works best.
+                </p>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={busy !== null || refiningId !== null}
+                  onClick={() => fileInputRef.current?.click()}
+                  className="cursor-pointer rounded-full accent-fill-gradient px-3.5 py-1.5 text-xs font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {busy === "ref"
+                    ? "Saving…"
+                    : hasReference
+                      ? "Replace"
+                      : "Upload"}
+                </button>
+                {hasReference ? (
                   <button
                     type="button"
                     disabled={busy !== null || refiningId !== null}
-                    onClick={() => fileInputRef.current?.click()}
-                    className="cursor-pointer rounded-full accent-fill-gradient px-3.5 py-1.5 text-xs font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => void clearReference()}
+                    className="cursor-pointer rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-foreground disabled:opacity-40"
                   >
-                    {busy === "ref"
-                      ? "Saving…"
-                      : hasReference
-                        ? "Replace"
-                        : "Upload"}
+                    Remove
                   </button>
-                  {hasReference ? (
-                    <button
-                      type="button"
-                      disabled={busy !== null || refiningId !== null}
-                      onClick={() => void clearReference()}
-                      className="cursor-pointer rounded-full border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:text-foreground disabled:opacity-40"
-                    >
-                      Remove
-                    </button>
-                  ) : null}
-                </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) =>
-                    void onPickReference(e.target.files?.[0] ?? null)
-                  }
-                />
+                ) : null}
               </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) =>
+                  void onPickReference(e.target.files?.[0] ?? null)
+                }
+              />
             </div>
 
-            <div>
-              <p className="text-xs font-medium text-foreground">
+            <div className="mt-6">
+              <p className="font-sans text-[13px] font-medium text-foreground">
                 Also in the scene
               </p>
-              <p className="mt-1 text-[11px] leading-snug text-muted">
+              <p className="mt-1 font-sans text-[12px] leading-snug text-muted">
                 People, pets, places — optional.
               </p>
               <ul className="mt-3 flex flex-col gap-4">
                 {extraRefs.map((xr) => (
-                  <li key={xr.id} className="w-full max-w-[11rem]">
-                    <div className="relative aspect-square overflow-hidden rounded-lg border border-[#E5DFD0] bg-[#F5F1E7] dark:border-border dark:bg-accent-soft/20">
+                  <li key={xr.id} className="w-full">
+                    <div className="relative aspect-[3/4] overflow-hidden rounded-[8px] border border-[#E5DFD0] bg-[#F5F1E7] dark:border-border dark:bg-accent-soft/20">
                       {extraPreviewUrls[xr.id] ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -1376,7 +1523,7 @@ export function IdeateVisionBoardClient() {
                         type="button"
                         disabled={busy !== null || refiningId !== null}
                         onClick={() => void clearExtraReference(xr.id)}
-                        className="absolute right-1 top-1 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white disabled:opacity-40"
+                        className="ideate-frosted-overlay ideate-frosted-overlay--chip absolute right-1 top-1 text-[10px] font-medium text-white disabled:opacity-40"
                         aria-label="Remove reference"
                       >
                         ×
@@ -1408,12 +1555,12 @@ export function IdeateVisionBoardClient() {
                 ))}
 
                 {extraRefs.length < MAX_VISION_EXTRA_REFERENCES ? (
-                  <li className="w-full max-w-[11rem]">
+                  <li className="w-full">
                     <button
                       type="button"
                       disabled={busy !== null || refiningId !== null}
                       onClick={() => extraFileInputRef.current?.click()}
-                      className="flex aspect-square w-full cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#D4CBB8] text-center transition-colors hover:border-[#B8A99A] hover:bg-[#F5F1E7]/60 disabled:opacity-40 dark:border-border dark:hover:bg-accent-soft/20"
+                      className="flex aspect-[3/4] w-full cursor-pointer flex-col items-center justify-center rounded-[8px] border border-dashed border-[#D4CBB8] text-center transition-colors hover:border-[#B8A99A] hover:bg-[#F5F1E7]/60 disabled:opacity-40 dark:border-border dark:hover:bg-accent-soft/20"
                     >
                       <span className="text-lg leading-none text-muted">+</span>
                       <span className="mt-1 text-[11px] font-medium text-muted">

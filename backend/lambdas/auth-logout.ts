@@ -43,17 +43,31 @@ export async function handler(
   if (method !== "POST") return json(event, 405, { error: "Method not allowed" });
 
   const refreshTable = process.env.REFRESH_TABLE_NAME?.trim();
-  const raw = parseCookieHeader(event, REFRESH_COOKIE);
-  if (refreshTable && raw) {
-    try {
-      await ddb.send(
-        new DeleteCommand({
-          TableName: refreshTable,
-          Key: { tokenHash: sha256Hex(raw) },
-        }),
-      );
-    } catch {
-      /* still clear cookies */
+  let bodyRefresh: string | null = null;
+  try {
+    const body = JSON.parse(event.body || "{}") as { refreshToken?: unknown };
+    if (typeof body.refreshToken === "string" && body.refreshToken.trim()) {
+      bodyRefresh = body.refreshToken.trim();
+    }
+  } catch {
+    /* ignore */
+  }
+  const cookieRaw = parseCookieHeader(event, REFRESH_COOKIE);
+  const candidates = [cookieRaw, bodyRefresh].filter(
+    (v, i, a): v is string => Boolean(v) && a.indexOf(v) === i,
+  );
+  if (refreshTable) {
+    for (const raw of candidates) {
+      try {
+        await ddb.send(
+          new DeleteCommand({
+            TableName: refreshTable,
+            Key: { tokenHash: sha256Hex(raw) },
+          }),
+        );
+      } catch {
+        /* still clear cookies */
+      }
     }
   }
 

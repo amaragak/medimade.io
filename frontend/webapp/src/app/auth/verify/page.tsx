@@ -39,11 +39,21 @@ function VerifyInner() {
         const result = await verifyMedimadeMagicLink(token);
         if (cancelled) return;
         if (result.needsProfileName) {
-          setMedimadeSession(result.token, result.email);
+          setMedimadeSession(
+            result.token,
+            result.email,
+            null,
+            result.refreshToken ?? null,
+          );
           setPhase("needsName");
           return;
         }
-        setMedimadeSession(result.token, result.email, result.displayName);
+        setMedimadeSession(
+          result.token,
+          result.email,
+          result.displayName,
+          result.refreshToken ?? null,
+        );
         setPhase("redirect");
         router.replace("/");
       } catch (e) {

@@ -4,7 +4,7 @@
  * Guests: device-only metadata + IndexedDB binaries.
  */
 
-import { getMedimadeSessionJwt } from "@/lib/auth-session";
+import { isMedimadeSessionActive } from "@/lib/auth-session";
 
 export type VisionBoardVersion = {
   id: string;
@@ -89,7 +89,7 @@ function emptyBoard(): IdeateVisionBoardStoreV1 {
 }
 
 function isSignedIn(): boolean {
-  return Boolean(getMedimadeSessionJwt());
+  return isMedimadeSessionActive();
 }
 
 function removeVisionLs(): void {
@@ -105,6 +105,11 @@ function removeVisionLs(): void {
 export function clearIdeateVisionBoardDeviceData(): void {
   memoryStore = null;
   removeVisionLs();
+}
+
+/** Clear in-memory vision board only — keep localStorage for cloud migration. */
+export function clearIdeateVisionBoardMemoryOnly(): void {
+  memoryStore = null;
 }
 
 export function pickVisionSwatchColor(seed: string): string {
@@ -308,6 +313,78 @@ export function removeVisionBoardItem(
     ...store,
     v: 2,
     items: store.items.filter((x) => x.id !== id),
+  };
+}
+
+/** True when the item can appear in the Ideate hero / compose mosaic. */
+export function visionItemHasImage(item: VisionBoardItem): boolean {
+  return Boolean(
+    (typeof item.imageUrl === "string" && item.imageUrl.trim()) ||
+      (typeof item.mediaId === "string" && item.mediaId.trim()),
+  );
+}
+
+export const VISION_COMPOSE_SLOT_COUNT = 6;
+
+/**
+ * First six image-bearing item ids in store order — same rule as the Ideate
+ * home hero mosaic. Empty slots are `null`.
+ */
+export function getComposeSlotIds(
+  items: VisionBoardItem[],
+): (string | null)[] {
+  const ids = items.filter(visionItemHasImage).map((i) => i.id);
+  return Array.from(
+    { length: VISION_COMPOSE_SLOT_COUNT },
+    (_, i) => ids[i] ?? null,
+  );
+}
+
+/**
+ * Place (or swap) an image tile into a compose mosaic slot (0–5).
+ * Slot order becomes the leading image items in the store — driving the hero.
+ */
+export function placeVisionItemInComposeSlot(
+  store: IdeateVisionBoardStoreV1,
+  itemId: string,
+  slotIndex: number,
+): IdeateVisionBoardStoreV1 {
+  if (slotIndex < 0 || slotIndex >= VISION_COMPOSE_SLOT_COUNT) return store;
+  const target = store.items.find((x) => x.id === itemId);
+  if (!target || !visionItemHasImage(target)) return store;
+
+  const slots = getComposeSlotIds(store.items);
+  const fromIdx = slots.indexOf(itemId);
+  if (fromIdx === slotIndex) return store;
+
+  if (fromIdx >= 0) {
+    const swap = slots[slotIndex] ?? null;
+    slots[fromIdx] = swap;
+    slots[slotIndex] = itemId;
+  } else {
+    slots[slotIndex] = itemId;
+  }
+
+  const used = new Set(
+    slots.filter((id): id is string => typeof id === "string" && Boolean(id)),
+  );
+  const imageRest = store.items.filter(
+    (x) => visionItemHasImage(x) && !used.has(x.id),
+  );
+  const nonImage = store.items.filter((x) => !visionItemHasImage(x));
+  const byId = new Map(store.items.map((x) => [x.id, x]));
+  const orderedImages = [
+    ...slots
+      .filter((id): id is string => typeof id === "string" && Boolean(id))
+      .map((id) => byId.get(id)!)
+      .filter(Boolean),
+    ...imageRest,
+  ];
+
+  return {
+    ...store,
+    v: 2,
+    items: [...orderedImages, ...nonImage].slice(0, 48),
   };
 }
 

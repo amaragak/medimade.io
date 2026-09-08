@@ -1,11 +1,5 @@
-import { IdeateVisionBoardClient } from "@/components/plan/ideate-vision-board-client";
+import { redirect } from "next/navigation";
 
-export const metadata = {
-  title: "Vision board",
-  description:
-    "Gather images and colours for what you’re moving toward — a quiet Dream vision board.",
-};
-
-export default function IdeateVisionBoardPage() {
-  return <IdeateVisionBoardClient />;
+export default function DreamVisionBoardRedirectPage() {
+  redirect("/ideate/my/vision-board");
 }

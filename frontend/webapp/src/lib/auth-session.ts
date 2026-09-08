@@ -1,12 +1,20 @@
 /**
- * Client session: access JWT in memory only; email/name in localStorage.
- * Refresh lives in HttpOnly cookie (set by API). Call ensureMedimadeSession() on boot.
+ * Client session: access JWT + refresh token in localStorage (same browser profile).
+ * HttpOnly cookies are still set when the browser allows them; body refresh is the
+ * durable fallback so cross-origin / localhost cookie blocks cannot sign you out.
+ *
+ * Sign-out happens ONLY via clearMedimadeSession() (explicit Log out).
+ * Soft refresh failures and even "expired" API responses never wipe the session.
  */
 
 const EMAIL_KEY = "mm_session_email_v1";
 const DISPLAY_NAME_KEY = "mm_session_display_name_v1";
 const ACTIVE_KEY = "mm_session_active_v1";
-/** Legacy — cleared on read so XSS cannot keep stealing long-lived tokens. */
+/** Durable access JWT for same-profile reloads (XSS tradeoff accepted for session stickiness). */
+const ACCESS_JWT_KEY = "mm_session_access_jwt_v1";
+/** Durable refresh token when third-party cookies are blocked. */
+const REFRESH_TOKEN_KEY = "mm_session_refresh_v1";
+/** Legacy — migrated into ACCESS_JWT_KEY then removed. */
 const LEGACY_JWT_KEY = "mm_session_jwt_v1";
 
 /** Survive HMR so parallel refresh rotations cannot race across module instances. */
@@ -15,9 +23,13 @@ const REFRESH_LOCK_KEY = "__mm_ensure_session_inflight__";
 let memoryAccessJwt: string | null = null;
 let refreshInFlight: Promise<boolean> | null = null;
 let accessRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+let visibilityBound = false;
+let hydratedFromStorage = false;
 
-/** Refresh ~10 minutes before the 1h access JWT expires. */
-const ACCESS_REFRESH_AFTER_MS = 50 * 60 * 1000;
+/** Fallback if JWT exp cannot be parsed — refresh ~10 minutes before a 1h token. */
+const ACCESS_REFRESH_FALLBACK_MS = 50 * 60 * 1000;
+const ACCESS_REFRESH_MIN_MS = 60 * 1000;
+const ACCESS_REFRESH_LEAD_MS = 5 * 60 * 1000;
 
 type RefreshLockHolder = { promise: Promise<boolean> };
 
@@ -41,13 +53,48 @@ function clearAccessRefreshTimer(): void {
   }
 }
 
+function readJwtExpMs(jwt: string): number | null {
+  try {
+    const parts = jwt.split(".");
+    if (parts.length < 2) return null;
+    const pad = parts[1]!.length % 4 === 0 ? "" : "=".repeat(4 - (parts[1]!.length % 4));
+    const b64 = parts[1]!.replace(/-/g, "+").replace(/_/g, "/") + pad;
+    const payload = JSON.parse(atob(b64)) as { exp?: unknown };
+    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp)) return null;
+    return payload.exp * 1000;
+  } catch {
+    return null;
+  }
+}
+
 function scheduleAccessRefresh(): void {
   if (typeof window === "undefined") return;
   clearAccessRefreshTimer();
+  const jwt = memoryAccessJwt;
+  let delay = ACCESS_REFRESH_FALLBACK_MS;
+  if (jwt) {
+    const expMs = readJwtExpMs(jwt);
+    if (expMs) {
+      delay = Math.max(ACCESS_REFRESH_MIN_MS, expMs - Date.now() - ACCESS_REFRESH_LEAD_MS);
+    }
+  }
   accessRefreshTimer = setTimeout(() => {
     accessRefreshTimer = null;
     void ensureMedimadeSession({ force: true });
-  }, ACCESS_REFRESH_AFTER_MS);
+  }, delay);
+  bindVisibilityRefresh();
+}
+
+function bindVisibilityRefresh(): void {
+  if (typeof window === "undefined" || visibilityBound) return;
+  visibilityBound = true;
+  const kick = () => {
+    if (!isMedimadeSessionActive()) return;
+    if (document.visibilityState && document.visibilityState !== "visible") return;
+    void ensureMedimadeSession({ force: true });
+  };
+  document.addEventListener("visibilitychange", kick);
+  window.addEventListener("focus", kick);
 }
 
 function normalizeStoredJwt(raw: string): string | null {
@@ -62,68 +109,118 @@ function normalizeStoredJwt(raw: string): string | null {
   return t || null;
 }
 
-function clearLegacyJwtFromStorage(): void {
+function readStorage(key: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const t = window.localStorage.getItem(key)?.trim();
+    return t || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeStorage(key: string, value: string | null): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.removeItem(LEGACY_JWT_KEY);
+    if (value) window.localStorage.setItem(key, value);
+    else window.localStorage.removeItem(key);
   } catch {
     /* */
   }
 }
 
+function hydrateAccessJwtFromStorage(): void {
+  if (typeof window === "undefined") return;
+  if (!hydratedFromStorage) {
+    hydratedFromStorage = true;
+    try {
+      const modern = normalizeStoredJwt(readStorage(ACCESS_JWT_KEY) ?? "");
+      const legacy = normalizeStoredJwt(readStorage(LEGACY_JWT_KEY) ?? "");
+      const jwt = modern || legacy;
+      if (jwt) {
+        memoryAccessJwt = jwt;
+        if (!modern) writeStorage(ACCESS_JWT_KEY, jwt);
+      }
+      writeStorage(LEGACY_JWT_KEY, null);
+      window.addEventListener("storage", (ev) => {
+        if (ev.key === ACCESS_JWT_KEY) {
+          const next = normalizeStoredJwt(ev.newValue ?? "");
+          memoryAccessJwt = next;
+          if (next) scheduleAccessRefresh();
+        }
+        if (ev.key === ACTIVE_KEY && ev.newValue !== "1") {
+          memoryAccessJwt = null;
+        }
+      });
+    } catch {
+      /* */
+    }
+    return;
+  }
+  // Re-read after another tab may have rotated tokens.
+  const modern = normalizeStoredJwt(readStorage(ACCESS_JWT_KEY) ?? "");
+  if (modern) memoryAccessJwt = modern;
+}
+
+/** Opaque refresh token for POST /auth/refresh body when cookies are blocked. */
+export function getMedimadeRefreshToken(): string | null {
+  return readStorage(REFRESH_TOKEN_KEY);
+}
+
+export function setMedimadeRefreshToken(token: string | null): void {
+  const t = token?.trim() || null;
+  writeStorage(REFRESH_TOKEN_KEY, t);
+}
+
 export function getMedimadeSessionJwt(): string | null {
   if (typeof window === "undefined") return null;
-  clearLegacyJwtFromStorage();
+  hydrateAccessJwtFromStorage();
   return memoryAccessJwt;
 }
 
 export function getMedimadeSessionEmail(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const t = window.localStorage.getItem(EMAIL_KEY)?.trim();
-    return t || null;
-  } catch {
-    return null;
-  }
+  return readStorage(EMAIL_KEY);
 }
 
 export function getMedimadeSessionDisplayName(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const t = window.localStorage.getItem(DISPLAY_NAME_KEY)?.trim();
-    return t || null;
-  } catch {
-    return null;
-  }
+  return readStorage(DISPLAY_NAME_KEY);
 }
 
+/** True if we have an access JWT or a remembered signed-in flag. */
 export function isMedimadeSessionActive(): boolean {
   if (typeof window === "undefined") return false;
+  hydrateAccessJwtFromStorage();
   if (memoryAccessJwt) return true;
-  try {
-    return window.localStorage.getItem(ACTIVE_KEY) === "1";
-  } catch {
-    return false;
-  }
+  return readStorage(ACTIVE_KEY) === "1";
 }
 
 export function setMedimadeSession(
   token: string,
   email?: string | null,
   displayName?: string | null,
+  refreshToken?: string | null,
 ): void {
   if (typeof window === "undefined") return;
   try {
     const jwt = normalizeStoredJwt(token);
     if (!jwt) return;
     memoryAccessJwt = jwt;
-    clearLegacyJwtFromStorage();
-    window.localStorage.setItem(ACTIVE_KEY, "1");
-    if (email?.trim()) window.localStorage.setItem(EMAIL_KEY, email.trim());
-    else window.localStorage.removeItem(EMAIL_KEY);
-    if (displayName?.trim())
-      window.localStorage.setItem(DISPLAY_NAME_KEY, displayName.trim());
-    else window.localStorage.removeItem(DISPLAY_NAME_KEY);
+    writeStorage(ACCESS_JWT_KEY, jwt);
+    writeStorage(LEGACY_JWT_KEY, null);
+    writeStorage(ACTIVE_KEY, "1");
+    if (typeof email === "string" && email.trim()) {
+      writeStorage(EMAIL_KEY, email.trim());
+    } else if (email === null) {
+      writeStorage(EMAIL_KEY, null);
+    }
+    if (typeof displayName === "string" && displayName.trim()) {
+      writeStorage(DISPLAY_NAME_KEY, displayName.trim());
+    } else if (displayName === null) {
+      writeStorage(DISPLAY_NAME_KEY, null);
+    }
+    if (refreshToken !== undefined) {
+      setMedimadeRefreshToken(refreshToken);
+    }
     scheduleAccessRefresh();
     window.dispatchEvent(new Event("medimade-session-changed"));
   } catch {
@@ -131,12 +228,16 @@ export function setMedimadeSession(
   }
 }
 
+/** Explicit Log out only. No other path may clear the session. */
 export function clearMedimadeSession(): void {
   if (typeof window === "undefined") return;
+  const refreshForLogout = getMedimadeRefreshToken();
   memoryAccessJwt = null;
   clearAccessRefreshTimer();
   try {
     window.localStorage.removeItem(LEGACY_JWT_KEY);
+    window.localStorage.removeItem(ACCESS_JWT_KEY);
+    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
     window.localStorage.removeItem(EMAIL_KEY);
     window.localStorage.removeItem(DISPLAY_NAME_KEY);
     window.localStorage.removeItem(ACTIVE_KEY);
@@ -150,30 +251,38 @@ export function clearMedimadeSession(): void {
     })
     .finally(() => {
       try {
+        // Restore guest journal samples after account cache was stripped.
+        void import("@/lib/journal-storage").then((j) => {
+          j.resetJournalLocalToGuestDemos();
+        });
         window.dispatchEvent(new Event("medimade-session-changed"));
       } catch {
         /* */
       }
     });
-  // Best-effort server logout (clears HttpOnly refresh cookie).
+  // Best-effort server logout (clears HttpOnly refresh cookie + Dynamo row).
   void import("@/lib/medimade-api")
-    .then((m) => m.logoutMedimadeSessionRemote())
+    .then((m) => m.logoutMedimadeSessionRemote(refreshForLogout))
     .catch(() => {
       /* */
     });
 }
 
 /**
- * Restore memory access JWT from HttpOnly refresh cookie after reload.
+ * Restore / rotate access JWT from refresh cookie or durable local refresh token.
  * Safe to call often — coalesces concurrent calls (including across HMR).
- * Pass `{ force: true }` to ignore a (possibly expired) in-memory access JWT.
+ * Never signs the user out; only clearMedimadeSession does that.
  */
 export async function ensureMedimadeSession(opts?: {
   force?: boolean;
 }): Promise<boolean> {
   if (typeof window === "undefined") return false;
-  clearLegacyJwtFromStorage();
-  if (!opts?.force && memoryAccessJwt) return true;
+  hydrateAccessJwtFromStorage();
+  if (!opts?.force && memoryAccessJwt) {
+    const expMs = readJwtExpMs(memoryAccessJwt);
+    // Proactively refresh if the access JWT is about to expire.
+    if (expMs && expMs - Date.now() > ACCESS_REFRESH_LEAD_MS) return true;
+  }
   if (!isMedimadeSessionActive() && !getMedimadeSessionEmail()) return false;
 
   const existingLock = getRefreshLock();
@@ -181,27 +290,36 @@ export async function ensureMedimadeSession(opts?: {
   if (refreshInFlight) return refreshInFlight;
 
   const previousJwt = memoryAccessJwt;
-  if (opts?.force) memoryAccessJwt = null;
 
   const run = (async () => {
     try {
       const { refreshMedimadeSessionRemote } = await import("@/lib/medimade-api");
       const result = await refreshMedimadeSessionRemote();
-      if (!result?.token) {
-        // Explicit auth rejection. If a forced refresh failed but we still had a
-        // usable access JWT, keep it — don't wipe the session on a race/blip.
-        if (previousJwt && opts?.force) {
-          memoryAccessJwt = previousJwt;
-          return true;
-        }
-        endSessionAfterRefreshFailure();
-        return false;
+      if (result.status === "ok" && result.token) {
+        setMedimadeSession(
+          result.token,
+          result.email,
+          result.displayName,
+          result.refreshToken ?? undefined,
+        );
+        return true;
       }
-      setMedimadeSession(result.token, result.email, result.displayName);
-      return true;
+
+      // Any failure (missing / invalid / expired / network): keep session.
+      // Another tab may have rotated the refresh token — adopt its storage if newer.
+      hydrateAccessJwtFromStorage();
+      if (previousJwt) {
+        memoryAccessJwt = previousJwt;
+        writeStorage(ACCESS_JWT_KEY, previousJwt);
+      }
+      scheduleAccessRefresh();
+      return Boolean(memoryAccessJwt);
     } catch {
-      // Network / transient — do not wipe the session.
-      if (previousJwt) memoryAccessJwt = previousJwt;
+      if (previousJwt) {
+        memoryAccessJwt = previousJwt;
+        writeStorage(ACCESS_JWT_KEY, previousJwt);
+      }
+      scheduleAccessRefresh();
       return Boolean(memoryAccessJwt);
     } finally {
       refreshInFlight = null;
@@ -212,28 +330,4 @@ export async function ensureMedimadeSession(opts?: {
   refreshInFlight = run;
   setRefreshLock({ promise: run });
   return run;
-}
-
-function endSessionAfterRefreshFailure(): void {
-  memoryAccessJwt = null;
-  clearAccessRefreshTimer();
-  try {
-    window.localStorage.removeItem(ACTIVE_KEY);
-    window.localStorage.removeItem(EMAIL_KEY);
-    window.localStorage.removeItem(DISPLAY_NAME_KEY);
-    window.localStorage.removeItem(LEGACY_JWT_KEY);
-  } catch {
-    /* */
-  }
-  void import("@/lib/ideate-cloud")
-    .then((m) => {
-      m.wipeIdeateDeviceData();
-    })
-    .finally(() => {
-      try {
-        window.dispatchEvent(new Event("medimade-session-changed"));
-      } catch {
-        /* */
-      }
-    });
 }

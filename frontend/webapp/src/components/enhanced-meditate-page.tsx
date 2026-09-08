@@ -32,8 +32,8 @@ const pillars = [
     highlight: false,
   },
   {
-    href: "/dream",
-    title: "Dream",
+    href: "/ideate",
+    title: "Ideate",
     body: "Steps, and what's really stopping you.",
     Icon: IconBulb,
     highlight: false,

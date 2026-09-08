@@ -8,11 +8,41 @@
   --site-header-h: 3.5rem;
   /* App content column — matches Tailwind `max-w-6xl` (72rem). */
   --content-max-width: 72rem;
+  /* Slightly warmer/deeper than canvas — questions grid cells. */
+  --surface-2: #f1ebe0;
+  /*
+   * Ideate vision-board frosted overlays (hero + mood board chips).
+   * Tune --ideate-overlay-bg-opacity after checking brightest/darkest tiles.
+   */
+  --ideate-overlay-bg-opacity: 0.25;
+  --ideate-overlay-bg: rgb(15 23 42 / var(--ideate-overlay-bg-opacity));
+  --ideate-overlay-border: rgb(255 255 255 / 0.2);
   color-scheme: light;
 }
 
 :root.dark {
+  --surface-2: #243041;
+  /* Slightly heavier frosted tint on dark UI / brighter tile edges */
+  --ideate-overlay-bg-opacity: 0.4;
   color-scheme: dark;
+}
+
+/* Frosted glass for text-over-image on Ideate vision board surfaces */
+.ideate-frosted-overlay {
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+  background: var(--ideate-overlay-bg);
+  border: 1px solid var(--ideate-overlay-border);
+  border-radius: 12px;
+}
+
+.ideate-frosted-overlay--panel {
+  padding: 24px 32px;
+}
+
+.ideate-frosted-overlay--chip {
+  border-radius: 9999px;
+  padding: 0.125rem 0.375rem;
 }
 
 @theme inline {
@@ -30,6 +60,7 @@
   --color-gold: var(--gold);
   --color-deep: var(--deep);
   --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
   --color-on-accent: var(--on-accent);
   --color-overlay: var(--overlay);
   --color-nav: var(--nav);
@@ -167,6 +198,20 @@ body {
   16% {
     transform: translateY(-4px);
   }
+}
+
+@keyframes ideate-scroll-hint-bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(6px);
+  }
+}
+
+.ideate-scroll-hint {
+  animation: ideate-scroll-hint-bounce 1.5s ease infinite;
 }
 
 .chat-typing-dot {
@@ -449,6 +494,12 @@ body {
 .home-hero > * {
   position: relative;
   z-index: 1;
+}
+
+/* Full tiled mandala — same as .home-hero, no clear-band / vignette mask. */
+.home-hero--full-pattern::before {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 main[data-page-kind="standard"] {

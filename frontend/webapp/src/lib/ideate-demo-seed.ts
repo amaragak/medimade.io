@@ -2,13 +2,25 @@
  * Guest-only Ideate samples — local device only, never treated as account data.
  */
 
-import { getMedimadeSessionJwt } from "@/lib/auth-session";
+import { isMedimadeSessionActive } from "@/lib/auth-session";
 import {
   loadIdeateReflectionQuestionsStore,
   saveIdeateReflectionQuestionsStore,
   saveIdeateReflectionQuestionsStoreLocal,
   type IdeateReflectionQuestion,
 } from "@/lib/ideate-reflection-questions";
+import {
+  loadIdeateValuesStore,
+  saveIdeateValuesStore,
+  saveIdeateValuesStoreLocal,
+  type IdeateValue,
+  type IdeateValuesStoreV1,
+} from "@/lib/ideate-values";
+import {
+  loadIdeateRegretsStore,
+  saveIdeateRegretsStoreLocal,
+  type IdeateRegret,
+} from "@/lib/ideate-regrets";
 import {
   loadIdeateVisionBoardStore,
   saveIdeateVisionBoardStore,
@@ -25,9 +37,15 @@ import type {
 } from "@/lib/plan-ideate-store";
 
 /** Bump when demo copy changes so guests get a one-time reseed of missing demos. */
-export const IDEATE_DEMO_SEED_FLAG_KEY = "mm_ideate_demo_seed_v2";
+export const IDEATE_DEMO_SEED_FLAG_KEY = "mm_ideate_demo_seed_v5";
+/** Stored under IDEATE_DEMO_SEED_FLAG_KEY — bump with companion content changes. */
+const DEMO_SEED_VERSION = "5";
 
+/** Cache-bust when demo image binaries change under the same filenames. */
 const DEMO_VISION_BASE = "/demo/vision-board";
+const DEMO_VISION_CACHE = "v5";
+const demoVisionUrl = (file: string) =>
+  `${DEMO_VISION_BASE}/${file}?${DEMO_VISION_CACHE}`;
 
 export const DEMO_IDEATE_DREAM_IDS = [
   "demo-ideate-mornings",
@@ -68,19 +86,31 @@ export function withoutDemoIdeateStore(store: IdeateStoreV2): IdeateStoreV2 {
 function markDemoSeedFlag(): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(IDEATE_DEMO_SEED_FLAG_KEY, "1");
+    window.localStorage.setItem(IDEATE_DEMO_SEED_FLAG_KEY, DEMO_SEED_VERSION);
   } catch {
     /* */
   }
 }
 
+function isCompanionSeedStale(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    return (
+      window.localStorage.getItem(IDEATE_DEMO_SEED_FLAG_KEY) !== DEMO_SEED_VERSION
+    );
+  } catch {
+    return true;
+  }
+}
+
 function dreamBase(
-  partial: Omit<PlanDream, "meditationsGenerated" | "completedAt"> &
-    Partial<Pick<PlanDream, "meditationsGenerated" | "completedAt">>,
+  partial: Omit<PlanDream, "meditationsGenerated" | "completedAt" | "checkIns"> &
+    Partial<Pick<PlanDream, "meditationsGenerated" | "completedAt" | "checkIns">>,
 ): PlanDream {
   return {
     meditationsGenerated: 0,
     completedAt: null,
+    checkIns: [],
     ...partial,
     demo: true,
   };
@@ -353,7 +383,7 @@ export function buildDemoIdeateStore(): IdeateStoreV2 {
 
 function buildDemoSelfReference(): VisionSelfReference {
   return {
-    url: `${DEMO_VISION_BASE}/demo-vision-self.png`,
+    url: demoVisionUrl("demo-vision-self.png"),
     mimeType: "image/png",
     fileName: "demo-vision-self.png",
     width: 1024,
@@ -371,7 +401,7 @@ function buildDemoVisionItems(): VisionBoardItem[] {
       color: "#C4A882",
       label: "Stillness above the peaks",
       kind: "image",
-      imageUrl: `${DEMO_VISION_BASE}/demo-vision-mountain.png`,
+      imageUrl: demoVisionUrl("demo-vision-mountain.png"),
       prompt: "Meditating on a mountain at sunrise",
       createdAt: now,
     },
@@ -380,7 +410,7 @@ function buildDemoVisionItems(): VisionBoardItem[] {
       color: "#8FA89A",
       label: "Strong body, clear mind",
       kind: "image",
-      imageUrl: `${DEMO_VISION_BASE}/demo-vision-gym.png`,
+      imageUrl: demoVisionUrl("demo-vision-gym.png"),
       prompt: "Training hard in a bright gym",
       createdAt: now,
     },
@@ -389,7 +419,7 @@ function buildDemoVisionItems(): VisionBoardItem[] {
       color: "#A8B5C4",
       label: "Money flowing easily",
       kind: "image",
-      imageUrl: `${DEMO_VISION_BASE}/demo-vision-wealth.png`,
+      imageUrl: demoVisionUrl("demo-vision-wealth.png"),
       prompt: "Celebrating abundance at the desk",
       createdAt: now,
     },
@@ -398,7 +428,7 @@ function buildDemoVisionItems(): VisionBoardItem[] {
       color: "#D4A090",
       label: "City lights, quiet confidence",
       kind: "image",
-      imageUrl: `${DEMO_VISION_BASE}/demo-vision-city.png`,
+      imageUrl: demoVisionUrl("demo-vision-city.png"),
       prompt: "On a rooftop overlooking the city at dusk",
       createdAt: now,
     },
@@ -407,7 +437,7 @@ function buildDemoVisionItems(): VisionBoardItem[] {
       color: "#C9B896",
       label: "Playing for a small room",
       kind: "image",
-      imageUrl: `${DEMO_VISION_BASE}/demo-vision-music.png`,
+      imageUrl: demoVisionUrl("demo-vision-music.png"),
       prompt: "Playing guitar on a warm intimate stage",
       createdAt: now,
     },
@@ -416,7 +446,7 @@ function buildDemoVisionItems(): VisionBoardItem[] {
       color: "#B8A99A",
       label: "Morning work by the window",
       kind: "image",
-      imageUrl: `${DEMO_VISION_BASE}/demo-vision-work.png`,
+      imageUrl: demoVisionUrl("demo-vision-work.png"),
       prompt: "Calm focused work in morning light",
       createdAt: now,
     },
@@ -444,7 +474,11 @@ function needsDemoVisionRefresh(board: IdeateVisionBoardStoreV1): boolean {
   if (board.items.length === 0) return true;
   if (!board.items.every(isDemoVisionItem)) return false;
   if (!isDemoSelfReference(board.selfReference)) return true;
-  return board.items.some((i) => !i.imageUrl);
+  if (board.items.some((i) => !i.imageUrl)) return true;
+  // Reseed when demo image cache-bust query changes (e.g. male → female set).
+  const bust = `?${DEMO_VISION_CACHE}`;
+  if (!String(board.selfReference?.url || "").includes(bust)) return true;
+  return board.items.some((i) => !String(i.imageUrl || "").includes(bust));
 }
 
 function buildDemoReflectionQuestions(): IdeateReflectionQuestion[] {
@@ -465,11 +499,94 @@ function buildDemoReflectionQuestions(): IdeateReflectionQuestion[] {
       id: "demo-rq-avoiding",
       text: "What are you avoiding thinking about?",
       description: "The uncomfortable edge often points the way.",
-      answer: "",
+      answer:
+        "That the project I care about keeps sliding because imperfect work still counts as me — and that scares me more than busywork.",
       source: "preset",
       presetId: "avoiding",
       createdAt: daysAgoIso(3, 14),
-      updatedAt: daysAgoIso(3, 14),
+      updatedAt: daysAgoIso(1, 16),
+    },
+    {
+      id: "demo-rq-body-knows",
+      text: "What does your body already know about this?",
+      description: "Before the plan — what does it feel like?",
+      answer:
+        "Shoulders drop when the phone stays in the hall. A short walk without headphones feels like permission, not a workout.",
+      source: "preset",
+      presetId: "body-knows",
+      createdAt: daysAgoIso(5, 9),
+      updatedAt: daysAgoIso(2, 9),
+    },
+    {
+      id: "demo-rq-regret",
+      text: "What would you regret not trying?",
+      description: "A quiet nudge toward the thing you keep postponing.",
+      answer:
+        "Opening the real doc for fifteen minutes — and treating music as something I do, not something I wait to feel ready for.",
+      source: "preset",
+      presetId: "regret",
+      createdAt: daysAgoIso(6, 20),
+      updatedAt: daysAgoIso(2, 20),
+    },
+  ];
+}
+
+function buildDemoValues(): IdeateValue[] {
+  return [
+    {
+      id: "demo-val-presence",
+      text: "Presence before productivity",
+      createdAt: daysAgoIso(10, 9),
+      updatedAt: daysAgoIso(10, 9),
+    },
+    {
+      id: "demo-val-honesty",
+      text: "Honest effort over perfect outcomes",
+      createdAt: daysAgoIso(9, 11),
+      updatedAt: daysAgoIso(9, 11),
+    },
+    {
+      id: "demo-val-kindness",
+      text: "Kindness to the body",
+      createdAt: daysAgoIso(8, 14),
+      updatedAt: daysAgoIso(8, 14),
+    },
+    {
+      id: "demo-val-enough",
+      text: "Enough is enough",
+      createdAt: daysAgoIso(7, 8),
+      updatedAt: daysAgoIso(7, 8),
+    },
+    {
+      id: "demo-val-quiet",
+      text: "Quiet mornings I actually keep",
+      createdAt: daysAgoIso(6, 10),
+      updatedAt: daysAgoIso(6, 10),
+    },
+  ];
+}
+
+function buildDemoValuesStore(): IdeateValuesStoreV1 {
+  return { v: 1, values: buildDemoValues() };
+}
+
+function buildDemoRegrets(): IdeateRegret[] {
+  return [
+    {
+      id: "demo-regret-doc",
+      statement:
+        "Not opening the real doc — spending years circling the work instead of starting it.",
+      category: "Creative",
+      createdAt: daysAgoIso(8, 19),
+      updatedAt: daysAgoIso(3, 19),
+    },
+    {
+      id: "demo-regret-mornings",
+      statement:
+        "Letting mornings disappear into the phone before I ever felt awake.",
+      category: "Health",
+      createdAt: daysAgoIso(7, 8),
+      updatedAt: daysAgoIso(2, 8),
     },
   ];
 }
@@ -482,6 +599,35 @@ function isDemoReflectionQuestion(q: IdeateReflectionQuestion): boolean {
   return q.id.startsWith("demo-rq-");
 }
 
+function isDemoValue(v: IdeateValue): boolean {
+  return v.id.startsWith("demo-val-");
+}
+
+function isDemoRegretEntry(r: IdeateRegret): boolean {
+  return r.id.startsWith("demo-regret-");
+}
+
+function needsDemoQuestionsRefresh(
+  questions: IdeateReflectionQuestion[],
+): boolean {
+  if (questions.length === 0) return true;
+  if (!questions.every(isDemoReflectionQuestion)) return false;
+  if (questions.length < 4) return true;
+  return questions.some((q) => !q.answer.trim());
+}
+
+function needsDemoValuesRefresh(store: IdeateValuesStoreV1): boolean {
+  if (store.values.length === 0) return true;
+  if (!store.values.every(isDemoValue)) return false;
+  return store.values.length < 5;
+}
+
+function needsDemoRegretsRefresh(store: { regrets: IdeateRegret[] }): boolean {
+  if (store.regrets.length === 0) return true;
+  if (!store.regrets.every(isDemoRegretEntry)) return false;
+  return store.regrets.length < 2;
+}
+
 /**
  * Guests: always show seeded samples — never leftover personal / signed-in cache.
  * Signed-in: never seed; strip demos from the returned store (caller persists).
@@ -489,7 +635,7 @@ function isDemoReflectionQuestion(q: IdeateReflectionQuestion): boolean {
 export function ensureGuestDemoIdeateSeeded(
   existing: IdeateStoreV2,
 ): IdeateStoreV2 {
-  if (typeof window !== "undefined" && getMedimadeSessionJwt()) {
+  if (typeof window !== "undefined" && isMedimadeSessionActive()) {
     stripDemoCompanionStores();
     return withoutDemoIdeateStore(existing);
   }
@@ -506,8 +652,9 @@ export function ensureGuestDemoIdeateSeeded(
     ) &&
     isDemoOnlyIdeateStore(existing)
   ) {
+    // Force companion refresh when seed version bumps or companions are incomplete.
+    seedCompanionStoresIfEmpty(companionNeedsSeed());
     markDemoSeedFlag();
-    seedCompanionStoresIfEmpty();
     return existing;
   }
 
@@ -534,6 +681,8 @@ export function ensureGuestDemoIdeateSeeded(
 /** Reset device Ideate to guest demos (call on sign-out). Sync so UI sees demos immediately. */
 export function resetIdeateLocalToGuestDemos(): void {
   if (typeof window === "undefined") return;
+  // Never overwrite a signed-in working session with guest samples.
+  if (isMedimadeSessionActive()) return;
   const demo = buildDemoIdeateStore();
   try {
     window.localStorage.setItem(
@@ -577,28 +726,75 @@ function stripDemoCompanionStores(): void {
     if (nextQs.length !== qs.questions.length) {
       saveIdeateReflectionQuestionsStoreLocal({ v: 1, questions: nextQs });
     }
+    const values = loadIdeateValuesStore();
+    const nextValues = values.values.filter((v) => !isDemoValue(v));
+    if (nextValues.length !== values.values.length) {
+      saveIdeateValuesStoreLocal({ v: 1, values: nextValues });
+    }
+    const regrets = loadIdeateRegretsStore();
+    const nextRegrets = regrets.regrets.filter((r) => !isDemoRegretEntry(r));
+    if (nextRegrets.length !== regrets.regrets.length) {
+      saveIdeateRegretsStoreLocal({ v: 1, regrets: nextRegrets });
+    }
   } catch {
     /* */
   }
 }
 
+function companionNeedsSeed(): boolean {
+  try {
+    return (
+      isCompanionSeedStale() ||
+      needsDemoVisionRefresh(loadIdeateVisionBoardStore()) ||
+      needsDemoQuestionsRefresh(
+        loadIdeateReflectionQuestionsStore().questions,
+      ) ||
+      needsDemoValuesRefresh(loadIdeateValuesStore()) ||
+      needsDemoRegretsRefresh(loadIdeateRegretsStore())
+    );
+  } catch {
+    return true;
+  }
+}
+
 function seedCompanionStoresIfEmpty(force = false): void {
   if (typeof window === "undefined") return;
+  if (isMedimadeSessionActive()) return;
   try {
     const board = loadIdeateVisionBoardStore();
     if (force || needsDemoVisionRefresh(board)) {
-      saveIdeateVisionBoardStore(buildDemoVisionBoard());
+      // Local-only — avoid scheduling cloud PUT from guest seed path.
+      saveIdeateVisionBoardStoreLocal(buildDemoVisionBoard());
     }
     const qs = loadIdeateReflectionQuestionsStore();
-    if (force || qs.questions.length === 0) {
-      saveIdeateReflectionQuestionsStore({
+    if (force || needsDemoQuestionsRefresh(qs.questions)) {
+      saveIdeateReflectionQuestionsStoreLocal({
         v: 1,
         questions: buildDemoReflectionQuestions(),
       });
     }
+    const values = loadIdeateValuesStore();
+    if (force || needsDemoValuesRefresh(values)) {
+      saveIdeateValuesStoreLocal(buildDemoValuesStore());
+    }
+    const regrets = loadIdeateRegretsStore();
+    if (force || needsDemoRegretsRefresh(regrets)) {
+      saveIdeateRegretsStoreLocal({ v: 1, regrets: buildDemoRegrets() });
+    }
   } catch {
     /* */
   }
+}
+
+/**
+ * Ensure guest companion stores (values / questions / vision) match the demo seed.
+ * Never run while a session is active — cloud owns signed-in data.
+ */
+export function ensureGuestCompanionDemos(force = false): void {
+  if (typeof window === "undefined") return;
+  if (isMedimadeSessionActive()) return;
+  seedCompanionStoresIfEmpty(force || companionNeedsSeed());
+  markDemoSeedFlag();
 }
 
 /** Insight blurbs keyed by demo dream id — for the Insights panel. */

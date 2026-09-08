@@ -30,6 +30,7 @@ import {
   fetchJournalStoreRemote,
   getMedimadeApiBase,
   getMedimadeSessionJwt,
+  isMedimadeSessionActive,
   putJournalStoreRemote,
   runJournalInsightsRemote,
 } from "@/lib/medimade-api";
@@ -298,7 +299,11 @@ export function JournalView() {
 
   useEffect(() => {
     const sync = () => {
-      const next = Boolean(getMedimadeSessionJwt());
+      // Cloud journal only when we actually have an access JWT. Sticky ACTIVE_KEY
+      // without a token used to strip demos and leave an empty journal while the
+      // user effectively could not use the account.
+      const next =
+        isMedimadeSessionActive() && Boolean(getMedimadeSessionJwt());
       setSignedIn((prev) => {
         if (prev !== next) {
           clearJournalRemoteSessionCache();

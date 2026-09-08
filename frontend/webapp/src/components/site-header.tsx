@@ -9,7 +9,7 @@ import {
   clearMedimadeSession,
   getMedimadeSessionDisplayName,
   getMedimadeSessionEmail,
-  getMedimadeSessionJwt,
+  isMedimadeSessionActive,
 } from "@/lib/medimade-api";
 import {
   COLOR_SCHEME_CHANGED_EVENT,
@@ -28,12 +28,21 @@ const meditateSub: NavSubItem[] = [
   { href: "/meditate/sounds", label: "Sounds" },
 ];
 
-const journalSub: NavSubItem[] = [
-  { href: "/journal/my", label: "My Journal" },
+/** Desktop flyout: Overview + app. Mobile uses overviewHref + app-only items. */
+const journalFlyout: NavSubItem[] = [
+  { href: "/journal", label: "Overview" },
+  { href: "/journal/my", label: "Journal" },
+];
+const journalMobileItems: NavSubItem[] = [
+  { href: "/journal/my", label: "Journal" },
 ];
 
-const ideateSub: NavSubItem[] = [
-  { href: "/dream/my", label: "My Dreams" },
+const ideateFlyout: NavSubItem[] = [
+  { href: "/ideate", label: "Overview" },
+  { href: "/ideate/my", label: "Ideate" },
+];
+const ideateMobileItems: NavSubItem[] = [
+  { href: "/ideate/my", label: "Ideate" },
 ];
 
 const focusSub: NavSubItem[] = [];
@@ -45,6 +54,10 @@ const utilityNav: NavSubItem[] = [
 
 function sectionActive(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}/`);
+}
+
+function ideateSectionActive(path: string): boolean {
+  return sectionActive(path, "/ideate") || sectionActive(path, "/dream");
 }
 
 function ColorSchemeToggle({ className = "" }: { className?: string }) {
@@ -214,7 +227,7 @@ export function SiteHeader() {
 
   useEffect(() => {
     const sync = () => {
-      setSignedIn(Boolean(getMedimadeSessionJwt()));
+      setSignedIn(isMedimadeSessionActive());
       const email = getMedimadeSessionEmail();
       setSessionLabel(
         getMedimadeSessionDisplayName()?.trim() || email || null,
@@ -262,24 +275,26 @@ export function SiteHeader() {
         </Link>
         <nav className="hidden items-center gap-1 sm:flex">
           <NavFlyout
-            href="/meditate"
+            href={
+              signedIn ? "/meditate/library/creations" : "/meditate"
+            }
             label="Meditate"
             items={meditateSub}
             active={sectionActive(pathname, "/meditate")}
             isItemActive={isItemActive}
           />
           <NavFlyout
-            href="/journal"
+            href={signedIn ? "/journal/my" : "/journal"}
             label="Journal"
-            items={journalSub}
+            items={journalFlyout}
             active={sectionActive(pathname, "/journal")}
             isItemActive={isItemActive}
           />
           <NavFlyout
-            href="/dream"
-            label="Dream"
-            items={ideateSub}
-            active={sectionActive(pathname, "/dream")}
+            href={signedIn ? "/ideate/my" : "/ideate"}
+            label="Ideate"
+            items={ideateFlyout}
+            active={ideateSectionActive(pathname)}
             isItemActive={isItemActive}
           />
           <NavFlyout
@@ -368,16 +383,16 @@ export function SiteHeader() {
               <MobileSection
                 title="Journal"
                 overviewHref="/journal"
-                items={journalSub}
+                items={journalMobileItems}
                 pathname={pathname}
                 isItemActive={isItemActive}
                 onNavigate={closeMobile}
               />
               <div className="my-2 border-t border-border" role="separator" />
               <MobileSection
-                title="Dream"
-                overviewHref="/dream"
-                items={ideateSub}
+                title="Ideate"
+                overviewHref="/ideate"
+                items={ideateMobileItems}
                 pathname={pathname}
                 isItemActive={isItemActive}
                 onNavigate={closeMobile}

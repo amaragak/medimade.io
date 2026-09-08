@@ -1,5 +1,5 @@
 export const metadata = {
-  title: "My Journal",
+  title: "Journal",
 };
 
 export default function MyJournalPage() {

@@ -25,6 +25,7 @@ import {
   upsertDream,
 } from "@/lib/plan-ideate-store";
 import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
+import { isMedimadeSessionActive } from "@/lib/auth-session";
 
 type ProjectTab = "reflect" | "steps";
 
@@ -62,7 +63,9 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
   }, [dreamId]);
 
   useEffect(() => {
-    if (!cloudReady) return;
+    // Guests can load from local demos immediately; signed-in waits for cloud ready
+    // so we don't flash empty before pull.
+    if (isMedimadeSessionActive() && !cloudReady) return;
     load();
   }, [load, cloudReady, revision]);
 
@@ -138,22 +141,22 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
     router.push("/meditate/create/from-chat?fromDream=1");
   }
 
-  if (!cloudReady || missing || !dream) {
+  if ((isMedimadeSessionActive() && !cloudReady) || missing || !dream) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-20 sm:px-6">
         <p className="text-muted">
-          {!cloudReady
+          {isMedimadeSessionActive() && !cloudReady
             ? "Loading…"
             : missing
               ? "This project isn’t here anymore—or the link is old."
               : "Loading…"}
         </p>
-        {cloudReady && missing ? (
+        {missing ? (
           <Link
-            href="/dream/my"
+            href="/ideate/my"
             className="mt-6 inline-block text-sm font-semibold text-accent-link underline-offset-2 hover:underline"
           >
-            Back to My Dreams
+            Back to Ideate
           </Link>
         ) : null}
       </div>
@@ -169,10 +172,10 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
       <div className="mx-auto max-w-6xl px-4 pt-3 pb-10 sm:px-6 sm:py-14">
         <div className="pb-0">
           <Link
-            href="/dream/my"
+            href="/ideate/my"
             className="text-xs font-semibold uppercase tracking-wide text-accent-link hover:underline"
           >
-            ← My Dreams
+            ← Ideate
           </Link>
           <div className="mt-2 flex items-start justify-between gap-4">
             <div className="min-w-0 flex-1">

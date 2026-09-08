@@ -416,13 +416,21 @@ export function ensureGuestDemoJournalSeeded(
     return current;
   }
 
-  // Empty stub or missing demos with no personal writing → full demo set.
+  // Empty stub, signed-in blank leftovers, or missing demos → full demo set.
   const demo = buildDemoJournalStore();
   if (typeof window !== "undefined") {
     saveJournalStore(demo);
     markDemoSeedFlag();
   }
   return demo;
+}
+
+/** Reset device journal to guest demos (call on sign-out). */
+export function resetJournalLocalToGuestDemos(): void {
+  if (typeof window === "undefined") return;
+  const demo = buildDemoJournalStore();
+  saveJournalStore(demo);
+  markDemoSeedFlag();
 }
 
 /**

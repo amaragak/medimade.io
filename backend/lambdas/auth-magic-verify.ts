@@ -121,6 +121,9 @@ async function issueSession(params: {
     200,
     {
       token: accessToken,
+      // Also returned in JSON so the webapp can persist refresh when third-party
+      // cookies are blocked (localhost / ITP). Still set as HttpOnly when possible.
+      refreshToken,
       userId: params.userId,
       email: params.email,
       needsProfileName: params.needsProfileName,

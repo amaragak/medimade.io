@@ -58,6 +58,7 @@ type IdeateCloudBundle = {
   visionBoard: unknown;
   reflectionQuestions: unknown;
   values: unknown;
+  regrets?: unknown;
 };
 
 function isBundle(x: unknown): x is IdeateCloudBundle {
@@ -186,6 +187,23 @@ function stripValues(values: unknown): unknown {
   return { v: 1, values: list.slice(0, 40) };
 }
 
+function stripRegrets(regrets: unknown): unknown {
+  if (!regrets || typeof regrets !== "object") return { v: 1, regrets: [] };
+  const o = regrets as Record<string, unknown>;
+  const list = Array.isArray(o.regrets)
+    ? o.regrets.filter((r) => {
+        if (!r || typeof r !== "object") return false;
+        const row = r as { id?: unknown; statement?: unknown };
+        if (typeof row.id !== "string" || typeof row.statement !== "string") {
+          return false;
+        }
+        if (row.id.startsWith("demo-regret-")) return false;
+        return row.statement.trim().length > 0;
+      })
+    : [];
+  return { v: 1, regrets: list.slice(0, 40) };
+}
+
 export async function handler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
@@ -248,6 +266,7 @@ export async function handler(
     const o = incoming as Record<string, unknown>;
 
     let existingValues: unknown = { v: 1, values: [] };
+    let existingRegrets: unknown = { v: 1, regrets: [] };
     try {
       const existingOut = await ddb.send(
         new GetCommand({
@@ -258,13 +277,14 @@ export async function handler(
       const existingRow = existingOut.Item as { store?: unknown } | undefined;
       if (
         existingRow?.store &&
-        typeof existingRow.store === "object" &&
-        "values" in (existingRow.store as object)
+        typeof existingRow.store === "object"
       ) {
-        existingValues = (existingRow.store as { values?: unknown }).values;
+        const es = existingRow.store as { values?: unknown; regrets?: unknown };
+        if ("values" in es) existingValues = es.values;
+        if ("regrets" in es) existingRegrets = es.regrets;
       }
     } catch {
-      /* fall through with empty values */
+      /* fall through */
     }
 
     const bundle: IdeateCloudBundle = {
@@ -276,8 +296,10 @@ export async function handler(
       ideate: stripDemoDreams(o.ideate),
       visionBoard: stripDemoVision(o.visionBoard),
       reflectionQuestions: stripDemoQuestions(o.reflectionQuestions),
-      // Older clients omit `values` — keep whatever is already stored.
+      // Older clients omit `values` / `regrets` — keep whatever is already stored.
       values: "values" in o ? stripValues(o.values) : stripValues(existingValues),
+      regrets:
+        "regrets" in o ? stripRegrets(o.regrets) : stripRegrets(existingRegrets),
     };
 
     const encoded = JSON.stringify(bundle);

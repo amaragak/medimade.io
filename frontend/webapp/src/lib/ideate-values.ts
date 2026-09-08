@@ -1,4 +1,4 @@
-import { getMedimadeSessionJwt } from "@/lib/auth-session";
+import { isMedimadeSessionActive } from "@/lib/auth-session";
 
 /**
  * Per-user Ideate values — discrete items, not a single freeform field.
@@ -29,7 +29,7 @@ function emptyValues(): IdeateValuesStoreV1 {
 }
 
 function isSignedIn(): boolean {
-  return Boolean(getMedimadeSessionJwt());
+  return isMedimadeSessionActive();
 }
 
 function removeValuesLs(): void {
@@ -45,6 +45,11 @@ function removeValuesLs(): void {
 export function clearIdeateValuesDeviceData(): void {
   memoryStore = null;
   removeValuesLs();
+}
+
+/** Clear in-memory values only — keep localStorage for cloud migration. */
+export function clearIdeateValuesMemoryOnly(): void {
+  memoryStore = null;
 }
 
 function safeIso(): string {
