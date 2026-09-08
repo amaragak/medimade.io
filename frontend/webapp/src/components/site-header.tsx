@@ -37,6 +37,7 @@ const journalMobileItems: NavSubItem[] = [
   { href: "/journal/my", label: "Journal" },
 ];
 
+/** Desktop flyout when signed in: Overview + app. Guests: header link only (no /ideate/my). */
 const ideateFlyout: NavSubItem[] = [
   { href: "/ideate", label: "Overview" },
   { href: "/ideate/my", label: "Ideate" },
