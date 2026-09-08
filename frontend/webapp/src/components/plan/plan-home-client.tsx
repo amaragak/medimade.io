@@ -56,7 +56,7 @@ import {
   saveIdeateQuotesStore,
   type IdeateQuote,
 } from "@/lib/ideate-quotes";
-import { fetchFamousAuthorQuotes } from "@/lib/medimade-api";
+import { fetchFamousQuotes } from "@/lib/medimade-api";
 import {
   loadIdeateSectionCollapse,
   saveIdeateSectionCollapse,
@@ -180,9 +180,9 @@ export function PlanHomeClient() {
   const [regretDraft, setRegretDraft] = useState("");
   const [regretCategoryDraft, setRegretCategoryDraft] = useState("");
   const [addingQuote, setAddingQuote] = useState(false);
-  const [quoteAddMode, setQuoteAddMode] = useState<"choose" | "author" | "original">(
-    "choose",
-  );
+  const [quoteAddMode, setQuoteAddMode] = useState<
+    "choose" | "author" | "work" | "original"
+  >("choose");
   const [quoteDraft, setQuoteDraft] = useState("");
   const [quoteAttributionDraft, setQuoteAttributionDraft] = useState("");
   const [authorQueryDraft, setAuthorQueryDraft] = useState("");
@@ -547,6 +547,7 @@ export function PlanHomeClient() {
   }
 
   function handleAddQuote() {
+    // Write-your-own → personal Ideate store only (never the public quote library).
     const next = addIdeateQuote(
       { v: 1, quotes },
       { text: quoteDraft, attribution: quoteAttributionDraft },
@@ -569,7 +570,7 @@ export function PlanHomeClient() {
     setAuthorSelectedQuotes(new Set());
   }
 
-  async function handleFetchAuthorQuotes() {
+  async function handleFetchSourceQuotes(kind: "author" | "work") {
     const q = authorQueryDraft.trim();
     if (q.length < 2 || authorFetchLoading) return;
     setAuthorFetchLoading(true);
@@ -578,13 +579,17 @@ export function PlanHomeClient() {
     setAuthorSelectedQuotes(new Set());
     setAuthorResolvedName(null);
     try {
-      const result = await fetchFamousAuthorQuotes(q);
-      setAuthorResolvedName(result.author);
+      const result = await fetchFamousQuotes({ kind, query: q });
+      setAuthorResolvedName(result.attribution);
       setAuthorFetchedQuotes(result.quotes);
-      setAuthorSelectedQuotes(new Set(result.quotes));
+      setAuthorSelectedQuotes(new Set());
     } catch (e) {
       setAuthorFetchError(
-        e instanceof Error ? e.message : "Could not find quotes for that person",
+        e instanceof Error
+          ? e.message
+          : kind === "work"
+            ? "Could not find quotes for that work"
+            : "Could not find quotes for that person",
       );
     } finally {
       setAuthorFetchLoading(false);
@@ -601,6 +606,8 @@ export function PlanHomeClient() {
   }
 
   function handleAddSelectedAuthorQuotes() {
+    // Library text was already cached by Haiku on Find quotes; adding here only
+    // copies into the user's personal Ideate list (no write-back to public DB).
     if (!authorResolvedName || authorSelectedQuotes.size === 0) return;
     const existingTexts = new Set(
       quotes.map((q) => q.text.trim().toLowerCase()),
@@ -1060,8 +1067,8 @@ export function PlanHomeClient() {
               <button
                 type="button"
                 onClick={() => setModalOpen(true)}
-                aria-label="Add a life area"
-                className="flex aspect-square w-full cursor-pointer flex-col items-center justify-center rounded-[4px] border-2 border-dashed bg-transparent transition-colors"
+                aria-label="Add new life area"
+                className="group flex aspect-square w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-[4px] border-2 border-dashed bg-transparent transition-[border-color] duration-200"
                 style={{
                   borderColor: "rgba(180,140,80,0.35)",
                 }}
@@ -1073,7 +1080,13 @@ export function PlanHomeClient() {
                 }}
               >
                 <span
-                  className="font-sans font-light leading-none"
+                  className="px-2 text-center font-sans text-[13px] font-medium uppercase tracking-[0.06em] opacity-0 transition-opacity duration-200 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 sm:text-[14px]"
+                  style={{ color: "rgba(180,140,80,0.7)" }}
+                >
+                  Add new life area
+                </span>
+                <span
+                  className="font-sans font-light leading-none transition-transform duration-200 ease-out group-hover:scale-125 group-focus-visible:scale-125"
                   style={{ color: "rgba(180,140,80,0.45)", fontSize: "36px" }}
                   aria-hidden
                 >
@@ -1101,14 +1114,9 @@ export function PlanHomeClient() {
               No quotes yet — add one when something sticks.
             </p>
           ) : (
-            <ul>
-              {quotes.map((q, i) => (
-                <li
-                  key={q.id}
-                  className={`group relative border-b-[0.5px] border-border py-5 ${
-                    i === 0 ? "border-t-0" : ""
-                  }`}
-                >
+            <ul className="flex flex-col gap-10">
+              {quotes.map((q) => (
+                <li key={q.id} className="group relative">
                   {editingQuoteId === q.id ? (
                     <form
                       onSubmit={(e) => {
@@ -1130,7 +1138,7 @@ export function PlanHomeClient() {
                         onChange={(e) => setEditQuoteDraft(e.target.value)}
                         rows={3}
                         maxLength={400}
-                        className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 font-display text-xl outline-none ring-accent/30 focus:ring-2"
+                        className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-center font-display text-xl outline-none ring-accent/30 focus:ring-2"
                       />
                       <label
                         className="sr-only"
@@ -1146,7 +1154,7 @@ export function PlanHomeClient() {
                         }
                         placeholder="Attribution (optional)"
                         maxLength={80}
-                        className="w-full max-w-sm rounded-lg border border-border bg-background px-3 py-2 font-sans text-sm outline-none ring-accent/30 focus:ring-2"
+                        className="w-full max-w-sm rounded-lg border border-border bg-background px-3 py-2 text-left font-sans text-sm outline-none ring-accent/30 focus:ring-2"
                       />
                       <div className="flex gap-2">
                         <button
@@ -1174,13 +1182,13 @@ export function PlanHomeClient() {
                       <button
                         type="button"
                         onClick={() => openEditQuote(q)}
-                        className="w-full cursor-pointer text-left"
+                        className="w-full cursor-pointer"
                       >
-                        <p className="font-display text-[22px] font-normal italic leading-[1.4] text-foreground transition-opacity hover:opacity-80">
+                        <p className="text-center font-display text-[22px] font-normal italic leading-[1.4] text-foreground transition-opacity hover:opacity-80">
                           &ldquo;{q.text}&rdquo;
                         </p>
                         {q.attribution?.trim() ? (
-                          <p className="mt-2 font-sans text-[13px] font-normal text-muted">
+                          <p className="mt-2 text-center font-sans text-[13px] font-normal text-muted">
                             — {q.attribution.trim()}
                           </p>
                         ) : null}
@@ -1188,7 +1196,7 @@ export function PlanHomeClient() {
                       <button
                         type="button"
                         onClick={() => handleRemoveQuote(q.id)}
-                        className="absolute right-0 top-5 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                        className="absolute right-0 top-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
                         aria-label="Remove quote"
                       >
                         Remove
@@ -1213,6 +1221,13 @@ export function PlanHomeClient() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setQuoteAddMode("work")}
+                    className="cursor-pointer rounded-full border border-border px-4 py-2 font-sans text-sm font-medium text-foreground transition-colors hover:border-[#F0A855]/60 hover:bg-accent-soft/30"
+                  >
+                    From a work
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setQuoteAddMode("original")}
                     className="cursor-pointer rounded-full border border-border px-4 py-2 font-sans text-sm font-medium text-foreground transition-colors hover:border-[#F0A855]/60 hover:bg-accent-soft/30"
                   >
@@ -1228,28 +1243,33 @@ export function PlanHomeClient() {
                 </div>
               ) : null}
 
-              {quoteAddMode === "author" ? (
+              {quoteAddMode === "author" || quoteAddMode === "work" ? (
                 <div className="flex flex-col gap-3">
                   <p className="max-w-xl font-sans text-[13px] text-muted">
-                    Type a famous person — we&apos;ll find ten well-known lines
-                    and remember them for next time.
+                    {quoteAddMode === "work"
+                      ? "Type a book, scripture, poem, play, or film — we'll find ten well-known lines."
+                      : "Type a famous person — we'll find ten well-known lines."}
                   </p>
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
-                      void handleFetchAuthorQuotes();
+                      void handleFetchSourceQuotes(quoteAddMode);
                     }}
                     className="flex flex-col gap-2 sm:flex-row sm:items-center"
                   >
-                    <label className="sr-only" htmlFor="ideate-quote-author">
-                      Famous person
+                    <label className="sr-only" htmlFor="ideate-quote-source">
+                      {quoteAddMode === "work" ? "Work title" : "Famous person"}
                     </label>
                     <input
-                      id="ideate-quote-author"
+                      id="ideate-quote-source"
                       autoFocus
                       value={authorQueryDraft}
                       onChange={(e) => setAuthorQueryDraft(e.target.value)}
-                      placeholder="e.g. Alan Watts, Maya Angelou…"
+                      placeholder={
+                        quoteAddMode === "work"
+                          ? "e.g. On the Road, the Bible, Meditations…"
+                          : "e.g. Alan Watts, Maya Angelou…"
+                      }
                       maxLength={80}
                       disabled={authorFetchLoading}
                       className="w-full max-w-md rounded-lg border border-border bg-background px-3 py-2 font-sans text-sm outline-none ring-accent/30 focus:ring-2 disabled:opacity-60"
@@ -1284,7 +1304,7 @@ export function PlanHomeClient() {
                   {authorResolvedName && authorFetchedQuotes.length > 0 ? (
                     <div className="flex flex-col gap-3">
                       <p className="font-sans text-[13px] text-muted">
-                        Quotes by{" "}
+                        Quotes from{" "}
                         <span className="font-medium text-foreground">
                           {authorResolvedName}
                         </span>
@@ -1319,6 +1339,7 @@ export function PlanHomeClient() {
                             setAuthorSelectedQuotes(new Set());
                             setAuthorResolvedName(null);
                             setAuthorFetchError(null);
+                            setAuthorQueryDraft("");
                           }}
                           className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
                         >

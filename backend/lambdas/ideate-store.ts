@@ -13,7 +13,7 @@ import {
   GetCommand,
   PutCommand,
 } from "@aws-sdk/lib-dynamodb";
-import { optionalUserJson, requireUserJson } from "../lib/medimade-auth-http";
+import { optionalUserJson, parseBearer, requireUserJson } from "../lib/medimade-auth-http";
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -249,9 +249,16 @@ export async function handler(
   if (!table) return json(500, { error: "IDEATE_TABLE_NAME is not set" });
 
   if (method === "GET") {
+    const token = parseBearer(event, null);
     const auth = await optionalUserJson(event, null);
     if (!auth?.sub) {
-      return json(200, { store: null });
+      // Distinguish "no/invalid session" from "authenticated empty account".
+      // Invalid Bearer still returns authenticated:false so clients don't wipe local data.
+      return json(200, {
+        store: null,
+        authenticated: false,
+        ...(token ? { error: "Invalid or expired session" } : {}),
+      });
     }
     const ownerId = auth.sub.trim();
     try {
@@ -263,9 +270,9 @@ export async function handler(
       );
       const row = out.Item as { store?: unknown } | undefined;
       if (!row?.store || !isBundle(row.store)) {
-        return json(200, { store: null });
+        return json(200, { store: null, authenticated: true });
       }
-      return json(200, { store: row.store });
+      return json(200, { store: row.store, authenticated: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "DynamoDB read failed";
       return json(500, { error: msg });

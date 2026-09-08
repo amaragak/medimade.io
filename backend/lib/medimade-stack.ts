@@ -324,17 +324,9 @@ export class MedimadeStack extends cdk.Stack {
     authJwtSecret.grantRead(authProfileDisplayName);
 
     // ffmpeg: Fish TTS proxy loudnorm + meditation bed mixing (account-local layer).
-    // Sydney keeps the original ServerlessRepo layer; London uses a copied layer.
-    const ffmpegLayerArnByRegion: Record<string, string> = {
-      "ap-southeast-2":
-        "arn:aws:lambda:ap-southeast-2:382309212161:layer:serverlessrepo-soundws-audio-tools-lambda-layer-LambdaLayer:1",
-      "eu-west-2":
-        "arn:aws:lambda:eu-west-2:382309212161:layer:medimade-ffmpeg-audio-tools:1",
-    };
     const ffmpegLayerArn =
       process.env.MEDIMADE_FFMPEG_LAYER_ARN?.trim() ||
-      ffmpegLayerArnByRegion[this.region] ||
-      ffmpegLayerArnByRegion["eu-west-2"]!;
+      "arn:aws:lambda:eu-west-2:382309212161:layer:medimade-ffmpeg-audio-tools:1";
     const ffmpegLayer = LayerVersion.fromLayerVersionArn(
       this,
       "FfmpegLayer",

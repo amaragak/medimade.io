@@ -1,7 +1,10 @@
 /**
- * Shared famous-author quote libraries.
- * POST { authorQuery } → resolve/cache via Haiku → 10 quotes.
- * Dynamo: AUTHOR#<slug> / LIBRARY + ALIAS#<normalized> / MAP
+ * Shared famous quote libraries (thinkers + works).
+ * POST { source: "author"|"work", query } → Haiku resolve + Dynamo cache → 10 quotes.
+ * Dynamo: AUTHOR#<slug>|WORK#<slug> / LIBRARY + ALIAS#… / MAP
+ *
+ * Canonicalisation / public cache is ONLY for Haiku library lookups.
+ * User-written / paraphrased / personal Ideate quotes must NEVER be written here.
  */
 
 import type {
@@ -60,7 +63,7 @@ function options(): APIGatewayProxyStructuredResultV2 {
   };
 }
 
-/** Fold accents, casing, punctuation — "Alan Watts" ≈ "alan wats" after Haiku, same key for exact folds. */
+/** Fold accents, casing, punctuation — "Alan Watts" ≈ "alan wats" after Haiku. */
 export function normalizeAuthorKey(raw: string): string {
   return raw
     .normalize("NFKD")
@@ -73,6 +76,18 @@ export function normalizeAuthorKey(raw: string): string {
 
 export function authorSlugFromKey(key: string): string {
   return key.replace(/\s+/g, "-").slice(0, 96);
+}
+
+/** "On the Road — Jack Kerouac" or just "The Bible" when no credited author. */
+export function formatWorkAttribution(
+  title: string,
+  author: string | null | undefined,
+): string {
+  const t = title.trim();
+  const a = typeof author === "string" ? author.trim() : "";
+  if (!t) return a;
+  if (!a) return t;
+  return `${t} — ${a}`;
 }
 
 async function getClaudeApiKey(): Promise<string> {
@@ -95,9 +110,27 @@ type AuthorLibrary = {
   updatedAt: string;
 };
 
+type WorkLibrary = {
+  slug: string;
+  title: string;
+  /** Null/empty for anonymous or communal works (e.g. the Bible). */
+  authorName: string | null;
+  quotes: string[];
+  aliases: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 type HaikuAuthorResult = {
   isFamousPerson: boolean;
   canonicalName: string;
+  quotes: string[];
+};
+
+type HaikuWorkResult = {
+  isKnownWork: boolean;
+  title: string;
+  authorName: string | null;
   quotes: string[];
 };
 
@@ -129,7 +162,27 @@ function sanitizeQuotes(raw: unknown): string[] {
   return out;
 }
 
-async function resolveWithHaiku(authorQuery: string): Promise<HaikuAuthorResult> {
+function optionalAuthorName(raw: unknown): string | null {
+  if (raw == null) return null;
+  if (typeof raw !== "string") return null;
+  const t = raw.trim();
+  if (!t) return null;
+  const lower = t.toLowerCase();
+  if (
+    lower === "null" ||
+    lower === "none" ||
+    lower === "unknown" ||
+    lower === "anonymous" ||
+    lower === "n/a"
+  ) {
+    return null;
+  }
+  return t.slice(0, 120);
+}
+
+async function resolveAuthorWithHaiku(
+  authorQuery: string,
+): Promise<HaikuAuthorResult> {
   const apiKey = await getClaudeApiKey();
   const system = [
     "You resolve famous people and recall their well-known quotes.",
@@ -199,21 +252,101 @@ async function resolveWithHaiku(authorQuery: string): Promise<HaikuAuthorResult>
   return { isFamousPerson, canonicalName, quotes };
 }
 
+async function resolveWorkWithHaiku(workQuery: string): Promise<HaikuWorkResult> {
+  const apiKey = await getClaudeApiKey();
+  const system = [
+    "You resolve famous works (books, scripture, poems, plays, films, songs)",
+    "and recall well-known lines from them.",
+    "Unify spelling/title variants of the SAME work to one correct presentation title",
+    '(e.g. "on the road", "On The Road" → "On the Road").',
+    "Set authorName to the primary credited author/creator when clearly known;",
+    "set authorName to null for anonymous, traditional, or communal works",
+    "(e.g. the Bible, many folk songs, some scripture).",
+    "If the query is not a recognizable work (or is too vague), set isKnownWork false.",
+    "Return ONLY valid JSON — no markdown, no commentary.",
+  ].join(" ");
+
+  const user = [
+    `Work query: ${JSON.stringify(workQuery)}`,
+    "",
+    "Respond with JSON shaped exactly like:",
+    "{",
+    '  "isKnownWork": true,',
+    '  "title": "Correct Work Title",',
+    '  "authorName": "Author Name or null",',
+    `  "quotes": ["quote 1", "quote 2", ... exactly ${QUOTE_COUNT} well-known lines from this work]`,
+    "}",
+    "",
+    `Rules: quotes must be short (${MAX_QUOTE_CHARS} chars max), famous lines from the work`,
+    "(not generic lines merely about it), no invented obscure lines, no speaker labels inside quotes,",
+    `exactly ${QUOTE_COUNT} quotes when isKnownWork is true; empty quotes array when false.`,
+  ].join("\n");
+
+  const res = await fetch(ANTHROPIC_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: CLAUDE_HAIKU_45_MODEL_ID,
+      max_tokens: 1800,
+      temperature: 0.2,
+      system,
+      messages: [{ role: "user", content: user }],
+    }),
+  });
+  const raw = await res.text();
+  if (!res.ok) {
+    throw new Error(`Haiku work quotes failed: ${raw.slice(0, 400)}`);
+  }
+
+  let text = "";
+  try {
+    const parsed = JSON.parse(raw) as {
+      content?: Array<{ type?: string; text?: string }>;
+    };
+    text = (parsed.content ?? [])
+      .filter((c) => c.type === "text" && typeof c.text === "string")
+      .map((c) => c.text!.trim())
+      .join("\n")
+      .trim();
+  } catch {
+    throw new Error("Haiku returned invalid envelope");
+  }
+
+  const obj = extractJsonObject(text) as Record<string, unknown>;
+  const isKnownWork = obj.isKnownWork === true;
+  const title = typeof obj.title === "string" ? obj.title.trim() : "";
+  const authorName = optionalAuthorName(obj.authorName);
+  const quotes = sanitizeQuotes(obj.quotes);
+  return { isKnownWork, title, authorName, quotes };
+}
+
 async function getAlias(
   table: string,
-  key: string,
+  aliasPk: string,
 ): Promise<string | null> {
   const out = await ddb.send(
     new GetCommand({
       TableName: table,
-      Key: { pk: `ALIAS#${key}`, sk: "MAP" },
+      Key: { pk: aliasPk, sk: "MAP" },
     }),
   );
   const slug = out.Item?.canonicalSlug;
   return typeof slug === "string" && slug.trim() ? slug.trim() : null;
 }
 
-async function getLibrary(
+function authorAliasPk(key: string): string {
+  return `ALIAS#${key}`;
+}
+
+function workAliasPk(key: string): string {
+  return `ALIAS#work:${key}`;
+}
+
+async function getAuthorLibrary(
   table: string,
   slug: string,
 ): Promise<AuthorLibrary | null> {
@@ -244,13 +377,44 @@ async function getLibrary(
   };
 }
 
-async function putAlias(table: string, key: string, canonicalSlug: string) {
-  if (!key) return;
+async function getWorkLibrary(
+  table: string,
+  slug: string,
+): Promise<WorkLibrary | null> {
+  const out = await ddb.send(
+    new GetCommand({
+      TableName: table,
+      Key: { pk: `WORK#${slug}`, sk: "LIBRARY" },
+    }),
+  );
+  const item = out.Item;
+  if (!item) return null;
+  const title = typeof item.title === "string" ? item.title.trim() : "";
+  const quotes = sanitizeQuotes(item.quotes);
+  if (!title || quotes.length === 0) return null;
+  const aliases = Array.isArray(item.aliases)
+    ? item.aliases.filter((a): a is string => typeof a === "string")
+    : [];
+  return {
+    slug,
+    title,
+    authorName: optionalAuthorName(item.authorName),
+    quotes,
+    aliases,
+    createdAt:
+      typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
+    updatedAt:
+      typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString(),
+  };
+}
+
+async function putAlias(table: string, aliasPk: string, canonicalSlug: string) {
+  if (!aliasPk) return;
   await ddb.send(
     new PutCommand({
       TableName: table,
       Item: {
-        pk: `ALIAS#${key}`,
+        pk: aliasPk,
         sk: "MAP",
         canonicalSlug,
         updatedAt: new Date().toISOString(),
@@ -259,7 +423,7 @@ async function putAlias(table: string, key: string, canonicalSlug: string) {
   );
 }
 
-async function putLibrary(table: string, lib: AuthorLibrary) {
+async function putAuthorLibrary(table: string, lib: AuthorLibrary) {
   await ddb.send(
     new PutCommand({
       TableName: table,
@@ -276,16 +440,209 @@ async function putLibrary(table: string, lib: AuthorLibrary) {
   );
 }
 
-function responseFromLibrary(
+async function putWorkLibrary(table: string, lib: WorkLibrary) {
+  await ddb.send(
+    new PutCommand({
+      TableName: table,
+      Item: {
+        pk: `WORK#${lib.slug}`,
+        sk: "LIBRARY",
+        title: lib.title,
+        ...(lib.authorName ? { authorName: lib.authorName } : {}),
+        quotes: lib.quotes,
+        aliases: lib.aliases,
+        createdAt: lib.createdAt,
+        updatedAt: lib.updatedAt,
+      },
+    }),
+  );
+}
+
+function responseFromAuthorLibrary(
   lib: AuthorLibrary,
   cached: boolean,
 ): APIGatewayProxyStructuredResultV2 {
   return json(200, {
+    kind: "author",
     author: lib.displayName,
     authorSlug: lib.slug,
+    attribution: lib.displayName,
     quotes: lib.quotes.slice(0, QUOTE_COUNT),
     cached,
   });
+}
+
+function responseFromWorkLibrary(
+  lib: WorkLibrary,
+  cached: boolean,
+): APIGatewayProxyStructuredResultV2 {
+  const attribution = formatWorkAttribution(lib.title, lib.authorName);
+  return json(200, {
+    kind: "work",
+    workTitle: lib.title,
+    workAuthor: lib.authorName,
+    workSlug: lib.slug,
+    attribution,
+    quotes: lib.quotes.slice(0, QUOTE_COUNT),
+    cached,
+  });
+}
+
+async function handleAuthorQuery(
+  table: string,
+  authorQuery: string,
+): Promise<APIGatewayProxyStructuredResultV2> {
+  const queryKey = normalizeAuthorKey(authorQuery);
+  if (!queryKey) {
+    return json(400, { error: "query is empty after normalization" });
+  }
+
+  const aliased = await getAlias(table, authorAliasPk(queryKey));
+  if (aliased) {
+    const lib = await getAuthorLibrary(table, aliased);
+    if (lib) return responseFromAuthorLibrary(lib, true);
+  }
+
+  const directSlug = authorSlugFromKey(queryKey);
+  const direct = await getAuthorLibrary(table, directSlug);
+  if (direct) {
+    await putAlias(table, authorAliasPk(queryKey), direct.slug);
+    return responseFromAuthorLibrary(direct, true);
+  }
+
+  const haiku = await resolveAuthorWithHaiku(authorQuery);
+  if (!haiku.isFamousPerson || !haiku.canonicalName) {
+    return json(404, {
+      error: "No famous person matched that name",
+      query: authorQuery,
+    });
+  }
+
+  const canonicalKey = normalizeAuthorKey(haiku.canonicalName);
+  if (!canonicalKey) {
+    return json(404, { error: "Could not resolve a canonical author name" });
+  }
+  const slug = authorSlugFromKey(canonicalKey);
+
+  const existing = await getAuthorLibrary(table, slug);
+  if (existing) {
+    const aliases = Array.from(
+      new Set([...existing.aliases, queryKey, canonicalKey]),
+    );
+    const now = new Date().toISOString();
+    const next: AuthorLibrary = {
+      ...existing,
+      displayName: haiku.canonicalName.trim() || existing.displayName,
+      aliases,
+      updatedAt: now,
+    };
+    await putAuthorLibrary(table, next);
+    await putAlias(table, authorAliasPk(queryKey), slug);
+    await putAlias(table, authorAliasPk(canonicalKey), slug);
+    return responseFromAuthorLibrary(next, true);
+  }
+
+  const quotes = haiku.quotes;
+  if (quotes.length < 5) {
+    return json(502, {
+      error: "Haiku returned too few quotes for this author",
+      author: haiku.canonicalName,
+    });
+  }
+
+  const now = new Date().toISOString();
+  const lib: AuthorLibrary = {
+    slug,
+    displayName: haiku.canonicalName.trim(),
+    quotes,
+    aliases: Array.from(new Set([queryKey, canonicalKey])),
+    createdAt: now,
+    updatedAt: now,
+  };
+  await putAuthorLibrary(table, lib);
+  await putAlias(table, authorAliasPk(queryKey), slug);
+  await putAlias(table, authorAliasPk(canonicalKey), slug);
+  return responseFromAuthorLibrary(lib, false);
+}
+
+async function handleWorkQuery(
+  table: string,
+  workQuery: string,
+): Promise<APIGatewayProxyStructuredResultV2> {
+  const queryKey = normalizeAuthorKey(workQuery);
+  if (!queryKey) {
+    return json(400, { error: "query is empty after normalization" });
+  }
+
+  const aliased = await getAlias(table, workAliasPk(queryKey));
+  if (aliased) {
+    const lib = await getWorkLibrary(table, aliased);
+    if (lib) return responseFromWorkLibrary(lib, true);
+  }
+
+  const directSlug = authorSlugFromKey(queryKey);
+  const direct = await getWorkLibrary(table, directSlug);
+  if (direct) {
+    await putAlias(table, workAliasPk(queryKey), direct.slug);
+    return responseFromWorkLibrary(direct, true);
+  }
+
+  const haiku = await resolveWorkWithHaiku(workQuery);
+  if (!haiku.isKnownWork || !haiku.title) {
+    return json(404, {
+      error: "No known work matched that title",
+      query: workQuery,
+    });
+  }
+
+  const canonicalKey = normalizeAuthorKey(haiku.title);
+  if (!canonicalKey) {
+    return json(404, { error: "Could not resolve a canonical work title" });
+  }
+  const slug = authorSlugFromKey(canonicalKey);
+
+  const existing = await getWorkLibrary(table, slug);
+  if (existing) {
+    const aliases = Array.from(
+      new Set([...existing.aliases, queryKey, canonicalKey]),
+    );
+    const now = new Date().toISOString();
+    const next: WorkLibrary = {
+      ...existing,
+      title: haiku.title.trim() || existing.title,
+      authorName:
+        haiku.authorName !== undefined ? haiku.authorName : existing.authorName,
+      aliases,
+      updatedAt: now,
+    };
+    await putWorkLibrary(table, next);
+    await putAlias(table, workAliasPk(queryKey), slug);
+    await putAlias(table, workAliasPk(canonicalKey), slug);
+    return responseFromWorkLibrary(next, true);
+  }
+
+  const quotes = haiku.quotes;
+  if (quotes.length < 5) {
+    return json(502, {
+      error: "Haiku returned too few quotes for this work",
+      workTitle: haiku.title,
+    });
+  }
+
+  const now = new Date().toISOString();
+  const lib: WorkLibrary = {
+    slug,
+    title: haiku.title.trim(),
+    authorName: haiku.authorName,
+    quotes,
+    aliases: Array.from(new Set([queryKey, canonicalKey])),
+    createdAt: now,
+    updatedAt: now,
+  };
+  await putWorkLibrary(table, lib);
+  await putAlias(table, workAliasPk(queryKey), slug);
+  await putAlias(table, workAliasPk(canonicalKey), slug);
+  return responseFromWorkLibrary(lib, false);
 }
 
 export async function handler(
@@ -302,95 +659,46 @@ export async function handler(
   if (event.isBase64Encoded && bodyRaw) {
     bodyRaw = Buffer.from(bodyRaw, "base64").toString("utf-8");
   }
-  let body: { authorQuery?: unknown };
+  let body: {
+    source?: unknown;
+    query?: unknown;
+    authorQuery?: unknown;
+    workQuery?: unknown;
+  };
   try {
-    body = JSON.parse(bodyRaw || "{}") as { authorQuery?: unknown };
+    body = JSON.parse(bodyRaw || "{}") as typeof body;
   } catch {
     return json(400, { error: "Invalid JSON body" });
   }
 
-  const authorQuery =
-    typeof body.authorQuery === "string" ? body.authorQuery.trim().slice(0, MAX_QUERY) : "";
-  if (authorQuery.length < 2) {
-    return json(400, { error: "authorQuery must be at least 2 characters" });
-  }
+  const sourceRaw =
+    typeof body.source === "string" ? body.source.trim().toLowerCase() : "";
+  const source: "author" | "work" =
+    sourceRaw === "work"
+      ? "work"
+      : sourceRaw === "author" || !sourceRaw
+        ? "author"
+        : "author";
 
-  const queryKey = normalizeAuthorKey(authorQuery);
-  if (!queryKey) {
-    return json(400, { error: "authorQuery is empty after normalization" });
+  const query =
+    (typeof body.query === "string" ? body.query.trim() : "") ||
+    (source === "work"
+      ? typeof body.workQuery === "string"
+        ? body.workQuery.trim()
+        : ""
+      : typeof body.authorQuery === "string"
+        ? body.authorQuery.trim()
+        : "");
+  const clipped = query.slice(0, MAX_QUERY);
+  if (clipped.length < 2) {
+    return json(400, {
+      error: "query must be at least 2 characters",
+    });
   }
 
   try {
-    // 1) Exact alias / fold hit
-    const aliased = await getAlias(table, queryKey);
-    if (aliased) {
-      const lib = await getLibrary(table, aliased);
-      if (lib) return responseFromLibrary(lib, true);
-    }
-
-    // 2) Direct slug hit (query already matches canonical fold)
-    const directSlug = authorSlugFromKey(queryKey);
-    const direct = await getLibrary(table, directSlug);
-    if (direct) {
-      await putAlias(table, queryKey, direct.slug);
-      return responseFromLibrary(direct, true);
-    }
-
-    // 3) Haiku resolve + fetch
-    const haiku = await resolveWithHaiku(authorQuery);
-    if (!haiku.isFamousPerson || !haiku.canonicalName) {
-      return json(404, {
-        error: "No famous person matched that name",
-        authorQuery,
-      });
-    }
-
-    const canonicalKey = normalizeAuthorKey(haiku.canonicalName);
-    if (!canonicalKey) {
-      return json(404, { error: "Could not resolve a canonical author name" });
-    }
-    const slug = authorSlugFromKey(canonicalKey);
-
-    // 4) Existing library under canonical identity (spelling unified)
-    const existing = await getLibrary(table, slug);
-    if (existing) {
-      const aliases = Array.from(
-        new Set([...existing.aliases, queryKey, canonicalKey]),
-      );
-      const now = new Date().toISOString();
-      const next: AuthorLibrary = {
-        ...existing,
-        displayName: haiku.canonicalName.trim() || existing.displayName,
-        aliases,
-        updatedAt: now,
-      };
-      await putLibrary(table, next);
-      await putAlias(table, queryKey, slug);
-      await putAlias(table, canonicalKey, slug);
-      return responseFromLibrary(next, true);
-    }
-
-    const quotes = haiku.quotes;
-    if (quotes.length < 5) {
-      return json(502, {
-        error: "Haiku returned too few quotes for this author",
-        author: haiku.canonicalName,
-      });
-    }
-
-    const now = new Date().toISOString();
-    const lib: AuthorLibrary = {
-      slug,
-      displayName: haiku.canonicalName.trim(),
-      quotes,
-      aliases: Array.from(new Set([queryKey, canonicalKey])),
-      createdAt: now,
-      updatedAt: now,
-    };
-    await putLibrary(table, lib);
-    await putAlias(table, queryKey, slug);
-    await putAlias(table, canonicalKey, slug);
-    return responseFromLibrary(lib, false);
+    if (source === "work") return await handleWorkQuery(table, clipped);
+    return await handleAuthorQuery(table, clipped);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Famous quotes lookup failed";
     return json(500, { error: msg });

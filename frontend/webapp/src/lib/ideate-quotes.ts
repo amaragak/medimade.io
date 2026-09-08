@@ -3,6 +3,10 @@ import { isMedimadeSessionActive } from "@/lib/auth-session";
 /**
  * Meaningful quotes for Ideate home — lines that keep you oriented.
  * Signed-in: in-memory + cloud PUT. Guests: device localStorage.
+ *
+ * Personal store only. User-written lines (and copies the user keeps from a
+ * library fetch) live here — they are never pushed into the shared
+ * famous-quotes Dynamo library (that cache is Haiku-canonicalised only).
  */
 
 export type IdeateQuote = {

@@ -406,6 +406,16 @@ function ideateBundleHasContent(bundle: IdeateCloudBundle): boolean {
   return false;
 }
 
+/** True when signed-in memory has any Ideate content (not just dreams). */
+export function signedInIdeateMemoryHasContent(): boolean {
+  try {
+    if (!isSignedIn()) return false;
+    return ideateBundleHasContent(buildIdeateCloudBundle());
+  } catch {
+    return false;
+  }
+}
+
 function removeIdeateLocalStorageKeys(): void {
   if (typeof window === "undefined") return;
   try {
@@ -499,7 +509,13 @@ export async function pullIdeateStoreFromCloud(opts?: {
   const devicePersonal = snapshotDeviceIdeatePersonal();
 
   try {
-    const remote = await fetchIdeateStoreRemote();
+    const { store: remote, authenticated } = await fetchIdeateStoreRemote();
+
+    // Wrong region / expired JWT / no auth — do not blank the account or mark pulled.
+    if (!authenticated) {
+      return { applied: false, empty: false };
+    }
+
     markIdeateStorePulledThisSession();
 
     if (remote && ideateBundleHasContent(remote)) {
@@ -521,7 +537,7 @@ export async function pullIdeateStoreFromCloud(opts?: {
       return { applied: true, empty: false };
     }
 
-    // Truly empty account — blank working copy, do not push.
+    // Authenticated empty account — blank working copy, do not push.
     withCloudPushSuppressed(() => {
       saveIdeateStoreLocal(emptyIdeate());
       saveIdeateVisionBoardStoreLocal({
@@ -543,7 +559,7 @@ export async function pullIdeateStoreFromCloud(opts?: {
     notifyIdeateCloud();
     return { applied: true, empty: true };
   } catch {
-    markIdeateStorePulledThisSession();
+    // Network / API errors — keep whatever we can; do not mark pulled so we retry.
     if (devicePersonal) {
       applyIdeateCloudBundle(devicePersonal);
       return { applied: true, empty: false };

@@ -17,11 +17,11 @@ import {
   clearIdeateCloudSessionCache,
   clearIdeateSignedInWorkingCopy,
   pullIdeateStoreFromCloud,
+  signedInIdeateMemoryHasContent,
   subscribeIdeateCloud,
   wasIdeateStorePulledThisSession,
   wipeIdeateDeviceData,
 } from "@/lib/ideate-cloud";
-import { loadIdeateStoreRaw } from "@/lib/plan-ideate-store";
 
 type IdeateCloudContextValue = {
   ready: boolean;
@@ -42,14 +42,6 @@ export function useIdeateCloud(): IdeateCloudContextValue {
   return useContext(IdeateCloudContext);
 }
 
-function memoryHasIdeateRows(): boolean {
-  try {
-    return loadIdeateStoreRaw().dreams.length > 0;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Pulls cloud Ideate for signed-in users before children read the store.
  * Guests become ready immediately with forced local demos.
@@ -68,6 +60,7 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const syncAuth = () => {
       const next = isMedimadeSessionActive();
+      const jwt = getMedimadeSessionJwt();
       setSignedIn((prev) => {
         if (prev !== next) {
           clearIdeateCloudSessionCache();
@@ -79,6 +72,11 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
         }
         return next;
       });
+      // JWT arrived after sticky session flag — pull cloud (removed in earlier refactor).
+      if (next && jwt && !wasIdeateStorePulledThisSession()) {
+        setAuthEpoch((e) => e + 1);
+        setReady(false);
+      }
     };
     void import("@/lib/auth-session").then((m) =>
       m.ensureMedimadeSession().finally(syncAuth),
@@ -103,7 +101,7 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
       if (active) {
         // Only wipe memory on guest → signed-in (drop demos) or when memory is empty.
         // Remounts must keep an existing in-memory account store.
-        if (justSignedIn || !memoryHasIdeateRows()) {
+        if (justSignedIn || !signedInIdeateMemoryHasContent()) {
           clearIdeateSignedInWorkingCopy();
         }
 
@@ -117,10 +115,13 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
 
         if (jwt) {
           const needPull =
-            !wasIdeateStorePulledThisSession() || !memoryHasIdeateRows();
+            !wasIdeateStorePulledThisSession() ||
+            !signedInIdeateMemoryHasContent();
           if (needPull) {
             await pullIdeateStoreFromCloud({
-              force: wasIdeateStorePulledThisSession() && !memoryHasIdeateRows(),
+              force:
+                wasIdeateStorePulledThisSession() &&
+                !signedInIdeateMemoryHasContent(),
             });
           }
         }

@@ -48,15 +48,21 @@ export type JournalStoreV2 = {
 
 const LEGACY_PLAIN_KEY = "mm_journal_entries_v1";
 const STORE_KEY = "mm_journal_store_v2";
-/** Bump when demo copy changes so guests get a one-time reseed of missing demos. */
-const DEMO_SEED_FLAG_KEY = "mm_journal_demo_seed_v1";
+/** Bump when guest seed set changes (e.g. drop empty blank stub). */
+const DEMO_SEED_FLAG_KEY = "mm_journal_demo_seed_v3";
+const LEGACY_DEMO_SEED_FLAG_KEYS = [
+  "mm_journal_demo_seed_v1",
+  "mm_journal_demo_seed_v2",
+] as const;
 
+/** Current guest sample ids (no empty stub). */
 const DEMO_ENTRY_IDS = [
-  "demo-journal-blank",
   "demo-journal-morning",
   "demo-journal-resistance",
   "demo-journal-gratitude",
 ] as const;
+/** Older seeds we still treat as demos so they get wiped on reseed. */
+const LEGACY_DEMO_ENTRY_IDS = ["demo-journal-blank"] as const;
 
 /** Stable id for `GET/PUT /journal/store` and `POST /journal/voice` (treat as a device secret). */
 export const JOURNAL_OWNER_ID_KEY = "mm_journal_owner_id";
@@ -324,24 +330,27 @@ export function buildDemoJournalStore(): JournalStoreV2 {
     contentHtml:
       "<p>A walk without headphones</p><p>A message from someone who remembered</p><p>Hot water and a clean mug</p>",
   });
-  const blank = newEntry({
-    id: "demo-journal-blank",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    title: "",
-    localOnly: true,
-    sourceMetadata: { demo: true },
-    contentHtml: "<p></p>",
-  });
+  // Most recently updated freeform first; no empty stub (New entry creates those).
   return {
     version: 2,
-    activeEntryId: blank.id,
-    entries: [blank, morning, resistance, gratitude],
+    activeEntryId: morning.id,
+    entries: [morning, resistance, gratitude],
   };
 }
 
 export function isDemoJournalEntry(e: JournalEntry): boolean {
-  return e.sourceMetadata?.demo === true;
+  if (e.sourceMetadata?.demo === true) return true;
+  const id = e.id;
+  return (
+    (DEMO_ENTRY_IDS as readonly string[]).includes(id) ||
+    (LEGACY_DEMO_ENTRY_IDS as readonly string[]).includes(id)
+  );
+}
+
+function isExactCurrentDemoStore(store: JournalStoreV2): boolean {
+  if (!isDemoOnlyStore(store)) return false;
+  if (store.entries.length !== DEMO_ENTRY_IDS.length) return false;
+  return DEMO_ENTRY_IDS.every((id) => store.entries.some((e) => e.id === id));
 }
 
 export function isDemoOnlyStore(store: JournalStoreV2): boolean {
@@ -370,28 +379,34 @@ export function emptyJournalStore(): JournalStoreV2 {
   return { version: 2, activeEntryId: null, entries: [] };
 }
 
-function demoSeedFlagSet(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(DEMO_SEED_FLAG_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
 function markDemoSeedFlag(): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(DEMO_SEED_FLAG_KEY, "1");
+    for (const k of LEGACY_DEMO_SEED_FLAG_KEYS) {
+      window.localStorage.removeItem(k);
+    }
+  } catch {
+    /* */
+  }
+}
+
+function wipeGuestJournalDeviceKeys(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(LEGACY_PLAIN_KEY);
+    window.localStorage.removeItem(JOURNAL_OWNER_ID_KEY);
+    for (const k of LEGACY_DEMO_SEED_FLAG_KEYS) {
+      window.localStorage.removeItem(k);
+    }
   } catch {
     /* */
   }
 }
 
 /**
- * For guests: ensure demo sample pages exist when the device journal has no
- * real writing yet. Safe to call repeatedly. Never overwrites meaningful
- * personal entries.
+ * Guests: always show seeded samples — never leftover personal / signed-in cache.
+ * Safe to call repeatedly. Overwrites non-demo device rows (cloud owns real data).
  */
 export function ensureGuestDemoJournalSeeded(
   existing?: JournalStoreV2 | null,
@@ -399,26 +414,16 @@ export function ensureGuestDemoJournalSeeded(
   const current =
     existing ??
     (typeof window !== "undefined" ? loadJournalStoreRaw() : buildDemoJournalStore());
-  const personalMeaningful = current.entries.filter(
-    (e) =>
-      !isDemoJournalEntry(e) && journalEntryHasMeaningfulContent(e),
-  );
-  if (personalMeaningful.length > 0) {
+
+  if (isExactCurrentDemoStore(current)) {
     markDemoSeedFlag();
     return current;
   }
 
-  const hasAllDemos = DEMO_ENTRY_IDS.every((id) =>
-    current.entries.some((e) => e.id === id),
-  );
-  if (hasAllDemos && isDemoOnlyStore(current)) {
-    markDemoSeedFlag();
-    return current;
-  }
-
-  // Empty stub, signed-in blank leftovers, or missing demos → full demo set.
+  // Personal / empty signed-in leftovers while logged out are stale device cache.
   const demo = buildDemoJournalStore();
   if (typeof window !== "undefined") {
+    wipeGuestJournalDeviceKeys();
     saveJournalStore(demo);
     markDemoSeedFlag();
   }
@@ -428,6 +433,7 @@ export function ensureGuestDemoJournalSeeded(
 /** Reset device journal to guest demos (call on sign-out). */
 export function resetJournalLocalToGuestDemos(): void {
   if (typeof window === "undefined") return;
+  wipeGuestJournalDeviceKeys();
   const demo = buildDemoJournalStore();
   saveJournalStore(demo);
   markDemoSeedFlag();
@@ -475,72 +481,14 @@ export function loadJournalStoreRaw(): JournalStoreV2 {
 }
 
 /**
- * Guest device journal: seeds demo samples when empty.
+ * Guest device journal: always demo-only samples (wipes leftover account cache).
  * Signed-in flows must use `loadJournalStoreRaw` + cloud GET instead.
  */
 export function loadJournalStore(): JournalStoreV2 {
   if (typeof window === "undefined") {
     return buildDemoJournalStore();
   }
-  try {
-    const raw = window.localStorage.getItem(STORE_KEY);
-    if (raw) {
-      const data = JSON.parse(raw) as unknown;
-      if (isStoreV2(data) && data.entries.length > 0) {
-        const normalized: JournalStoreV2 = {
-          version: 2,
-          activeEntryId:
-            data.activeEntryId &&
-            data.entries.some((e) => e.id === data.activeEntryId)
-              ? data.activeEntryId
-              : data.entries[0].id,
-          entries: data.entries.map(normalizeEntry),
-          ...(normalizeFolders(data.folders)
-            ? { folders: normalizeFolders(data.folders) }
-            : {}),
-        };
-        const meaningful = normalized.entries.filter(
-          journalEntryHasMeaningfulContent,
-        );
-        if (meaningful.length === 0) {
-          return ensureGuestDemoJournalSeeded(normalized);
-        }
-        // Guests who never received demos (flag unset) and have no writing yet
-        // were handled above; if they only have blanks, still seed.
-        if (!demoSeedFlagSet()) {
-          const personal = normalized.entries.filter(
-            (e) => !isDemoJournalEntry(e),
-          );
-          if (
-            personal.length === 0 ||
-            !personal.some(journalEntryHasMeaningfulContent)
-          ) {
-            return ensureGuestDemoJournalSeeded(normalized);
-          }
-          markDemoSeedFlag();
-        }
-        return normalized;
-      }
-    }
-    const legacy = window.localStorage.getItem(LEGACY_PLAIN_KEY);
-    if (legacy && typeof legacy === "string" && legacy.trim()) {
-      const e = newEntry({
-        contentHtml: `<p>${escapeLegacyPlain(legacy)}</p>`,
-        title: deriveEntryTitle(`<p>${escapeLegacyPlain(legacy)}</p>`),
-      });
-      const store: JournalStoreV2 = {
-        version: 2,
-        activeEntryId: e.id,
-        entries: [e],
-      };
-      saveJournalStore(store);
-      markDemoSeedFlag();
-      return store;
-    }
-  } catch {
-    /* */
-  }
-  return ensureGuestDemoJournalSeeded(emptyJournalStore());
+  return ensureGuestDemoJournalSeeded();
 }
 
 function escapeLegacyPlain(s: string): string {
@@ -815,6 +763,76 @@ export function journalEntryHasMeaningfulContent(e: JournalEntry): boolean {
   if (e.title.trim().length > 0) return true;
   if (/<img\b/i.test(e.contentHtml)) return true;
   return stripHtmlToText(e.contentHtml).trim().length > 0;
+}
+
+/**
+ * Drop empty stubs from the store. Pass `keepEmptyId` for the entry the user
+ * just created via New entry (allowed to stay blank while open).
+ */
+export function pruneEmptyJournalEntries(
+  store: JournalStoreV2,
+  keepEmptyId?: string | null,
+): JournalStoreV2 {
+  const entries = store.entries.filter(
+    (e) =>
+      journalEntryHasMeaningfulContent(e) ||
+      (keepEmptyId != null && e.id === keepEmptyId),
+  );
+  if (entries.length === store.entries.length) {
+    const activeOk =
+      store.activeEntryId &&
+      entries.some((e) => e.id === store.activeEntryId);
+    if (activeOk) return store;
+  }
+  const activeEntryId =
+    store.activeEntryId && entries.some((e) => e.id === store.activeEntryId)
+      ? store.activeEntryId
+      : mostRecentlyUpdatedId(entries.filter((e) => !isGratitudeEntry(e))) ??
+        entries[0]?.id ??
+        null;
+  return {
+    version: 2,
+    activeEntryId,
+    entries,
+    ...(store.folders?.length ? { folders: store.folders } : {}),
+  };
+}
+
+/** Most recently updated entry id (by `updatedAt`), or null. */
+export function mostRecentlyUpdatedId(
+  entries: JournalEntry[],
+): string | null {
+  if (!entries.length) return null;
+  let best = entries[0];
+  let bestT = new Date(best.updatedAt).getTime();
+  for (let i = 1; i < entries.length; i++) {
+    const e = entries[i];
+    const t = new Date(e.updatedAt).getTime();
+    if (t > bestT) {
+      best = e;
+      bestT = t;
+    }
+  }
+  return best.id;
+}
+
+/** True when draft fields differ from the persisted entry (real edit). */
+export function journalEntryDraftChanged(
+  entry: JournalEntry,
+  draft: {
+    contentHtml: string;
+    title: string;
+    gratitude?: JournalGratitudeLines;
+  },
+): boolean {
+  if (entry.title !== draft.title) return true;
+  if (entry.contentHtml !== draft.contentHtml) return true;
+  if (isGratitudeEntry(entry)) {
+    const a = entry.gratitude ?? emptyGratitudeLines();
+    const b = draft.gratitude ?? emptyGratitudeLines();
+    return a[0] !== b[0] || a[1] !== b[1] || a[2] !== b[2];
+  }
+  return false;
 }
 
 function maxJournalEntryUpdatedAt(entries: JournalEntry[]): number {

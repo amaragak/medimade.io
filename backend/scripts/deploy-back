@@ -7,6 +7,8 @@
 #   backend/scripts/deploy-back --profile mm
 #   backend/scripts/deploy-back MedimadeBackend --require-approval never --profile mm
 #
+# Primary region is London (eu-west-2). The mm AWS profile must also default to eu-west-2.
+# Do not deploy other regions unless explicitly required for emergency ops.
 # AWS profile: defaults to AWS_PROFILE=mm when unset and no --profile in arguments.
 set -euo pipefail
 
@@ -15,6 +17,12 @@ SCRIPT_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)"
 # shellcheck source=lib/default-aws-profile.sh
 source "$SCRIPT_LIB/default-aws-profile.sh"
 medimade_default_aws_profile "$@"
+
+# Pin London unless the caller already set a region explicitly.
+export CDK_DEFAULT_REGION="${CDK_DEFAULT_REGION:-eu-west-2}"
+export AWS_REGION="${AWS_REGION:-$CDK_DEFAULT_REGION}"
+export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-$CDK_DEFAULT_REGION}"
+
 REPO_ROOT="$(cd "$BACKEND_ROOT/.." && pwd)"
 WEBAPP_ENV="$REPO_ROOT/frontend/webapp/.env"
 MOBILE_ENV="$REPO_ROOT/frontend/mobile/.env"
@@ -60,6 +68,8 @@ fi
 if [[ -n "${auth_origin:-}" ]] && ! has_context "authWebappOrigin" "$@"; then
   extra_args+=(-c "authWebappOrigin=$auth_origin")
 fi
+
+echo "Deploying MedimadeBackend to region ${CDK_DEFAULT_REGION} (profile ${AWS_PROFILE:-default})"
 
 if ((${#extra_args[@]})); then
   npx cdk deploy "${extra_args[@]}" "$@" --outputs-file "$OUTPUTS"

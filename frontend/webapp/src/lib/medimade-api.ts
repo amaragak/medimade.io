@@ -644,32 +644,51 @@ export type IdeateCloudBundle = {
   manifesto?: unknown;
 };
 
-export type FamousAuthorQuotesResult = {
-  author: string;
-  authorSlug: string;
+export type FamousQuotesKind = "author" | "work";
+
+export type FamousQuotesResult = {
+  kind: FamousQuotesKind;
+  /** Ready-to-store attribution line. */
+  attribution: string;
   quotes: string[];
   cached: boolean;
+  author?: string;
+  authorSlug?: string;
+  workTitle?: string;
+  workAuthor?: string | null;
+  workSlug?: string;
 };
 
+/** @deprecated Prefer `fetchFamousQuotes({ kind: "author", query })`. */
+export type FamousAuthorQuotesResult = FamousQuotesResult;
+
 /**
- * Resolve a famous person (Haiku + Dynamo cache) and return up to 10 quotes.
- * `POST /ideate/famous-quotes`
+ * Resolve a famous thinker or work (Haiku + Dynamo cache) and return up to 10 quotes.
+ * Uses same-origin `POST /api/ideate/famous-quotes` (proxies to API Gateway).
+ * Read/cache path for the shared library only — do not send user-authored text here.
  */
-export async function fetchFamousAuthorQuotes(
-  authorQuery: string,
-): Promise<FamousAuthorQuotesResult> {
-  const base = getMedimadeApiBase();
-  if (!base) {
-    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+export async function fetchFamousQuotes(params: {
+  kind: FamousQuotesKind;
+  query: string;
+}): Promise<FamousQuotesResult> {
+  let res: Response;
+  try {
+    res = await fetch("/api/ideate/famous-quotes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: params.kind,
+        query: params.query,
+      }),
+    });
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : "network error";
+    throw new Error(
+      detail === "Failed to fetch"
+        ? "Could not reach the quotes service. Check your connection and try again."
+        : detail,
+    );
   }
-  const res = await medimadeFetch(`${base}/ideate/famous-quotes`, {
-    method: "POST",
-    headers: {
-      ...medimadeApiAuthHeaders(),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ authorQuery }),
-  });
   let data: Record<string, unknown> = {};
   try {
     data = (await res.json()) as Record<string, unknown>;
@@ -683,30 +702,72 @@ export async function fetchFamousAuthorQuotes(
       res.statusText;
     throw new Error(msg);
   }
+  const kind: FamousQuotesKind =
+    data.kind === "work" ? "work" : "author";
+  const attribution =
+    typeof data.attribution === "string" ? data.attribution.trim() : "";
   const author = typeof data.author === "string" ? data.author.trim() : "";
   const authorSlug =
     typeof data.authorSlug === "string" ? data.authorSlug.trim() : "";
+  const workTitle =
+    typeof data.workTitle === "string" ? data.workTitle.trim() : "";
+  const workSlug =
+    typeof data.workSlug === "string" ? data.workSlug.trim() : "";
+  const workAuthor =
+    typeof data.workAuthor === "string"
+      ? data.workAuthor.trim()
+      : data.workAuthor === null
+        ? null
+        : undefined;
   const quotes = Array.isArray(data.quotes)
     ? data.quotes
         .filter((q): q is string => typeof q === "string")
         .map((q) => q.trim())
         .filter(Boolean)
     : [];
-  if (!author || quotes.length === 0) {
-    throw new Error("No quotes returned for that author");
+  const resolvedAttribution =
+    attribution ||
+    (kind === "work"
+      ? workAuthor
+        ? `${workTitle} — ${workAuthor}`
+        : workTitle
+      : author);
+  if (!resolvedAttribution || quotes.length === 0) {
+    throw new Error(
+      kind === "work"
+        ? "No quotes returned for that work"
+        : "No quotes returned for that author",
+    );
   }
   return {
-    author,
-    authorSlug,
+    kind,
+    attribution: resolvedAttribution,
     quotes,
     cached: data.cached === true,
+    ...(author ? { author } : {}),
+    ...(authorSlug ? { authorSlug } : {}),
+    ...(workTitle ? { workTitle } : {}),
+    ...(workSlug ? { workSlug } : {}),
+    ...(workAuthor !== undefined ? { workAuthor } : {}),
   };
 }
 
+/** Resolve a famous person and return up to 10 quotes. */
+export async function fetchFamousAuthorQuotes(
+  authorQuery: string,
+): Promise<FamousQuotesResult> {
+  return fetchFamousQuotes({ kind: "author", query: authorQuery });
+}
+
 /**
- * Loads Ideate from `GET /ideate/store`. Guests get `null` (use local demos).
+ * Loads Ideate from `GET /ideate/store`.
+ * Returns `authenticated: false` when the session JWT was missing/invalid so
+ * callers do not treat that as a truly empty account and wipe memory.
  */
-export async function fetchIdeateStoreRemote(): Promise<IdeateCloudBundle | null> {
+export async function fetchIdeateStoreRemote(): Promise<{
+  store: IdeateCloudBundle | null;
+  authenticated: boolean;
+}> {
   const base = getMedimadeApiBase();
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
@@ -727,10 +788,16 @@ export async function fetchIdeateStoreRemote(): Promise<IdeateCloudBundle | null
       res.statusText;
     throw new Error(msg);
   }
+  const authenticated =
+    typeof data.authenticated === "boolean"
+      ? data.authenticated
+      : // Legacy APIs omit the flag — assume auth succeeded if we sent a JWT.
+        Boolean(getMedimadeSessionJwt());
   const store = data.store;
-  if (store == null) return null;
-  if (typeof store !== "object") return null;
-  return store as IdeateCloudBundle;
+  if (store == null || typeof store !== "object") {
+    return { store: null, authenticated };
+  }
+  return { store: store as IdeateCloudBundle, authenticated };
 }
 
 /**

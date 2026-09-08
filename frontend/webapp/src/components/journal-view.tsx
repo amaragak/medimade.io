@@ -45,14 +45,18 @@ import {
   isDemoJournalEntry,
   isDemoOnlyStore,
   isGratitudeEntry,
+  journalEntryDraftChanged,
+  journalEntryHasMeaningfulContent,
   journalWritingStreakDays,
   loadJournalStoreRaw,
   localDateKey,
   localDateKeyFromIso,
+  mostRecentlyUpdatedId,
   mergeRemoteJournalKeepingLocalOnly,
   newGratitudeJournalEntry,
   newJournalEntry,
   newJournalFolder,
+  pruneEmptyJournalEntries,
   saveJournalStore,
   stripHtmlToText,
   withoutDemoJournalEntries,
@@ -173,11 +177,12 @@ function activeIdForJournalTab(
   entries: JournalEntry[],
   preferred: string | null,
 ): string | null {
+  const free = entries.filter((e) => !isGratitudeEntry(e));
   const preferredEntry = preferred
-    ? entries.find((e) => e.id === preferred)
+    ? free.find((e) => e.id === preferred)
     : undefined;
-  if (preferredEntry && !isGratitudeEntry(preferredEntry)) return preferredEntry.id;
-  return entries.find((e) => !isGratitudeEntry(e))?.id ?? preferred;
+  if (preferredEntry) return preferredEntry.id;
+  return mostRecentlyUpdatedId(free);
 }
 
 function JumpToDayPopover({
@@ -399,8 +404,11 @@ export function JournalView() {
     if (!authReady) return;
     // Guests: demo samples on device. Signed-in: localStorage is only a cache —
     // strip demos and wait for GET /journal/store (cloud is source of truth).
-    const store = signedIn
+    const rawSignedIn = signedIn
       ? withoutDemoJournalEntries(loadJournalStoreRaw())
+      : null;
+    const store = signedIn
+      ? pruneEmptyJournalEntries(rawSignedIn!)
       : ensureGuestDemoJournalSeeded();
     const nextActive = activeIdForJournalTab(
       store.entries,
@@ -416,11 +424,17 @@ export function JournalView() {
     latestGratitudeRef.current = active?.gratitude ?? emptyGratitudeLines();
     setGratitudeDraft(latestGratitudeRef.current);
     setHydrated(true);
+    if (
+      nextActive !== store.activeEntryId ||
+      (rawSignedIn && rawSignedIn.entries.length !== store.entries.length)
+    ) {
+      persist(store.entries, nextActive, store.folders ?? []);
+    }
     if (signedIn) {
       // Don't allow a previous guest "checked" skip to fire an empty PUT.
       setRemoteJournalChecked(false);
     }
-  }, [authReady, signedIn]);
+  }, [authReady, signedIn, persist]);
 
   /** Pull cloud journal when signed in (guests stay on local demo / device pages). */
   useEffect(() => {
@@ -448,23 +462,37 @@ export function JournalView() {
           });
 
         if (!remote?.entries?.length) {
-          // Empty cloud account: start a blank personal page (never keep demos).
+          // Empty cloud account: show nothing until the user clicks New entry.
           if (localIsDemoOnly || localEntries.some(isDemoJournalEntry)) {
-            const blank = newJournalEntry();
             skipCloudPushRef.current = true;
-            entriesRef.current = [blank];
-            setEntries([blank]);
+            entriesRef.current = [];
+            setEntries([]);
             setFolders([]);
             foldersRef.current = [];
-            setActiveEntryId(blank.id);
-            latestHtmlRef.current = blank.contentHtml;
-            latestTitleRef.current = blank.title;
+            setActiveEntryId(null);
+            latestHtmlRef.current = "<p></p>";
+            latestTitleRef.current = "";
             latestGratitudeRef.current = emptyGratitudeLines();
             setGratitudeDraft(latestGratitudeRef.current);
-            persist([blank], blank.id, []);
+            persist([], null, []);
           } else {
             // Cache already has personal rows with empty remote — keep showing
             // them and let the push effect upload (first sync of this device).
+            const pruned = pruneEmptyJournalEntries({
+              version: 2,
+              activeEntryId: activeIdRef.current,
+              entries: localEntries,
+              ...(foldersRef.current.length
+                ? { folders: foldersRef.current }
+                : {}),
+            });
+            if (pruned.entries.length !== localEntries.length) {
+              skipCloudPushRef.current = true;
+              entriesRef.current = pruned.entries;
+              setEntries(pruned.entries);
+              setActiveEntryId(pruned.activeEntryId);
+              persist(pruned.entries, pruned.activeEntryId, foldersRef.current);
+            }
             skipCloudPushRef.current = false;
           }
           return;
@@ -472,15 +500,14 @@ export function JournalView() {
 
         // Cloud wins: replace device cache (including any leftover demos).
         skipCloudPushRef.current = true;
-        const merged = mergeRemoteJournalKeepingLocalOnly(
-          remote,
-          localEntries,
+        const merged = pruneEmptyJournalEntries(
+          mergeRemoteJournalKeepingLocalOnly(remote, localEntries),
         );
         const preferred =
           merged.activeEntryId &&
           merged.entries.some((e) => e.id === merged.activeEntryId)
             ? merged.activeEntryId
-            : merged.entries[0]?.id ?? null;
+            : null;
         const nextActive = activeIdForJournalTab(merged.entries, preferred);
         entriesRef.current = merged.entries;
         setEntries(merged.entries);
@@ -578,6 +605,17 @@ export function JournalView() {
     const title = latestTitleRef.current;
     const gratitude = latestGratitudeRef.current;
     const prev = entriesRef.current;
+    const prevEntry = prev.find((e) => e.id === id);
+    if (!prevEntry) return;
+    if (
+      !journalEntryDraftChanged(prevEntry, {
+        contentHtml: html,
+        title,
+        gratitude,
+      })
+    ) {
+      return;
+    }
     const next = prev.map((e) =>
       e.id === id
         ? {
@@ -604,6 +642,17 @@ export function JournalView() {
       const title = latestTitleRef.current;
       const gratitude = latestGratitudeRef.current;
       setEntries((prev) => {
+        const prevEntry = prev.find((e) => e.id === id);
+        if (
+          !prevEntry ||
+          !journalEntryDraftChanged(prevEntry, {
+            contentHtml: html,
+            title,
+            gratitude,
+          })
+        ) {
+          return prev;
+        }
         const next = prev.map((e) =>
           e.id === id
             ? {
@@ -632,6 +681,17 @@ export function JournalView() {
       const html = latestHtmlRef.current;
       const title = latestTitleRef.current;
       const gratitude = latestGratitudeRef.current;
+      const prevEntry = entriesRef.current.find((e) => e.id === id);
+      if (
+        !prevEntry ||
+        !journalEntryDraftChanged(prevEntry, {
+          contentHtml: html,
+          title,
+          gratitude,
+        })
+      ) {
+        return;
+      }
       const next = entriesRef.current.map((e) =>
         e.id === id
           ? {
@@ -733,47 +793,63 @@ export function JournalView() {
     if (!id) return;
     if (!window.confirm("Delete this entry from this device?")) return;
     const remaining = entriesRef.current.filter((e) => e.id !== id);
-    let nextEntries = remaining;
-    let nextId = remaining.find((e) =>
-      journalTab === "gratitude" ? isGratitudeEntry(e) : !isGratitudeEntry(e),
-    )?.id ?? remaining[0]?.id ?? null;
-    if (!nextId) {
-      const stub =
-        journalTab === "gratitude" ? newGratitudeJournalEntry() : newJournalEntry();
-      nextEntries = [stub, ...remaining];
-      nextId = stub.id;
-    }
-    entriesRef.current = nextEntries;
-    setEntries(nextEntries);
+    const nextId =
+      remaining.find((e) =>
+        journalTab === "gratitude" ? isGratitudeEntry(e) : !isGratitudeEntry(e),
+      )?.id ??
+      mostRecentlyUpdatedId(remaining) ??
+      null;
+    entriesRef.current = remaining;
+    setEntries(remaining);
     setActiveEntryId(nextId);
-    const next = nextEntries.find((e) => e.id === nextId);
+    const next = remaining.find((e) => e.id === nextId);
     latestHtmlRef.current = next?.contentHtml ?? "<p></p>";
     latestTitleRef.current = next?.title ?? "";
     latestGratitudeRef.current = next?.gratitude ?? emptyGratitudeLines();
     setGratitudeDraft(latestGratitudeRef.current);
-    persist(nextEntries, nextId);
+    persist(remaining, nextId);
     setMobileEntryMenuOpen(false);
     if (journalTab === "journal" && journalEntryIdFromPath(pathname)) {
-      router.push(JOURNAL_SECTION_HREF.journal);
+      router.push(
+        nextId
+          ? `/journal/my/${encodeURIComponent(nextId)}`
+          : JOURNAL_SECTION_HREF.journal,
+      );
     } else if (
       journalTab === "gratitude" &&
       gratitudeEntryIdFromPath(pathname)
     ) {
-      router.push(JOURNAL_SECTION_HREF.gratitude);
+      router.push(
+        nextId
+          ? `/journal/my/gratitudes/${encodeURIComponent(nextId)}`
+          : JOURNAL_SECTION_HREF.gratitude,
+      );
     }
   }, [journalTab, persist, pathname, router]);
 
   const applyEntrySelection = useCallback(
     (nextId: string) => {
+      const leavingId = activeIdRef.current;
       flushSaveSync();
+      // Drop empty stubs left behind (New entry is kept only while it is open).
+      let list = entriesRef.current;
+      if (leavingId && leavingId !== nextId) {
+        const left = list.find((e) => e.id === leavingId);
+        if (left && !journalEntryHasMeaningfulContent(left)) {
+          list = list.filter((e) => e.id !== leavingId);
+          entriesRef.current = list;
+          setEntries(list);
+          persist(list, nextId);
+        }
+      }
       setActiveEntryId(nextId);
-      const next = entriesRef.current.find((e) => e.id === nextId);
+      const next = list.find((e) => e.id === nextId);
       latestHtmlRef.current = next?.contentHtml ?? "<p></p>";
       latestTitleRef.current = next?.title ?? "";
       latestGratitudeRef.current = next?.gratitude ?? emptyGratitudeLines();
       setGratitudeDraft(latestGratitudeRef.current);
     },
-    [flushSaveSync],
+    [flushSaveSync, persist],
   );
 
   const selectEntry = useCallback(
@@ -1008,17 +1084,23 @@ export function JournalView() {
   }, [openTodayGratitude, pathname, router]);
 
   const activateJournalList = useCallback(() => {
-    const free = entriesRef.current.find((e) => !isGratitudeEntry(e));
-    if (free) {
-      setActiveEntryId(free.id);
-      latestHtmlRef.current = free.contentHtml;
-      latestTitleRef.current = free.title;
+    const free = entriesRef.current.filter((e) => !isGratitudeEntry(e));
+    const freeId = mostRecentlyUpdatedId(free);
+    if (!freeId) {
+      setActiveEntryId(null);
+      latestHtmlRef.current = "<p></p>";
+      latestTitleRef.current = "";
       latestGratitudeRef.current = emptyGratitudeLines();
       setGratitudeDraft(latestGratitudeRef.current);
       return;
     }
-    createEntry();
-  }, [createEntry]);
+    const freeEntry = free.find((e) => e.id === freeId)!;
+    setActiveEntryId(freeId);
+    latestHtmlRef.current = freeEntry.contentHtml;
+    latestTitleRef.current = freeEntry.title;
+    latestGratitudeRef.current = emptyGratitudeLines();
+    setGratitudeDraft(latestGratitudeRef.current);
+  }, []);
 
   const prevListSectionRef = useRef<JournalMainTab | null>(null);
   useEffect(() => {
@@ -1045,14 +1127,23 @@ export function JournalView() {
     if (journalTab !== "journal") return;
     const active = entriesRef.current.find((e) => e.id === activeIdRef.current);
     if (!active || !isGratitudeEntry(active)) return;
-    const free = entriesRef.current.find((e) => !isGratitudeEntry(e));
-    if (!free) return;
-    setActiveEntryId(free.id);
-    latestHtmlRef.current = free.contentHtml;
-    latestTitleRef.current = free.title;
+    const free = entriesRef.current.filter((e) => !isGratitudeEntry(e));
+    const freeId = mostRecentlyUpdatedId(free);
+    if (!freeId) {
+      setActiveEntryId(null);
+      latestHtmlRef.current = "<p></p>";
+      latestTitleRef.current = "";
+      latestGratitudeRef.current = emptyGratitudeLines();
+      setGratitudeDraft(latestGratitudeRef.current);
+      return;
+    }
+    const freeEntry = free.find((e) => e.id === freeId)!;
+    setActiveEntryId(freeId);
+    latestHtmlRef.current = freeEntry.contentHtml;
+    latestTitleRef.current = freeEntry.title;
     latestGratitudeRef.current = emptyGratitudeLines();
     setGratitudeDraft(latestGratitudeRef.current);
-    persist(entriesRef.current, free.id);
+    persist(entriesRef.current, freeId);
   }, [hydrated, journalTab, entries, persist]);
 
   const onGratitudeChange = useCallback(

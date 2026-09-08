@@ -285,7 +285,7 @@ export function SiteHeader() {
             isItemActive={isItemActive}
           />
           <NavFlyout
-            href={signedIn ? "/journal/my" : "/journal"}
+            href="/journal/my"
             label="Journal"
             items={journalFlyout}
             active={sectionActive(pathname, "/journal")}

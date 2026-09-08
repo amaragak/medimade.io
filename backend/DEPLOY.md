@@ -93,18 +93,6 @@ Primary region is **`eu-west-2` (London)** in `bin/medimade.ts`. Bootstrap that 
 npx cdk bootstrap aws://382309212161/eu-west-2 --profile mm
 ```
 
-Sydney (`ap-southeast-2`) may still exist during cutover — do not delete it until London is confirmed. To deploy a specific region:
-
-```bash
-CDK_DEFAULT_REGION=eu-west-2 ./scripts/deploy-back MedimadeBackend --require-approval never --profile mm
-```
-
-Cross-region data copy (Sydney → London, after both stacks exist):
-
-```bash
-AWS_PROFILE=mm ./scripts/migrate-sydney-to-london.sh
-```
-
 ## Deploy
 
 ```bash
@@ -112,6 +100,12 @@ npx cdk deploy --all --profile mm
 ```
 
 Confirm changes when prompted, or add `--require-approval never` for CI.
+
+Or via the helper (writes frontend `.env` from stack outputs; always deploys London):
+
+```bash
+./scripts/deploy-back MedimadeBackend --require-approval never --profile mm
+```
 
 ### Repo deploy helper (`scripts/deploy-back`)
 
