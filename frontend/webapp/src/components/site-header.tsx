@@ -293,7 +293,7 @@ export function SiteHeader() {
           <NavFlyout
             href={signedIn ? "/ideate/my" : "/ideate"}
             label="Ideate"
-            items={ideateFlyout}
+            items={signedIn ? ideateFlyout : []}
             active={ideateSectionActive(pathname)}
             isItemActive={isItemActive}
           />
@@ -392,7 +392,7 @@ export function SiteHeader() {
               <MobileSection
                 title="Ideate"
                 overviewHref="/ideate"
-                items={ideateMobileItems}
+                items={signedIn ? ideateMobileItems : []}
                 pathname={pathname}
                 isItemActive={isItemActive}
                 onNavigate={closeMobile}
