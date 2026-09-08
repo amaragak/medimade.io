@@ -993,8 +993,8 @@ export function IdeateVisionBoardClient() {
 
         {/* Compose grid — page hero */}
         <div
-          className="mt-8 grid w-full grid-cols-3 gap-1"
-          style={{ gridTemplateColumns: "repeat(3, 1fr)" }}
+          className="mt-8 grid w-full grid-cols-4 gap-1"
+          style={{ gridTemplateColumns: "repeat(4, 1fr)" }}
           onDragLeave={(e) => {
             if (!e.currentTarget.contains(e.relatedTarget as Node)) {
               setComposeDragOver(null);
@@ -1013,7 +1013,7 @@ export function IdeateVisionBoardClient() {
             return (
               <div
                 key={`compose-slot-${slotIndex}`}
-                className={`group relative aspect-[4/3] overflow-hidden rounded-[8px] transition-[outline-color] ${
+                className={`group relative aspect-square overflow-hidden rounded-[8px] transition-[outline-color] ${
                   src
                     ? "bg-surface-2"
                     : "border border-dashed border-[#D4CBB8] bg-[#F5F1E7] dark:border-border dark:bg-accent-soft/20"

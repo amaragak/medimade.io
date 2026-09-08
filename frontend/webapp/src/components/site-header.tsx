@@ -37,7 +37,7 @@ const journalMobileItems: NavSubItem[] = [
   { href: "/journal/my", label: "Journal" },
 ];
 
-/** Desktop flyout when signed in: Overview + app. Guests: header link only (no /ideate/my). */
+/** Desktop flyout: Overview + app. Mobile uses overviewHref + app-only items. */
 const ideateFlyout: NavSubItem[] = [
   { href: "/ideate", label: "Overview" },
   { href: "/ideate/my", label: "Ideate" },
@@ -292,9 +292,9 @@ export function SiteHeader() {
             isItemActive={isItemActive}
           />
           <NavFlyout
-            href={signedIn ? "/ideate/my" : "/ideate"}
+            href="/ideate/my"
             label="Ideate"
-            items={signedIn ? ideateFlyout : []}
+            items={ideateFlyout}
             active={ideateSectionActive(pathname)}
             isItemActive={isItemActive}
           />
@@ -393,7 +393,7 @@ export function SiteHeader() {
               <MobileSection
                 title="Ideate"
                 overviewHref="/ideate"
-                items={signedIn ? ideateMobileItems : []}
+                items={ideateMobileItems}
                 pathname={pathname}
                 isItemActive={isItemActive}
                 onNavigate={closeMobile}

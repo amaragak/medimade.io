@@ -324,10 +324,10 @@ export function visionItemHasImage(item: VisionBoardItem): boolean {
   );
 }
 
-export const VISION_COMPOSE_SLOT_COUNT = 6;
+export const VISION_COMPOSE_SLOT_COUNT = 8;
 
 /**
- * First six image-bearing item ids in store order — same rule as the Ideate
+ * First eight image-bearing item ids in store order — same rule as the Ideate
  * home hero mosaic. Empty slots are `null`.
  */
 export function getComposeSlotIds(
@@ -341,7 +341,7 @@ export function getComposeSlotIds(
 }
 
 /**
- * Place (or swap) an image tile into a compose mosaic slot (0–5).
+ * Place (or swap) an image tile into a compose mosaic slot (0–7).
  * Slot order becomes the leading image items in the store — driving the hero.
  */
 export function placeVisionItemInComposeSlot(

@@ -491,15 +491,130 @@ body {
   mask-image: none;
 }
 
-.home-hero > * {
+/* Keep content above ::before without forcing position — absolute chrome must stay absolute. */
+.home-hero > *:not(.home-hero-chrome) {
   position: relative;
   z-index: 1;
+}
+
+.home-hero > .home-hero-chrome {
+  z-index: 5;
 }
 
 /* Full tiled mandala — same as .home-hero, no clear-band / vignette mask. */
 .home-hero--full-pattern::before {
   -webkit-mask-image: none;
   mask-image: none;
+}
+
+/* Ideate home: black hero fill so the paisley vignette reads on a dark field. */
+.home-hero.home-hero--ideate {
+  --home-hero-bg: #000000;
+  --home-hero-pattern-opacity: 0.55;
+  background-color: #000000;
+}
+
+.dark .home-hero.home-hero--ideate {
+  --home-hero-pattern-opacity: 0.45;
+}
+
+/* Ideate home: navy hero fill + paisley vignette. */
+.home-hero.home-hero--ideate-navy {
+  --home-hero-bg: #1e2530;
+  --home-hero-pattern-opacity: 0.42;
+  background-color: #1e2530;
+}
+
+.dark .home-hero.home-hero--ideate-navy {
+  --home-hero-pattern-opacity: 0.38;
+}
+
+/* Ideate stock pattern backgrounds (Adobe Stock assets under /patterns/hero). */
+.home-hero.home-hero--stock {
+  --home-hero-pattern-opacity: 1;
+}
+
+.home-hero.home-hero--stock::before,
+.dark .home-hero.home-hero--stock::before {
+  -webkit-mask-image: none;
+  mask-image: none;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: cover;
+}
+
+.home-hero.home-hero--stock-mandala {
+  --home-hero-bg: #1a1820;
+  background-color: #1a1820;
+}
+.home-hero.home-hero--stock-mandala::before,
+.dark .home-hero.home-hero--stock-mandala::before {
+  background-image: url("/patterns/hero/adobestock-1713569649.webp");
+  background-repeat: repeat;
+  background-size: 520px 520px;
+  opacity: 0.72;
+}
+
+.home-hero.home-hero--stock-floral {
+  --home-hero-bg: #f3eee6;
+  background-color: #f3eee6;
+}
+.home-hero.home-hero--stock-floral::before,
+.dark .home-hero.home-hero--stock-floral::before {
+  background-image: url("/patterns/hero/adobestock-2156039259.webp");
+  background-repeat: repeat;
+  background-size: 640px 640px;
+  opacity: 0.9;
+}
+
+.home-hero.home-hero--stock-ornate {
+  --home-hero-bg: #ede8df;
+  background-color: #ede8df;
+}
+.home-hero.home-hero--stock-ornate::before,
+.dark .home-hero.home-hero--stock-ornate::before {
+  background-image: url("/patterns/hero/adobestock-2162625652.webp");
+  background-repeat: repeat;
+  background-size: 640px 640px;
+  opacity: 0.88;
+}
+
+.home-hero.home-hero--stock-waves {
+  --home-hero-bg: #2a4a6a;
+  background-color: #2a4a6a;
+}
+.home-hero.home-hero--stock-waves::before,
+.dark .home-hero.home-hero--stock-waves::before {
+  background-image: url("/patterns/hero/adobestock-2157180245.webp");
+  opacity: 0.95;
+}
+
+.home-hero.home-hero--stock-celestial {
+  --home-hero-bg: #0b1a3a;
+  background-color: #0b1a3a;
+}
+.home-hero.home-hero--stock-celestial::before,
+.dark .home-hero.home-hero--stock-celestial::before {
+  background-image: url("/patterns/hero/adobestock-2055049378.webp");
+  opacity: 0.92;
+}
+
+.home-hero.home-hero--stock-astrology {
+  --home-hero-bg: #12182a;
+  background-color: #12182a;
+}
+.home-hero.home-hero--stock-astrology::before,
+.dark .home-hero.home-hero--stock-astrology::before {
+  background-image: url("/patterns/hero/adobestock-2089052451.webp");
+  opacity: 0.92;
+}
+
+/* Ideate life-area cards — light sandy / dark slate via inline CSS vars. */
+.life-area-card {
+  background-color: var(--life-area-bg);
+}
+.dark .life-area-card {
+  background-color: var(--life-area-bg-dark);
 }
 
 main[data-page-kind="standard"] {

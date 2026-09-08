@@ -4,6 +4,7 @@ export type IdeateCollapsibleSectionId =
   | "values"
   | "questions"
   | "regrets"
+  | "quotes"
   | "lifeAreas";
 
 export type IdeateSectionCollapseState = Record<
@@ -15,6 +16,7 @@ const DEFAULTS: IdeateSectionCollapseState = {
   values: false,
   questions: false,
   regrets: false,
+  quotes: false,
   lifeAreas: false,
 };
 
@@ -29,6 +31,7 @@ export function loadIdeateSectionCollapse(): IdeateSectionCollapseState {
       values: Boolean(parsed.values),
       questions: Boolean(parsed.questions),
       regrets: Boolean(parsed.regrets),
+      quotes: Boolean(parsed.quotes),
       lifeAreas: Boolean(parsed.lifeAreas),
     };
   } catch {

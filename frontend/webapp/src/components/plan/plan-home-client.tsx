@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IconChevronDown, IconEye, IconLoader2, IconPencil, IconRefresh, IconSparkles, IconWind } from "@tabler/icons-react";
+import { IconArrowRight, IconChevronDown, IconEye, IconLoader2, IconPencil, IconRefresh, IconSparkles, IconWind } from "@tabler/icons-react";
 import {
   createPlanDream,
   dreamExcerpt,
@@ -48,6 +48,16 @@ import {
   type IdeateRegret,
 } from "@/lib/ideate-regrets";
 import {
+  addIdeateQuote,
+  addIdeateQuotes,
+  loadIdeateQuotesStore,
+  patchIdeateQuote,
+  removeIdeateQuote,
+  saveIdeateQuotesStore,
+  type IdeateQuote,
+} from "@/lib/ideate-quotes";
+import { fetchFamousAuthorQuotes } from "@/lib/medimade-api";
+import {
   loadIdeateSectionCollapse,
   saveIdeateSectionCollapse,
   type IdeateCollapsibleSectionId,
@@ -66,13 +76,20 @@ import {
 import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 import { ensureGuestCompanionDemos } from "@/lib/ideate-demo-seed";
 import { isMedimadeSessionActive } from "@/lib/auth-session";
-import { lifeAreaCardBackground } from "@/lib/ideate-life-area-colors";
+import { lifeAreaCardBgVars } from "@/lib/ideate-life-area-colors";
 import {
   ensureIdeateManifesto,
   manifestoFingerprint,
   loadCachedManifesto,
   saveIdeateManifestoManual,
 } from "@/lib/ideate-manifesto";
+import {
+  loadIdeateHeroBg,
+  saveIdeateHeroBg,
+  getIdeateHeroBgOption,
+  IDEATE_HERO_BG_OPTIONS,
+  type IdeateHeroBgId,
+} from "@/lib/ideate-hero-bg";
 
 function lifeAreaSnippet(d: PlanDream): string | null {
   const raw = (d.dreamText || d.firstThought || d.visionText || "").trim();
@@ -133,10 +150,12 @@ export function PlanHomeClient() {
   const [questions, setQuestions] = useState<IdeateReflectionQuestion[]>([]);
   const [values, setValues] = useState<IdeateValue[]>([]);
   const [regrets, setRegrets] = useState<IdeateRegret[]>([]);
+  const [quotes, setQuotes] = useState<IdeateQuote[]>([]);
   const [collapsed, setCollapsed] = useState<IdeateSectionCollapseState>({
     values: false,
     questions: false,
     regrets: false,
+    quotes: false,
     lifeAreas: false,
   });
   const [manifesto, setManifesto] = useState<string>("");
@@ -161,8 +180,31 @@ export function PlanHomeClient() {
   const [addingRegret, setAddingRegret] = useState(false);
   const [regretDraft, setRegretDraft] = useState("");
   const [regretCategoryDraft, setRegretCategoryDraft] = useState("");
+  const [addingQuote, setAddingQuote] = useState(false);
+  const [quoteAddMode, setQuoteAddMode] = useState<"choose" | "author" | "original">(
+    "choose",
+  );
+  const [quoteDraft, setQuoteDraft] = useState("");
+  const [quoteAttributionDraft, setQuoteAttributionDraft] = useState("");
+  const [authorQueryDraft, setAuthorQueryDraft] = useState("");
+  const [authorFetchLoading, setAuthorFetchLoading] = useState(false);
+  const [authorFetchError, setAuthorFetchError] = useState<string | null>(null);
+  const [authorResolvedName, setAuthorResolvedName] = useState<string | null>(
+    null,
+  );
+  const [authorFetchedQuotes, setAuthorFetchedQuotes] = useState<string[]>([]);
+  const [authorSelectedQuotes, setAuthorSelectedQuotes] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [editingQuoteId, setEditingQuoteId] = useState<string | null>(null);
+  const [editQuoteDraft, setEditQuoteDraft] = useState("");
+  const [editQuoteAttributionDraft, setEditQuoteAttributionDraft] =
+    useState("");
   const [scrollHintVisible, setScrollHintVisible] = useState(true);
+  const [heroBg, setHeroBg] = useState<IdeateHeroBgId>("black");
+  const [heroBgPickerOpen, setHeroBgPickerOpen] = useState(false);
   const addPickerRef = useRef<HTMLDivElement>(null);
+  const heroBgPickerRef = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLElement>(null);
   const manifestoReqRef = useRef(0);
 
@@ -176,11 +218,34 @@ export function PlanHomeClient() {
     setQuestions(loadIdeateReflectionQuestionsStore().questions);
     setValues(loadIdeateValuesStore().values);
     setRegrets(loadIdeateRegretsStore().regrets);
+    setQuotes(loadIdeateQuotesStore().quotes);
   }, []);
 
   useEffect(() => {
     setCollapsed(loadIdeateSectionCollapse());
+    setHeroBg(loadIdeateHeroBg());
   }, []);
+
+  useEffect(() => {
+    if (!heroBgPickerOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (heroBgPickerRef.current?.contains(t)) return;
+      setHeroBgPickerOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setHeroBgPickerOpen(false);
+    };
+    const t = window.setTimeout(() => {
+      document.addEventListener("mousedown", onDoc);
+      document.addEventListener("keydown", onKey);
+    }, 0);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [heroBgPickerOpen]);
 
   const toggleSection = useCallback((id: IdeateCollapsibleSectionId) => {
     setCollapsed((prev) => {
@@ -448,6 +513,11 @@ export function PlanHomeClient() {
     setRegrets(next);
   }
 
+  function persistQuotes(next: IdeateQuote[]) {
+    saveIdeateQuotesStore({ v: 1, quotes: next });
+    setQuotes(next);
+  }
+
   function handleAddValue() {
     const next = addIdeateValue({ v: 1, values }, valueDraft);
     if (next.values.length === values.length) return;
@@ -470,6 +540,112 @@ export function PlanHomeClient() {
 
   function handleRemoveRegret(id: string) {
     persistRegrets(removeIdeateRegret({ v: 1, regrets }, id).regrets);
+  }
+
+  function handleAddQuote() {
+    const next = addIdeateQuote(
+      { v: 1, quotes },
+      { text: quoteDraft, attribution: quoteAttributionDraft },
+    );
+    if (next.quotes.length === quotes.length) return;
+    persistQuotes(next.quotes);
+    resetQuoteComposer();
+  }
+
+  function resetQuoteComposer() {
+    setAddingQuote(false);
+    setQuoteAddMode("choose");
+    setQuoteDraft("");
+    setQuoteAttributionDraft("");
+    setAuthorQueryDraft("");
+    setAuthorFetchLoading(false);
+    setAuthorFetchError(null);
+    setAuthorResolvedName(null);
+    setAuthorFetchedQuotes([]);
+    setAuthorSelectedQuotes(new Set());
+  }
+
+  async function handleFetchAuthorQuotes() {
+    const q = authorQueryDraft.trim();
+    if (q.length < 2 || authorFetchLoading) return;
+    setAuthorFetchLoading(true);
+    setAuthorFetchError(null);
+    setAuthorFetchedQuotes([]);
+    setAuthorSelectedQuotes(new Set());
+    setAuthorResolvedName(null);
+    try {
+      const result = await fetchFamousAuthorQuotes(q);
+      setAuthorResolvedName(result.author);
+      setAuthorFetchedQuotes(result.quotes);
+      setAuthorSelectedQuotes(new Set(result.quotes));
+    } catch (e) {
+      setAuthorFetchError(
+        e instanceof Error ? e.message : "Could not find quotes for that person",
+      );
+    } finally {
+      setAuthorFetchLoading(false);
+    }
+  }
+
+  function toggleAuthorQuote(text: string) {
+    setAuthorSelectedQuotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(text)) next.delete(text);
+      else next.add(text);
+      return next;
+    });
+  }
+
+  function handleAddSelectedAuthorQuotes() {
+    if (!authorResolvedName || authorSelectedQuotes.size === 0) return;
+    const existingTexts = new Set(
+      quotes.map((q) => q.text.trim().toLowerCase()),
+    );
+    const inputs = authorFetchedQuotes
+      .filter((t) => authorSelectedQuotes.has(t))
+      .filter((t) => !existingTexts.has(t.trim().toLowerCase()))
+      .map((text) => ({ text, attribution: authorResolvedName }));
+    if (inputs.length === 0) {
+      resetQuoteComposer();
+      return;
+    }
+    const next = addIdeateQuotes({ v: 1, quotes }, inputs);
+    persistQuotes(next.quotes);
+    resetQuoteComposer();
+  }
+
+  function handleRemoveQuote(id: string) {
+    persistQuotes(removeIdeateQuote({ v: 1, quotes }, id).quotes);
+    if (editingQuoteId === id) {
+      setEditingQuoteId(null);
+      setEditQuoteDraft("");
+      setEditQuoteAttributionDraft("");
+    }
+  }
+
+  function openEditQuote(q: IdeateQuote) {
+    setEditingQuoteId(q.id);
+    setEditQuoteDraft(q.text);
+    setEditQuoteAttributionDraft(q.attribution ?? "");
+    setAddingQuote(false);
+  }
+
+  function saveEditQuote() {
+    if (!editingQuoteId) return;
+    const next = patchIdeateQuote(
+      { v: 1, quotes },
+      editingQuoteId,
+      {
+        text: editQuoteDraft,
+        attribution: editQuoteAttributionDraft.trim()
+          ? editQuoteAttributionDraft
+          : null,
+      },
+    );
+    persistQuotes(next.quotes);
+    setEditingQuoteId(null);
+    setEditQuoteDraft("");
+    setEditQuoteAttributionDraft("");
   }
 
   function exploreRegretInIdeate(regret: IdeateRegret) {
@@ -596,22 +772,84 @@ export function PlanHomeClient() {
     regrets.length === 0
       ? "No entries yet"
       : regrets[0]!.statement.trim() || "Untitled";
+  const quotesSummary =
+    quotes.length === 0
+      ? "No quotes yet"
+      : quotes[0]!.text.trim() || "Untitled";
+
+  const heroBgOption = getIdeateHeroBgOption(heroBg);
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)] pb-20">
-      {/* Vision board hero — homepage mandala + vignette */}
+      {/* Vision board hero — editable mandala band */}
       <section
         ref={heroRef}
-        className="home-hero w-full"
+        className={`home-hero group/hero relative w-full ${heroBgOption.className}`}
         aria-label="Vision board"
       >
-        <div className="mx-auto max-w-6xl px-4 py-3 sm:px-6 sm:py-4">
+        <div
+          ref={heroBgPickerRef}
+          className="home-hero-chrome absolute right-3 top-3 z-[5] sm:right-5 sm:top-4"
+        >
+          <button
+            type="button"
+            onClick={() => setHeroBgPickerOpen((o) => !o)}
+            aria-label="Change hero background"
+            aria-expanded={heroBgPickerOpen}
+            title="Background"
+            className={`inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/50 bg-black/60 text-white shadow-[0_2px_10px_rgb(0_0_0_/_0.35)] backdrop-blur-sm transition-[opacity,colors] hover:border-white hover:bg-black/80 hover:text-white ${
+              heroBgPickerOpen
+                ? "opacity-100"
+                : "opacity-0 group-hover/hero:opacity-100 group-focus-within/hero:opacity-100 max-md:opacity-70"
+            }`}
+          >
+            <IconPencil size={15} stroke={1.75} aria-hidden />
+          </button>
+          {heroBgPickerOpen ? (
+            <div
+              role="listbox"
+              aria-label="Hero background"
+              className="absolute right-0 top-full z-20 mt-2 grid w-[14.5rem] grid-cols-3 gap-3 rounded-xl border border-white/20 bg-black/80 p-3 shadow-lg backdrop-blur-md"
+            >
+              {IDEATE_HERO_BG_OPTIONS.map((opt) => {
+                const selected = opt.id === heroBg;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    aria-label={opt.label}
+                    title={opt.label}
+                    onClick={() => {
+                      setHeroBg(opt.id);
+                      saveIdeateHeroBg(opt.id);
+                      setHeroBgPickerOpen(false);
+                    }}
+                    className={`mx-auto h-9 w-9 shrink-0 cursor-pointer overflow-hidden rounded-full border bg-cover bg-center transition-[box-shadow] ${
+                      selected
+                        ? "border-transparent ring-2 ring-white ring-offset-2 ring-offset-black"
+                        : "border-white/30 hover:border-white/70"
+                    }`}
+                    style={{
+                      backgroundColor: opt.swatch,
+                      backgroundImage: opt.swatchImage
+                        ? `url(${opt.swatchImage})`
+                        : undefined,
+                    }}
+                  />
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+        <div className="mx-auto max-w-6xl px-4 py-4 sm:px-6 sm:py-5">
           <div className="relative w-full">
             <div
               className="w-full"
               style={{
                 filter:
-                  "grayscale(18%) sepia(12%) contrast(0.93) brightness(0.9) saturate(0.85)",
+                  "grayscale(32%) sepia(22%) contrast(0.88) brightness(0.82) saturate(0.7)",
               }}
             >
               <VisionBoardMosaic
@@ -630,7 +868,7 @@ export function PlanHomeClient() {
                 className="pointer-events-none absolute -inset-x-4 -inset-y-5 -z-10 overflow-hidden rounded-2xl sm:-inset-x-5 sm:-inset-y-6"
                 style={{
                   background:
-                    "radial-gradient(ellipse 85% 80% at center, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0.42) 45%, rgba(0,0,0,0.18) 72%, transparent 100%)",
+                    "radial-gradient(ellipse 85% 80% at center, rgba(0,0,0,0.74) 0%, rgba(0,0,0,0.52) 45%, rgba(0,0,0,0.24) 72%, transparent 100%)",
                   backdropFilter: "blur(8px)",
                   WebkitBackdropFilter: "blur(8px)",
                   maskImage:
@@ -698,7 +936,7 @@ export function PlanHomeClient() {
                       manifestoRefreshing ? "opacity-60" : ""
                     }`}
                   >
-                    {manifesto}
+                    &ldquo;{manifesto}&rdquo;
                   </p>
                   <div className="pointer-events-none absolute -right-1 -top-1 flex items-center gap-1 opacity-0 transition-opacity group-hover/manifesto:pointer-events-auto group-hover/manifesto:opacity-100 group-focus-within/manifesto:pointer-events-auto group-focus-within/manifesto:opacity-100 sm:-right-2 sm:-top-2">
                     <button
@@ -777,7 +1015,7 @@ export function PlanHomeClient() {
           <ul className="grid grid-cols-2 gap-[10px] sm:grid-cols-4">
             {sortedDreams.map((d) => {
               const snippet = lifeAreaSnippet(d);
-              const bg = lifeAreaCardBackground(
+              const bgVars = lifeAreaCardBgVars(
                 lifeAreaCreationIndex.get(d.id) ?? 0,
               );
               const lastInteracted = formatCheckInDate(
@@ -787,29 +1025,28 @@ export function PlanHomeClient() {
                 <li key={d.id} className="min-w-0">
                   <Link
                     href={`/ideate/goal/${encodeURIComponent(d.id)}`}
-                    className="flex aspect-square cursor-pointer flex-col rounded-[4px] p-[22px] shadow-[0_4px_14px_rgba(0,0,0,0.06)] transition-[transform,box-shadow] duration-150 hover:-translate-y-[3px] hover:shadow-[0_10px_28px_rgba(0,0,0,0.09)]"
-                    style={{ backgroundColor: bg }}
+                    className="life-area-card group relative flex aspect-square cursor-pointer flex-col rounded-[4px] p-[22px] shadow-[0_4px_14px_rgba(0,0,0,0.06)] transition-[transform,box-shadow] duration-150 hover:-translate-y-[3px] hover:shadow-[0_10px_28px_rgba(0,0,0,0.09)] dark:shadow-none dark:hover:shadow-none"
+                    style={bgVars}
                   >
-                    <h3 className="shrink-0 font-display text-xl font-medium leading-snug tracking-tight text-[#1E2530] sm:text-[1.375rem]">
+                    <h3 className="shrink-0 pr-2 font-display text-xl font-medium leading-snug tracking-tight text-[#1E2530] dark:text-[#F4F0E8] sm:text-[1.375rem]">
                       {d.title.trim() || "Untitled"}
                     </h3>
                     <p
-                      className={`mt-2 line-clamp-3 min-h-0 flex-1 font-sans text-sm leading-relaxed ${
+                      className={`mt-2 line-clamp-3 min-h-0 flex-1 font-sans text-sm leading-relaxed text-[rgba(60,35,15,0.6)] dark:text-[#A8B0BC] ${
                         snippet ? "" : "italic"
                       }`}
-                      style={{ color: "rgba(60,35,15,0.6)" }}
                     >
                       {snippet ?? "Nothing written yet"}
                     </p>
-                    <p
-                      className="mt-auto shrink-0 pt-3 font-sans leading-snug"
-                      style={{
-                        color: "rgba(60,35,15,0.4)",
-                        fontSize: "11px",
-                      }}
-                    >
+                    <p className="mt-auto shrink-0 pt-3 pr-11 font-sans text-[11px] leading-snug text-[rgba(60,35,15,0.4)] dark:text-[#A8B0BC]/70">
                       Last interacted on {lastInteracted}
                     </p>
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute bottom-[16px] right-[16px] inline-flex h-9 w-9 translate-x-1 items-center justify-center rounded-full border border-[#1E2530] bg-transparent text-[#1E2530] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100 max-md:hidden dark:border-[#F4F0E8] dark:text-[#F4F0E8]"
+                    >
+                      <IconArrowRight size={16} stroke={2} />
+                    </span>
                   </Link>
                 </li>
               );
@@ -842,6 +1079,334 @@ export function PlanHomeClient() {
             </li>
           </ul>
         </section>
+
+        {/* —— Meaningful quotes —— */}
+        <IdeateCollapsibleSection
+          eyebrow="Meaningful quotes"
+          summary={quotesSummary}
+          collapsed={collapsed.quotes}
+          onToggle={() => toggleSection("quotes")}
+        >
+          <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
+            Lines that keep you oriented — from thinkers you admire, or your
+            own.
+          </p>
+
+          {quotes.length === 0 && !addingQuote ? (
+            <p className="font-sans text-sm italic text-faint">
+              No quotes yet — add one when something sticks.
+            </p>
+          ) : (
+            <ul>
+              {quotes.map((q, i) => (
+                <li
+                  key={q.id}
+                  className={`group relative border-b-[0.5px] border-border py-5 ${
+                    i === 0 ? "border-t-0" : ""
+                  }`}
+                >
+                  {editingQuoteId === q.id ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        saveEditQuote();
+                      }}
+                      className="flex flex-col gap-2"
+                    >
+                      <label
+                        className="sr-only"
+                        htmlFor={`ideate-quote-edit-${q.id}`}
+                      >
+                        Edit quote
+                      </label>
+                      <textarea
+                        id={`ideate-quote-edit-${q.id}`}
+                        autoFocus
+                        value={editQuoteDraft}
+                        onChange={(e) => setEditQuoteDraft(e.target.value)}
+                        rows={3}
+                        maxLength={400}
+                        className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 font-display text-xl outline-none ring-accent/30 focus:ring-2"
+                      />
+                      <label
+                        className="sr-only"
+                        htmlFor={`ideate-quote-attr-edit-${q.id}`}
+                      >
+                        Attribution
+                      </label>
+                      <input
+                        id={`ideate-quote-attr-edit-${q.id}`}
+                        value={editQuoteAttributionDraft}
+                        onChange={(e) =>
+                          setEditQuoteAttributionDraft(e.target.value)
+                        }
+                        placeholder="Attribution (optional)"
+                        maxLength={80}
+                        className="w-full max-w-sm rounded-lg border border-border bg-background px-3 py-2 font-sans text-sm outline-none ring-accent/30 focus:ring-2"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingQuoteId(null);
+                            setEditQuoteDraft("");
+                            setEditQuoteAttributionDraft("");
+                          }}
+                          className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={!editQuoteDraft.trim()}
+                          className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => openEditQuote(q)}
+                        className="w-full cursor-pointer text-left"
+                      >
+                        <p className="font-display text-[22px] font-normal italic leading-[1.4] text-foreground transition-opacity hover:opacity-80">
+                          &ldquo;{q.text}&rdquo;
+                        </p>
+                        {q.attribution?.trim() ? (
+                          <p className="mt-2 font-sans text-[13px] font-normal text-muted">
+                            — {q.attribution.trim()}
+                          </p>
+                        ) : null}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveQuote(q.id)}
+                        className="absolute right-0 top-5 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                        aria-label="Remove quote"
+                      >
+                        Remove
+                      </button>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {addingQuote ? (
+            <div className="mt-4 flex flex-col gap-3">
+              {quoteAddMode === "choose" ? (
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setQuoteAddMode("author")}
+                    className="cursor-pointer rounded-full border border-border px-4 py-2 font-sans text-sm font-medium text-foreground transition-colors hover:border-[#F0A855]/60 hover:bg-accent-soft/30"
+                  >
+                    From a thinker
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQuoteAddMode("original")}
+                    className="cursor-pointer rounded-full border border-border px-4 py-2 font-sans text-sm font-medium text-foreground transition-colors hover:border-[#F0A855]/60 hover:bg-accent-soft/30"
+                  >
+                    Write your own
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resetQuoteComposer}
+                    className="cursor-pointer rounded-full px-3 py-2 font-sans text-xs font-medium text-muted hover:text-foreground sm:ml-1"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : null}
+
+              {quoteAddMode === "author" ? (
+                <div className="flex flex-col gap-3">
+                  <p className="max-w-xl font-sans text-[13px] text-muted">
+                    Type a famous person — we&apos;ll find ten well-known lines
+                    and remember them for next time.
+                  </p>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void handleFetchAuthorQuotes();
+                    }}
+                    className="flex flex-col gap-2 sm:flex-row sm:items-center"
+                  >
+                    <label className="sr-only" htmlFor="ideate-quote-author">
+                      Famous person
+                    </label>
+                    <input
+                      id="ideate-quote-author"
+                      autoFocus
+                      value={authorQueryDraft}
+                      onChange={(e) => setAuthorQueryDraft(e.target.value)}
+                      placeholder="e.g. Alan Watts, Maya Angelou…"
+                      maxLength={80}
+                      disabled={authorFetchLoading}
+                      className="w-full max-w-md rounded-lg border border-border bg-background px-3 py-2 font-sans text-sm outline-none ring-accent/30 focus:ring-2 disabled:opacity-60"
+                    />
+                    <button
+                      type="submit"
+                      disabled={
+                        authorQueryDraft.trim().length < 2 || authorFetchLoading
+                      }
+                      className="inline-flex items-center justify-center gap-2 rounded-full accent-fill-gradient px-4 py-2 text-xs font-medium text-on-accent disabled:opacity-40"
+                    >
+                      {authorFetchLoading ? (
+                        <>
+                          <IconLoader2
+                            size={14}
+                            stroke={1.75}
+                            className="animate-spin"
+                            aria-hidden
+                          />
+                          Finding…
+                        </>
+                      ) : (
+                        "Find quotes"
+                      )}
+                    </button>
+                  </form>
+                  {authorFetchError ? (
+                    <p className="font-sans text-sm text-red-700/80 dark:text-red-300/90">
+                      {authorFetchError}
+                    </p>
+                  ) : null}
+                  {authorResolvedName && authorFetchedQuotes.length > 0 ? (
+                    <div className="flex flex-col gap-3">
+                      <p className="font-sans text-[13px] text-muted">
+                        Quotes by{" "}
+                        <span className="font-medium text-foreground">
+                          {authorResolvedName}
+                        </span>
+                        . Pick the ones to keep.
+                      </p>
+                      <ul className="flex flex-col gap-2">
+                        {authorFetchedQuotes.map((text) => {
+                          const selected = authorSelectedQuotes.has(text);
+                          return (
+                            <li key={text}>
+                              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border/80 px-3 py-2.5 transition-colors hover:border-[#F0A855]/45">
+                                <input
+                                  type="checkbox"
+                                  checked={selected}
+                                  onChange={() => toggleAuthorQuote(text)}
+                                  className="mt-1.5 shrink-0"
+                                />
+                                <span className="min-w-0 font-display text-[17px] font-normal italic leading-[1.4] text-foreground">
+                                  &ldquo;{text}&rdquo;
+                                </span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQuoteAddMode("choose");
+                            setAuthorFetchedQuotes([]);
+                            setAuthorSelectedQuotes(new Set());
+                            setAuthorResolvedName(null);
+                            setAuthorFetchError(null);
+                          }}
+                          className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                        >
+                          Back
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleAddSelectedAuthorQuotes}
+                          disabled={authorSelectedQuotes.size === 0}
+                          className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
+                        >
+                          Add selected ({authorSelectedQuotes.size})
+                        </button>
+                      </div>
+                    </div>
+                  ) : !authorFetchLoading ? (
+                    <button
+                      type="button"
+                      onClick={() => setQuoteAddMode("choose")}
+                      className="self-start rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                    >
+                      Back
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {quoteAddMode === "original" ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleAddQuote();
+                  }}
+                  className="flex flex-col gap-2"
+                >
+                  <label className="sr-only" htmlFor="ideate-quote-new">
+                    Quote
+                  </label>
+                  <textarea
+                    id="ideate-quote-new"
+                    autoFocus
+                    value={quoteDraft}
+                    onChange={(e) => setQuoteDraft(e.target.value)}
+                    placeholder="A line that keeps you oriented…"
+                    rows={3}
+                    maxLength={400}
+                    className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 font-display text-xl outline-none ring-accent/30 focus:ring-2"
+                  />
+                  <label className="sr-only" htmlFor="ideate-quote-attr">
+                    Attribution
+                  </label>
+                  <input
+                    id="ideate-quote-attr"
+                    value={quoteAttributionDraft}
+                    onChange={(e) => setQuoteAttributionDraft(e.target.value)}
+                    placeholder="Attribution (optional)"
+                    maxLength={80}
+                    className="w-full max-w-sm rounded-lg border border-border bg-background px-3 py-2 font-sans text-sm outline-none ring-accent/30 focus:ring-2"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setQuoteAddMode("choose")}
+                      className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={!quoteDraft.trim()}
+                      className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setAddingQuote(true);
+                setQuoteAddMode("choose");
+                setEditingQuoteId(null);
+              }}
+              className="mt-5 cursor-pointer font-sans text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
+            >
+              + Add a quote
+            </button>
+          )}
+        </IdeateCollapsibleSection>
 
         {/* —— Values —— */}
         <IdeateCollapsibleSection

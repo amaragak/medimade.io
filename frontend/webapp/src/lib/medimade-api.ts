@@ -638,7 +638,68 @@ export type IdeateCloudBundle = {
   values?: unknown;
   /** Optional — regret minimisation entries. */
   regrets?: unknown;
+  /** Optional — meaningful quotes. */
+  quotes?: unknown;
 };
+
+export type FamousAuthorQuotesResult = {
+  author: string;
+  authorSlug: string;
+  quotes: string[];
+  cached: boolean;
+};
+
+/**
+ * Resolve a famous person (Haiku + Dynamo cache) and return up to 10 quotes.
+ * `POST /ideate/famous-quotes`
+ */
+export async function fetchFamousAuthorQuotes(
+  authorQuery: string,
+): Promise<FamousAuthorQuotesResult> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await medimadeFetch(`${base}/ideate/famous-quotes`, {
+    method: "POST",
+    headers: {
+      ...medimadeApiAuthHeaders(),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ authorQuery }),
+  });
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.error === "string" && data.error) ||
+      (typeof data.detail === "string" && data.detail) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  const author = typeof data.author === "string" ? data.author.trim() : "";
+  const authorSlug =
+    typeof data.authorSlug === "string" ? data.authorSlug.trim() : "";
+  const quotes = Array.isArray(data.quotes)
+    ? data.quotes
+        .filter((q): q is string => typeof q === "string")
+        .map((q) => q.trim())
+        .filter(Boolean)
+    : [];
+  if (!author || quotes.length === 0) {
+    throw new Error("No quotes returned for that author");
+  }
+  return {
+    author,
+    authorSlug,
+    quotes,
+    cached: data.cached === true,
+  };
+}
 
 /**
  * Loads Ideate from `GET /ideate/store`. Guests get `null` (use local demos).

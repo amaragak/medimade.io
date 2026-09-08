@@ -149,6 +149,14 @@ export class MedimadeStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    /** Shared famous-author quote libraries (Haiku-fetched, aliased by spelling variants). */
+    const famousQuotesTable = new dynamodb.Table(this, "IdeateFamousQuotesTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     /** Rolling Claude-derived journal insights (per topic + meta watermark) keyed by `ownerId`. */
     const journalInsightsTable = new dynamodb.Table(this, "JournalInsightsTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -1417,6 +1425,33 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "IdeateStoreIntegration",
         ideateStore,
+      ),
+    });
+
+    const ideateFamousQuotes = new lambda_nodejs.NodejsFunction(
+      this,
+      "IdeateFamousQuotesFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/ideate-famous-quotes.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(60),
+        memorySize: 512,
+        environment: {
+          FAMOUS_QUOTES_TABLE_NAME: famousQuotesTable.tableName,
+          CLAUDE_SECRET_ARN: claudeApiKeySecret.secretArn,
+        },
+      },
+    );
+    famousQuotesTable.grantReadWriteData(ideateFamousQuotes);
+    claudeApiKeySecret.grantRead(ideateFamousQuotes);
+
+    httpApi.addRoutes({
+      path: "/ideate/famous-quotes",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "IdeateFamousQuotesIntegration",
+        ideateFamousQuotes,
       ),
     });
 

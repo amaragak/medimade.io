@@ -1,7 +1,7 @@
 /**
  * Vision board preview mosaic.
  * `asymmetric` — marketing pitch collage.
- * `grid` — straight 3×2 square grid (/ideate/my).
+ * `grid` — straight 4×2 square grid (/ideate/my).
  * Slots prefer images when provided; remaining slots use color fills.
  */
 
@@ -24,7 +24,7 @@ export const VISION_BOARD_EMPTY_COLORS = [
 ] as const;
 
 export const VISION_BOARD_MOSAIC_SLOT_COUNT = 5;
-export const VISION_BOARD_GRID_SLOT_COUNT = 6;
+export const VISION_BOARD_GRID_SLOT_COUNT = 8;
 
 type Layout = "asymmetric" | "grid";
 
@@ -107,14 +107,14 @@ export function VisionBoardMosaic({
       <div
         className={`grid w-full shrink-0 ${gapClassName} ${radiusClassName} ${sizeClassName} ${className}`}
         style={{
-          gridTemplateColumns: "repeat(3, 1fr)",
+          gridTemplateColumns: "repeat(4, 1fr)",
         }}
         aria-hidden
       >
         {Array.from({ length: VISION_BOARD_GRID_SLOT_COUNT }, (_, i) => (
           <MosaicCell
             key={i}
-            className={`aspect-[4/3] w-full ${cellRadiusClassName}`}
+            className={`aspect-square w-full ${cellRadiusClassName}`}
             color={c(i)}
             imageSrc={img(i)}
             objectPosition="center 20%"

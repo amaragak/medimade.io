@@ -22,7 +22,7 @@ export function IdeateCollapsibleSection({
   children,
 }: Props) {
   return (
-    <section className="group mt-16 cursor-pointer border-t border-border pt-8">
+    <section className="group cursor-pointer border-t border-border pt-8">
       <button
         type="button"
         onClick={onToggle}
@@ -51,11 +51,11 @@ export function IdeateCollapsibleSection({
         />
       </button>
 
-      {/* Hairline only when collapsed — never between header and open content */}
+      {/* Hairline only when collapsed — overlaps next section’s border-t so dividers read as one line */}
       {collapsed ? (
         <div
           aria-hidden
-          className="border-b border-border transition-[border-color] duration-200 ease-[ease] group-hover:border-[#F0A855]"
+          className="-mb-px border-b border-border transition-[border-color] duration-200 ease-[ease] group-hover:border-[#F0A855]"
         />
       ) : null}
 

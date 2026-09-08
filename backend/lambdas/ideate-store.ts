@@ -59,6 +59,7 @@ type IdeateCloudBundle = {
   reflectionQuestions: unknown;
   values: unknown;
   regrets?: unknown;
+  quotes?: unknown;
 };
 
 function isBundle(x: unknown): x is IdeateCloudBundle {
@@ -204,6 +205,23 @@ function stripRegrets(regrets: unknown): unknown {
   return { v: 1, regrets: list.slice(0, 40) };
 }
 
+function stripQuotes(quotes: unknown): unknown {
+  if (!quotes || typeof quotes !== "object") return { v: 1, quotes: [] };
+  const o = quotes as Record<string, unknown>;
+  const list = Array.isArray(o.quotes)
+    ? o.quotes.filter((q) => {
+        if (!q || typeof q !== "object") return false;
+        const row = q as { id?: unknown; text?: unknown };
+        if (typeof row.id !== "string" || typeof row.text !== "string") {
+          return false;
+        }
+        if (row.id.startsWith("demo-quote-")) return false;
+        return row.text.trim().length > 0;
+      })
+    : [];
+  return { v: 1, quotes: list.slice(0, 40) };
+}
+
 export async function handler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
@@ -267,6 +285,7 @@ export async function handler(
 
     let existingValues: unknown = { v: 1, values: [] };
     let existingRegrets: unknown = { v: 1, regrets: [] };
+    let existingQuotes: unknown = { v: 1, quotes: [] };
     try {
       const existingOut = await ddb.send(
         new GetCommand({
@@ -279,9 +298,14 @@ export async function handler(
         existingRow?.store &&
         typeof existingRow.store === "object"
       ) {
-        const es = existingRow.store as { values?: unknown; regrets?: unknown };
+        const es = existingRow.store as {
+          values?: unknown;
+          regrets?: unknown;
+          quotes?: unknown;
+        };
         if ("values" in es) existingValues = es.values;
         if ("regrets" in es) existingRegrets = es.regrets;
+        if ("quotes" in es) existingQuotes = es.quotes;
       }
     } catch {
       /* fall through */
@@ -296,10 +320,12 @@ export async function handler(
       ideate: stripDemoDreams(o.ideate),
       visionBoard: stripDemoVision(o.visionBoard),
       reflectionQuestions: stripDemoQuestions(o.reflectionQuestions),
-      // Older clients omit `values` / `regrets` — keep whatever is already stored.
+      // Older clients omit `values` / `regrets` / `quotes` — keep whatever is already stored.
       values: "values" in o ? stripValues(o.values) : stripValues(existingValues),
       regrets:
         "regrets" in o ? stripRegrets(o.regrets) : stripRegrets(existingRegrets),
+      quotes:
+        "quotes" in o ? stripQuotes(o.quotes) : stripQuotes(existingQuotes),
     };
 
     const encoded = JSON.stringify(bundle);

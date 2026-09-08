@@ -22,6 +22,11 @@ import {
   type IdeateRegret,
 } from "@/lib/ideate-regrets";
 import {
+  loadIdeateQuotesStore,
+  saveIdeateQuotesStoreLocal,
+  type IdeateQuote,
+} from "@/lib/ideate-quotes";
+import {
   loadIdeateVisionBoardStore,
   saveIdeateVisionBoardStore,
   saveIdeateVisionBoardStoreLocal,
@@ -597,6 +602,31 @@ function buildDemoRegrets(): IdeateRegret[] {
   ];
 }
 
+function buildDemoQuotes(): IdeateQuote[] {
+  return [
+    {
+      id: "demo-quote-enough",
+      text: "You do not have to be exceptional. You have to be present.",
+      attribution: "Anonymous",
+      createdAt: daysAgoIso(9, 11),
+      updatedAt: daysAgoIso(9, 11),
+    },
+    {
+      id: "demo-quote-start",
+      text: "Start before you are ready — readiness arrives after the first honest step.",
+      attribution: "Consciously",
+      createdAt: daysAgoIso(6, 14),
+      updatedAt: daysAgoIso(6, 14),
+    },
+    {
+      id: "demo-quote-gentle",
+      text: "Move gently, and stop before you're empty.",
+      createdAt: daysAgoIso(4, 9),
+      updatedAt: daysAgoIso(4, 9),
+    },
+  ];
+}
+
 function isDemoVisionItem(i: VisionBoardItem): boolean {
   return i.id.startsWith("demo-vb-");
 }
@@ -611,6 +641,10 @@ function isDemoValue(v: IdeateValue): boolean {
 
 function isDemoRegretEntry(r: IdeateRegret): boolean {
   return r.id.startsWith("demo-regret-");
+}
+
+function isDemoQuoteEntry(q: IdeateQuote): boolean {
+  return q.id.startsWith("demo-quote-");
 }
 
 function needsDemoQuestionsRefresh(
@@ -632,6 +666,12 @@ function needsDemoRegretsRefresh(store: { regrets: IdeateRegret[] }): boolean {
   if (store.regrets.length === 0) return true;
   if (!store.regrets.every(isDemoRegretEntry)) return false;
   return store.regrets.length < 2;
+}
+
+function needsDemoQuotesRefresh(store: { quotes: IdeateQuote[] }): boolean {
+  if (store.quotes.length === 0) return true;
+  if (!store.quotes.every(isDemoQuoteEntry)) return false;
+  return store.quotes.length < 3;
 }
 
 /**
@@ -742,6 +782,11 @@ function stripDemoCompanionStores(): void {
     if (nextRegrets.length !== regrets.regrets.length) {
       saveIdeateRegretsStoreLocal({ v: 1, regrets: nextRegrets });
     }
+    const quotes = loadIdeateQuotesStore();
+    const nextQuotes = quotes.quotes.filter((q) => !isDemoQuoteEntry(q));
+    if (nextQuotes.length !== quotes.quotes.length) {
+      saveIdeateQuotesStoreLocal({ v: 1, quotes: nextQuotes });
+    }
   } catch {
     /* */
   }
@@ -756,7 +801,8 @@ function companionNeedsSeed(): boolean {
         loadIdeateReflectionQuestionsStore().questions,
       ) ||
       needsDemoValuesRefresh(loadIdeateValuesStore()) ||
-      needsDemoRegretsRefresh(loadIdeateRegretsStore())
+      needsDemoRegretsRefresh(loadIdeateRegretsStore()) ||
+      needsDemoQuotesRefresh(loadIdeateQuotesStore())
     );
   } catch {
     return true;
@@ -786,6 +832,10 @@ function seedCompanionStoresIfEmpty(force = false): void {
     const regrets = loadIdeateRegretsStore();
     if (force || needsDemoRegretsRefresh(regrets)) {
       saveIdeateRegretsStoreLocal({ v: 1, regrets: buildDemoRegrets() });
+    }
+    const quotes = loadIdeateQuotesStore();
+    if (force || needsDemoQuotesRefresh(quotes)) {
+      saveIdeateQuotesStoreLocal({ v: 1, quotes: buildDemoQuotes() });
     }
   } catch {
     /* */

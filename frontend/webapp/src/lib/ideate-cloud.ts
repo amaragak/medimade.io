@@ -32,6 +32,13 @@ import {
   type IdeateRegretsStoreV1,
 } from "@/lib/ideate-regrets";
 import {
+  clearIdeateQuotesDeviceData,
+  clearIdeateQuotesMemoryOnly,
+  loadIdeateQuotesStore,
+  saveIdeateQuotesStoreLocal,
+  type IdeateQuotesStoreV1,
+} from "@/lib/ideate-quotes";
+import {
   clearIdeateVisionBoardDeviceData,
   clearIdeateVisionBoardMemoryOnly,
   loadIdeateVisionBoardStore,
@@ -91,6 +98,7 @@ export function clearIdeateSignedInWorkingCopy(): void {
   clearIdeateReflectionQuestionsMemoryOnly();
   clearIdeateValuesMemoryOnly();
   clearIdeateRegretsMemoryOnly();
+  clearIdeateQuotesMemoryOnly();
   clearIdeateManifestoCache();
   if (typeof window !== "undefined") {
     try {
@@ -116,6 +124,7 @@ export function wipeIdeateDeviceData(): void {
   clearIdeateReflectionQuestionsDeviceData();
   clearIdeateValuesDeviceData();
   clearIdeateRegretsDeviceData();
+  clearIdeateQuotesDeviceData();
   clearIdeateManifestoCache();
   if (typeof window !== "undefined") {
     try {
@@ -239,6 +248,15 @@ function stripRegretsForCloud(store: IdeateRegretsStoreV1): IdeateRegretsStoreV1
   };
 }
 
+function stripQuotesForCloud(store: IdeateQuotesStoreV1): IdeateQuotesStoreV1 {
+  return {
+    v: 1,
+    quotes: store.quotes
+      .filter((q) => !q.id.startsWith("demo-quote-"))
+      .slice(0, 40),
+  };
+}
+
 export function buildIdeateCloudBundle(): IdeateCloudBundle {
   const ideate = withoutDemoIdeateStore(loadIdeateStoreRaw());
   return {
@@ -251,6 +269,7 @@ export function buildIdeateCloudBundle(): IdeateCloudBundle {
     ),
     values: stripValuesForCloud(loadIdeateValuesStore()),
     regrets: stripRegretsForCloud(loadIdeateRegretsStore()),
+    quotes: stripQuotesForCloud(loadIdeateQuotesStore()),
   };
 }
 
@@ -316,6 +335,13 @@ function snapshotDeviceIdeatePersonal(): IdeateCloudBundle | null {
       : { v: 1, regrets: [] }) as IdeateRegretsStoreV1,
   );
 
+  const quotesRaw = readJsonLs("mm_ideate_quotes_v1");
+  const quotes = stripQuotesForCloud(
+    (quotesRaw && typeof quotesRaw === "object"
+      ? quotesRaw
+      : { v: 1, quotes: [] }) as IdeateQuotesStoreV1,
+  );
+
   const bundle: IdeateCloudBundle = {
     version: 1,
     updatedAt: new Date().toISOString(),
@@ -324,6 +350,7 @@ function snapshotDeviceIdeatePersonal(): IdeateCloudBundle | null {
     reflectionQuestions,
     values,
     regrets,
+    quotes,
   };
   return ideateBundleHasContent(bundle) ? bundle : null;
 }
@@ -337,12 +364,14 @@ function ideateBundleHasContent(bundle: IdeateCloudBundle): boolean {
     | undefined;
   const values = bundle.values as IdeateValuesStoreV1 | null | undefined;
   const regrets = bundle.regrets as IdeateRegretsStoreV1 | null | undefined;
+  const quotes = bundle.quotes as IdeateQuotesStoreV1 | null | undefined;
   if ((ideate?.dreams?.length ?? 0) > 0) return true;
   if ((vision?.items?.length ?? 0) > 0) return true;
   if (vision?.selfReference?.url || vision?.selfReference?.key) return true;
   if ((qs?.questions?.length ?? 0) > 0) return true;
   if ((values?.values?.length ?? 0) > 0) return true;
   if ((regrets?.regrets?.length ?? 0) > 0) return true;
+  if ((quotes?.quotes?.length ?? 0) > 0) return true;
   return false;
 }
 
@@ -354,6 +383,7 @@ function removeIdeateLocalStorageKeys(): void {
     window.localStorage.removeItem("mm_ideate_reflection_questions_v1");
     window.localStorage.removeItem("mm_ideate_values_v1");
     window.localStorage.removeItem("mm_ideate_regrets_v1");
+    window.localStorage.removeItem("mm_ideate_quotes_v1");
   } catch {
     /* */
   }
@@ -393,6 +423,11 @@ export function applyIdeateCloudBundle(bundle: IdeateCloudBundle): void {
       (bundle.regrets as IdeateRegretsStoreV1) ?? { v: 1, regrets: [] },
     );
     saveIdeateRegretsStoreLocal(regrets);
+
+    const quotes = stripQuotesForCloud(
+      (bundle.quotes as IdeateQuotesStoreV1) ?? { v: 1, quotes: [] },
+    );
+    saveIdeateQuotesStoreLocal(quotes);
   });
   notifyIdeateCloud();
 }
@@ -451,6 +486,7 @@ export async function pullIdeateStoreFromCloud(): Promise<{
       saveIdeateReflectionQuestionsStoreLocal({ v: 1, questions: [] });
       saveIdeateValuesStoreLocal({ v: 1, values: [] });
       saveIdeateRegretsStoreLocal({ v: 1, regrets: [] });
+      saveIdeateQuotesStoreLocal({ v: 1, quotes: [] });
     });
     notifyIdeateCloud();
     return { applied: true, empty: true };
@@ -469,6 +505,8 @@ export async function pullIdeateStoreFromCloud(): Promise<{
         stripQuestionsForCloud(loadIdeateReflectionQuestionsStore()),
       );
       saveIdeateValuesStoreLocal(stripValuesForCloud(loadIdeateValuesStore()));
+      saveIdeateRegretsStoreLocal(stripRegretsForCloud(loadIdeateRegretsStore()));
+      saveIdeateQuotesStoreLocal(stripQuotesForCloud(loadIdeateQuotesStore()));
     });
     notifyIdeateCloud();
     return { applied: false, empty: false };
