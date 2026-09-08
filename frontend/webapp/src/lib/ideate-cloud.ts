@@ -436,8 +436,11 @@ export function applyIdeateCloudBundle(bundle: IdeateCloudBundle): void {
  * Pull cloud Ideate once per session when signed in.
  * If cloud is empty but the device still has personal (non-demo) rows, migrate
  * those up instead of blanking the account.
+ * Pass `force` to re-fetch after a soft empty memory state.
  */
-export async function pullIdeateStoreFromCloud(): Promise<{
+export async function pullIdeateStoreFromCloud(opts?: {
+  force?: boolean;
+}): Promise<{
   applied: boolean;
   empty: boolean;
 }> {
@@ -445,8 +448,11 @@ export async function pullIdeateStoreFromCloud(): Promise<{
     // Do not mark pulled — a later JWT must still be allowed to fetch.
     return { applied: false, empty: true };
   }
-  if (pulledThisSession) {
+  if (pulledThisSession && !opts?.force) {
     return { applied: false, empty: false };
+  }
+  if (opts?.force) {
+    pulledThisSession = false;
   }
 
   const devicePersonal = snapshotDeviceIdeatePersonal();

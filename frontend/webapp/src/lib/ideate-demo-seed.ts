@@ -483,7 +483,8 @@ function isDemoSelfReference(ref: VisionSelfReference | null | undefined): boole
 
 function needsDemoVisionRefresh(board: IdeateVisionBoardStoreV1): boolean {
   if (board.items.length === 0) return true;
-  if (!board.items.every(isDemoVisionItem)) return false;
+  // Personal (non-demo) leftovers must never stick on guest devices.
+  if (!board.items.every(isDemoVisionItem)) return true;
   if (!isDemoSelfReference(board.selfReference)) return true;
   if (board.items.some((i) => !i.imageUrl)) return true;
   // Reseed when demo image cache-bust query changes (e.g. male → female set).
@@ -651,26 +652,27 @@ function needsDemoQuestionsRefresh(
   questions: IdeateReflectionQuestion[],
 ): boolean {
   if (questions.length === 0) return true;
-  if (!questions.every(isDemoReflectionQuestion)) return false;
+  // Account leftovers on a guest device → replace with seeds.
+  if (!questions.every(isDemoReflectionQuestion)) return true;
   if (questions.length < 4) return true;
   return questions.some((q) => !q.answer.trim());
 }
 
 function needsDemoValuesRefresh(store: IdeateValuesStoreV1): boolean {
   if (store.values.length === 0) return true;
-  if (!store.values.every(isDemoValue)) return false;
+  if (!store.values.every(isDemoValue)) return true;
   return store.values.length < 5;
 }
 
 function needsDemoRegretsRefresh(store: { regrets: IdeateRegret[] }): boolean {
   if (store.regrets.length === 0) return true;
-  if (!store.regrets.every(isDemoRegretEntry)) return false;
+  if (!store.regrets.every(isDemoRegretEntry)) return true;
   return store.regrets.length < 2;
 }
 
 function needsDemoQuotesRefresh(store: { quotes: IdeateQuote[] }): boolean {
   if (store.quotes.length === 0) return true;
-  if (!store.quotes.every(isDemoQuoteEntry)) return false;
+  if (!store.quotes.every(isDemoQuoteEntry)) return true;
   return store.quotes.length < 3;
 }
 

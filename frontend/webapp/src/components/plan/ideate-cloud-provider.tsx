@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -20,6 +21,7 @@ import {
   wasIdeateStorePulledThisSession,
   wipeIdeateDeviceData,
 } from "@/lib/ideate-cloud";
+import { loadIdeateStoreRaw } from "@/lib/plan-ideate-store";
 
 type IdeateCloudContextValue = {
   ready: boolean;
@@ -40,16 +42,24 @@ export function useIdeateCloud(): IdeateCloudContextValue {
   return useContext(IdeateCloudContext);
 }
 
+function memoryHasIdeateRows(): boolean {
+  try {
+    return loadIdeateStoreRaw().dreams.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Pulls cloud Ideate for signed-in users before children read the store.
- * Guests become ready immediately (local demos).
- * Never seed demos while a session is active — even before the access JWT lands.
+ * Guests become ready immediately with forced local demos.
  */
 export function IdeateCloudProvider({ children }: { children: ReactNode }) {
   const [signedIn, setSignedIn] = useState(false);
   const [authEpoch, setAuthEpoch] = useState(0);
   const [ready, setReady] = useState(false);
   const [revision, setRevision] = useState(0);
+  const wasSignedInRef = useRef<boolean | null>(null);
 
   const refresh = useCallback(() => setRevision((n) => n + 1), []);
 
@@ -58,29 +68,17 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const syncAuth = () => {
       const next = isMedimadeSessionActive();
-      const hasJwt = Boolean(getMedimadeSessionJwt());
       setSignedIn((prev) => {
         if (prev !== next) {
           clearIdeateCloudSessionCache();
           if (!next) {
-            // Sign-out: wipe account working copy and put guest demos back.
             wipeIdeateDeviceData();
-          } else {
-            // Sign-in: drop guest demos immediately so they cannot flash / leak.
-            clearIdeateSignedInWorkingCopy();
           }
           setAuthEpoch((e) => e + 1);
           setReady(false);
         }
         return next;
       });
-      // Sticky active + late access JWT: pull cloud once without flipping signedIn.
-      if (next && hasJwt && !wasIdeateStorePulledThisSession()) {
-        void pullIdeateStoreFromCloud().then(() => {
-          setReady(true);
-          setRevision((n) => n + 1);
-        });
-      }
     };
     void import("@/lib/auth-session").then((m) =>
       m.ensureMedimadeSession().finally(syncAuth),
@@ -94,30 +92,44 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     setReady(false);
     void (async () => {
-      // Do not force-rotate here — forced refresh on every Dream mount burned soft
-      // failures on localhost and logged people out.
       await import("@/lib/auth-session").then((m) => m.ensureMedimadeSession());
       const active = isMedimadeSessionActive();
       setSignedIn(active);
 
+      const wasSignedIn = wasSignedInRef.current;
+      wasSignedInRef.current = active;
+      const justSignedIn = active && wasSignedIn === false;
+
       if (active) {
-        // Signed-in path: never seed guest demos. Pull cloud when JWT is ready.
-        clearIdeateSignedInWorkingCopy();
-        if (getMedimadeSessionJwt()) {
-          await pullIdeateStoreFromCloud();
-        } else {
-          // Soft refresh miss — keep account UI; scheduled retry will restore JWT.
-          void import("@/lib/auth-session").then((m) => m.ensureMedimadeSession());
+        // Only wipe memory on guest → signed-in (drop demos) or when memory is empty.
+        // Remounts must keep an existing in-memory account store.
+        if (justSignedIn || !memoryHasIdeateRows()) {
+          clearIdeateSignedInWorkingCopy();
+        }
+
+        let jwt = getMedimadeSessionJwt();
+        if (!jwt) {
+          await import("@/lib/auth-session").then((m) =>
+            m.ensureMedimadeSession({ force: true }),
+          );
+          jwt = getMedimadeSessionJwt();
+        }
+
+        if (jwt) {
+          const needPull =
+            !wasIdeateStorePulledThisSession() || !memoryHasIdeateRows();
+          if (needPull) {
+            await pullIdeateStoreFromCloud({
+              force: wasIdeateStorePulledThisSession() && !memoryHasIdeateRows(),
+            });
+          }
         }
       } else {
-        const { ensureGuestCompanionDemos, resetIdeateLocalToGuestDemos } =
-          await import("@/lib/ideate-demo-seed");
-        const { loadIdeateStore } = await import("@/lib/plan-ideate-store");
-        loadIdeateStore();
-        ensureGuestCompanionDemos(true);
-        if (loadIdeateStore().dreams.length === 0) {
-          resetIdeateLocalToGuestDemos();
-        }
+        // Guests always get seeded samples — never leftover account rows in LS.
+        const { resetIdeateLocalToGuestDemos } = await import(
+          "@/lib/ideate-demo-seed"
+        );
+        resetIdeateLocalToGuestDemos();
       }
 
       if (!cancelled) {
