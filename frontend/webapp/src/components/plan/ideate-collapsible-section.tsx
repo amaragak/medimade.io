@@ -66,7 +66,7 @@ export function IdeateCollapsibleSection({
         <div
           className={`min-h-0 ${collapsed ? "overflow-hidden" : "overflow-visible"}`}
         >
-          <div className={collapsed ? "" : "pt-4"}>{children}</div>
+          <div className={collapsed ? "" : "pb-8 pt-4"}>{children}</div>
         </div>
       </div>
     </section>

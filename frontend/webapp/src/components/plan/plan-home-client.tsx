@@ -1013,7 +1013,7 @@ export function PlanHomeClient() {
         ) : null}
 
         {/* —— Life areas —— */}
-        <section className="pt-8 sm:pt-10" aria-labelledby="ideate-life-areas-heading">
+        <section className="pb-8 pt-8 sm:pb-10 sm:pt-10" aria-labelledby="ideate-life-areas-heading">
           <h2
             id="ideate-life-areas-heading"
             className="mb-1.5 font-sans text-[15px] font-medium uppercase tracking-[0.08em] text-[#1E2530] dark:text-foreground"
@@ -1097,6 +1097,149 @@ export function PlanHomeClient() {
           </ul>
         </section>
 
+        {/* —— Values —— */}
+        <IdeateCollapsibleSection
+          eyebrow="Values"
+          summary={valuesSummary}
+          collapsed={collapsed.values}
+          onToggle={() => toggleSection("values")}
+        >
+          {values.length === 0 ? (
+            <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
+              Principles you want to live by — name a few that feel true.
+            </p>
+          ) : null}
+
+          {values.length === 0 && !addingValue ? null : (
+            <ul className="flex flex-col gap-4">
+              {values.map((v, i) => (
+                <li key={v.id} className="group">
+                  {editingValueId === v.id ? (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        saveEditValue();
+                      }}
+                      className="flex flex-col gap-2"
+                    >
+                      <label
+                        className="sr-only"
+                        htmlFor={`ideate-value-edit-${v.id}`}
+                      >
+                        Edit value
+                      </label>
+                      <input
+                        id={`ideate-value-edit-${v.id}`}
+                        autoFocus
+                        value={editValueDraft}
+                        onChange={(e) => setEditValueDraft(e.target.value)}
+                        maxLength={120}
+                        className="w-full rounded-lg border border-border bg-background px-3 py-2 font-display text-2xl outline-none ring-accent/30 focus:ring-2"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingValueId(null);
+                            setEditValueDraft("");
+                          }}
+                          className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={!editValueDraft.trim()}
+                          className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    </form>
+                  ) : (
+                    <div className="flex items-start gap-4">
+                      <span className="mt-1.5 min-w-6 shrink-0 font-sans text-xs text-muted">
+                        {formatIndex(i + 1)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => openEditValue(v)}
+                        className="min-w-0 flex-1 cursor-pointer text-left font-display text-[26px] font-normal leading-[1.2] text-foreground transition-opacity hover:opacity-80"
+                      >
+                        {v.text}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveValue(v.id)}
+                        className="mt-1.5 shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                        aria-label={`Remove ${v.text}`}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {addingValue ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleAddValue();
+              }}
+              className="mt-4 flex flex-col gap-2"
+            >
+              <label className="sr-only" htmlFor="ideate-value-new">
+                New value
+              </label>
+              <input
+                id="ideate-value-new"
+                autoFocus
+                value={valueDraft}
+                onChange={(e) => setValueDraft(e.target.value)}
+                placeholder="e.g. Honesty, Presence, Craft"
+                maxLength={120}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 font-display text-xl outline-none ring-accent/30 focus:ring-2"
+              />
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingValue(false);
+                    setValueDraft("");
+                  }}
+                  className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!valueDraft.trim()}
+                  className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
+                >
+                  Add
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="mt-5 flex justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setAddingValue(true);
+                  setEditingValueId(null);
+                  setEditValueDraft("");
+                }}
+                className="inline-flex cursor-pointer items-center justify-center rounded-full accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+              >
+                + Add a value
+              </button>
+            </div>
+          )}
+        </IdeateCollapsibleSection>
+
         {/* —— Meaningful quotes —— */}
         <IdeateCollapsibleSection
           eyebrow="Meaningful quotes"
@@ -1104,16 +1247,14 @@ export function PlanHomeClient() {
           collapsed={collapsed.quotes}
           onToggle={() => toggleSection("quotes")}
         >
-          <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
-            Lines that keep you oriented — from thinkers you admire, or your
-            own.
-          </p>
-
-          {quotes.length === 0 && !addingQuote ? (
-            <p className="font-sans text-sm italic text-faint">
-              No quotes yet — add one when something sticks.
+          {quotes.length === 0 ? (
+            <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
+              Lines that keep you oriented — from thinkers you admire, or your
+              own.
             </p>
-          ) : (
+          ) : null}
+
+          {quotes.length === 0 && !addingQuote ? null : (
             <ul className="flex flex-col gap-10">
               {quotes.map((q) => (
                 <li key={q.id} className="group relative">
@@ -1419,161 +1560,19 @@ export function PlanHomeClient() {
               ) : null}
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setAddingQuote(true);
-                setQuoteAddMode("choose");
-                setEditingQuoteId(null);
-              }}
-              className="mt-5 cursor-pointer font-sans text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
-            >
-              + Add a quote
-            </button>
-          )}
-        </IdeateCollapsibleSection>
-
-        {/* —— Values —— */}
-        <IdeateCollapsibleSection
-          eyebrow="Values"
-          summary={valuesSummary}
-          collapsed={collapsed.values}
-          onToggle={() => toggleSection("values")}
-        >
-          {values.length === 0 && !addingValue ? (
-            <p className="font-sans text-sm italic text-faint">
-              No values yet — add one when you&apos;re ready.
-            </p>
-          ) : (
-            <ul>
-              {values.map((v, i) => (
-                <li
-                  key={v.id}
-                  className={`group border-b-[0.5px] border-border py-4 ${
-                    i === 0 ? "border-t-0" : ""
-                  }`}
-                >
-                  {editingValueId === v.id ? (
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        saveEditValue();
-                      }}
-                      className="flex flex-col gap-2"
-                    >
-                      <label
-                        className="sr-only"
-                        htmlFor={`ideate-value-edit-${v.id}`}
-                      >
-                        Edit value
-                      </label>
-                      <input
-                        id={`ideate-value-edit-${v.id}`}
-                        autoFocus
-                        value={editValueDraft}
-                        onChange={(e) => setEditValueDraft(e.target.value)}
-                        maxLength={120}
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 font-display text-2xl outline-none ring-accent/30 focus:ring-2"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingValueId(null);
-                            setEditValueDraft("");
-                          }}
-                          className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={!editValueDraft.trim()}
-                          className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
-                        >
-                          Save
-                        </button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div className="flex items-start gap-4">
-                      <span className="mt-1.5 min-w-6 shrink-0 font-sans text-xs text-muted">
-                        {formatIndex(i + 1)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => openEditValue(v)}
-                        className="min-w-0 flex-1 cursor-pointer text-left font-display text-[26px] font-normal leading-[1.2] text-foreground transition-opacity hover:opacity-80"
-                      >
-                        {v.text}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveValue(v.id)}
-                        className="mt-1.5 shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
-                        aria-label={`Remove ${v.text}`}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {addingValue ? (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                handleAddValue();
-              }}
-              className="mt-4 flex flex-col gap-2"
-            >
-              <label className="sr-only" htmlFor="ideate-value-new">
-                New value
-              </label>
-              <input
-                id="ideate-value-new"
-                autoFocus
-                value={valueDraft}
-                onChange={(e) => setValueDraft(e.target.value)}
-                placeholder="e.g. Honesty, Presence, Craft"
-                maxLength={120}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 font-display text-xl outline-none ring-accent/30 focus:ring-2"
-              />
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddingValue(false);
-                    setValueDraft("");
-                  }}
-                  className="rounded-full px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!valueDraft.trim()}
-                  className="rounded-full accent-fill-gradient px-3 py-1.5 text-xs font-medium text-on-accent disabled:opacity-40"
-                >
-                  Add
-                </button>
-              </div>
-            </form>
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setAddingValue(true);
-                setEditingValueId(null);
-                setEditValueDraft("");
-              }}
-              className="mt-5 cursor-pointer font-sans text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
-            >
-              + Add a value
-            </button>
+            <div className="mt-5 flex justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setAddingQuote(true);
+                  setQuoteAddMode("choose");
+                  setEditingQuoteId(null);
+                }}
+                className="inline-flex cursor-pointer items-center justify-center rounded-full accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+              >
+                + Add a quote
+              </button>
+            </div>
           )}
         </IdeateCollapsibleSection>
 
@@ -1584,6 +1583,13 @@ export function PlanHomeClient() {
           collapsed={collapsed.questions}
           onToggle={() => toggleSection("questions")}
         >
+          {questions.length === 0 ? (
+            <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
+              Questions worth sitting with — add a few and answer when
+              you&apos;re ready.
+            </p>
+          ) : null}
+
           <ul>
             {questionCells.map((q, i) => {
               const isPreview = "isPreview" in q && q.isPreview;
@@ -1603,57 +1609,79 @@ export function PlanHomeClient() {
                   }`}
                 >
                   <div className="flex items-start gap-4">
-                    <button
-                      type="button"
-                      onClick={openOrAdd}
-                      className="min-w-0 flex-1 cursor-pointer text-left"
-                    >
-                      <span className="block font-display text-[19px] font-normal leading-[1.4] text-foreground">
-                        {q.text}
-                      </span>
-                      {answer ? (
-                        <span className="mt-2 block whitespace-pre-wrap font-sans text-base font-normal leading-[1.6] text-muted">
-                          {answer}
-                        </span>
+                    <div className="min-w-0 flex-1">
+                      {isPreview ? (
+                        <button
+                          type="button"
+                          onClick={openOrAdd}
+                          className="w-full cursor-pointer text-left"
+                        >
+                          <span className="block font-display text-[19px] font-normal leading-[1.4] text-foreground">
+                            {q.text}
+                          </span>
+                          <span className="mt-2 block font-sans text-base font-medium text-accent-link">
+                            Add this question →
+                          </span>
+                        </button>
                       ) : (
-                        <span className="mt-2 block font-sans text-base font-medium text-accent-link">
-                          Add your answer →
-                        </span>
+                        <>
+                          <p className="font-display text-[19px] font-normal leading-[1.4] text-foreground">
+                            {q.text}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={openOrAdd}
+                            className="mt-2 w-full cursor-pointer text-left"
+                          >
+                            {answer ? (
+                              <span className="block whitespace-pre-wrap font-sans text-base font-normal leading-[1.6] text-muted transition-opacity hover:opacity-80">
+                                {answer}
+                              </span>
+                            ) : (
+                              <span className="block font-sans text-base font-medium text-accent-link">
+                                Add your answer →
+                              </span>
+                            )}
+                          </button>
+                        </>
                       )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openOrAdd}
-                      className="mt-0.5 shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
-                    >
-                      Edit
-                    </button>
+                    </div>
+                    {!isPreview ? (
+                      <button
+                        type="button"
+                        onClick={openOrAdd}
+                        className="mt-0.5 shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                      >
+                        Edit answer
+                      </button>
+                    ) : null}
                   </div>
                 </li>
               );
             })}
           </ul>
 
-          <div className="relative mt-5" ref={addPickerRef}>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setAddQuestionOpen((o) => !o);
-                setWritingCustom(false);
-                setCustomDraft("");
-              }}
-              className="cursor-pointer font-sans text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
-            >
-              {questions.length === 0 ? "+ Add another" : "+ Add a question"}
-            </button>
-
-            {addQuestionOpen ? (
-              <div
-                role="dialog"
-                aria-label="Add a reflection question"
-                className="absolute left-0 z-30 mt-2 w-[min(100%,22rem)] overflow-hidden rounded-xl border border-border bg-card shadow-lg"
+          <div className="mt-5 flex justify-center">
+            <div className="relative" ref={addPickerRef}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAddQuestionOpen((o) => !o);
+                  setWritingCustom(false);
+                  setCustomDraft("");
+                }}
+                className="inline-flex cursor-pointer items-center justify-center rounded-full accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
               >
+                {questions.length === 0 ? "+ Add another" : "+ Add a question"}
+              </button>
+
+              {addQuestionOpen ? (
+                <div
+                  role="dialog"
+                  aria-label="Add a reflection question"
+                  className="absolute top-full left-1/2 z-30 mt-2 w-[min(100vw-2rem,22rem)] -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-card shadow-lg"
+                >
                 <ul className="max-h-56 overflow-y-auto py-1">
                   {unusedPresets.length === 0 ? (
                     <li className="px-3 py-2.5 text-sm text-muted">
@@ -1746,8 +1774,9 @@ export function PlanHomeClient() {
                     </button>
                   )}
                 </div>
-              </div>
-            ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
         </IdeateCollapsibleSection>
 
@@ -1758,24 +1787,17 @@ export function PlanHomeClient() {
           collapsed={collapsed.regrets}
           onToggle={() => toggleSection("regrets")}
         >
-          <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
-            Imagine yourself at 80, looking back. What would you regret not
-            having tried?
-          </p>
-
-          {regrets.length === 0 && !addingRegret ? (
-            <p className="font-sans text-sm italic text-faint">
-              No regrets captured yet — add one when you&apos;re ready.
+          {regrets.length === 0 ? (
+            <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
+              Imagine yourself at 80, looking back. What would you regret not
+              having tried?
             </p>
-          ) : (
-            <ul>
-              {regrets.map((r, i) => (
-                <li
-                  key={r.id}
-                  className={`group relative border-b-[0.5px] border-border py-4 ${
-                    i === 0 ? "border-t-0" : ""
-                  }`}
-                >
+          ) : null}
+
+          {regrets.length === 0 && !addingRegret ? null : (
+            <ul className="flex flex-col gap-6">
+              {regrets.map((r) => (
+                <li key={r.id} className="group relative">
                   <p className="mb-1.5 font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-muted">
                     {r.category?.trim() || "—"}
                   </p>
@@ -1792,7 +1814,7 @@ export function PlanHomeClient() {
                   <button
                     type="button"
                     onClick={() => handleRemoveRegret(r.id)}
-                    className="absolute right-0 top-4 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                    className="absolute right-0 top-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
                     aria-label="Remove regret"
                   >
                     Remove
@@ -1856,13 +1878,15 @@ export function PlanHomeClient() {
               </div>
             </form>
           ) : (
-            <button
-              type="button"
-              onClick={() => setAddingRegret(true)}
-              className="mt-5 cursor-pointer font-sans text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
-            >
-              + Add an entry
-            </button>
+            <div className="mt-5 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setAddingRegret(true)}
+                className="inline-flex cursor-pointer items-center justify-center rounded-full accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+              >
+                + Add an entry
+              </button>
+            </div>
           )}
         </IdeateCollapsibleSection>
       </section>
@@ -1914,7 +1938,7 @@ export function PlanHomeClient() {
                   value={newDream}
                   onChange={(e) => setNewDream(e.target.value)}
                   placeholder="Say it messy. No one is grading this."
-                  rows={3}
+                  rows={2}
                   className="mt-2 w-full resize-none rounded-xl border border-[#E5DFD0] bg-card px-3 py-2.5 text-sm leading-relaxed outline-none ring-accent/30 focus:ring-2 dark:border-border"
                 />
               </label>
@@ -1930,7 +1954,7 @@ export function PlanHomeClient() {
                   value={newObstacle}
                   onChange={(e) => setNewObstacle(e.target.value)}
                   placeholder="Name it without fixing it yet."
-                  rows={3}
+                  rows={2}
                   className="mt-2 w-full resize-none rounded-xl border border-[#E5DFD0] bg-card px-3 py-2.5 text-sm leading-relaxed outline-none ring-accent/30 focus:ring-2 dark:border-border"
                 />
               </label>
@@ -1946,7 +1970,7 @@ export function PlanHomeClient() {
                   value={newVision}
                   onChange={(e) => setNewVision(e.target.value)}
                   placeholder="A single moment when this has already happened."
-                  rows={3}
+                  rows={2}
                   className="mt-2 w-full resize-none rounded-xl border border-[#E5DFD0] bg-card px-3 py-2.5 text-sm leading-relaxed outline-none ring-accent/30 focus:ring-2 dark:border-border"
                 />
               </label>

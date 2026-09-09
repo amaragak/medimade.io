@@ -22,7 +22,14 @@ import { markSpaClientNavigation } from "@/lib/spa-client-nav";
 
 type NavSubItem = { href: string; label: string };
 
-const meditateSub: NavSubItem[] = [
+/** Desktop flyout: Overview + app. Mobile uses overviewHref + app-only items. */
+const meditateFlyout: NavSubItem[] = [
+  { href: "/meditate", label: "Overview" },
+  { href: "/meditate/create", label: "Create" },
+  { href: "/meditate/library/creations", label: "Library" },
+  { href: "/meditate/sounds", label: "Sounds" },
+];
+const meditateMobileItems: NavSubItem[] = [
   { href: "/meditate/create", label: "Create" },
   { href: "/meditate/library/creations", label: "Library" },
   { href: "/meditate/sounds", label: "Sounds" },
@@ -276,11 +283,9 @@ export function SiteHeader() {
         </Link>
         <nav className="hidden items-center gap-1 sm:flex">
           <NavFlyout
-            href={
-              signedIn ? "/meditate/library/creations" : "/meditate"
-            }
+            href="/meditate"
             label="Meditate"
-            items={meditateSub}
+            items={meditateFlyout}
             active={sectionActive(pathname, "/meditate")}
             isItemActive={isItemActive}
           />
@@ -375,7 +380,7 @@ export function SiteHeader() {
               <MobileSection
                 title="Meditate"
                 overviewHref="/meditate"
-                items={meditateSub}
+                items={meditateMobileItems}
                 pathname={pathname}
                 isItemActive={isItemActive}
                 onNavigate={closeMobile}

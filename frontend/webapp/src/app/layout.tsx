@@ -1,14 +1,13 @@
 import type { Metadata } from "next";
 import { Caveat, DM_Sans, Fraunces } from "next/font/google";
-import Script from "next/script";
 import { Suspense } from "react";
 import "./globals.css";
+import { ColorSchemeBoot } from "@/components/color-scheme-boot";
 import { LibraryPlayerProvider } from "@/components/library-player-provider";
 import { ProfileNameGate } from "@/components/profile-name-gate";
 import { MainShell } from "@/components/main-shell";
 import { SiteHeader } from "@/components/site-header";
 import {
-  colorSchemeBootScript,
   HOME_HERO_PATTERN_DARK,
   HOME_HERO_PATTERN_LIGHT,
 } from "@/lib/color-scheme";
@@ -67,11 +66,7 @@ export default function RootLayout({
         suppressHydrationWarning
         className={`${dmSans.variable} ${fraunces.variable} ${caveat.variable} flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground antialiased`}
       >
-        <Script
-          id="mm-color-scheme-boot"
-          strategy="beforeInteractive"
-          dangerouslySetInnerHTML={{ __html: colorSchemeBootScript }}
-        />
+        <ColorSchemeBoot />
         <LibraryPlayerProvider>
           <Suspense fallback={null}>
             <ProfileNameGate />
