@@ -32,7 +32,7 @@ export function IdeateCollapsibleSection({
         }`}
       >
         <div className="flex min-w-0 items-center gap-4">
-          <p className="shrink-0 font-sans text-[15px] font-medium uppercase tracking-[0.08em] text-[#1E2530] dark:text-foreground">
+          <p className="shrink-0 font-sans text-[15px] font-medium uppercase tracking-[0.08em] text-muted">
             {eyebrow}
           </p>
           {collapsed ? (

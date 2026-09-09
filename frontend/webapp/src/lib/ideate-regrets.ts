@@ -154,7 +154,7 @@ export function addIdeateRegret(
     createdAt: now,
     updatedAt: now,
   };
-  return { v: 1, regrets: [next, ...store.regrets] };
+  return { v: 1, regrets: [...store.regrets, next] };
 }
 
 export function patchIdeateRegret(

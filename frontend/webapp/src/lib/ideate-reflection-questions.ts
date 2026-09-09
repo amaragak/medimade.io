@@ -218,3 +218,13 @@ export function patchQuestionAnswer(
     ),
   };
 }
+
+export function removeIdeateReflectionQuestion(
+  store: IdeateReflectionQuestionsStoreV1,
+  id: string,
+): IdeateReflectionQuestionsStoreV1 {
+  return {
+    v: 1,
+    questions: store.questions.filter((q) => q.id !== id),
+  };
+}

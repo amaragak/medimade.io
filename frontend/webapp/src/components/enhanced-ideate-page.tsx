@@ -53,8 +53,8 @@ const LIFE_AREA_BREAKDOWN = [
     iconBg: "rgb(166 82 82 / 0.15)",
   },
   {
-    label: "The vision",
-    hint: "A moment when it’s already true",
+    label: "Describe the moment",
+    hint: "A concrete scene where it’s already true",
     sample: "Guitar in my lap. Ten minutes. No audience needed.",
     Icon: IconEye,
     iconColor: "#5A7A5E",

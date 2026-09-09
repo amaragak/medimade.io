@@ -160,18 +160,16 @@ export function addIdeateQuote(
     createdAt: now,
     updatedAt: now,
   };
-  return { v: 1, quotes: [next, ...store.quotes] };
+  return { v: 1, quotes: [...store.quotes, next] };
 }
 
-/** Add several quotes (newest first), skipping blanks / capacity. */
+/** Add several quotes (oldest → newest), skipping blanks / capacity. */
 export function addIdeateQuotes(
   store: IdeateQuotesStoreV1,
   inputs: Array<{ text: string; attribution?: string }>,
 ): IdeateQuotesStoreV1 {
   let next = store;
-  // Preserve input order in the list by inserting oldest-first into the prepend path.
-  for (let i = inputs.length - 1; i >= 0; i--) {
-    const item = inputs[i]!;
+  for (const item of inputs) {
     next = addIdeateQuote(next, item);
   }
   return next;

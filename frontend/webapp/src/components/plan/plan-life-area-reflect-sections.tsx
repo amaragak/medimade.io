@@ -45,10 +45,10 @@ const SECTION_META: Record<
     iconBg: "rgb(166 82 82 / 0.15)",
   },
   vision: {
-    title: "The vision",
-    hint: "A single moment when this has already happened.",
+    title: "Describe the moment",
+    hint: "Not the whole dream — one concrete scene where it has already happened.",
     placeholder:
-      "Describe a specific moment in the future where this has happened. What do you see, hear, feel?",
+      "Where are you? What do you see, hear, feel? Write it as if it’s already true.",
     Icon: IconEye,
     iconColor: "#5A7A5E",
     iconBg: "rgb(90 122 94 / 0.15)",

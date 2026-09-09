@@ -29,6 +29,7 @@ import {
   availablePresets,
   loadIdeateReflectionQuestionsStore,
   patchQuestionAnswer,
+  removeIdeateReflectionQuestion,
   saveIdeateReflectionQuestionsStore,
   type IdeateReflectionQuestion,
 } from "@/lib/ideate-reflection-questions";
@@ -202,6 +203,7 @@ export function PlanHomeClient() {
   const [scrollHintVisible, setScrollHintVisible] = useState(true);
   const [heroBg, setHeroBg] = useState<IdeateHeroBgId>("black");
   const [heroBgPickerOpen, setHeroBgPickerOpen] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const addPickerRef = useRef<HTMLDivElement>(null);
   const heroBgPickerRef = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLElement>(null);
@@ -218,6 +220,10 @@ export function PlanHomeClient() {
     setValues(loadIdeateValuesStore().values);
     setRegrets(loadIdeateRegretsStore().regrets);
     setQuotes(loadIdeateQuotesStore().quotes);
+  }, []);
+
+  useEffect(() => {
+    setHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -370,25 +376,56 @@ export function PlanHomeClient() {
     };
   }, [addQuestionOpen]);
 
-  const sortedDreams = useMemo(
+  /** Add order: first created stays first (createdAt, not updatedAt). */
+  const orderedDreams = useMemo(
     () =>
       [...dreams].sort(
         (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
       ),
     [dreams],
   );
 
-  /** Oldest-first index for cycling the fixed sandy palette. */
+  /** Palette index follows add order. */
   const lifeAreaCreationIndex = useMemo(() => {
-    const byAge = [...dreams].sort(
-      (a, b) =>
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-    );
     const map = new Map<string, number>();
-    byAge.forEach((d, i) => map.set(d.id, i));
+    orderedDreams.forEach((d, i) => map.set(d.id, i));
     return map;
-  }, [dreams]);
+  }, [orderedDreams]);
+
+  /** Same add-order for list sections (createdAt; ignores later edits). */
+  const orderedValues = useMemo(
+    () =>
+      [...values].sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      ),
+    [values],
+  );
+  const orderedQuotes = useMemo(
+    () =>
+      [...quotes].sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      ),
+    [quotes],
+  );
+  const orderedRegrets = useMemo(
+    () =>
+      [...regrets].sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      ),
+    [regrets],
+  );
+  const orderedQuestions = useMemo(
+    () =>
+      [...questions].sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      ),
+    [questions],
+  );
 
   const unusedPresets = useMemo(
     () => availablePresets({ v: 1, questions }),
@@ -406,8 +443,8 @@ export function PlanHomeClient() {
   );
 
   const lifeAreaTitles = useMemo(
-    () => sortedDreams.map((d) => d.title.trim()).filter(Boolean),
-    [sortedDreams],
+    () => orderedDreams.map((d) => d.title.trim()).filter(Boolean),
+    [orderedDreams],
   );
 
   useEffect(() => {
@@ -744,10 +781,19 @@ export function PlanHomeClient() {
     setDraftAnswer("");
   }
 
+  function handleRemoveQuestion(id: string) {
+    const next = removeIdeateReflectionQuestion({ v: 1, questions }, id);
+    persistQuestions(next.questions);
+    if (activeQuestionId === id) {
+      setActiveQuestionId(null);
+      setDraftAnswer("");
+    }
+  }
+
   const resistanceThreads = globalResistanceThreads(loadIdeateStore());
   const questionCells =
-    questions.length > 0
-      ? questions
+    orderedQuestions.length > 0
+      ? orderedQuestions
       : unusedPresets.slice(0, 4).map((p) => ({
           id: `preset-preview-${p.id}`,
           text: p.text,
@@ -757,7 +803,7 @@ export function PlanHomeClient() {
           isPreview: true as const,
         }));
 
-  if (sessionActive && !cloudReady) {
+  if (!hydrated || (sessionActive && !cloudReady)) {
     return (
       <div className="min-h-[calc(100vh-3.5rem)] pb-16">
         <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
@@ -768,25 +814,25 @@ export function PlanHomeClient() {
   }
 
   const valuesSummary =
-    values.length === 0
+    orderedValues.length === 0
       ? "No values yet"
-      : values
+      : orderedValues
           .map((v) => v.text.trim())
           .filter(Boolean)
           .slice(0, 3)
           .join(" · ");
   const questionsSummary =
-    questions.length === 0
+    orderedQuestions.length === 0
       ? "No questions yet"
-      : questions[0]!.text.trim() || "Untitled question";
+      : orderedQuestions[0]!.text.trim() || "Untitled question";
   const regretsSummary =
-    regrets.length === 0
+    orderedRegrets.length === 0
       ? "No entries yet"
-      : regrets[0]!.statement.trim() || "Untitled";
+      : orderedRegrets[0]!.statement.trim() || "Untitled";
   const quotesSummary =
-    quotes.length === 0
+    orderedQuotes.length === 0
       ? "No quotes yet"
-      : quotes[0]!.text.trim() || "Untitled";
+      : orderedQuotes[0]!.text.trim() || "Untitled";
 
   const heroBgOption = getIdeateHeroBgOption(heroBg);
 
@@ -1016,7 +1062,7 @@ export function PlanHomeClient() {
         <section className="pb-8 pt-8 sm:pb-10 sm:pt-10" aria-labelledby="ideate-life-areas-heading">
           <h2
             id="ideate-life-areas-heading"
-            className="mb-1.5 font-sans text-[15px] font-medium uppercase tracking-[0.08em] text-[#1E2530] dark:text-foreground"
+            className="mb-1.5 font-sans text-[15px] font-medium uppercase tracking-[0.08em] text-muted"
           >
             Your life areas
           </h2>
@@ -1024,7 +1070,7 @@ export function PlanHomeClient() {
             Add the areas of your life you want to grow.
           </p>
           <ul className="grid grid-cols-2 gap-[10px] sm:grid-cols-4">
-            {sortedDreams.map((d) => {
+            {orderedDreams.map((d) => {
               const snippet = lifeAreaSnippet(d);
               const bgVars = lifeAreaCardBgVars(
                 lifeAreaCreationIndex.get(d.id) ?? 0,
@@ -1063,37 +1109,49 @@ export function PlanHomeClient() {
               );
             })}
 
-            <li className="min-w-0">
+            {/* Incomplete row: dashed tile fills remaining slots. Full rows of 4: compact button below. */}
+            {orderedDreams.length === 0 || orderedDreams.length % 4 !== 0 ? (
+              <li className="min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setModalOpen(true)}
+                  aria-label="Add new life area"
+                  className="group flex aspect-square w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-[4px] border-2 border-dashed bg-transparent transition-[border-color] duration-200"
+                  style={{
+                    borderColor: "rgba(180,140,80,0.35)",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = "rgba(180,140,80,0.6)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = "rgba(180,140,80,0.35)";
+                  }}
+                >
+                  <span className="px-2 text-center font-sans text-[13px] font-bold uppercase tracking-[0.06em] text-[#1E2530] opacity-0 transition-opacity duration-200 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 sm:text-[14px] dark:text-[#F4F0E8]">
+                    Add new life area
+                  </span>
+                  <span
+                    className="font-sans font-light leading-none text-[rgba(180,140,80,0.45)] transition-[transform,color] duration-200 ease-out group-hover:scale-125 group-hover:text-[#1E2530] group-focus-visible:scale-125 group-focus-visible:text-[#1E2530] dark:group-hover:text-[#F4F0E8] dark:group-focus-visible:text-[#F4F0E8]"
+                    style={{ fontSize: "36px" }}
+                    aria-hidden
+                  >
+                    +
+                  </span>
+                </button>
+              </li>
+            ) : null}
+          </ul>
+          {orderedDreams.length > 0 && orderedDreams.length % 4 === 0 ? (
+            <div className="mt-7 flex justify-center">
               <button
                 type="button"
                 onClick={() => setModalOpen(true)}
-                aria-label="Add new life area"
-                className="group flex aspect-square w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-[4px] border-2 border-dashed bg-transparent transition-[border-color] duration-200"
-                style={{
-                  borderColor: "rgba(180,140,80,0.35)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "rgba(180,140,80,0.6)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "rgba(180,140,80,0.35)";
-                }}
+                className="inline-flex cursor-pointer items-center justify-center rounded-full accent-fill-gradient px-4 py-2 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
               >
-                <span
-                  className="px-2 text-center font-sans text-[13px] font-bold uppercase tracking-[0.06em] text-[#1E2530] opacity-0 transition-opacity duration-200 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 sm:text-[14px] dark:text-[#F4F0E8]"
-                >
-                  Add new life area
-                </span>
-                <span
-                  className="font-sans font-light leading-none text-[rgba(180,140,80,0.45)] transition-[transform,color] duration-200 ease-out group-hover:scale-125 group-hover:text-[#1E2530] group-focus-visible:scale-125 group-focus-visible:text-[#1E2530] dark:group-hover:text-[#F4F0E8] dark:group-focus-visible:text-[#F4F0E8]"
-                  style={{ fontSize: "36px" }}
-                  aria-hidden
-                >
-                  +
-                </span>
+                + Add new life area
               </button>
-            </li>
-          </ul>
+            </div>
+          ) : null}
         </section>
 
         {/* —— Values —— */}
@@ -1111,7 +1169,7 @@ export function PlanHomeClient() {
 
           {values.length === 0 && !addingValue ? null : (
             <ul className="flex flex-col gap-4">
-              {values.map((v, i) => (
+              {orderedValues.map((v, i) => (
                 <li key={v.id} className="group">
                   {editingValueId === v.id ? (
                     <form
@@ -1254,8 +1312,8 @@ export function PlanHomeClient() {
           ) : null}
 
           {quotes.length === 0 && !addingQuote ? null : (
-            <ul className="flex flex-col gap-10">
-              {quotes.map((q) => (
+            <ul className="flex flex-col gap-6">
+              {orderedQuotes.map((q) => (
                 <li key={q.id} className="group relative">
                   {editingQuoteId === q.id ? (
                     <form
@@ -1278,7 +1336,7 @@ export function PlanHomeClient() {
                         onChange={(e) => setEditQuoteDraft(e.target.value)}
                         rows={3}
                         maxLength={400}
-                        className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-center font-display text-xl outline-none ring-accent/30 focus:ring-2"
+                        className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-left font-display text-xl outline-none ring-accent/30 focus:ring-2"
                       />
                       <label
                         className="sr-only"
@@ -1318,17 +1376,17 @@ export function PlanHomeClient() {
                       </div>
                     </form>
                   ) : (
-                    <>
+                    <div className="flex items-baseline gap-3">
                       <button
                         type="button"
                         onClick={() => openEditQuote(q)}
-                        className="w-full cursor-pointer"
+                        className="flex min-w-0 flex-1 cursor-pointer flex-wrap items-baseline gap-x-4 gap-y-1 text-left transition-opacity hover:opacity-80"
                       >
-                        <p className="text-center font-display text-[22px] font-normal italic leading-[1.4] text-foreground transition-opacity hover:opacity-80">
+                        <p className="min-w-0 flex-1 font-display text-[22px] font-normal italic leading-[1.4] text-foreground">
                           &ldquo;{q.text}&rdquo;
                         </p>
                         {q.attribution?.trim() ? (
-                          <p className="mt-2 text-center font-sans text-[13px] font-normal text-muted">
+                          <p className="shrink-0 font-sans text-[13px] font-normal text-muted">
                             — {q.attribution.trim()}
                           </p>
                         ) : null}
@@ -1336,12 +1394,12 @@ export function PlanHomeClient() {
                       <button
                         type="button"
                         onClick={() => handleRemoveQuote(q.id)}
-                        className="absolute right-0 top-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                        className="shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
                         aria-label="Remove quote"
                       >
                         Remove
                       </button>
-                    </>
+                    </div>
                   )}
                 </li>
               ))}
@@ -1646,13 +1704,27 @@ export function PlanHomeClient() {
                       )}
                     </div>
                     {!isPreview ? (
-                      <button
-                        type="button"
-                        onClick={openOrAdd}
-                        className="mt-0.5 shrink-0 cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
-                      >
-                        Edit answer
-                      </button>
+                      <div className="mt-0.5 flex shrink-0 flex-col items-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={openOrAdd}
+                          className="cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                        >
+                          Edit answer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleRemoveQuestion(
+                              (q as IdeateReflectionQuestion).id,
+                            )
+                          }
+                          className="cursor-pointer font-sans text-xs text-faint opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
+                          aria-label="Remove question"
+                        >
+                          Remove
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                 </li>
@@ -1779,7 +1851,8 @@ export function PlanHomeClient() {
           </div>
         </IdeateCollapsibleSection>
 
-        {/* —— Regrets —— */}
+        {/* —— Regrets — temporarily hidden —— */}
+        {false && (
         <IdeateCollapsibleSection
           eyebrow="Regret minimisation"
           summary={regretsSummary}
@@ -1795,7 +1868,7 @@ export function PlanHomeClient() {
 
           {regrets.length === 0 && !addingRegret ? null : (
             <ul className="flex flex-col gap-6">
-              {regrets.map((r) => (
+              {orderedRegrets.map((r) => (
                 <li key={r.id} className="group relative">
                   <p className="mb-1.5 font-sans text-[10px] font-medium uppercase tracking-[0.08em] text-muted">
                     {r.category?.trim() || "—"}
@@ -1888,6 +1961,7 @@ export function PlanHomeClient() {
             </div>
           )}
         </IdeateCollapsibleSection>
+        )}
       </section>
 
       {modalOpen ? (
@@ -1911,7 +1985,8 @@ export function PlanHomeClient() {
               New life area
             </h2>
             <p className="mt-1 text-sm text-muted">
-              Name it, and optionally seed the dream, resistance, and vision.
+              Name it, and optionally seed the dream, resistance, and a lived
+              moment.
             </p>
 
             <label className="mt-5 block text-sm font-medium text-foreground">
@@ -1948,6 +2023,7 @@ export function PlanHomeClient() {
                     <IconWind size={15} stroke={1.75} aria-hidden />
                   </span>
                   What&apos;s in the way?
+                  <span className="font-normal text-muted">(optional)</span>
                 </span>
                 <textarea
                   value={newObstacle}
@@ -1963,12 +2039,13 @@ export function PlanHomeClient() {
                   <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-[#5A7A5E]/15 text-[#5A7A5E]">
                     <IconEye size={15} stroke={1.75} aria-hidden />
                   </span>
-                  The vision
+                  Describe the moment
+                  <span className="font-normal text-muted">(optional)</span>
                 </span>
                 <textarea
                   value={newVision}
                   onChange={(e) => setNewVision(e.target.value)}
-                  placeholder="A single moment when this has already happened."
+                  placeholder="A concrete scene where this has already happened — where you are, what you notice, how it feels."
                   rows={2}
                   className="mt-2 w-full resize-none rounded-xl border border-[#E5DFD0] bg-card px-3 py-2.5 text-sm leading-relaxed outline-none ring-accent/30 focus:ring-2 dark:border-border"
                 />
@@ -2031,24 +2108,33 @@ export function PlanHomeClient() {
               autoFocus
               className="mt-5 w-full resize-none rounded-2xl border border-border bg-background px-4 py-3 text-sm leading-relaxed outline-none ring-accent/25 focus:ring-2"
             />
-            <div className="mt-5 flex justify-end gap-2">
+            <div className="mt-5 flex items-center justify-between gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  setActiveQuestionId(null);
-                  setDraftAnswer("");
-                }}
-                className="rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:bg-accent-soft/30 hover:text-foreground"
+                onClick={() => handleRemoveQuestion(activeQuestion.id)}
+                className="cursor-pointer text-sm font-medium text-muted transition-colors hover:text-foreground"
               >
-                Cancel
+                Remove question
               </button>
-              <button
-                type="button"
-                onClick={() => saveActiveAnswer()}
-                className="rounded-full accent-fill-gradient px-4 py-2 text-sm font-medium text-on-accent transition-opacity hover:opacity-90"
-              >
-                Save
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveQuestionId(null);
+                    setDraftAnswer("");
+                  }}
+                  className="rounded-full border border-border px-4 py-2 text-sm font-medium text-muted transition-colors hover:bg-accent-soft/30 hover:text-foreground"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => saveActiveAnswer()}
+                  className="rounded-full accent-fill-gradient px-4 py-2 text-sm font-medium text-on-accent transition-opacity hover:opacity-90"
+                >
+                  Save
+                </button>
+              </div>
             </div>
           </div>
         </div>
