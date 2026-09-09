@@ -1080,14 +1080,13 @@ export function PlanHomeClient() {
                 }}
               >
                 <span
-                  className="px-2 text-center font-sans text-[13px] font-medium uppercase tracking-[0.06em] opacity-0 transition-opacity duration-200 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 sm:text-[14px]"
-                  style={{ color: "rgba(180,140,80,0.7)" }}
+                  className="px-2 text-center font-sans text-[13px] font-bold uppercase tracking-[0.06em] text-[#1E2530] opacity-0 transition-opacity duration-200 ease-out group-hover:opacity-100 group-focus-visible:opacity-100 sm:text-[14px] dark:text-[#F4F0E8]"
                 >
                   Add new life area
                 </span>
                 <span
-                  className="font-sans font-light leading-none transition-transform duration-200 ease-out group-hover:scale-125 group-focus-visible:scale-125"
-                  style={{ color: "rgba(180,140,80,0.45)", fontSize: "36px" }}
+                  className="font-sans font-light leading-none text-[rgba(180,140,80,0.45)] transition-[transform,color] duration-200 ease-out group-hover:scale-125 group-hover:text-[#1E2530] group-focus-visible:scale-125 group-focus-visible:text-[#1E2530] dark:group-hover:text-[#F4F0E8] dark:group-focus-visible:text-[#F4F0E8]"
+                  style={{ fontSize: "36px" }}
                   aria-hidden
                 >
                   +
