@@ -84,9 +84,9 @@ function SignInPromptInner({ onDismiss, nextPath }: Props) {
     setError(null);
     setGuestBusy(true);
     try {
-      exitMarketingPreviewMode();
       await loginAsMedimadeGuest();
-      router.replace(next);
+      exitMarketingPreviewMode();
+      window.location.assign(next);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not start guest session",

@@ -198,14 +198,6 @@ export async function loginAsMedimadeGuest(): Promise<MedimadeMagicLinkVerifyRes
     result.displayName,
     result.refreshToken ?? null,
   );
-  // Prefetch Ideate into memory before navigation so /ideate/my does not paint empty.
-  try {
-    const cloud = await import("@/lib/ideate-cloud");
-    cloud.clearIdeateSignedInWorkingCopy();
-    await cloud.pullIdeateStoreFromCloud({ force: true });
-  } catch (err) {
-    console.error("[auth/guest] ideate prefetch failed", err);
-  }
   return result;
 }
 

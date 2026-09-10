@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { Moon, Sun } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { LogoMark } from "@/components/logo-mark";
@@ -73,13 +73,13 @@ function ColorSchemeToggle({ className = "" }: { className?: string }) {
 
 export function SiteHeader() {
   const pathname = usePathname() || "/";
-  const router = useRouter();
   const prevPathnameRef = useRef(pathname);
   const mobileMenuRef = useRef<HTMLDetailsElement | null>(null);
   const [hasSession, setHasSession] = useState(false);
   const [marketingPreview, setMarketingPreview] = useState(false);
   const [sessionLabel, setSessionLabel] = useState<string | null>(null);
   const [guestBusy, setGuestBusy] = useState(false);
+  const [guestError, setGuestError] = useState<string | null>(null);
 
   useEffect(() => {
     if (prevPathnameRef.current !== pathname) {
@@ -109,13 +109,20 @@ export function SiteHeader() {
     if (mobileMenuRef.current) mobileMenuRef.current.open = false;
   };
 
+  /** Always performs a fresh guest login (JWT in localStorage — cookies optional). */
   async function previewAsGuest() {
     setGuestBusy(true);
+    setGuestError(null);
     try {
-      exitMarketingPreviewMode();
       await loginAsMedimadeGuest();
-      router.replace("/");
-    } catch {
+      exitMarketingPreviewMode();
+      // Hard navigation so app chrome mounts even if SPA listeners race.
+      window.location.assign("/");
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Guest login failed";
+      console.error("[preview-as-guest]", err);
+      setGuestError(msg);
       setGuestBusy(false);
     }
   }
@@ -288,16 +295,26 @@ export function SiteHeader() {
             </details>
           </div>
         </div>
-        <div className="flex min-w-0 items-center justify-end pr-4 sm:pr-6">
+        <div className="relative flex min-w-0 items-center justify-end pr-4 sm:pr-6">
           {!showSignedInChrome ? (
-            <AlphaChromeButton
-              className="hidden shrink-0 sm:inline-flex"
-              disabled={guestBusy}
-              title="Alpha — signs in as the shared guest account"
-              onClick={() => void previewAsGuest()}
-            >
-              {guestBusy ? "Starting…" : "Preview app as guest"}
-            </AlphaChromeButton>
+            <div className="hidden flex-col items-end gap-1 sm:flex">
+              <AlphaChromeButton
+                className="shrink-0"
+                disabled={guestBusy}
+                title="Alpha — signs in as the shared guest account"
+                onClick={() => void previewAsGuest()}
+              >
+                {guestBusy ? "Starting…" : "Preview app as guest"}
+              </AlphaChromeButton>
+              {guestError ? (
+                <p
+                  className="max-w-[14rem] text-right font-mono text-[10px] leading-snug text-danger"
+                  role="alert"
+                >
+                  {guestError}
+                </p>
+              ) : null}
+            </div>
           ) : null}
         </div>
       </div>

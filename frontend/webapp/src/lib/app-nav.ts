@@ -219,12 +219,6 @@ export function buildAppBreadcrumbs(
       ];
     }
     if (pathname.startsWith("/ideate/my")) {
-      if (new URLSearchParams(search).get("new") === "1") {
-        return [
-          { label: "Ideate", href: "/ideate/my" },
-          { label: "New life area", href: null },
-        ];
-      }
       return [
         { label: "Ideate", href: "/ideate/my" },
         { label: "Overview", href: null },
