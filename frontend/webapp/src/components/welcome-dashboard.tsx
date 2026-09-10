@@ -4,8 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { IconArrowRight } from "@tabler/icons-react";
 import {
+  ensureMedimadeSession,
   getMedimadeSessionDisplayName,
   getMedimadeSessionEmail,
+  getMedimadeSessionJwt,
   isMedimadeSessionActive,
 } from "@/lib/auth-session";
 import {
@@ -457,45 +459,89 @@ export function WelcomeDashboard() {
   }, []);
 
   useEffect(() => {
-    const apply = (entries: JournalEntry[]) => {
+    let cancelled = false;
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+
+    const applyJournal = (entries: JournalEntry[]) => {
       const real = entries.filter((e) => !isDemoJournalEntry(e));
       const sorted = [...real].sort(
         (a, b) =>
           new Date(b.updatedAt || b.createdAt).getTime() -
           new Date(a.updatedAt || a.createdAt).getTime(),
       );
-      setJournalEntries(sorted);
+      if (!cancelled) setJournalEntries(sorted);
     };
-    apply(withoutDemoJournalEntries(loadJournalStoreRaw()).entries);
-    void fetchJournalStoreRemote()
-      .then((remote) => {
-        if (remote?.entries) apply(remote.entries);
-      })
-      .catch(() => {
-        /* keep local */
-      });
-  }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
+    const refreshJournal = () => {
+      applyJournal(withoutDemoJournalEntries(loadJournalStoreRaw()).entries);
+      if (!isMedimadeSessionActive() || !getMedimadeSessionJwt()) return;
+      void fetchJournalStoreRemote()
+        .then((remote) => {
+          if (remote?.entries) applyJournal(remote.entries);
+        })
+        .catch(() => {
+          /* keep local */
+        });
+    };
+
+    const scheduleLibraryRetry = () => {
+      const t = setTimeout(() => {
+        timers.delete(t);
+        void refreshLibrary({ isRetry: true });
+      }, 400);
+      timers.add(t);
+    };
+
+    const refreshLibrary = async (opts?: { isRetry?: boolean }) => {
+      if (!isMedimadeSessionActive()) {
+        if (!cancelled) {
+          setMeditations([]);
+          setLibraryReady(true);
+        }
+        return;
+      }
       try {
+        await ensureMedimadeSession();
+        if (cancelled) return;
+        if (!getMedimadeSessionJwt()) {
+          if (!opts?.isRetry) scheduleLibraryRetry();
+          else if (!cancelled) setLibraryReady(true);
+          return;
+        }
         const items = await listLibraryMeditations();
+        if (cancelled) return;
         const visible = items.filter(
           (x) => x.catalogued && x.archived !== true && x.isDraft !== true,
         );
         visible.sort((a, b) =>
           (b.createdAt ?? "").localeCompare(a.createdAt ?? ""),
         );
-        if (!cancelled) setMeditations(visible);
+        setMeditations(visible);
+        setLibraryReady(true);
       } catch {
-        if (!cancelled) setMeditations([]);
-      } finally {
-        if (!cancelled) setLibraryReady(true);
+        if (cancelled) return;
+        if (!opts?.isRetry) {
+          scheduleLibraryRetry();
+          return;
+        }
+        setMeditations([]);
+        setLibraryReady(true);
       }
-    })();
+    };
+
+    refreshJournal();
+    void refreshLibrary();
+
+    const onSession = () => {
+      refreshJournal();
+      void refreshLibrary();
+    };
+    window.addEventListener("medimade-session-changed", onSession);
     return () => {
       cancelled = true;
+      for (const t of timers) clearTimeout(t);
+      timers.clear();
+      window.removeEventListener("medimade-session-changed", onSession);
     };
   }, []);
 
