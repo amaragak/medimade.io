@@ -397,7 +397,7 @@ body {
   }
 }
 
-.mesh-hero {
+  .mesh-hero {
   background-color: var(--background);
   background-image:
     radial-gradient(
@@ -886,18 +886,18 @@ main[data-app-layout="signed-in"] .page-pattern-tile {
 }
 
 .dark .journal-voice-clip-card {
-  background-image:
-    radial-gradient(
-      ellipse 90% 70% at 100% 0%,
-      color-mix(in srgb, var(--accent) 9%, transparent),
-      transparent 50%
-    ),
-    radial-gradient(
-      ellipse 60% 50% at 0% 100%,
-      color-mix(in srgb, var(--gold) 8%, transparent),
-      transparent 46%
-    );
-}
+    background-image:
+      radial-gradient(
+        ellipse 90% 70% at 100% 0%,
+        color-mix(in srgb, var(--accent) 9%, transparent),
+        transparent 50%
+      ),
+      radial-gradient(
+        ellipse 60% 50% at 0% 100%,
+        color-mix(in srgb, var(--gold) 8%, transparent),
+        transparent 46%
+      );
+  }
 
 
 /*
