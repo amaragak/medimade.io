@@ -58,6 +58,7 @@ import {
   type PendingLibraryGeneration,
 } from "@/lib/pending-library-generations";
 import { CommunityCategoryGrid } from "@/components/community-category-grid";
+import { AppPrimaryTabsDesktop } from "@/components/app-primary-tabs";
 import { SoundscapePicker } from "@/components/soundscape-picker";
 import { playWithLeadBuffer } from "@/lib/audio-lead-buffer";
 import {
@@ -2493,7 +2494,7 @@ export default function LibraryView({
     sortBy !== "newest" || categoryFilter !== "all";
 
   const mobileSearchFilterRow = (
-    <div className="flex items-center gap-2 sm:hidden">
+    <div className="flex items-center gap-2 md:hidden">
       <SearchInput
         className="min-w-0 flex-1"
         inputRef={mobileSearchRef}
@@ -2542,47 +2543,35 @@ export default function LibraryView({
   return (
     <>
     <div
-      className="mx-auto w-full max-w-6xl min-w-0 px-4 pt-3 pb-10 sm:px-6 sm:py-10 [scrollbar-gutter:stable]"
+      className="mx-auto w-full max-w-6xl min-w-0 px-4 pt-3 pb-10 sm:px-6 sm:pt-4 sm:pb-10 [scrollbar-gutter:stable]"
     >
       <header className="w-full min-w-0">
-        <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-3">
-          <h1 className="shrink-0 font-display text-3xl font-medium tracking-tight">
-            Library
-          </h1>
-          {/* Tablet+ : tabs + create text (unchanged) */}
-          <div className="hidden min-w-0 flex-wrap items-center justify-end gap-2 sm:flex">
-            <div
-              className="inline-flex max-w-full flex-wrap rounded-xl border border-border bg-card p-1"
-              role="tablist"
-              aria-label="Library section"
-            >
-              {LIBRARY_MAIN_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={libraryTab === tab.id}
-                  onClick={() => goToLibraryTab(tab.id)}
-                  className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                    libraryTab === tab.id
-                      ? "bg-nav-active text-nav-foreground"
-                      : "text-muted hover:text-foreground"
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-            <Link
-              href="/meditate/create"
-              className="shrink-0 cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
-            >
-              + Create new
-            </Link>
+        <AppPrimaryTabsDesktop>
+          <div
+            className="inline-flex max-w-full flex-nowrap rounded-xl border border-border bg-card p-1"
+            role="tablist"
+            aria-label="Library section"
+          >
+            {LIBRARY_MAIN_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={libraryTab === tab.id}
+                onClick={() => goToLibraryTab(tab.id)}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                  libraryTab === tab.id
+                    ? "bg-nav-active text-nav-foreground"
+                    : "text-muted hover:text-foreground"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-        </div>
+        </AppPrimaryTabsDesktop>
         {/* Mobile: compact tabs + icon create on one row */}
-        <div className="mt-3 flex items-center gap-2 sm:hidden">
+        <div className="flex items-center gap-2 md:hidden">
           <div
             className="inline-flex min-w-0 flex-1 rounded-xl border border-border bg-card p-0.5"
             role="tablist"
@@ -2615,8 +2604,8 @@ export default function LibraryView({
         </div>
         {libraryTab === "meditations" ? (
           <>
-            <div className="mt-3 sm:hidden">{mobileSearchFilterRow}</div>
-            <div className="mt-4 hidden w-full flex-wrap items-center gap-3 sm:flex">
+            <div className="mt-3 md:hidden">{mobileSearchFilterRow}</div>
+            <div className="mt-3 hidden w-full flex-wrap items-center gap-3 md:flex">
             <div className="flex shrink-0 items-center gap-3">
               {libraryTab === "meditations" ? (
               <button
@@ -2704,8 +2693,24 @@ export default function LibraryView({
             </div>
             {searchInput}
             <div className="shrink-0">{layoutToggle}</div>
+            <Link
+              href="/meditate/create"
+              className="ml-auto shrink-0 cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+            >
+              + Create new
+            </Link>
           </div>
           </>
+        ) : null}
+        {libraryTab === "programs" ? (
+          <div className="mt-3 hidden justify-end md:flex">
+            <Link
+              href="/meditate/create"
+              className="shrink-0 cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+            >
+              + Create new
+            </Link>
+          </div>
         ) : null}
       </header>
 
@@ -2716,15 +2721,21 @@ export default function LibraryView({
             onSelect={setCategoryFilter}
           />
           <div
-            className="sm:hidden"
+            className="md:hidden"
             style={{ height: 11, minHeight: 11, width: "100%" }}
             aria-hidden
           />
           {mobileSearchFilterRow}
-          <div className="mt-8 hidden w-full flex-wrap items-center gap-3 sm:flex">
+          <div className="mt-3 hidden w-full flex-wrap items-center gap-3 md:flex">
             <div className="shrink-0">{sortDropdown}</div>
             {searchInput}
             <div className="shrink-0">{layoutToggle}</div>
+            <Link
+              href="/meditate/create"
+              className="ml-auto shrink-0 cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+            >
+              + Create new
+            </Link>
           </div>
         </>
       ) : null}

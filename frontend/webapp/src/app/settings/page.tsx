@@ -4,16 +4,8 @@ export const metadata = {
 
 export default function SettingsPage() {
   return (
-    <div className="mx-auto max-w-3xl px-4 pt-3 pb-10 sm:px-6 sm:py-10">
-      <h1 className="font-display text-3xl font-medium tracking-tight">
-        API & integrations
-      </h1>
-      <p className="mt-2 text-muted">
-        Programmatic generation, webhooks, and tier limits—wire your own clients
-        or automations.
-      </p>
-
-      <section className="mt-10 rounded-2xl border border-border bg-card p-6">
+    <div className="mx-auto max-w-3xl px-4 pt-3 pb-10 sm:px-6 sm:pt-4 sm:pb-10">
+      <section className="rounded-2xl border border-border bg-card p-6">
         <h2 className="text-sm font-semibold">API key</h2>
         <p className="mt-1 text-xs text-muted">
           Keys are scoped by environment; rotate from the console when shipped.

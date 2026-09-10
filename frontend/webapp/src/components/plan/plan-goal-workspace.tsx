@@ -184,93 +184,83 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)]">
-      <div className="mx-auto max-w-6xl px-4 pt-3 sm:px-6 sm:pt-14">
-        <div className="pb-0">
-          <Link
-            href="/ideate/my"
-            className="text-xs font-semibold uppercase tracking-wide text-accent-link hover:underline"
+      <div className="mx-auto max-w-6xl px-4 pt-2 sm:px-6 sm:pt-3">
+        <div className="@container flex items-end justify-between gap-4 border-b border-border/70">
+          <nav
+            className="flex min-w-0 flex-wrap gap-x-6 gap-y-1"
+            role="tablist"
+            aria-label="Project views"
           >
-            ← Ideate
-          </Link>
-
-          <div className="mt-2 flex items-center justify-between gap-4">
-            <h1 className="min-w-0 font-display text-3xl font-medium tracking-tight text-[#1E2530] dark:text-foreground sm:text-4xl">
-              {dream.title.trim() || "Untitled"}
-            </h1>
-            <button
-              type="button"
-              disabled={!canGenerate}
-              onClick={() => generateMeditation()}
-              title={
-                canGenerate
-                  ? undefined
-                  : "Add a few lines to your vision first"
-              }
-              className="pro-header-cta shrink-0 cursor-pointer rounded-xl px-4 py-2.5 text-sm font-medium transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              Generate meditation
-            </button>
-          </div>
-
-          <div className="@container mt-4 flex items-end justify-between gap-4 border-b border-border/70">
-            <nav
-              className="flex min-w-0 flex-wrap gap-x-6 gap-y-1"
-              role="tablist"
-              aria-label="Project views"
-            >
-              {(
-                [
-                  { id: "vision" as const, label: "Vision" },
-                  { id: "steps" as const, label: "Tasks", count: stepCount },
-                  { id: "thoughts" as const, label: "Thoughts" },
-                  { id: "insights" as const, label: "Insights" },
-                  { id: "meditations" as const, label: "Meditations" },
-                  { id: "whiteboard" as const, label: "Whiteboard" },
-                ] as const
-              ).map((item) => {
-                const active = tab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setTab(item.id)}
-                    className={`-mb-px cursor-pointer border-b-2 pb-2.5 text-sm transition-colors ${
-                      active
-                        ? "border-selected font-semibold text-foreground"
-                        : "border-transparent text-muted hover:border-border hover:text-foreground"
-                    }`}
-                  >
-                    {item.label}
-                    {"count" in item && item.count > 0 ? (
-                      <span className="ml-1 font-normal text-muted">
-                        · {item.count}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </nav>
-            <div className="hidden shrink-0 pb-2.5 @[40rem]:block">
-              <PlanLifeAreaHeaderSummary dream={dream} />
-            </div>
-          </div>
+            {(
+              [
+                { id: "vision" as const, label: "Vision" },
+                { id: "steps" as const, label: "Tasks", count: stepCount },
+                { id: "thoughts" as const, label: "Thoughts" },
+                { id: "insights" as const, label: "Insights" },
+                { id: "meditations" as const, label: "Meditations" },
+                { id: "whiteboard" as const, label: "Whiteboard" },
+              ] as const
+            ).map((item) => {
+              const active = tab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setTab(item.id)}
+                  className={`-mb-px cursor-pointer border-b-2 pb-2.5 text-sm transition-colors ${
+                    active
+                      ? "border-selected font-semibold text-foreground"
+                      : "border-transparent text-muted hover:border-border hover:text-foreground"
+                  }`}
+                >
+                  {item.label}
+                  {"count" in item && item.count > 0 ? (
+                    <span className="ml-1 font-normal text-muted">
+                      · {item.count}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </nav>
+          <button
+            type="button"
+            disabled={!canGenerate}
+            onClick={() => generateMeditation()}
+            title={
+              canGenerate
+                ? undefined
+                : "Add a few lines to your vision first"
+            }
+            className="pro-header-cta mb-1.5 shrink-0 cursor-pointer rounded-xl px-4 py-2.5 text-sm font-medium transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Generate meditation
+          </button>
         </div>
+        {tab !== "vision" ? (
+          <div className="mt-3">
+            <PlanLifeAreaHeaderSummary dream={dream} />
+          </div>
+        ) : null}
       </div>
 
       {tab === "vision" ? (
         /* Truly full-bleed: outside max-w container */
-        <div className="mt-8 w-full pb-10">
+        <div className="mt-4 w-full pb-10">
           <PlanLifeAreaVisionSections
             dreamText={dream.dreamText}
             obstacleText={dream.obstacleText}
             visionText={dream.visionText}
             onPatch={(p) => patch(p)}
           />
+          <div className="mx-auto max-w-6xl px-4 pt-4 sm:px-6">
+            <PlanLifeAreaHeaderSummary dream={dream} />
+          </div>
         </div>
       ) : tab === "steps" ? (
-        <div className="mt-8 w-full pb-10">
+        <div className="mt-4 w-full pb-10">
           <PlanSubtasksPanel
             project={dream}
             onRefresh={load}
@@ -288,7 +278,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
               onPatch={(p) => patch(p)}
             />
           ) : tab === "insights" ? (
-            <div className="mt-8 space-y-6">
+            <div className="mt-4 space-y-6">
               <div className="max-w-2xl">
                 <PlanInsightsPanel
                   key={dream.id}

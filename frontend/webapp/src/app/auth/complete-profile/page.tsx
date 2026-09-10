@@ -10,16 +10,12 @@ import {
   setMedimadeSession,
 } from "@/lib/medimade-api";
 import { decodeMedimadeJwtPayloadUnverified } from "@/lib/medimade-jwt-payload";
-
-function safeNext(raw: string | null): string {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/";
-  return raw;
-}
+import { safeAuthNext } from "@/lib/app-routes";
 
 function CompleteProfileInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const next = safeNext(searchParams.get("next"));
+  const next = safeAuthNext(searchParams.get("next"), "/");
   const [phase, setPhase] = useState<"check" | "form" | "saving" | "err">("check");
   const [message, setMessage] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");

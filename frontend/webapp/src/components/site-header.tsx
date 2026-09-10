@@ -20,52 +20,18 @@ import {
 } from "@/lib/color-scheme";
 import { markSpaClientNavigation } from "@/lib/spa-client-nav";
 
-type NavSubItem = { href: string; label: string };
-
-/** Desktop flyout: Overview + app. Mobile uses overviewHref + app-only items. */
-const meditateFlyout: NavSubItem[] = [
-  { href: "/meditate", label: "Overview" },
-  { href: "/meditate/create", label: "Create" },
-  { href: "/meditate/library/creations", label: "Library" },
-  { href: "/meditate/sounds", label: "Sounds" },
-];
-const meditateMobileItems: NavSubItem[] = [
-  { href: "/meditate/create", label: "Create" },
-  { href: "/meditate/library/creations", label: "Library" },
-  { href: "/meditate/sounds", label: "Sounds" },
-];
-
-/** Desktop flyout: Overview + app. Mobile uses overviewHref + app-only items. */
-const journalFlyout: NavSubItem[] = [
-  { href: "/journal", label: "Overview" },
-  { href: "/journal/my", label: "Journal" },
-];
-const journalMobileItems: NavSubItem[] = [
-  { href: "/journal/my", label: "Journal" },
-];
-
-/** Desktop flyout: Overview + app. Mobile uses overviewHref + app-only items. */
-const ideateFlyout: NavSubItem[] = [
-  { href: "/ideate", label: "Overview" },
-  { href: "/ideate/my", label: "Ideate" },
-];
-const ideateMobileItems: NavSubItem[] = [
-  { href: "/ideate/my", label: "Ideate" },
-];
-
-const focusSub: NavSubItem[] = [];
-
-const utilityNav: NavSubItem[] = [
+/** Marketing / logged-out top nav — section roots only (no app flyouts). */
+const marketingNav: { href: string; label: string }[] = [
+  { href: "/meditate", label: "Meditate" },
+  { href: "/journal", label: "Journal" },
+  { href: "/ideate", label: "Ideate" },
+  { href: "/focus", label: "Focus" },
   { href: "/admin", label: "Admin" },
   { href: "/settings", label: "API" },
 ];
 
 function sectionActive(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}/`);
-}
-
-function ideateSectionActive(path: string): boolean {
-  return sectionActive(path, "/ideate") || sectionActive(path, "/dream");
 }
 
 function ColorSchemeToggle({ className = "" }: { className?: string }) {
@@ -98,127 +64,6 @@ function ColorSchemeToggle({ className = "" }: { className?: string }) {
   );
 }
 
-function NavFlyout({
-  href,
-  label,
-  items,
-  active,
-  isItemActive,
-}: {
-  href: string;
-  label: string;
-  items: NavSubItem[];
-  active: boolean;
-  isItemActive: (href: string) => boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const hasMenu = items.length > 0;
-
-  return (
-    <div
-      className="relative"
-      onMouseEnter={() => {
-        if (hasMenu) setOpen(true);
-      }}
-      onMouseLeave={() => setOpen(false)}
-      onFocusCapture={() => {
-        if (hasMenu) setOpen(true);
-      }}
-      onBlurCapture={(e) => {
-        const next = e.relatedTarget as Node | null;
-        if (next && e.currentTarget.contains(next)) return;
-        setOpen(false);
-      }}
-    >
-      <Link
-        href={href}
-        aria-haspopup={hasMenu ? "true" : undefined}
-        aria-expanded={hasMenu ? open : undefined}
-        className={`inline-flex rounded-lg px-3 py-2 text-sm transition-colors hover:bg-nav-active hover:text-nav-foreground ${
-          active
-            ? "bg-nav-active font-semibold text-nav-foreground"
-            : "text-nav-muted"
-        }`}
-      >
-        {label}
-      </Link>
-      {hasMenu && open ? (
-        <div
-          className="absolute left-0 top-full z-[110] min-w-[11rem] pt-1"
-          role="menu"
-          aria-label={label}
-        >
-          <div className="rounded-xl border border-border bg-card py-1 shadow-lg">
-            {items.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                role="menuitem"
-                aria-current={isItemActive(item.href) ? "page" : undefined}
-                className={`block px-3 py-2 text-sm transition-colors hover:bg-accent-soft/50 ${
-                  isItemActive(item.href)
-                    ? "font-semibold text-foreground"
-                    : "text-muted"
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function MobileSection({
-  title,
-  overviewHref,
-  overviewLabel = "Overview",
-  items,
-  pathname,
-  isItemActive,
-  onNavigate,
-}: {
-  title: string;
-  overviewHref: string;
-  overviewLabel?: string;
-  items: NavSubItem[];
-  pathname: string;
-  isItemActive: (href: string) => boolean;
-  onNavigate: () => void;
-}) {
-  return (
-    <>
-      <p className="px-4 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-muted">
-        {title}
-      </p>
-      <Link
-        href={overviewHref}
-        onClick={onNavigate}
-        className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
-          pathname === overviewHref ? "font-semibold text-foreground" : ""
-        }`}
-      >
-        {overviewLabel}
-      </Link>
-      {items.map((item) => (
-        <Link
-          key={item.href}
-          href={item.href}
-          onClick={onNavigate}
-          aria-current={isItemActive(item.href) ? "page" : undefined}
-          className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
-            isItemActive(item.href) ? "font-semibold text-foreground" : ""
-          }`}
-        >
-          {item.label}
-        </Link>
-      ))}
-    </>
-  );
-}
-
 export function SiteHeader() {
   const pathname = usePathname() || "/";
   const prevPathnameRef = useRef(pathname);
@@ -248,11 +93,6 @@ export function SiteHeader() {
     return () => window.removeEventListener("medimade-session-changed", sync);
   }, []);
 
-  const isItemActive = (href: string) =>
-    href === "/"
-      ? pathname === "/"
-      : pathname === href || pathname.startsWith(`${href}/`);
-
   const closeMobile = () => {
     if (mobileMenuRef.current) mobileMenuRef.current.open = false;
   };
@@ -269,10 +109,7 @@ export function SiteHeader() {
         <span className="site-header-glow-right absolute right-0 top-1/2 h-40 w-[22rem] translate-x-[42%] -translate-y-1/2 blur-xl" />
       </div>
       <div className="relative mx-auto flex h-14 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
-        <Link
-          href="/"
-          className="relative inline-flex items-center"
-        >
+        <Link href="/" className="relative inline-flex items-center">
           <LogoMark
             size={34}
             className="relative z-[1] top-px mr-[13px] shrink-0 text-accent-button"
@@ -282,48 +119,26 @@ export function SiteHeader() {
           </span>
         </Link>
         <nav className="hidden items-center gap-1 sm:flex">
-          <NavFlyout
-            href="/meditate"
-            label="Meditate"
-            items={meditateFlyout}
-            active={sectionActive(pathname, "/meditate")}
-            isItemActive={isItemActive}
-          />
-          <NavFlyout
-            href="/journal/my"
-            label="Journal"
-            items={journalFlyout}
-            active={sectionActive(pathname, "/journal")}
-            isItemActive={isItemActive}
-          />
-          <NavFlyout
-            href="/ideate/my"
-            label="Ideate"
-            items={ideateFlyout}
-            active={ideateSectionActive(pathname)}
-            isItemActive={isItemActive}
-          />
-          <NavFlyout
-            href="/focus"
-            label="Focus"
-            items={focusSub}
-            active={sectionActive(pathname, "/focus")}
-            isItemActive={isItemActive}
-          />
-          {utilityNav.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={isItemActive(item.href) ? "page" : undefined}
-              className={`rounded-lg px-3 py-2 text-sm transition-colors hover:bg-nav-active hover:text-nav-foreground ${
-                isItemActive(item.href)
-                  ? "bg-nav-active font-semibold text-nav-foreground"
-                  : "text-nav-muted"
-              }`}
-            >
-              {item.label}
-            </Link>
-          ))}
+          {marketingNav.map((item) => {
+            const active =
+              item.href === "/ideate"
+                ? sectionActive(pathname, "/ideate") ||
+                  sectionActive(pathname, "/dream")
+                : sectionActive(pathname, item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`rounded-lg px-3 py-2 text-sm transition-colors hover:bg-nav-active hover:text-nav-foreground ${
+                  active
+                    ? "bg-nav-active font-semibold text-nav-foreground"
+                    : "text-nav-muted"
+                }`}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
           <ColorSchemeToggle className="ml-1" />
           {signedIn ? (
             <div className="ml-1 flex items-center gap-2">
@@ -377,55 +192,21 @@ export function SiteHeader() {
               </svg>
             </summary>
             <div className="absolute right-0 mt-2 max-h-[70vh] w-56 overflow-y-auto rounded-xl border border-border bg-card py-2 shadow-lg">
-              <MobileSection
-                title="Meditate"
-                overviewHref="/meditate"
-                items={meditateMobileItems}
-                pathname={pathname}
-                isItemActive={isItemActive}
-                onNavigate={closeMobile}
-              />
-              <div className="my-2 border-t border-border" role="separator" />
-              <MobileSection
-                title="Journal"
-                overviewHref="/journal"
-                items={journalMobileItems}
-                pathname={pathname}
-                isItemActive={isItemActive}
-                onNavigate={closeMobile}
-              />
-              <div className="my-2 border-t border-border" role="separator" />
-              <MobileSection
-                title="Ideate"
-                overviewHref="/ideate"
-                items={ideateMobileItems}
-                pathname={pathname}
-                isItemActive={isItemActive}
-                onNavigate={closeMobile}
-              />
-              <div className="my-2 border-t border-border" role="separator" />
-              <MobileSection
-                title="Focus"
-                overviewHref="/focus"
-                items={focusSub}
-                pathname={pathname}
-                isItemActive={isItemActive}
-                onNavigate={closeMobile}
-              />
-              <div className="my-2 border-t border-border" role="separator" />
-              {utilityNav.map((item) => (
+              {marketingNav.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
                   onClick={closeMobile}
-                  aria-current={isItemActive(item.href) ? "page" : undefined}
                   className={`block px-4 py-2 text-sm hover:bg-accent-soft/50 ${
-                    isItemActive(item.href) ? "font-semibold text-foreground" : ""
+                    sectionActive(pathname, item.href)
+                      ? "font-semibold text-foreground"
+                      : "text-muted"
                   }`}
                 >
                   {item.label}
                 </Link>
               ))}
+              <div className="my-2 border-t border-border" role="separator" />
               {signedIn ? (
                 <button
                   type="button"
@@ -433,7 +214,7 @@ export function SiteHeader() {
                     clearMedimadeSession();
                     closeMobile();
                   }}
-                  className="block w-full px-4 py-2 text-left text-sm text-muted"
+                  className="block w-full px-4 py-2 text-left text-sm text-muted hover:bg-accent-soft/50"
                 >
                   Sign out
                 </button>
@@ -441,7 +222,7 @@ export function SiteHeader() {
                 <Link
                   href="/login"
                   onClick={closeMobile}
-                  className="block px-4 py-2 text-sm font-medium text-accent-link"
+                  className="block px-4 py-2 text-sm font-medium text-foreground hover:bg-accent-soft/50"
                 >
                   Sign in
                 </Link>
@@ -449,7 +230,7 @@ export function SiteHeader() {
               <Link
                 href="/pro"
                 onClick={closeMobile}
-                className="block px-4 py-2 text-sm font-medium text-accent-link"
+                className="block px-4 py-2 text-sm font-medium text-accent-link hover:bg-accent-soft/50"
               >
                 Pro
               </Link>

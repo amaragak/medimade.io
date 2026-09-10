@@ -17,6 +17,8 @@ const ACCESS_JWT_KEY = "mm_session_access_jwt_v1";
 const REFRESH_TOKEN_KEY = "mm_session_refresh_v1";
 /** Legacy — migrated into ACCESS_JWT_KEY then removed. */
 const LEGACY_JWT_KEY = "mm_session_jwt_v1";
+/** Legacy client-only guest flag — cleared on real login / logout. */
+const LEGACY_GUEST_KEY = "mm_session_guest_v1";
 
 /** Survive HMR so parallel refresh rotations cannot race across module instances. */
 const REFRESH_LOCK_KEY = "__mm_ensure_session_inflight__";
@@ -205,6 +207,16 @@ export function getMedimadeSessionDisplayName(): string | null {
 /** True if we have an access JWT or a remembered signed-in flag. */
 export function isMedimadeSessionActive(): boolean {
   if (typeof window === "undefined") return false;
+  // Drop legacy client-only guest sessions (no JWT) — guest is a real account now.
+  if (readStorage(LEGACY_GUEST_KEY) === "1" && !memoryAccessJwt) {
+    try {
+      window.localStorage.removeItem(LEGACY_GUEST_KEY);
+      window.localStorage.removeItem(ACTIVE_KEY);
+      window.localStorage.removeItem(DISPLAY_NAME_KEY);
+    } catch {
+      /* */
+    }
+  }
   hydrateAccessJwtFromStorage();
   if (memoryAccessJwt) return true;
   return readStorage(ACTIVE_KEY) === "1";
@@ -221,6 +233,7 @@ export function setMedimadeSession(
     const jwt = normalizeStoredJwt(token);
     if (!jwt) return;
     memoryAccessJwt = jwt;
+    writeStorage(LEGACY_GUEST_KEY, null);
     writeStorage(ACCESS_JWT_KEY, jwt);
     writeStorage(LEGACY_JWT_KEY, null);
     writeStorage(ACTIVE_KEY, "1");
@@ -257,6 +270,7 @@ export function clearMedimadeSession(): void {
     window.localStorage.removeItem(EMAIL_KEY);
     window.localStorage.removeItem(DISPLAY_NAME_KEY);
     window.localStorage.removeItem(ACTIVE_KEY);
+    window.localStorage.removeItem(LEGACY_GUEST_KEY);
   } catch {
     /* */
   }

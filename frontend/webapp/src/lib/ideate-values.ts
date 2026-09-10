@@ -71,8 +71,15 @@ function newId(prefix: string): string {
 function normalizeValue(x: unknown): IdeateValue | null {
   if (!x || typeof x !== "object") return null;
   const o = x as Record<string, unknown>;
-  if (typeof o.id !== "string" || typeof o.text !== "string") return null;
-  const text = o.text.trim().slice(0, MAX_TEXT);
+  if (typeof o.id !== "string") return null;
+  const rawText =
+    typeof o.text === "string"
+      ? o.text
+      : typeof o.label === "string"
+        ? o.label
+        : null;
+  if (typeof rawText !== "string") return null;
+  const text = rawText.trim().slice(0, MAX_TEXT);
   if (!text) return null;
   const createdAt = typeof o.createdAt === "string" ? o.createdAt : safeIso();
   return {

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   applyVisionBoardRefinement,
@@ -975,25 +974,10 @@ export function IdeateVisionBoardClient() {
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)] pb-16">
-      <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
-        <Link
-          href="/ideate/my"
-          className="text-sm font-medium text-accent-link transition-opacity hover:opacity-80"
-        >
-          ← Ideate
-        </Link>
-
-        <h1 className="mt-6 font-display text-2xl font-medium tracking-tight text-foreground sm:text-3xl">
-          Vision board
-        </h1>
-        <p className="mt-2 max-w-2xl text-base leading-relaxed text-muted">
-          Compose the mosaic that opens Ideate. Drag images from your library
-          into slots, or generate new ones below.
-        </p>
-
+      <section className="mx-auto max-w-6xl px-4 py-4 sm:px-6 sm:py-6">
         {/* Compose grid — page hero */}
         <div
-          className="mt-8 grid w-full grid-cols-4 gap-1"
+          className="grid w-full grid-cols-4 gap-1"
           style={{ gridTemplateColumns: "repeat(4, 1fr)" }}
           onDragLeave={(e) => {
             if (!e.currentTarget.contains(e.relatedTarget as Node)) {

@@ -313,7 +313,24 @@ export function PlanHomeClient() {
   }, []);
 
   const { ready: cloudReady, revision, signedIn } = useIdeateCloud();
-  const sessionActive = isMedimadeSessionActive();
+  const sessionActive = signedIn;
+
+  // Sidebar "Add a life area" deep-link (`/ideate/my?new=1`).
+  const newLifeAreaHandledRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("new") !== "1") {
+      newLifeAreaHandledRef.current = false;
+      return;
+    }
+    if (!hydrated || !cloudReady || newLifeAreaHandledRef.current) return;
+    newLifeAreaHandledRef.current = true;
+    setModalOpen(true);
+    params.delete("new");
+    const qs = params.toString();
+    router.replace(`/ideate/my${qs ? `?${qs}` : ""}${window.location.hash}`);
+  }, [hydrated, cloudReady, router]);
 
   // Guests never wait on the cloud provider — missing provider used to brick /ideate/my
   // on eternal "Loading…". Seed + paint from local demos immediately.
@@ -803,7 +820,7 @@ export function PlanHomeClient() {
           isPreview: true as const,
         }));
 
-  if (!hydrated || (sessionActive && !cloudReady)) {
+  if (!hydrated || !cloudReady) {
     return (
       <div className="min-h-[calc(100vh-3.5rem)] pb-16">
         <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6 sm:py-12">
@@ -1067,7 +1084,11 @@ export function PlanHomeClient() {
         ) : null}
 
         {/* —— Life areas —— */}
-        <section className="pb-8 pt-8 sm:pb-10 sm:pt-10" aria-labelledby="ideate-life-areas-heading">
+        <section
+          id="life-areas"
+          className="scroll-mt-20 pb-8 pt-8 sm:pb-10 sm:pt-10"
+          aria-labelledby="ideate-life-areas-heading"
+        >
           <h2
             id="ideate-life-areas-heading"
             className="mb-1.5 font-sans text-[15px] font-medium uppercase tracking-[0.08em] text-muted"

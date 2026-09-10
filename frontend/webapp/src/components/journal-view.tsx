@@ -26,6 +26,7 @@ import {
 import { SearchInput } from "@/components/search-input";
 import { Calendar, ChevronLeft, Folder, Import } from "lucide-react";
 import { JournalLockGate } from "@/components/journal-lock-gate";
+import { AppPrimaryTabsDesktop } from "@/components/app-primary-tabs";
 import {
   fetchJournalStoreRemote,
   getMedimadeApiBase,
@@ -47,7 +48,6 @@ import {
   isGratitudeEntry,
   journalEntryDraftChanged,
   journalEntryHasMeaningfulContent,
-  journalWritingStreakDays,
   loadJournalStoreRaw,
   localDateKey,
   localDateKeyFromIso,
@@ -762,11 +762,6 @@ export function JournalView() {
     [filteredTabEntries],
   );
 
-  const streakDays = useMemo(
-    () => journalWritingStreakDays(entries),
-    [entries],
-  );
-
   const folderFilterLabel =
     folders.find((f) => f.id === selectedFolderId)?.name ?? "All entries";
 
@@ -982,6 +977,20 @@ export function JournalView() {
     router.push(`/journal/my/${encodeURIComponent(e.id)}`);
   }, [flushSaveSync, persist, selectedFolderId, router]);
 
+  // Sidebar "New entry" deep-link (`/journal/my?new=1`).
+  const newEntryHandledRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("new") !== "1") {
+      newEntryHandledRef.current = false;
+      return;
+    }
+    if (!hydrated || newEntryHandledRef.current) return;
+    newEntryHandledRef.current = true;
+    createEntry();
+  }, [pathname, hydrated, createEntry]);
+
   const commitImport = useCallback(
     (rows: JournalImportPreviewRow[], batchId: string) => {
       flushSaveSync();
@@ -1163,14 +1172,60 @@ export function JournalView() {
 
   return (
     <JournalLockGate>
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-4 pt-2 pb-6 sm:px-6 sm:py-6">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-4 pt-2 pb-6 sm:px-6 sm:pt-4 sm:pb-6">
       <div
-        className={`mb-6 shrink-0 ${mobileComposeChrome ? "max-sm:hidden" : ""}`}
+        className={`shrink-0 ${mobileComposeChrome ? "max-sm:hidden" : ""} ${
+          importBatchId ? "mb-3" : "mb-3 md:mb-0"
+        }`}
       >
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <h1 className="font-display text-3xl font-medium tracking-tight">
-            Journal
-          </h1>
+        <AppPrimaryTabsDesktop>
+          <div
+            className="inline-flex max-w-full flex-nowrap rounded-xl border border-border bg-background p-1"
+            role="tablist"
+            aria-label="Journal section"
+          >
+            <Link
+              href={JOURNAL_SECTION_HREF.journal}
+              role="tab"
+              aria-selected={section === "journal"}
+              onClick={() => flushSaveSync()}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                section === "journal"
+                  ? "bg-selected text-on-selected"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              Journal
+            </Link>
+            <Link
+              href={JOURNAL_SECTION_HREF.gratitude}
+              role="tab"
+              aria-selected={section === "gratitude"}
+              onClick={() => flushSaveSync()}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                section === "gratitude"
+                  ? "bg-selected text-on-selected"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              Gratitudes
+            </Link>
+            <Link
+              href={JOURNAL_SECTION_HREF.insights}
+              role="tab"
+              aria-selected={section === "insights"}
+              onClick={() => flushSaveSync()}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                section === "insights"
+                  ? "bg-selected text-on-selected"
+                  : "text-muted hover:text-foreground"
+              }`}
+            >
+              Insights
+            </Link>
+          </div>
+        </AppPrimaryTabsDesktop>
+        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 md:hidden">
           <div
             className="inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
             role="tablist"
@@ -1217,13 +1272,6 @@ export function JournalView() {
             </Link>
           </div>
         </div>
-        {streakDays > 0 ? (
-          <p className="mt-2 text-sm text-foreground/80">
-            {streakDays === 1
-              ? "You wrote yesterday or today — come back when it feels right."
-              : `${streakDays} days in a row with a page. Gentle streak, not a score.`}
-          </p>
-        ) : null}
         {importBatchId ? (
           <p className="mt-2 text-sm text-muted">
             Showing just-imported pages.{" "}

@@ -10,6 +10,7 @@ import {
   setMedimadeSession,
   verifyMedimadeMagicLink,
 } from "@/lib/medimade-api";
+import { consumeAuthNext } from "@/lib/app-routes";
 
 type Phase = "working" | "needsName" | "savingName" | "err" | "redirect";
 
@@ -55,7 +56,7 @@ function VerifyInner() {
           result.refreshToken ?? null,
         );
         setPhase("redirect");
-        router.replace("/");
+        router.replace(consumeAuthNext("/"));
       } catch (e) {
         if (cancelled) return;
         setPhase("err");
@@ -80,7 +81,7 @@ function VerifyInner() {
       const email = getMedimadeSessionEmail();
       setMedimadeSession(token, email, displayName);
       setPhase("redirect");
-      router.replace("/");
+      router.replace(consumeAuthNext("/"));
     } catch (e) {
       setPhase("needsName");
       setMessage(e instanceof Error ? e.message : "Could not save your name");

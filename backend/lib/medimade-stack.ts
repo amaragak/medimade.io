@@ -149,6 +149,14 @@ export class MedimadeStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    /** Daily habit tracker: play events + manual checks per user/day. */
+    const habitsTable = new dynamodb.Table(this, "HabitsTable", {
+      partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     /** Shared famous-author quote libraries (Haiku-fetched, aliased by spelling variants). */
     const famousQuotesTable = new dynamodb.Table(this, "IdeateFamousQuotesTable", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -273,6 +281,23 @@ export class MedimadeStack extends cdk.Stack {
     usersTable.grantReadWriteData(authMagicVerify);
     refreshTable.grantReadWriteData(authMagicVerify);
     authJwtSecret.grantRead(authMagicVerify);
+
+    const authGuest = new lambda_nodejs.NodejsFunction(this, "AuthGuestFunction", {
+      entry: path.join(__dirname, "../lambdas/auth-guest.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      timeout: cdk.Duration.seconds(15),
+      memorySize: 256,
+      environment: {
+        USERS_TABLE_NAME: usersTable.tableName,
+        REFRESH_TABLE_NAME: refreshTable.tableName,
+        AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        AUTH_WEBAPP_ORIGIN: authWebappOrigin,
+      },
+    });
+    usersTable.grantReadWriteData(authGuest);
+    refreshTable.grantReadWriteData(authGuest);
+    authJwtSecret.grantRead(authGuest);
 
     const authRefresh = new lambda_nodejs.NodejsFunction(this, "AuthRefreshFunction", {
       entry: path.join(__dirname, "../lambdas/auth-refresh.ts"),
@@ -500,6 +525,14 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "AuthMagicVerifyIntegration",
         authMagicVerify,
+      ),
+    });
+    httpApi.addRoutes({
+      path: "/auth/guest",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "AuthGuestIntegration",
+        authGuest,
       ),
     });
     httpApi.addRoutes({
@@ -1417,6 +1450,63 @@ export class MedimadeStack extends cdk.Stack {
       integration: new integrations.HttpLambdaIntegration(
         "IdeateStoreIntegration",
         ideateStore,
+      ),
+    });
+
+    const dashboardDailyStatus = new lambda_nodejs.NodejsFunction(
+      this,
+      "DashboardDailyStatusFunction",
+      {
+        entry: path.join(__dirname, "../lambdas/dashboard-daily-status.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        timeout: cdk.Duration.seconds(30),
+        memorySize: 512,
+        environment: {
+          HABITS_TABLE_NAME: habitsTable.tableName,
+          JOURNAL_TABLE_NAME: journalTable.tableName,
+          IDEATE_TABLE_NAME: ideateTable.tableName,
+          AUTH_JWT_SECRET_ARN: authJwtSecret.secretArn,
+        },
+      },
+    );
+    habitsTable.grantReadWriteData(dashboardDailyStatus);
+    journalTable.grantReadData(dashboardDailyStatus);
+    ideateTable.grantReadData(dashboardDailyStatus);
+    authJwtSecret.grantRead(dashboardDailyStatus);
+
+    const dailyStatusIntegration = new integrations.HttpLambdaIntegration(
+      "DashboardDailyStatusIntegration",
+      dashboardDailyStatus,
+    );
+    const dailyStatusApiIntegration = new integrations.HttpLambdaIntegration(
+      "DashboardDailyStatusApiIntegration",
+      dashboardDailyStatus,
+    );
+    httpApi.addRoutes({
+      path: "/dashboard/daily-status",
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.PUT,
+        apigwv2.HttpMethod.OPTIONS,
+      ],
+      integration: dailyStatusIntegration,
+    });
+    httpApi.addRoutes({
+      path: "/api/dashboard/daily-status",
+      methods: [
+        apigwv2.HttpMethod.GET,
+        apigwv2.HttpMethod.PUT,
+        apigwv2.HttpMethod.OPTIONS,
+      ],
+      integration: dailyStatusApiIntegration,
+    });
+    httpApi.addRoutes({
+      path: "/dashboard/play-events",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.OPTIONS],
+      integration: new integrations.HttpLambdaIntegration(
+        "DashboardPlayEventsIntegration",
+        dashboardDailyStatus,
       ),
     });
 

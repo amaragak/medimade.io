@@ -46,9 +46,17 @@ function usePatternTileHeight(
   return heightPx;
 }
 
-export function MainShell({ children }: { children: ReactNode }) {
+export function MainShell({
+  children,
+  layout = "default",
+}: {
+  children: ReactNode;
+  /** Signed-in app: flush-left content column + right-only pattern gutter. */
+  layout?: "default" | "app";
+}) {
   const pathname = usePathname();
-  const isHeroPage = isMarketingHeroRoute(pathname);
+  const isHeroPage =
+    layout !== "app" && isMarketingHeroRoute(pathname);
   const contentRef = useRef<HTMLDivElement>(null);
   const patternTileActive = !isHeroPage;
   const tileHeightPx = usePatternTileHeight(contentRef, patternTileActive);
@@ -62,6 +70,7 @@ export function MainShell({ children }: { children: ReactNode }) {
     <main
       className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain bg-background"
       data-page-kind={isHeroPage ? "hero" : "standard"}
+      data-app-layout={layout === "app" ? "signed-in" : undefined}
       style={playerPad > 0 ? { paddingBottom: playerPad } : undefined}
     >
       {patternTileActive && tileHeightPx > 0 ? (

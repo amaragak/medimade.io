@@ -956,7 +956,7 @@ export function MixerSoundsStudio({
       className={
         isAdmin
           ? "flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden"
-          : "mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 pt-2 pb-6 sm:px-6 sm:py-6"
+          : "mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col px-4 pt-2 pb-6 sm:px-6 sm:pt-4 sm:pb-6"
       }
     >
       <audio ref={previewNatureRef} className="hidden" playsInline />
@@ -972,23 +972,19 @@ export function MixerSoundsStudio({
       <audio ref={factoryNoiseRef} className="hidden" playsInline />
 
       <div
-        className={`flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 ${
-          isAdmin ? "mb-3" : "mb-6"
-        } ${mobileEditorOpen ? "max-sm:hidden" : ""}`}
+        className={`mb-3 flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 ${
+          mobileEditorOpen ? "max-sm:hidden" : ""
+        }`}
       >
         {isAdmin ? (
           <p className="text-sm text-muted">
             Factory presets shown on the Sounds page. Save publishes to everyone.
           </p>
-        ) : (
-          <h1 className="font-display text-3xl font-medium tracking-tight">
-            Sounds
-          </h1>
-        )}
+        ) : null}
         <button
           type="button"
           onClick={createNew}
-          className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 sm:px-3"
+          className="ml-auto inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 sm:px-3"
           aria-label="New mix"
         >
           <IconPlus size={18} stroke={2} className="sm:hidden" aria-hidden />

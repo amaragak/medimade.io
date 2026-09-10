@@ -3915,19 +3915,15 @@ export function CreateWorkspace({
 
   const createPageChrome: {
     title: string;
-    blurb: string;
     crumbs: Array<{ label: string; href?: string }>;
   } = showPathChooser
     ? {
         title: "Create a meditation",
-        blurb: "Create a personalised meditation just for you.",
         crumbs: [],
       }
     : showStyleTypePick
       ? {
           title: "What type of meditation?",
-          blurb:
-            "Choose the practice you want to build. Next you’ll answer a few short questions so it fits what you need today.",
           crumbs: [
             { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
             { label: "Type" },
@@ -3936,7 +3932,6 @@ export function CreateWorkspace({
       : showStyleQuestions
         ? {
             title: meditationStyle?.trim() || "A few questions",
-            blurb: "These help shape the practice around what you need today.",
             crumbs: [
               { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
               {
@@ -3949,7 +3944,6 @@ export function CreateWorkspace({
         : showJournalPick
           ? {
               title: "Which entry should this reflect on?",
-              blurb: "Pick one entry to build the meditation around.",
               crumbs: [
                 { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
                 { label: "Reflect on a journal entry" },
@@ -3958,8 +3952,6 @@ export function CreateWorkspace({
         : showPromptPick
           ? {
               title: "One-shot prompt",
-              blurb:
-                "Describe the meditation you want. We’ll turn it into a full guided script — no back-and-forth.",
               crumbs: [
                 { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
                 { label: "One-shot prompt" },
@@ -3968,8 +3960,6 @@ export function CreateWorkspace({
         : workspaceSectionStep === 2 && creationPath === "style"
           ? {
               title: "Customise how your meditation will sound",
-              blurb:
-                "Pick a voice, then a soundscape — or build your own from scratch.",
               crumbs: [
                 { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
                 {
@@ -3989,8 +3979,6 @@ export function CreateWorkspace({
           : workspaceSectionStep === 2
             ? {
                 title: "Customise how your meditation will sound",
-                blurb:
-                  "Pick a voice, then a soundscape — or build your own from scratch.",
                 crumbs: [
                   { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
                   {
@@ -4013,7 +4001,6 @@ export function CreateWorkspace({
               }
             : {
                 title: "Shape how your meditation script is written",
-                blurb: "Chat with the guide to shape your script.",
                 crumbs: [
                   { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
                   {
@@ -4071,7 +4058,11 @@ export function CreateWorkspace({
   );
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-1 flex-col pt-3 sm:pt-6">
+    <div
+      className={`flex h-full min-h-0 w-full flex-1 flex-col ${
+        showPathChooser ? "pt-2 sm:pt-3" : "pt-3 sm:pt-4"
+      }`}
+    >
       {/* Keep preview elements mounted on every step so src is assigned before the Audio panel. */}
       <audio ref={previewNatureRef} className="hidden" playsInline />
       <audio ref={previewMusicRef} className="hidden" playsInline />
@@ -4084,7 +4075,8 @@ export function CreateWorkspace({
         playsInline
         onEnded={() => setCompositionPlaying(false)}
       />
-      <div className="mx-auto mb-4 w-full max-w-6xl shrink-0 px-4 sm:mb-6 sm:px-6">
+      {(createCrumbs.length > 0 || !showPathChooser) ? (
+      <div className="mx-auto mb-3 w-full max-w-6xl shrink-0 px-4 sm:px-6">
           {createCrumbs.length > 0 ? (
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
@@ -4141,21 +4133,13 @@ export function CreateWorkspace({
               {showLengthInCrumbs ? lengthCrumbControl : null}
             </div>
           ) : null}
+          {!showPathChooser ? (
           <div className="flex items-center justify-between gap-4">
             <h1 className="min-w-0 font-display text-3xl font-medium tracking-tight">
               <span className="sm:hidden">{createMobileHeading}</span>
               <span className="hidden sm:inline">{createPageChrome.title}</span>
             </h1>
-            {isLocalDevHost() && showPathChooser ? (
-              <button
-                type="button"
-                onClick={beginDevSkipToAudio}
-                className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent-link transition-colors hover:bg-accent-soft/70"
-                aria-label="Dev: skip chat and go to audio setup with a random script on generate"
-              >
-                Skip to audio
-              </button>
-            ) : showChatReset ? (
+            {showChatReset ? (
               <button
                 type="button"
                 onClick={resetChatKeepMode}
@@ -4228,9 +4212,9 @@ export function CreateWorkspace({
               </div>
             ) : null}
           </div>
-
-          <p className="mt-2 hidden text-muted sm:block">{createPageChrome.blurb}</p>
+          ) : null}
       </div>
+      ) : null}
 
       {draftLoadError ? (
         <div
@@ -4257,10 +4241,22 @@ export function CreateWorkspace({
       <div className="relative flex min-h-0 flex-1 flex-col">
         {showPathChooser ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-          <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-4 overflow-y-auto px-4 sm:px-6">
-          <h2 className="shrink-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
-            How would you like to generate your script?
-          </h2>
+          <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-3 overflow-y-auto px-4 pt-0 sm:px-6">
+          <div className="flex shrink-0 items-center justify-between gap-3">
+            <h2 className="min-w-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
+              How would you like to generate your script?
+            </h2>
+            {isLocalDevHost() ? (
+              <button
+                type="button"
+                onClick={beginDevSkipToAudio}
+                className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent-link transition-colors hover:bg-accent-soft/70"
+                aria-label="Dev: skip chat and go to audio setup with a random script on generate"
+              >
+                Skip to audio
+              </button>
+            ) : null}
+          </div>
           <div
             ref={chooserCardsRef}
             className={`grid grid-cols-1 items-stretch gap-4 md:gap-6 ${

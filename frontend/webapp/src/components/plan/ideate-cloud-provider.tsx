@@ -15,6 +15,7 @@ import {
 import {
   clearIdeateCloudSessionCache,
   pullIdeateStoreFromCloud,
+  signedInIdeateMemoryHasContent,
   subscribeIdeateCloud,
   wipeIdeateDeviceData,
 } from "@/lib/ideate-cloud";
@@ -38,9 +39,14 @@ export function useIdeateCloud(): IdeateCloudContextValue {
   return useContext(IdeateCloudContext);
 }
 
+/** Cloud Ideate needs a real access JWT — sticky ACTIVE_KEY alone is not enough. */
+function hasIdeateCloudSession(): boolean {
+  return isMedimadeSessionActive() && Boolean(getMedimadeSessionJwt());
+}
+
 /**
  * Signed-in: await GET /ideate/store, then ready.
- * Guests: demos, ready immediately.
+ * Logged out: demos, ready immediately.
  * Never cancels an in-flight pull by bumping epoch mid-request.
  */
 export function IdeateCloudProvider({ children }: { children: ReactNode }) {
@@ -55,7 +61,7 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const syncAuth = () => {
-      const next = isMedimadeSessionActive();
+      const next = hasIdeateCloudSession();
       setSignedIn((prev) => {
         if (prev === next) return prev;
         clearIdeateCloudSessionCache();
@@ -83,21 +89,32 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
       await import("@/lib/auth-session").then((m) => m.ensureMedimadeSession());
       if (!alive) return;
 
-      const active = isMedimadeSessionActive();
-      setSignedIn(active);
+      if (isMedimadeSessionActive() && !getMedimadeSessionJwt()) {
+        await import("@/lib/auth-session").then((m) =>
+          m.ensureMedimadeSession({ force: true }),
+        );
+        if (!alive) return;
+      }
 
-      if (active) {
-        let jwt = getMedimadeSessionJwt();
-        if (!jwt) {
-          await import("@/lib/auth-session").then((m) =>
-            m.ensureMedimadeSession({ force: true }),
-          );
-          if (!alive) return;
-          jwt = getMedimadeSessionJwt();
+      const cloud = hasIdeateCloudSession();
+      setSignedIn(cloud);
+
+      if (cloud) {
+        let result = await pullIdeateStoreFromCloud({ force: true });
+        if (
+          alive &&
+          !result.applied &&
+          !signedInIdeateMemoryHasContent()
+        ) {
+          // Network / auth blip — one retry before painting empty.
+          result = await pullIdeateStoreFromCloud({ force: true });
         }
-        if (jwt) {
-          // Always fetch. force so a cancelled prior attempt cannot skip us.
-          await pullIdeateStoreFromCloud({ force: true });
+        if (!alive) return;
+        if (!result.applied && !signedInIdeateMemoryHasContent()) {
+          console.error(
+            "[ideate] cloud pull did not apply; UI may look empty",
+            result,
+          );
         }
       } else {
         const { resetIdeateLocalToGuestDemos } = await import(

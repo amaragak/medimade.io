@@ -626,6 +626,17 @@ main[data-page-kind="standard"] {
   --page-pattern-opacity: 0.24;
 }
 
+/* Logged-in app: content column flush left; pattern only in the right gutter. */
+main[data-page-kind="standard"][data-app-layout="signed-in"] {
+  --content-col-end: min(100%, var(--content-max-width));
+  --content-edge: max(0px, calc(100% - var(--content-col-end)));
+}
+
+main[data-page-kind="standard"][data-app-layout="signed-in"] :where(.mx-auto) {
+  margin-left: 0;
+  margin-right: auto;
+}
+
 :root.dark main[data-page-kind="standard"] {
   --page-pattern-opacity: 0.18;
 }
@@ -681,6 +692,26 @@ main[data-page-kind="standard"] {
     rgb(0 0 0 / 0.46) calc(100% - var(--content-edge) * 0.26),
     rgb(0 0 0 / 0.55) calc(100% - var(--content-edge) * 0.16),
     rgb(0 0 0 / 0.64) calc(100% - var(--content-edge) * 0.08),
+    rgb(0 0 0 / 0.72) 100%
+  );
+}
+
+/* Signed-in: clear through the flush-left content column; fade only on the right. */
+main[data-app-layout="signed-in"] .page-pattern-tile {
+  --page-pattern-gutter-mask: linear-gradient(
+    to right,
+    rgb(0 0 0 / 0.04) 0,
+    rgb(0 0 0 / 0.04) var(--content-col-end),
+    rgb(0 0 0 / 0.04) calc(var(--content-col-end) + var(--content-edge) * 0.06),
+    rgb(0 0 0 / 0.05) calc(var(--content-col-end) + var(--content-edge) * 0.14),
+    rgb(0 0 0 / 0.085) calc(var(--content-col-end) + var(--content-edge) * 0.24),
+    rgb(0 0 0 / 0.13) calc(var(--content-col-end) + var(--content-edge) * 0.34),
+    rgb(0 0 0 / 0.2) calc(var(--content-col-end) + var(--content-edge) * 0.44),
+    rgb(0 0 0 / 0.28) calc(var(--content-col-end) + var(--content-edge) * 0.54),
+    rgb(0 0 0 / 0.37) calc(var(--content-col-end) + var(--content-edge) * 0.64),
+    rgb(0 0 0 / 0.46) calc(var(--content-col-end) + var(--content-edge) * 0.74),
+    rgb(0 0 0 / 0.55) calc(var(--content-col-end) + var(--content-edge) * 0.84),
+    rgb(0 0 0 / 0.64) calc(var(--content-col-end) + var(--content-edge) * 0.92),
     rgb(0 0 0 / 0.72) 100%
   );
 }

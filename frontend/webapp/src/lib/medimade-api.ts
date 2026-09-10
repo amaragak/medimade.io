@@ -53,7 +53,8 @@ function isAuthSessionPath(url: string): boolean {
       path.endsWith("/auth/refresh") ||
       path.endsWith("/auth/logout") ||
       path.endsWith("/auth/magic-link") ||
-      path.endsWith("/auth/magic-link/verify")
+      path.endsWith("/auth/magic-link/verify") ||
+      path.endsWith("/auth/guest")
     );
   } catch {
     return false;
@@ -148,6 +149,64 @@ export async function requestMedimadeMagicLink(email: string): Promise<void> {
   if (!res.ok) {
     throw new Error(data.detail ?? data.error ?? res.statusText);
   }
+}
+
+/**
+ * Log in as the shared guest account (JWT session + that account's cloud data).
+ * Writes the session immediately — same path as magic-link verify.
+ */
+export async function loginAsMedimadeGuest(): Promise<MedimadeMagicLinkVerifyResult> {
+  const base = getMedimadeApiBase();
+  if (!base) throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  const res = await medimadeFetch(`${base}/auth/guest`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    token?: string;
+    refreshToken?: string;
+    userId?: string;
+    email?: string;
+    needsProfileName?: unknown;
+    displayName?: unknown;
+    error?: string;
+    detail?: string;
+  };
+  if (!res.ok || typeof data.token !== "string" || !data.token.trim()) {
+    throw new Error(data.detail ?? data.error ?? res.statusText ?? "Guest login failed");
+  }
+  const displayName =
+    typeof data.displayName === "string" && data.displayName.trim()
+      ? data.displayName.trim()
+      : "Guest";
+  const result: MedimadeMagicLinkVerifyResult = {
+    token: data.token.trim(),
+    refreshToken:
+      typeof data.refreshToken === "string" && data.refreshToken.trim()
+        ? data.refreshToken.trim()
+        : undefined,
+    userId: typeof data.userId === "string" ? data.userId : "",
+    email: typeof data.email === "string" ? data.email : "",
+    needsProfileName: false,
+    displayName,
+  };
+  setMedimadeSession(
+    result.token,
+    result.email || null,
+    result.displayName,
+    result.refreshToken ?? null,
+  );
+  // Prefetch Ideate into memory before navigation so /ideate/my does not paint empty.
+  try {
+    const cloud = await import("@/lib/ideate-cloud");
+    cloud.clearIdeateSignedInWorkingCopy();
+    await cloud.pullIdeateStoreFromCloud({ force: true });
+  } catch (err) {
+    console.error("[auth/guest] ideate prefetch failed", err);
+  }
+  return result;
 }
 
 export type MedimadeMagicLinkVerifyResult = {
@@ -885,6 +944,110 @@ export async function fetchJournalStoreRemote(): Promise<JournalStoreV2 | null> 
   if (store == null) return null;
   if (typeof store !== "object") return null;
   return store as JournalStoreV2;
+}
+
+export type DashboardDailyStatus = {
+  gratitude: boolean;
+  meditation: boolean;
+  lifeArea: boolean;
+  streak: number;
+};
+
+/** Loads today’s habit tracker flags + streak from `GET /api/dashboard/daily-status`. */
+export async function fetchDashboardDailyStatus(opts?: {
+  dateKey?: string;
+}): Promise<DashboardDailyStatus> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const dateKey = opts?.dateKey;
+  const tzOffsetMinutes = new Date().getTimezoneOffset();
+  const qs = new URLSearchParams({
+    tzOffsetMinutes: String(tzOffsetMinutes),
+    ...(dateKey ? { dateKey } : {}),
+  });
+  const res = await medimadeFetch(
+    `${base}/api/dashboard/daily-status?${qs.toString()}`,
+    { headers: medimadeApiAuthHeaders() },
+  );
+  let data: Record<string, unknown> = {};
+  try {
+    data = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+  return {
+    gratitude: data.gratitude === true,
+    meditation: data.meditation === true,
+    lifeArea: data.lifeArea === true,
+    streak: typeof data.streak === "number" && Number.isFinite(data.streak)
+      ? Math.max(0, Math.floor(data.streak))
+      : 0,
+  };
+}
+
+/** Persists a manual day check for one habit pillar. */
+export async function putDashboardDailyManualCheck(params: {
+  dateKey: string;
+  pillar: "gratitude" | "meditation" | "lifeArea";
+  checked: boolean;
+}): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
+  }
+  const res = await medimadeFetch(`${base}/api/dashboard/daily-status`, {
+    method: "PUT",
+    headers: medimadeJsonHeaders(),
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    let data: Record<string, unknown> = {};
+    try {
+      data = (await res.json()) as Record<string, unknown>;
+    } catch {
+      /* ignore */
+    }
+    const msg =
+      (typeof data.detail === "string" && data.detail) ||
+      (typeof data.error === "string" && data.error) ||
+      res.statusText;
+    throw new Error(msg);
+  }
+}
+
+/** Logs meditation play_started / play_progress (≥60s) for daily habits. */
+export async function postDashboardPlayEvent(params: {
+  type: "play_started" | "play_progress";
+  meditationId?: string;
+  at?: string;
+  seconds?: number;
+  dateKey?: string;
+}): Promise<void> {
+  const base = getMedimadeApiBase();
+  if (!base) return;
+  const jwt = getMedimadeSessionJwt();
+  if (!jwt) return;
+  try {
+    await medimadeFetch(`${base}/dashboard/play-events`, {
+      method: "POST",
+      headers: medimadeJsonHeaders(),
+      body: JSON.stringify({
+        ...params,
+        tzOffsetMinutes: new Date().getTimezoneOffset(),
+      }),
+    });
+  } catch {
+    /* best-effort — local storage still tracks */
+  }
 }
 
 /**
