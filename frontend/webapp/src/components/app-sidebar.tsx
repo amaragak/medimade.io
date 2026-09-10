@@ -280,11 +280,11 @@ export function AppSidebar({
     for (const section of [...APP_NAV_MAIN, ...APP_NAV_ADMIN]) {
       if (section.children?.length) {
         if (next[section.id] === undefined) {
-          next[section.id] = section.id === active;
+          next[section.id] = true;
         }
       }
     }
-    // Always expand the active section on navigation if never toggled off this session load.
+    // Keep the active section open on navigation unless the user collapsed it.
     if (active && APP_NAV_MAIN.some((s) => s.id === active && s.children?.length)) {
       if (stored[active] !== false) next[active] = true;
     }
