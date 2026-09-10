@@ -9,11 +9,17 @@ function nextPublicEnvFromProcess(): Record<string, string> {
     "NEXT_PUBLIC_MEDIMADE_API_URL",
     "NEXT_PUBLIC_MEDIMADE_CHAT_URL",
     "NEXT_PUBLIC_MEDIMADE_MEDIA_BASE_URL",
+    "NEXT_PUBLIC_MEDIMADE_SCRIPT_LAB_URL",
   ] as const;
   const out: Record<string, string> = {};
   for (const k of keys) {
     const v = process.env[k]?.trim();
     if (v) out[k] = v;
+  }
+  if (!out.NEXT_PUBLIC_MEDIMADE_API_URL) {
+    throw new Error(
+      "NEXT_PUBLIC_MEDIMADE_API_URL is missing — refuse to deploy a webapp that cannot call the API",
+    );
   }
   return out;
 }

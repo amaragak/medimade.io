@@ -59,15 +59,24 @@ if (args[0] === "--stack") {
   let region;
   /** @type {string[]} */
   const rest = args.slice(1);
-  if (rest[0] === "--region") {
-    region = rest[1]?.trim();
-    rest.splice(0, 2);
+  // Accept `--region` anywhere after `--stack` (CI uses `--stack Name --region …`).
+  for (let i = 0; i < rest.length; ) {
+    if (rest[i] === "--region") {
+      region = rest[i + 1]?.trim();
+      rest.splice(i, 2);
+      continue;
+    }
+    if (typeof rest[i] === "string" && rest[i].startsWith("--")) {
+      console.error(`Unknown flag: ${rest[i]}`);
+      process.exit(1);
+    }
+    i += 1;
   }
   const stackName = rest[0]?.trim();
   webappEnv = rest[1];
   mobileEnv = rest[2];
   extensionEnv = rest[3];
-  if (!stackName || !webappEnv) {
+  if (!stackName || !webappEnv || webappEnv.startsWith("--")) {
     console.error(
       "Usage: node write-webapp-env-from-outputs.mjs --stack <StackName> [--region <region>] <webapp/.env> [mobile/.env] [extension/.env]",
     );

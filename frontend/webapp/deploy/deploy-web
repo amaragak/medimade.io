@@ -84,6 +84,15 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
+if [[ -z "${NEXT_PUBLIC_MEDIMADE_API_URL:-}" ]]; then
+  echo "error: NEXT_PUBLIC_MEDIMADE_API_URL is not set." >&2
+  echo "        CI should write it via write-webapp-env-from-outputs.mjs before this script." >&2
+  echo "        Locally: ensure $ENV_FILE exists, or export the var." >&2
+  exit 1
+fi
+
+echo "Deploying with NEXT_PUBLIC_MEDIMADE_API_URL=${NEXT_PUBLIC_MEDIMADE_API_URL}"
+
 if [[ -n "$PROFILE" ]]; then
   export AWS_PROFILE="$PROFILE"
 elif [[ -z "${AWS_PROFILE:-}" ]]; then
