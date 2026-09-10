@@ -24,6 +24,10 @@ import {
   getMedimadeSessionJwt,
   isMedimadeSessionActive,
 } from "@/lib/auth-session";
+import {
+  exitMarketingPreviewMode,
+  isMarketingPreviewMode,
+} from "@/lib/marketing-preview";
 
 /** Sidebar / app shell needs a real access JWT, not sticky ACTIVE_KEY alone. */
 function hasAppSession(): boolean {
@@ -53,6 +57,7 @@ function SignInOverlayHost() {
 /**
  * Logged-out: marketing top nav (+ optional sign-in overlay).
  * Logged-in: sidebar + minimal top bar.
+ * Marketing preview keeps the JWT but uses marketing chrome.
  * Protected app URLs redirect to the marketing section with ?signin=1&next=…
  */
 export function AppChrome({ children }: { children: ReactNode }) {
@@ -60,6 +65,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [signedIn, setSignedIn] = useState(false);
+  const [marketingPreview, setMarketingPreview] = useState(false);
   const [ready, setReady] = useState(false);
   const [accountLabel, setAccountLabel] = useState("Guest");
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -67,6 +73,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
   useEffect(() => {
     const sync = () => {
       setSignedIn(hasAppSession());
+      setMarketingPreview(isMarketingPreviewMode());
       setAccountLabel(
         getMedimadeSessionDisplayName()?.trim() ||
           getMedimadeSessionEmail()?.trim() ||
@@ -83,9 +90,18 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setMobileOpen(false);
-  }, [signedIn]);
+  }, [signedIn, marketingPreview]);
 
-  // Gate protected app routes when logged out.
+  const showAppChrome = signedIn && !marketingPreview;
+
+  // Hitting a protected app URL while in marketing preview → open the app.
+  useEffect(() => {
+    if (!ready || !signedIn || !marketingPreview) return;
+    if (!isProtectedAppPath(pathname) || isPublicAuthPath(pathname)) return;
+    exitMarketingPreviewMode();
+  }, [ready, signedIn, marketingPreview, pathname]);
+
+  // Gate protected app routes when logged out (no JWT).
   useEffect(() => {
     if (!ready || signedIn) return;
     if (isPublicAuthPath(pathname)) return;
@@ -98,18 +114,18 @@ export function AppChrome({ children }: { children: ReactNode }) {
     router.replace(marketingSignInUrl(pathname, search));
   }, [ready, signedIn, pathname, searchParams, router]);
 
-  // Marketing section roots → app destinations when signed in.
+  // Marketing section roots → app destinations when signed in (not in preview).
   useEffect(() => {
-    if (!ready || !signedIn) return;
+    if (!ready || !showAppChrome) return;
     const dest = signedInDestinationForMarketingRoot(pathname);
     if (!dest) return;
     router.replace(dest);
-  }, [ready, signedIn, pathname, router]);
+  }, [ready, showAppChrome, pathname, router]);
 
   const gateProtected =
     isProtectedAppPath(pathname) && !isPublicAuthPath(pathname);
   const bounceToApp = Boolean(
-    signedIn && signedInDestinationForMarketingRoot(pathname),
+    showAppChrome && signedInDestinationForMarketingRoot(pathname),
   );
 
   // Avoid flashing the wrong chrome (or protected page body) before session hydrate.
@@ -134,9 +150,9 @@ export function AppChrome({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!signedIn) {
-    // While redirecting away from a protected URL, don't flash app content.
-    if (gateProtected) {
+  if (!showAppChrome) {
+    // While redirecting away from a protected URL (no session), don't flash app content.
+    if (gateProtected && !signedIn) {
       return (
         <>
           <SiteHeader />

@@ -22,8 +22,9 @@ export const APP_NAV_MAIN: AppNavSection[] = [
     label: "Meditate",
     href: "/meditate/library/creations",
     children: [
-      { id: "library", label: "Library", href: "/meditate/library/creations" },
       { id: "create", label: "Create", href: "/meditate/create" },
+      { id: "library", label: "Library", href: "/meditate/library/creations" },
+      { id: "sounds", label: "Sounds", href: "/meditate/sounds" },
     ],
   },
   {
@@ -31,8 +32,8 @@ export const APP_NAV_MAIN: AppNavSection[] = [
     label: "Journal",
     href: "/journal/my",
     children: [
-      { id: "entries", label: "Entries", href: "/journal/my" },
       { id: "new", label: "New entry", href: "/journal/my?new=1" },
+      { id: "entries", label: "Entries", href: "/journal/my" },
     ],
   },
   {
@@ -41,6 +42,7 @@ export const APP_NAV_MAIN: AppNavSection[] = [
     href: "/ideate/my",
     children: [
       { id: "overview", label: "Overview", href: "/ideate/my" },
+      { id: "vision-board", label: "Vision board", href: "/ideate/my/vision-board" },
       // Life areas are injected dynamically in AppSidebar (not static nav).
     ],
   },
@@ -69,11 +71,21 @@ export function pathMatchesHref(pathname: string, href: string): boolean {
   if (pathOnly === "/meditate/create") {
     return pathname === "/meditate/create" || pathname.startsWith("/meditate/create/");
   }
+  if (pathOnly === "/meditate/sounds") {
+    return pathname === "/meditate/sounds" || pathname.startsWith("/meditate/sounds/");
+  }
   if (pathOnly === "/journal/my") {
     return pathname === "/journal/my" || pathname.startsWith("/journal/my/");
   }
   if (pathOnly === "/ideate/my") {
-    return pathname === "/ideate/my" || pathname.startsWith("/ideate/my/");
+    // Exact overview only — `/ideate/my/vision-board` is a sibling link.
+    return pathname === "/ideate/my";
+  }
+  if (pathOnly === "/ideate/my/vision-board") {
+    return (
+      pathname === "/ideate/my/vision-board" ||
+      pathname.startsWith("/ideate/my/vision-board/")
+    );
   }
   if (pathOnly === "/admin") {
     return pathname === "/admin" || pathname.startsWith("/admin/");

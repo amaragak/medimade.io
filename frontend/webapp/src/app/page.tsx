@@ -7,22 +7,23 @@ import {
   getMedimadeSessionJwt,
   isMedimadeSessionActive,
 } from "@/lib/auth-session";
+import { isMarketingPreviewMode } from "@/lib/marketing-preview";
 
 function hasAppSession(): boolean {
   return isMedimadeSessionActive() && Boolean(getMedimadeSessionJwt());
 }
 
 /**
- * Logged-out: marketing home.
- * Logged-in: welcome / dashboard (same `/` URL).
+ * Logged-out / marketing preview: marketing home.
+ * Logged-in (app chrome): welcome / dashboard (same `/` URL).
  */
 export default function HomePage() {
   const [ready, setReady] = useState(false);
-  const [signedIn, setSignedIn] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
 
   useEffect(() => {
     const sync = () => {
-      setSignedIn(hasAppSession());
+      setShowDashboard(hasAppSession() && !isMarketingPreviewMode());
       setReady(true);
     };
     void import("@/lib/auth-session").then((m) =>
@@ -40,6 +41,6 @@ export default function HomePage() {
     );
   }
 
-  if (signedIn) return <WelcomeDashboard />;
+  if (showDashboard) return <WelcomeDashboard />;
   return <EnhancedHomePage />;
 }

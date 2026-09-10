@@ -16,12 +16,13 @@ import { isDemoIdeateDream } from "@/lib/ideate-demo-seed";
 import { lifeAreaCardBgVars } from "@/lib/ideate-life-area-colors";
 import {
   formatDuration,
-  formatWhen,
 } from "@/components/library-meditation-card";
+import { useLibraryPlayer } from "@/components/library-player-provider";
 import {
   formatJournalEntryDate,
   isDemoJournalEntry,
   loadJournalStoreRaw,
+  stripHtmlToText,
   withoutDemoJournalEntries,
   type JournalEntry,
 } from "@/lib/journal-storage";
@@ -98,9 +99,10 @@ function NavGhost({ href, children }: { href: string; children: ReactNode }) {
   return (
     <Link
       href={href}
-      className="inline-flex items-center justify-center rounded-xl border border-marketing-ink/20 bg-transparent px-4 py-2.5 text-sm font-semibold text-marketing-ink transition-colors hover:bg-marketing-ink/[0.04]"
+      className="inline-flex items-center justify-center gap-1.5 rounded-full border border-marketing-ink/20 bg-transparent px-4 py-2.5 text-sm font-semibold text-marketing-ink transition-colors hover:bg-marketing-ink/[0.04]"
     >
       {children}
+      <IconArrowRight size={14} stroke={2} aria-hidden className="shrink-0" />
     </Link>
   );
 }
@@ -112,6 +114,11 @@ type RecentRow = {
   meta: string;
   trailing: string;
 };
+
+function journalEntryExcerpt(e: JournalEntry): string {
+  const t = stripHtmlToText(e.contentHtml).trim();
+  return t || "Empty entry";
+}
 
 function RecentColumn({ rows }: { rows: RecentRow[] }) {
   return (
@@ -132,22 +139,124 @@ function RecentColumn({ rows }: { rows: RecentRow[] }) {
             >
               <Link
                 href={row.href}
-                className="flex cursor-pointer items-start justify-between gap-4 py-3 transition-colors hover:bg-marketing-ink/[0.03]"
+                className="flex cursor-pointer items-center justify-between gap-4 py-3 transition-colors hover:bg-marketing-ink/[0.03]"
               >
-                <span className="min-w-0">
-                  <span className="block truncate text-[13px] text-marketing-ink/80">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-marketing-ink">
                     {row.title}
                   </span>
                   <span className="mt-0.5 block truncate text-[11px] text-marketing-muted">
                     {row.meta}
                   </span>
                 </span>
-                <span className="shrink-0 pt-0.5 text-[12px] tabular-nums text-marketing-muted">
+                <span className="shrink-0 whitespace-nowrap text-[12px] tabular-nums text-marketing-muted">
                   {row.trailing}
                 </span>
               </Link>
             </li>
           ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function RecentMeditationsColumn({ items }: { items: LibraryMeditationItem[] }) {
+  const { playItem, playingS3Key, toggleCurrent, nowPlaying } =
+    useLibraryPlayer();
+
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-marketing-eyebrow">
+        Recent
+      </p>
+      {items.length === 0 ? (
+        <p className="mt-3 border-t border-marketing-ink/10 pt-3 text-[13px] text-marketing-muted">
+          Nothing recent yet.
+        </p>
+      ) : (
+        <ul className="mt-1">
+          {items.map((m, i) => {
+            const key = m.sk || m.id || `m-${i}`;
+            const title = m.title?.trim() || "Untitled";
+            const meta =
+              [m.meditationStyle?.trim(), m.speakerName?.trim()]
+                .filter(Boolean)
+                .join(" · ") || "Personalised practice";
+            const trailing = formatDuration(m.durationSeconds);
+            const isActive = Boolean(m.s3Key && nowPlaying?.s3Key === m.s3Key);
+            const isPlaying = Boolean(m.s3Key && playingS3Key === m.s3Key);
+
+            return (
+              <li
+                key={key}
+                className="group border-b border-marketing-ink/10 first:border-t"
+              >
+                <div className="flex items-center gap-3 py-3 transition-colors group-hover:bg-marketing-ink/[0.03]">
+                  <Link
+                    href="/meditate/library/creations"
+                    className="min-w-0 flex-1 cursor-pointer"
+                  >
+                    <span className="block truncate text-[13px] font-semibold text-marketing-ink">
+                      {title}
+                    </span>
+                    <span className="mt-0.5 block truncate text-[11px] text-marketing-muted">
+                      {meta}
+                    </span>
+                  </Link>
+                  <div className="relative flex h-9 min-w-[4.75rem] shrink-0 items-center justify-end">
+                    <span
+                      className={`whitespace-nowrap pr-1 text-right text-[12px] tabular-nums text-marketing-muted transition-opacity ${
+                        isPlaying
+                          ? "opacity-0"
+                          : "opacity-100 max-md:opacity-0 md:group-hover:opacity-0"
+                      }`}
+                    >
+                      {trailing}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={isPlaying ? "Pause" : `Play ${title}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (!m.s3Key) return;
+                        if (isActive) toggleCurrent();
+                        else playItem(m);
+                      }}
+                      className={`absolute right-0 top-1/2 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity ${
+                        isPlaying
+                          ? "opacity-100"
+                          : "opacity-100 md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto"
+                      }`}
+                    >
+                      {isPlaying ? (
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="16"
+                          height="16"
+                          fill="currentColor"
+                          aria-hidden
+                        >
+                          <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
+                        </svg>
+                      ) : (
+                        <svg
+                          viewBox="0 0 24 24"
+                          width="16"
+                          height="16"
+                          fill="currentColor"
+                          aria-hidden
+                        >
+                          <path d="M8 5v14l11-7L8 5z" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
@@ -161,9 +270,29 @@ function LifeAreaCards({
   dreams: PlanDream[];
   creationIndexById: Map<string, number>;
 }) {
-  const preview = dreams.slice(0, 4);
+  // Caller already sorts by last interacted; keep the three most recent.
+  const preview = dreams.slice(0, 3);
+  if (dreams.length === 0) {
+    return (
+      <Link
+        href="/ideate/my?new=1"
+        aria-label="Add new life area"
+        className="flex min-h-[72px] w-full items-center justify-center rounded-[4px] border-2 border-dashed bg-transparent transition-[border-color] duration-200"
+        style={{ borderColor: "rgba(180,140,80,0.35)" }}
+      >
+        <span
+          className="font-sans font-light leading-none text-[rgba(180,140,80,0.45)]"
+          style={{ fontSize: "28px" }}
+          aria-hidden
+        >
+          +
+        </span>
+      </Link>
+    );
+  }
+
   return (
-    <ul className="grid grid-cols-2 gap-[10px] sm:grid-cols-4">
+    <ul className="flex flex-col gap-2">
       {preview.map((d) => {
         const snippet = lifeAreaSnippet(d);
         const bgVars = lifeAreaCardBgVars(creationIndexById.get(d.id) ?? 0);
@@ -172,25 +301,27 @@ function LifeAreaCards({
           <li key={d.id} className="min-w-0">
             <Link
               href={`/ideate/goal/${encodeURIComponent(d.id)}`}
-              className="life-area-card group relative flex aspect-square cursor-pointer flex-col rounded-[4px] p-4 shadow-[0_8px_24px_rgba(0,0,0,0.12),0_2px_8px_rgba(0,0,0,0.08)] transition-[transform,box-shadow] duration-150 hover:-translate-y-[3px] hover:shadow-[0_16px_40px_rgba(0,0,0,0.16),0_4px_12px_rgba(0,0,0,0.1)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.3)] dark:hover:shadow-[0_16px_40px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.35)] sm:p-5"
+              className="life-area-card group relative flex cursor-pointer items-center gap-4 rounded-[4px] px-4 py-3.5 shadow-[0_4px_14px_rgba(0,0,0,0.08),0_1px_4px_rgba(0,0,0,0.05)] transition-[transform,box-shadow] duration-150 hover:-translate-y-px hover:shadow-[0_8px_20px_rgba(0,0,0,0.12),0_2px_6px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.35),0_1px_4px_rgba(0,0,0,0.25)] dark:hover:shadow-[0_8px_20px_rgba(0,0,0,0.45),0_2px_6px_rgba(0,0,0,0.3)] sm:px-5"
               style={bgVars}
             >
-              <h3 className="shrink-0 pr-1 font-display text-lg font-medium leading-snug tracking-tight text-[#1E2530] dark:text-[#F4F0E8] sm:text-xl">
-                {d.title.trim() || "Untitled"}
-              </h3>
-              <p
-                className={`mt-1.5 line-clamp-3 min-h-0 flex-1 font-sans text-[13px] leading-relaxed text-[rgba(60,35,15,0.6)] dark:text-[#A8B0BC] ${
-                  snippet ? "" : "italic"
-                }`}
-              >
-                {snippet ?? "Nothing written yet"}
-              </p>
-              <p className="mt-auto shrink-0 pt-2 pr-9 font-sans text-[10px] leading-snug text-[rgba(60,35,15,0.4)] dark:text-[#A8B0BC]/70">
-                Last interacted on {lastInteracted}
-              </p>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-display text-base font-medium tracking-tight text-[#1E2530] dark:text-[#F4F0E8] sm:text-lg">
+                  {d.title.trim() || "Untitled"}
+                </span>
+                <span
+                  className={`mt-0.5 block truncate font-sans text-[12px] leading-snug text-[rgba(60,35,15,0.6)] dark:text-[#A8B0BC] ${
+                    snippet ? "" : "italic"
+                  }`}
+                >
+                  {snippet ?? "Nothing written yet"}
+                </span>
+              </span>
+              <span className="hidden shrink-0 whitespace-nowrap font-sans text-[11px] text-[rgba(60,35,15,0.45)] sm:block dark:text-[#A8B0BC]/70">
+                {lastInteracted}
+              </span>
               <span
                 aria-hidden
-                className="pointer-events-none absolute bottom-3 right-3 inline-flex h-8 w-8 translate-x-1 items-center justify-center rounded-full border border-[#1E2530] bg-transparent text-[#1E2530] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100 max-md:hidden dark:border-[#F4F0E8] dark:text-[#F4F0E8]"
+                className="inline-flex h-8 w-8 shrink-0 translate-x-1 items-center justify-center rounded-full border border-[#1E2530] bg-transparent text-[#1E2530] opacity-0 transition-[opacity,transform] duration-150 ease-out group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100 max-md:hidden dark:border-[#F4F0E8] dark:text-[#F4F0E8]"
               >
                 <IconArrowRight size={14} stroke={2} />
               </span>
@@ -198,24 +329,6 @@ function LifeAreaCards({
           </li>
         );
       })}
-      {dreams.length === 0 ? (
-        <li className="min-w-0">
-          <Link
-            href="/ideate/my?new=1"
-            aria-label="Add new life area"
-            className="group flex aspect-square w-full flex-col items-center justify-center gap-2 rounded-[4px] border-2 border-dashed bg-transparent transition-[border-color] duration-200"
-            style={{ borderColor: "rgba(180,140,80,0.35)" }}
-          >
-            <span
-              className="font-sans font-light leading-none text-[rgba(180,140,80,0.45)]"
-              style={{ fontSize: "32px" }}
-              aria-hidden
-            >
-              +
-            </span>
-          </Link>
-        </li>
-      ) : null}
     </ul>
   );
 }
@@ -224,26 +337,37 @@ function DashboardBand({
   bandClass,
   eyebrow,
   stat,
-  actions,
+  nav,
+  create,
   aside,
 }: {
   bandClass: string;
   eyebrow: string;
   stat: string;
-  actions: ReactNode;
+  /** Secondary nav under the stat (e.g. library / journal links). */
+  nav?: ReactNode;
+  /** Create CTA — flush to the bottom of the column, with top padding. */
+  create?: ReactNode;
   aside: ReactNode;
 }) {
   return (
     <section className={`w-full ${bandClass}`}>
-      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-4 py-6 sm:px-6 md:grid-cols-2 md:items-start md:gap-10 md:px-7">
-        <div className="min-w-0">
+      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-4 py-6 sm:px-6 md:grid-cols-2 md:items-stretch md:gap-10 md:px-7">
+        <div className="flex min-h-0 min-w-0 flex-col">
           <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-marketing-eyebrow">
             {eyebrow}
           </p>
           <h2 className="mt-2 font-display text-[26px] font-normal leading-snug tracking-tight text-marketing-ink">
             {stat}
           </h2>
-          <div className="mt-5 flex flex-wrap gap-2">{actions}</div>
+          {nav ? (
+            <div className="mt-5 flex flex-wrap items-center gap-2">{nav}</div>
+          ) : null}
+          {create ? (
+            <div className="mt-5 flex flex-wrap gap-2 md:mt-auto md:pt-5">
+              {create}
+            </div>
+          ) : null}
         </div>
         <div className="min-w-0">{aside}</div>
       </div>
@@ -253,30 +377,33 @@ function DashboardBand({
 
 function IdeateDashboardBand({
   stat,
-  actions,
+  nav,
+  create,
   dreams,
   creationIndexById,
 }: {
   stat: string;
-  actions: ReactNode;
+  nav: ReactNode;
+  create: ReactNode;
   dreams: PlanDream[];
   creationIndexById: Map<string, number>;
 }) {
   return (
     <section className="w-full bg-marketing-band-ideate">
-      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 md:px-7">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-marketing-eyebrow">
-              Ideate
-            </p>
-            <h2 className="mt-2 font-display text-[26px] font-normal leading-snug tracking-tight text-marketing-ink">
-              {stat}
-            </h2>
+      <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-4 py-6 sm:px-6 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.55fr)] md:items-stretch md:gap-10 md:px-7">
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-marketing-eyebrow">
+            Ideate
+          </p>
+          <h2 className="mt-2 font-display text-[26px] font-normal leading-snug tracking-tight text-marketing-ink">
+            {stat}
+          </h2>
+          <div className="mt-5 flex flex-wrap items-center gap-2">{nav}</div>
+          <div className="mt-5 flex flex-wrap gap-2 md:mt-auto md:pt-5">
+            {create}
           </div>
-          <div className="flex shrink-0 flex-wrap gap-2">{actions}</div>
         </div>
-        <div className="mt-5">
+        <div className="min-w-0">
           <LifeAreaCards
             dreams={dreams}
             creationIndexById={creationIndexById}
@@ -404,26 +531,15 @@ export function WelcomeDashboard() {
         ? "1 life area you’re tending."
         : `${dreams.length} life areas you’re tending.`;
 
-  const meditateRecent: RecentRow[] = meditations.slice(0, 3).map((m, i) => ({
-    key: m.sk || m.id || `m-${i}`,
-    href: "/meditate/library/creations",
-    title: m.title?.trim() || "Untitled",
-    meta: [m.meditationStyle?.trim(), m.speakerName?.trim()]
-      .filter(Boolean)
-      .join(" · ") || "Personalised practice",
-    trailing:
-      formatDuration(m.durationSeconds) !== "—"
-        ? formatDuration(m.durationSeconds)
-        : formatWhen(m.createdAt),
-  }));
-
   const journalRecent: RecentRow[] = journalEntries.slice(0, 3).map((e) => ({
     key: e.id,
     href: `/journal/my/${encodeURIComponent(e.id)}`,
     title: e.title.trim() || "Untitled entry",
-    meta: "Journal entry",
+    meta: journalEntryExcerpt(e),
     trailing: formatJournalEntryDate(e.updatedAt || e.createdAt),
   }));
+
+  const recentMeditations = meditations.slice(0, 3);
 
   return (
     <div className="w-full pb-12">
@@ -445,39 +561,44 @@ export function WelcomeDashboard() {
           bandClass="bg-marketing-band-c"
           eyebrow="Meditate"
           stat={meditateStat}
-          actions={
+          nav={
             <>
-              <NavPrimary href="/meditate/create">Create new</NavPrimary>
-              <NavGhost href="/meditate/library/creations">Library</NavGhost>
+              <NavGhost href="/meditate/library/creations">
+                My Creations
+              </NavGhost>
               <NavGhost href="/meditate/library/programs">Programs</NavGhost>
               <NavGhost href="/meditate/library/community">Community</NavGhost>
-              <NavGhost href="/meditate/sounds">Sounds</NavGhost>
             </>
           }
-          aside={<RecentColumn rows={meditateRecent} />}
+          create={<NavPrimary href="/meditate/create">+ Create new</NavPrimary>}
+          aside={<RecentMeditationsColumn items={recentMeditations} />}
         />
         <DashboardBand
           bandClass="bg-marketing-band-d"
           eyebrow="Journal"
           stat={journalStat}
-          actions={
+          nav={
             <>
-              <NavPrimary href="/journal/my?new=1">New entry</NavPrimary>
               <NavGhost href="/journal/my">Entries</NavGhost>
               <NavGhost href="/journal/my/gratitudes">Gratitudes</NavGhost>
               <NavGhost href="/journal/my/insights">Insights</NavGhost>
             </>
           }
+          create={
+            <NavPrimary href="/journal/my?new=1">+ New entry</NavPrimary>
+          }
           aside={<RecentColumn rows={journalRecent} />}
         />
         <IdeateDashboardBand
           stat={ideateStat}
-          actions={
+          nav={
             <>
-              <NavPrimary href="/ideate/my?new=1">Add a life area</NavPrimary>
               <NavGhost href="/ideate/my">Overview</NavGhost>
               <NavGhost href="/ideate/my/vision-board">Vision board</NavGhost>
             </>
+          }
+          create={
+            <NavPrimary href="/ideate/my?new=1">+ Add a life area</NavPrimary>
           }
           dreams={dreams}
           creationIndexById={creationIndexById}
@@ -486,7 +607,7 @@ export function WelcomeDashboard() {
           bandClass="bg-marketing-band-a"
           eyebrow="Focus"
           stat="Sit with one task at a time."
-          actions={<NavPrimary href="/focus">Open Focus</NavPrimary>}
+          nav={<NavPrimary href="/focus">Open Focus</NavPrimary>}
           aside={<RecentColumn rows={[]} />}
         />
       </div>

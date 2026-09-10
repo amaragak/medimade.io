@@ -1,14 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Fragment, useEffect, useState } from "react";
 import { LogoMark } from "@/components/logo-mark";
 import { AppPrimaryTabsSlot } from "@/components/app-primary-tabs";
+import { AlphaChromeButton } from "@/components/dev-chrome-button";
 import {
   buildAppBreadcrumbs,
   type AppBreadcrumbCrumb,
 } from "@/lib/app-nav";
+import { enterMarketingPreviewMode } from "@/lib/marketing-preview";
 import { loadIdeateStore } from "@/lib/plan-ideate-store";
 import { subscribeIdeateCloud } from "@/lib/ideate-cloud";
 
@@ -30,6 +32,7 @@ function lifeAreaTitleFromPath(pathname: string): string | null {
 
 export function AppTopBar({ onOpenSidebar }: Props) {
   const pathname = usePathname() || "/";
+  const router = useRouter();
   const [crumbs, setCrumbs] = useState<AppBreadcrumbCrumb[]>([]);
 
   useEffect(() => {
@@ -159,6 +162,18 @@ export function AppTopBar({ onOpenSidebar }: Props) {
             })}
           </nav>
         </div>
+      </div>
+
+      <div className="absolute right-3 top-1/2 z-20 -translate-y-1/2 sm:right-4">
+        <AlphaChromeButton
+          title="Alpha — show marketing site without clearing session"
+          onClick={() => {
+            enterMarketingPreviewMode();
+            router.push("/");
+          }}
+        >
+          View marketing page
+        </AlphaChromeButton>
       </div>
 
       {/* True viewport centre (full header width), not content-area centre. */}
