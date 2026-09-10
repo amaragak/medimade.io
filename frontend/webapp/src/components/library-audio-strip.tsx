@@ -132,7 +132,6 @@ export function LibraryAudioStrip({
   compositionItems,
   onDismiss,
   playbackToggleNonce,
-  elevated = false,
   bedVolumeApiRef,
   onPlayingChange,
   onPlaybackTimeChange,
@@ -143,7 +142,6 @@ export function LibraryAudioStrip({
   compositionItems: BackgroundAudioItem[];
   onDismiss: () => void;
   playbackToggleNonce: number;
-  elevated?: boolean;
   bedVolumeApiRef?: MutableRefObject<LibraryBedVolumeApi | null>;
   onPlayingChange?: (s3Key: string, playing: boolean) => void;
   onPlaybackTimeChange?: (s3Key: string, timeSeconds: number) => void;
@@ -455,9 +453,7 @@ export function LibraryAudioStrip({
   return (
     <div
       ref={rootRef}
-      className={`fixed inset-x-0 bottom-0 border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_8%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_35%,transparent)] sm:px-4 ${
-        elevated ? "z-[70]" : "z-50"
-      }`}
+      className={`fixed inset-x-0 bottom-0 z-[140] border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_8%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_35%,transparent)] sm:px-4`}
       style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
       role="region"
       aria-label="Now playing"
