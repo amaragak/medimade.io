@@ -283,19 +283,24 @@ export async function refreshMedimadeSessionRemote(): Promise<MedimadeRefreshRes
     });
 
   let storedRefresh = getMedimadeRefreshToken();
-  // Cookie first (empty body), then durable local refresh if cookies are blocked.
-  let res = await attempt(null);
+  // Prefer body refresh when we have one — stale HttpOnly cookies must not win.
+  // Fall back to cookie-only when localStorage has nothing.
+  let res = storedRefresh ? await attempt(storedRefresh) : await attempt(null);
   if (res.status === 401 && storedRefresh) {
-    res = await attempt(storedRefresh);
-  }
-  // Parallel refresh can 401 on a just-rotated token; retry once so the newer
-  // cookie / localStorage refresh (updated by another tab) can win.
-  if (res.status === 401) {
-    await new Promise((r) => setTimeout(r, 200));
-    storedRefresh = getMedimadeRefreshToken();
+    // Cookie-only retry in case body token was the stale one and cookie is live.
     res = await attempt(null);
-    if (res.status === 401 && storedRefresh) {
-      res = await attempt(storedRefresh);
+  }
+  // Parallel refresh can 401 on a just-rotated token; retry so the newer
+  // localStorage refresh (updated by another tab) can win.
+  if (res.status === 401) {
+    for (const waitMs of [250, 600]) {
+      await new Promise((r) => setTimeout(r, waitMs));
+      storedRefresh = getMedimadeRefreshToken();
+      res = storedRefresh ? await attempt(storedRefresh) : await attempt(null);
+      if (res.status === 401 && storedRefresh) {
+        res = await attempt(null);
+      }
+      if (res.ok) break;
     }
   }
 
@@ -802,10 +807,33 @@ export async function fetchIdeateStoreRemote(): Promise<{
 
 /**
  * Saves Ideate bundle to `PUT /ideate/store` (requires session JWT).
+ * Refuses empty bundles so a client bug cannot wipe Dynamo.
  */
 export async function putIdeateStoreRemote(
   store: IdeateCloudBundle,
 ): Promise<void> {
+  const ideate = store?.ideate as { dreams?: unknown[] } | null | undefined;
+  const vision = store?.visionBoard as
+    | { items?: unknown[]; selfReference?: { url?: string; key?: string } | null }
+    | null
+    | undefined;
+  const qs = store?.reflectionQuestions as { questions?: unknown[] } | null;
+  const values = store?.values as { values?: unknown[] } | null;
+  const regrets = store?.regrets as { regrets?: unknown[] } | null;
+  const quotes = store?.quotes as { quotes?: unknown[] } | null;
+  const manifesto = store?.manifesto as { text?: string } | null;
+  const hasContent =
+    (ideate?.dreams?.length ?? 0) > 0 ||
+    (vision?.items?.length ?? 0) > 0 ||
+    Boolean(vision?.selfReference?.url || vision?.selfReference?.key) ||
+    (qs?.questions?.length ?? 0) > 0 ||
+    (values?.values?.length ?? 0) > 0 ||
+    (regrets?.regrets?.length ?? 0) > 0 ||
+    (quotes?.quotes?.length ?? 0) > 0 ||
+    (manifesto?.text?.trim().length ?? 0) > 0;
+  if (!hasContent) {
+    throw new Error("Refusing to upload empty Ideate store");
+  }
   const base = getMedimadeApiBase();
   if (!base) {
     throw new Error("NEXT_PUBLIC_MEDIMADE_API_URL is not set");
@@ -1779,6 +1807,8 @@ export async function createMeditationAudioJob(params: {
   fishPauseMode?: FishPauseMode;
   /** Program shelf audio — keep off My Creations. */
   excludeFromLibrary?: boolean;
+  /** Ideate life-area id when generated from that area / goal path. */
+  lifeAreaId?: string | null;
   speed?: number;
   /** If set, applies voice FX (Pedalboard) after loudness normalization. */
   voiceFxPreset?: string | null;
@@ -1832,6 +1862,9 @@ export async function createMeditationAudioJob(params: {
     meditationTargetMinutes,
     ...(params.journalMode === true ? { journalMode: true } : {}),
     ...(params.excludeFromLibrary === true ? { excludeFromLibrary: true } : {}),
+    ...(typeof params.lifeAreaId === "string" && params.lifeAreaId.trim()
+      ? { lifeAreaId: params.lifeAreaId.trim() }
+      : {}),
     ...(params.voiceFxPreset ? { voiceFxPreset: params.voiceFxPreset } : {}),
     ...(sessionTokenForBody() ? { sessionToken: sessionTokenForBody() } : {}),
     ...(speed === undefined ? {} : { speed }),
@@ -3124,6 +3157,10 @@ export type LibraryMeditationItem = {
   mp3Bytes: number | null;
   /** Saved create-flow draft (not shown in main library list). */
   isDraft: boolean;
+  /** Ideate life-area this meditation was created for (when linked). */
+  lifeAreaId?: string | null;
+  /** Create-job id when this row came from Generate. */
+  jobId?: string | null;
   /** Speech-only stem; backgrounds are mixed in the Library player. */
   liveMix?: boolean;
   backgroundNatureKey?: string | null;

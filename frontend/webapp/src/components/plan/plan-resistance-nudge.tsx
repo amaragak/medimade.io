@@ -17,7 +17,9 @@ type Props = {
   projectId: string;
   subtaskId: string;
   copySeed: string;
-  onDismiss: () => void;
+  /** Always-on placeholder until stall integration is decided. */
+  persistent?: boolean;
+  onDismiss?: () => void;
   onRecorded: () => void;
 };
 
@@ -26,6 +28,7 @@ export function PlanResistanceNudge({
   projectId,
   subtaskId,
   copySeed,
+  persistent = false,
   onDismiss,
   onRecorded,
 }: Props) {
@@ -36,6 +39,7 @@ export function PlanResistanceNudge({
   );
 
   useEffect(() => {
+    if (persistent) return;
     const store = loadIdeateStore();
     const t = store.todos.find((x) => x.id === todo.id);
     if (!t) return;
@@ -47,7 +51,7 @@ export function PlanResistanceNudge({
           : x,
       ),
     });
-  }, [todo.id]);
+  }, [todo.id, persistent]);
 
   async function submit(category: ResistanceCategory | null) {
     const body = text.trim();
@@ -65,7 +69,9 @@ export function PlanResistanceNudge({
     saveIdeateStore(store);
     onRecorded();
     setSubmitting(false);
-    onDismiss();
+    setText("");
+    setSelectedChip(null);
+    if (!persistent) onDismiss?.();
     const note = body || category || "";
     if (note && !category) {
       void classifyResistanceText(note).then((inferred) => {
@@ -87,14 +93,16 @@ export function PlanResistanceNudge({
 
   return (
     <div className="mt-2 rounded-xl border border-accent/15 bg-accent-soft/10 px-3 py-3">
-      <p className="font-hand text-sm italic leading-relaxed text-foreground/90">
-        {pickNudgeCopy(copySeed)}
+      <p className="text-sm leading-relaxed text-foreground">
+        {persistent
+          ? "What’s getting in the way of the next step?"
+          : pickNudgeCopy(copySeed)}
       </p>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={2}
-        placeholder="Say it plainly, if you want to."
+        placeholder="What’s in the way?"
         className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/25 focus:ring-2"
       />
       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -127,13 +135,15 @@ export function PlanResistanceNudge({
         >
           {submitting ? "Saving…" : "Share"}
         </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          className="cursor-pointer rounded-full px-3 py-1.5 text-xs text-muted hover:text-foreground"
-        >
-          Close
-        </button>
+        {!persistent && onDismiss ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="cursor-pointer rounded-full px-3 py-1.5 text-xs text-muted hover:text-foreground"
+          >
+            Close
+          </button>
+        ) : null}
       </div>
     </div>
   );

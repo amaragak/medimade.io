@@ -71,6 +71,8 @@ export type CreateSessionV1 = {
   journalReflectSelectedIds: string[];
   journalReflectGuidance: string;
   goalSelectedId: string | null;
+  /** Ideate life-area id when creating from Generate meditation / goal pick. */
+  lifeAreaId: string | null;
   oneShotPrompt: string;
   draftSk: string | null;
   coachAudioReady: boolean;
@@ -201,6 +203,9 @@ export function parseCreateSession(raw: unknown): CreateSessionV1 | null {
   if (o.goalSelectedId != null && typeof o.goalSelectedId !== "string") {
     return null;
   }
+  if (o.lifeAreaId != null && typeof o.lifeAreaId !== "string") {
+    return null;
+  }
   if (o.draftSk != null && typeof o.draftSk !== "string") return null;
 
   return {
@@ -241,6 +246,10 @@ export function parseCreateSession(raw: unknown): CreateSessionV1 | null {
     journalReflectGuidance:
       typeof o.journalReflectGuidance === "string" ? o.journalReflectGuidance : "",
     goalSelectedId: typeof o.goalSelectedId === "string" ? o.goalSelectedId : null,
+    lifeAreaId:
+      typeof o.lifeAreaId === "string" && o.lifeAreaId.trim()
+        ? o.lifeAreaId.trim()
+        : null,
     oneShotPrompt: typeof o.oneShotPrompt === "string" ? o.oneShotPrompt : "",
     draftSk: typeof o.draftSk === "string" ? o.draftSk : null,
     coachAudioReady: o.coachAudioReady === true,
@@ -264,6 +273,34 @@ export function writeCreateSession(session: CreateSessionV1): void {
     sessionStorage.setItem(CREATE_SESSION_STORAGE_KEY, JSON.stringify(session));
   } catch {
     /* quota / private mode */
+  }
+}
+
+/** Ideate → Create life-area link; survives handoff clear + remounts. */
+export const CREATE_LINKED_LIFE_AREA_KEY = "mm_create_linked_life_area_v1";
+
+export function writeLinkedLifeAreaId(id: string | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    const trimmed = id?.trim() ?? "";
+    if (!trimmed) {
+      sessionStorage.removeItem(CREATE_LINKED_LIFE_AREA_KEY);
+      return;
+    }
+    sessionStorage.setItem(CREATE_LINKED_LIFE_AREA_KEY, trimmed);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readLinkedLifeAreaId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(CREATE_LINKED_LIFE_AREA_KEY);
+    const trimmed = raw?.trim() ?? "";
+    return trimmed || null;
+  } catch {
+    return null;
   }
 }
 

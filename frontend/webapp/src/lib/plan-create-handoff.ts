@@ -29,6 +29,8 @@ export type PlanCreateHandoffV2 = {
   visionText: string;
   dreamText?: string;
   obstacleText?: string;
+  /** PlanDream / life-area id — carried into the library meditation. */
+  lifeAreaId?: string;
   project: {
     dreamText: string;
     resistanceText: string;
@@ -42,6 +44,9 @@ export type PlanCreateHandoff = PlanCreateHandoffV1 | PlanCreateHandoffV2;
 export function buildPlanCreateHandoffApiContent(h: PlanCreateHandoff): string {
   const lines: string[] = [
     PLAN_CREATE_FIRST_MESSAGE,
+    "",
+    "This is an Ideate life-area handoff. The user already wrote dream / resistance / vision below — treat that as primary material for a Visualization meditation.",
+    "Ask at most one short follow-up only if something essential for the visualization is missing. Prefer wrapping up with [[READY]] when the vision is already concrete.",
     "",
     `Dream / goal title: ${h.goalTitle.trim() || "Untitled"}`,
     "",
@@ -101,6 +106,10 @@ export function readPlanCreateHandoff(): PlanCreateHandoff | null {
         dreamText: typeof o.dreamText === "string" ? o.dreamText : undefined,
         obstacleText:
           typeof o.obstacleText === "string" ? o.obstacleText : undefined,
+        lifeAreaId:
+          typeof o.lifeAreaId === "string" && o.lifeAreaId.trim()
+            ? o.lifeAreaId.trim()
+            : undefined,
         project: {
           dreamText: typeof p.dreamText === "string" ? p.dreamText : "",
           resistanceText:

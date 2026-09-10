@@ -26,7 +26,9 @@ import {
   clearCreateSession,
   createSessionSatisfiesRoute,
   readCreateSession,
+  readLinkedLifeAreaId,
   writeCreateSession,
+  writeLinkedLifeAreaId,
   type CreateSessionV1,
 } from "@/lib/create-session-storage";
 import { JournalReflectPicker } from "@/components/journal-reflect-picker";
@@ -1305,6 +1307,7 @@ export function CreateWorkspace({
   const [planGoals, setPlanGoals] = useState<PlanGoal[]>([]);
   const [planGoalsReady, setPlanGoalsReady] = useState(false);
   const [goalSelectedId, setGoalSelectedId] = useState<string | null>(null);
+  const [lifeAreaId, setLifeAreaId] = useState<string | null>(null);
   const [oneShotPrompt, setOneShotPrompt] = useState("");
 
   /** Dev: skip chat → audio; Generate asks the worker for a random script. */
@@ -1408,6 +1411,7 @@ export function CreateWorkspace({
     );
     setJournalReflectGuidance(s.journalReflectGuidance ?? "");
     setGoalSelectedId(s.goalSelectedId);
+    setLifeAreaId(s.lifeAreaId ?? null);
     setOneShotPrompt(s.oneShotPrompt ?? "");
     if (s.draftSk) setDraftSk(s.draftSk);
     setIntroTypingDone(true);
@@ -1419,6 +1423,10 @@ export function CreateWorkspace({
 
   useLayoutEffect(() => {
     if (initialDraftSk?.trim() || seedJournalContext || seedPlanContext) {
+      // Ideate/journal handoff skips full session restore, but keep any sticky
+      // life-area link so Generate still attaches after URL replace remounts.
+      const sticky = readLinkedLifeAreaId();
+      if (sticky) setLifeAreaId(sticky);
       setSessionHydrated(true);
       return;
     }
@@ -1435,6 +1443,8 @@ export function CreateWorkspace({
       );
     if (sessionOk && session) {
       applyCreateSession(session);
+      const sticky = readLinkedLifeAreaId();
+      if (sticky) setLifeAreaId(sticky);
       setSessionHydrated(true);
       return;
     }
@@ -1443,6 +1453,8 @@ export function CreateWorkspace({
       pendingUrlSyncRef.current = href;
       router.replace(href);
     }
+    const sticky = readLinkedLifeAreaId();
+    if (sticky) setLifeAreaId(sticky);
     setSessionHydrated(true);
     // Restore once per mount (full refresh). Client navigations keep the layout.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2014,22 +2026,44 @@ export function CreateWorkspace({
       return;
     }
 
+    const linkedLifeAreaId =
+      handoff.v === 2 &&
+      typeof handoff.lifeAreaId === "string" &&
+      handoff.lifeAreaId.trim()
+        ? handoff.lifeAreaId.trim()
+        : null;
+    if (linkedLifeAreaId) {
+      setLifeAreaId(linkedLifeAreaId);
+      // Persist immediately — handoff is cleared after coach reply, and the
+      // create-session write is debounced; without this Generate loses the link.
+      writeLinkedLifeAreaId(linkedLifeAreaId);
+    }
+
     const apiUserContent = buildPlanCreateHandoffApiContent(handoff);
     const styleHint = "Visualization";
+    // Do not plant a prior assistant turn in the API history — that skips the
+    // coach's first-turn / [[READY]] rules. Opening copy is UI-only.
     const history: MedimadeChatTurn[] = [
-      { role: "assistant", content: PLAN_CREATE_OPENING_ASSISTANT },
       { role: "user", content: apiUserContent },
     ];
 
     setCreationPath("freeflow");
     initedCreatePathsRef.current.add("freeflow");
-    setJournalMode(true);
+    // Visualization technique lock (not open journal mode) so coach format +
+    // [[READY]] / proceed CTA match the style-chat path.
+    setJournalMode(false);
     setIntroTypingDone(true);
     setPhase("claude");
     setMeditationStyle(styleHint);
     setClaudeThread([]);
+    setCoachAudioReady(false);
     setInput("");
     setMessages([
+      {
+        role: "assistant",
+        text: PLAN_CREATE_OPENING_ASSISTANT,
+        variant: "chat",
+      },
       {
         role: "user",
         text: PLAN_CREATE_FIRST_MESSAGE,
@@ -2044,11 +2078,16 @@ export function CreateWorkspace({
           {
             meditationStyle: styleHint,
             messages: history,
-            journalMode: true,
+            journalMode: false,
             meditationTargetMinutes,
           },
         );
         setClaudeThread([...history, { role: "assistant", content: text }]);
+        const parsed = parseCoachDisplayText(text);
+        if (parsed.ready) {
+          setCoachAudioReady(true);
+          setMessages((m) => pinAudioReadyCtaOnLastAssistant(m));
+        }
       } catch (e) {
         const msg =
           e instanceof Error ? e.message : "Could not reach the guide.";
@@ -2527,6 +2566,10 @@ export function CreateWorkspace({
       setJournalReflectGuidance("");
     }
     if (next !== "goal") setGoalSelectedId(null);
+    if (next !== "goal" && next !== "freeflow") {
+      setLifeAreaId(null);
+      writeLinkedLifeAreaId(null);
+    }
   }
 
   function beginStylePath() {
@@ -2591,10 +2634,16 @@ export function CreateWorkspace({
     pushCreate({ path: "style", styleStep: "questions", mix: true });
   }
 
-  function beginFreeFlowPath() {
+  function beginFreeFlowPath(opts?: { resetLifeArea?: boolean }) {
     startBranch("freeflow");
     setCoachAudioReady(false);
     setCreationPath("freeflow");
+    // Pathname re-init must NOT wipe an Ideate life-area link. Only clear when
+    // the user explicitly starts a fresh Free flow from the mode picker.
+    if (opts?.resetLifeArea) {
+      setLifeAreaId(null);
+      writeLinkedLifeAreaId(null);
+    }
     setJournalMode(true);
     setPhase("feeling");
     setChatLoading(false);
@@ -2637,6 +2686,8 @@ export function CreateWorkspace({
     setCreationPath("goal");
     setJournalMode(true);
     setGoalSelectedId(null);
+    setLifeAreaId(null);
+    writeLinkedLifeAreaId(null);
     setPhase("goalPick");
     setChatLoading(false);
     setScriptLoading(false);
@@ -2717,6 +2768,9 @@ export function CreateWorkspace({
     if (!id || chatLoading) return;
     const goal = planGoals.find((g) => g.id === id);
     if (!goal) return;
+
+    setLifeAreaId(id);
+    writeLinkedLifeAreaId(id);
 
     const lines: string[] = [];
     lines.push(`Goal: ${goal.title.trim() || "Untitled goal"}`);
@@ -2899,7 +2953,8 @@ export function CreateWorkspace({
       if (!initedCreatePathsRef.current.has("freeflow")) beginFreeFlowPath();
       else {
         setCreationPath("freeflow");
-        setJournalMode(true);
+        // Ideate → Create uses freeflow URL with Visualization (not journal mode).
+        if (!readLinkedLifeAreaId()) setJournalMode(true);
       }
       if (parsed.mix) {
         setCreateStripStep(2);
@@ -2999,6 +3054,7 @@ export function CreateWorkspace({
         journalReflectSelectedIds: Array.from(journalReflectSelectedIds),
         journalReflectGuidance,
         goalSelectedId,
+        lifeAreaId,
         oneShotPrompt,
         draftSk,
         coachAudioReady,
@@ -3043,6 +3099,7 @@ export function CreateWorkspace({
     journalReflectSelectedIds,
     journalReflectGuidance,
     goalSelectedId,
+    lifeAreaId,
     oneShotPrompt,
     draftSk,
     coachAudioReady,
@@ -3267,6 +3324,8 @@ export function CreateWorkspace({
             })
             .join("\n\n");
 
+      const linkedLifeAreaId =
+        lifeAreaId?.trim() || readLinkedLifeAreaId() || "";
       const { jobId } = await createMeditationAudioJob({
         meditationStyle,
         journalMode: journalMode === true,
@@ -3280,6 +3339,7 @@ export function CreateWorkspace({
         fishPauseMode: isLocalDevHost() ? fishPauseMode : "segmented",
         speed: speechSpeed,
         voiceFxPreset: speakerFxPreviewOn ? "mixer" : null,
+        ...(linkedLifeAreaId ? { lifeAreaId: linkedLifeAreaId } : {}),
         // A soundscape replaces the whole bed: it rides the music slot alone,
         // and the mixer's own selections stay out of this render.
         ...(soundscapeActive
@@ -3367,6 +3427,7 @@ export function CreateWorkspace({
         meditationStyle,
         speakerName,
         speakerModelId,
+        ...(linkedLifeAreaId ? { lifeAreaId: linkedLifeAreaId } : {}),
       };
       appendPendingLibraryGeneration(pending);
 
@@ -4512,10 +4573,15 @@ export function CreateWorkspace({
                   return;
                 }
                 if (!resume) {
-                  if (mode === "freeflow") beginFreeFlowPath();
-                  else if (mode === "journalReflect") beginJournalReflectPath();
-                  else if (mode === "goal") beginGoalPath();
-                  else if (mode === "oneShot") beginOneShotPath();
+                  if (mode === "freeflow") {
+                    beginFreeFlowPath({ resetLifeArea: true });
+                  } else if (mode === "journalReflect") {
+                    beginJournalReflectPath();
+                  } else if (mode === "goal") {
+                    beginGoalPath();
+                  } else if (mode === "oneShot") {
+                    beginOneShotPath();
+                  }
                 }
                 setCreateStripStep(1);
                 pushCreate({ path: mode });
@@ -4858,12 +4924,12 @@ export function CreateWorkspace({
                           : "rounded-[1.25rem]";
                       const bubbleBase = `chat-bubble relative inline-block w-fit max-w-[calc(100%-16px)] px-3.5 py-2.5 ${radius}`;
                       const bubble = isUser
-                        ? `${bubbleBase} bg-border/40 text-lg text-foreground ${
+                        ? `${bubbleBase} bg-border/70 text-lg text-foreground ${
                             showTail ? "chat-bubble-tail-right" : ""
                           } ${muted}`
                         : isScript
                           ? `${bubbleBase} border border-gold/45 bg-gold/5 text-foreground ${muted}`
-                          : `${bubbleBase} bg-accent-soft/80 text-lg text-foreground ${
+                          : `${bubbleBase} bg-accent-soft text-lg text-foreground ${
                               showTail ? "chat-bubble-tail-left" : ""
                             } ${muted}`;
                       return (

@@ -10,6 +10,8 @@ export type PendingLibraryGeneration = {
   speakerModelId: string | null;
   status?: "pending" | "running" | "failed";
   error?: string | null;
+  /** Ideate life-area this generation was started from. */
+  lifeAreaId?: string | null;
 };
 
 export const PENDING_LIBRARY_GENERATIONS_LS_KEY =

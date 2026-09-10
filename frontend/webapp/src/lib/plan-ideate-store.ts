@@ -1,4 +1,5 @@
 import type { DreamState, PlanDream } from "@/lib/plan-dreams";
+import { normalizeLifeAreaInsights } from "@/lib/plan-dreams";
 import { ensureGuestDemoIdeateSeeded, withoutDemoIdeateStore } from "@/lib/ideate-demo-seed";
 import { isMedimadeSessionActive } from "@/lib/auth-session";
 
@@ -130,6 +131,7 @@ function normalizeDream(d: PlanDream): PlanDream {
     visionEntries: Array.isArray(d.visionEntries) ? d.visionEntries : [],
     looseNotes: typeof d.looseNotes === "string" ? d.looseNotes : "",
     checkIns: Array.isArray(d.checkIns) ? d.checkIns.slice(0, 40) : [],
+    insights: normalizeLifeAreaInsights(d.insights),
     cardColor:
       typeof d.cardColor === "string" && d.cardColor.trim()
         ? d.cardColor.trim()
@@ -328,12 +330,14 @@ export function loadIdeateStore(): IdeateStoreV2 {
     return cleaned;
   }
   const next = ensureGuestDemoIdeateSeeded(raw);
+  // Persist only when ensure replaced the store — never shrink guest steps
+  // just because render called load again.
   const shouldPersist =
     typeof window !== "undefined" &&
     (next.dreams.length !== raw.dreams.length ||
-      next.subtasks.length !== raw.subtasks.length ||
-      next.todos.length !== raw.todos.length ||
-      next.dreams.some((d, i) => d.id !== raw.dreams[i]?.id));
+      next.dreams.some((d, i) => d.id !== raw.dreams[i]?.id) ||
+      next.subtasks.length > raw.subtasks.length ||
+      next.todos.length > raw.todos.length);
   if (shouldPersist) {
     saveIdeateStoreLocal(next);
   }

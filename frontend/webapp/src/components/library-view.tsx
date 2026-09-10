@@ -10,7 +10,6 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { IconAdjustmentsHorizontal, IconPlus } from "@tabler/icons-react";
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import * as Switch from "@radix-ui/react-switch";
 import { SearchInput } from "@/components/search-input";
 import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
 import { SoundFolderSelect } from "@/components/sound-folder-select";
@@ -34,7 +33,6 @@ import {
   backgroundAudioStreamingKey,
   type BackgroundAudioItem,
 } from "@/lib/medimade-api";
-import { ChatMarkdown } from "@/components/chat-markdown";
 import { useMobileOrTouchChrome } from "@/hooks/use-mobile-or-touch-chrome";
 import {
   estimateFishBillableUtf8Bytes,
@@ -43,7 +41,6 @@ import {
   fishUsdPerMillionForModel,
   formatFishCostUsd,
   generationTimingsFlyoverLines,
-  stripPauseMarkers,
 } from "@/lib/meditation-analytics";
 import {
   CLAUDE_HAIKU_45_MODEL_ID,
@@ -63,25 +60,17 @@ import {
 import { CommunityCategoryGrid } from "@/components/community-category-grid";
 import { SoundscapePicker } from "@/components/soundscape-picker";
 import { playWithLeadBuffer } from "@/lib/audio-lead-buffer";
+import {
+  formatDuration,
+  IconHeart,
+  isPendingRow,
+  LibraryMeditationCard,
+  pendingGenerationToRow,
+  type LibraryMeditationRow,
+} from "@/components/library-meditation-card";
 
 /** Mixer gain persisted for a soundscape; live playback uses its own volume. */
 const SOUNDSCAPE_MIX_GAIN = 50;
-
-function formatAudioClock(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) return "0:00";
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds == null || !Number.isFinite(seconds) || seconds <= 0) {
-    return "—";
-  }
-  const m = Math.floor(seconds / 60);
-  const s = Math.max(0, Math.floor(seconds % 60));
-  return `${m}m ${s}s`;
-}
 
 function isLocalDevHost(): boolean {
   if (process.env.NODE_ENV !== "production") return true;
@@ -253,18 +242,6 @@ function FishCostDevTooltip({ text }: { text: string }) {
       </div>
     </div>
   );
-}
-
-function formatWhen(iso: string | null): string {
-  if (!iso) return "—";
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  } catch {
-    return iso;
-  }
 }
 
 const MS_DAY = 86_400_000;
@@ -440,57 +417,6 @@ function IconMixReset({ className }: { className?: string }) {
     >
       <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
       <path d="M3 3v5h5" />
-    </svg>
-  );
-}
-
-function IconMixer({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      width="20"
-      height="20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      aria-hidden
-    >
-      <path d="M4 21V10M4 6V3M12 21v-7M12 8V3M20 21v-5M20 10V3" />
-      <circle cx="4" cy="8" r="2.2" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="10" r="2.2" fill="currentColor" stroke="none" />
-      <circle cx="20" cy="12" r="2.2" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-function IconHeart({
-  filled,
-  className,
-  strokeWidth = 2,
-}: {
-  filled: boolean;
-  className?: string;
-  strokeWidth?: number;
-}) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      width="20"
-      height="20"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path
-        d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z"
-        fill={filled ? "currentColor" : "none"}
-      />
     </svg>
   );
 }
@@ -1127,22 +1053,6 @@ function LibraryMixEditorModal({
   );
 }
 
-type PendingLibraryMeditationItem = {
-  kind: "pending";
-  pendingKey: string; // pending:<jobId>
-  jobId: string;
-  title: string;
-  description: string | null;
-  createdAt: string;
-  meditationStyle: string | null;
-  speakerName: string | null;
-  speakerModelId: string | null;
-  status: "pending" | "running" | "failed";
-  error: string | null;
-};
-
-type LibraryRow = LibraryMeditationItem | PendingLibraryMeditationItem;
-
 function isCataloguedLibraryItem(m: LibraryMeditationItem): boolean {
   return m.catalogued === true && m.isDraft !== true;
 }
@@ -1154,10 +1064,6 @@ function findCataloguedLibraryItem(
   const key = audioKey.trim();
   if (!key) return undefined;
   return list.find((x) => x.s3Key === key && isCataloguedLibraryItem(x));
-}
-
-function isPendingRow(x: LibraryRow): x is PendingLibraryMeditationItem {
-  return (x as PendingLibraryMeditationItem).kind === "pending";
 }
 
 function programDayLibraryTitle(day: {
@@ -1225,7 +1131,7 @@ function librarySearchTokens(q: string): string[] {
     .filter(Boolean);
 }
 
-function libraryRowSearchHaystack(m: LibraryRow): string {
+function libraryRowSearchHaystack(m: LibraryMeditationRow): string {
   if (isPendingRow(m)) {
     return [m.title, m.description, m.meditationStyle]
       .filter((x): x is string => Boolean(x && x.trim()))
@@ -1244,7 +1150,7 @@ function libraryRowSearchHaystack(m: LibraryRow): string {
     .toLowerCase();
 }
 
-function libraryRowMatchesSearch(m: LibraryRow, tokens: string[]): boolean {
+function libraryRowMatchesSearch(m: LibraryMeditationRow, tokens: string[]): boolean {
   if (tokens.length === 0) return true;
   const hay = libraryRowSearchHaystack(m);
   return tokens.every((t) => hay.includes(t));
@@ -1587,22 +1493,10 @@ export default function LibraryView({
     return next;
   }, [items, sortBy]);
 
-  const pendingRows: PendingLibraryMeditationItem[] = useMemo(() => {
+  const pendingRows = useMemo(() => {
     const next = [...pending];
     next.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
-    return next.map((p) => ({
-      kind: "pending",
-      pendingKey: `pending:${p.jobId}`,
-      jobId: p.jobId,
-      title: p.title,
-      description: p.description ?? null,
-      createdAt: p.createdAt,
-      meditationStyle: p.meditationStyle ?? null,
-      speakerName: p.speakerName ?? null,
-      speakerModelId: p.speakerModelId ?? null,
-      status: p.status ?? "pending",
-      error: p.error ?? null,
-    }));
+    return next.map(pendingGenerationToRow);
   }, [pending]);
 
   const communityItems = useMemo(() => {
@@ -1628,13 +1522,13 @@ export default function LibraryView({
     return next;
   }, [communityItems, sortBy]);
 
-  const libraryRows: LibraryRow[] = useMemo(() => {
+  const libraryRows: LibraryMeditationRow[] = useMemo(() => {
     if (libraryTab === "community") return sortedCommunityItems;
     if (libraryTab === "programs") return [];
     return [...pendingRows, ...sortedItems];
   }, [libraryTab, pendingRows, sortedItems, sortedCommunityItems]);
 
-  const visibleItems: LibraryRow[] = useMemo(() => {
+  const visibleItems: LibraryMeditationRow[] = useMemo(() => {
     const tokens = librarySearchTokens(searchQuery);
     if (libraryTab === "programs") return [];
     if (libraryTab === "community") {
@@ -1696,7 +1590,7 @@ export default function LibraryView({
     setPage((p) => Math.min(Math.max(1, p), totalPages));
   }, [totalPages]);
 
-  const pagedVisibleItems: LibraryRow[] = useMemo(() => {
+  const pagedVisibleItems: LibraryMeditationRow[] = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
     const end = start + PAGE_SIZE;
     if (libraryTab !== "meditations") {
@@ -2384,329 +2278,79 @@ export default function LibraryView({
     setMixAnchorEl(null);
     setMixError(null);
   }
-  function renderItem(m: LibraryRow) {
-    if (isPendingRow(m)) {
-      const isFailed = m.status === "failed";
-      const spinner = (
-        <svg
-          className="h-5 w-5 animate-spin"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          aria-hidden
-        >
-          <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-        </svg>
-      );
-      const failIcon = (
-        <svg
-          className="h-5 w-5"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden
-        >
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
-          <path d="M12 9v4" />
-          <path d="M12 17h.01" />
-        </svg>
-      );
-      return (
-        <li
-          key={m.pendingKey}
-          ref={(el) => {
-            if (el) itemElsRef.current.set(m.pendingKey, el);
-            else itemElsRef.current.delete(m.pendingKey);
-          }}
-          className={`relative min-w-0 overflow-hidden rounded-2xl border p-4 shadow-sm ${
-            isFailed
-              ? "border-danger/35 bg-danger/5"
-              : "border-accent/35 bg-accent-soft/20"
-          }`}
-        >
-          {!isFailed ? (
-            <>
-              {/* Indeterminate linear progress (MUI-like) */}
-              <div
-                aria-hidden
-                className="pointer-events-none absolute left-0 top-0 h-1 w-full bg-accent/10"
-              >
-                <div
-                  className="h-full w-1/3 bg-accent/60"
-                  style={{
-                    animation: "mmIndeterminateBar 1.4s ease-in-out infinite",
-                  }}
-                />
-              </div>
-              <div
-                aria-hidden
-                className="pointer-events-none absolute inset-0 animate-pulse bg-accent-soft/30"
-              />
-            </>
-          ) : null}
-          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0 flex-1">
-              <h2 className="font-display text-lg font-medium leading-snug">
-                {m.title}
-              </h2>
-              <p className="mt-1 text-sm text-muted">{m.description ?? "—"}</p>
-              {isFailed ? (
-                <p className="mt-2 text-sm text-danger">
-                  {m.error ?? "Generation failed."}
-                </p>
-              ) : null}
-              <p className="mt-2 text-xs text-muted">
-                {formatWhen(m.createdAt)}
-                {m.speakerName ? ` · ${m.speakerName}` : ""}
-              </p>
-            </div>
-            <div className="flex flex-shrink-0 items-center gap-2">
-              <div
-                className={`flex h-11 w-11 items-center justify-center rounded-full ${
-                  isFailed
-                    ? "bg-danger/10 text-danger"
-                    : "bg-selected/10 text-selected"
-                }`}
-                aria-label={isFailed ? "Generation failed" : "Generating"}
-                title={isFailed ? "Generation failed" : "Generating"}
-              >
-                {isFailed ? failIcon : spinner}
-              </div>
-              <button
-                type="button"
-                onClick={() => removePendingJob(m.jobId)}
-                className="cursor-pointer rounded-full border border-border bg-background px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:border-accent/35 hover:bg-accent-soft/20"
-              >
-                Remove
-              </button>
-            </div>
-          </div>
-        </li>
-      );
-    }
-    // From here, `m` is a real library item.
-    if (m.isDraft === true) {
-      const href =
-        m.sk != null
-          ? `/meditate/create?draftSk=${encodeURIComponent(m.sk)}`
-          : "/meditate/create";
-      const continueBtn = (
-        <Link
-          href={href}
-          className="inline-flex shrink-0 items-center justify-center rounded-full accent-fill-gradient px-4 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
-        >
-          Continue
-        </Link>
-      );
-      if (viewMode === "grid") {
-        return (
-          <li
-            key={m.s3Key}
-            className="group relative flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card p-5 shadow-sm"
-          >
-            <p className="text-xs font-medium uppercase tracking-wide text-muted">
-              Draft
-            </p>
-            <h2 className="font-display mt-2 text-lg font-medium leading-snug">
-              {m.title}
-            </h2>
-            <p className="mt-1 text-sm text-muted">
-              {m.meditationStyle?.trim() ? m.meditationStyle : "—"}
-            </p>
-            <p className="mt-3 text-xs text-muted">
-              {formatWhen(m.createdAt)}
-            </p>
-            <div className="mt-auto pt-4">{continueBtn}</div>
-          </li>
-        );
-      }
-      return (
-        <li
-          key={m.s3Key}
-          ref={(el) => {
-            if (el) itemElsRef.current.set(m.s3Key, el);
-            else itemElsRef.current.delete(m.s3Key);
-          }}
-          className="group relative min-w-0 overflow-hidden rounded-2xl border border-border bg-card p-4 shadow-sm"
-        >
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0 flex-1">
-              <span className="inline-block rounded-full border border-border bg-accent-soft/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
-                Draft
-              </span>
-              <h2 className="font-display mt-2 text-lg font-medium leading-snug">
-                {m.title}
-              </h2>
-              <p className="mt-1 text-sm text-muted">
-                {m.meditationStyle?.trim()
-                  ? m.meditationStyle
-                  : "Style not set yet"}
-              </p>
-              <p className="mt-2 text-xs text-muted">
-                Saved {formatWhen(m.createdAt)}
-              </p>
-            </div>
-            {continueBtn}
-          </div>
-        </li>
-      );
-    }
-
-    const open = m.sk != null && expandedSk === m.sk;
-    const isSelected = nowPlaying?.s3Key === m.s3Key;
-    const isPlaying = playingS3Key === m.s3Key;
-    const styleLine = libraryMeditationCategoryLabel(m);
-    const lengthLine = formatDuration(m.durationSeconds);
-    const fishCostText = showFishCostTooltip ? fishCostTooltipText(m) : null;
-
+  function renderItem(m: LibraryMeditationRow) {
+    const rowKey = isPendingRow(m) ? m.pendingKey : m.s3Key;
     const isCommunity = libraryTab === "community";
     const isProgramShelf = libraryTab === "programs";
     const hideOwnerActions = isCommunity || isProgramShelf;
-    const stars = isCommunity ? null : (
-      <div className="flex items-center gap-0.5">
-        {[1, 2, 3, 4, 5].map((star) => (
-          <button
-            key={star}
-            type="button"
-            disabled={!m.sk || ratingBusy === m.sk || isProgramShelf}
-            onClick={() =>
-              void setRating(m, m.rating === star ? null : star)
-            }
-            className={`rounded px-0.5 text-base leading-none sm:text-lg ${
-              m.rating != null && star <= m.rating
-                ? "text-accent"
-                : "text-star-idle"
-            } ${!m.sk || isProgramShelf ? "cursor-not-allowed opacity-40" : ""}`}
-            title={
-              isProgramShelf
-                ? "Ratings aren’t available on program classes"
-                : m.sk
-                  ? undefined
-                  : "Ratings need a catalogued row (generated after metadata deploy)"
-            }
-          >
-            ★
-          </button>
-        ))}
-      </div>
-    );
 
-    const favouriteDisabled = !m.sk || favouriteBusySk === m.sk;
-    const favouriteBtn = hideOwnerActions ? null : (
-      <button
-        type="button"
-        onClick={() => void setFavourite(m, !m.favourite)}
-        disabled={favouriteDisabled}
-        aria-label={m.favourite ? "Unfavourite meditation" : "Favourite meditation"}
-        className={`self-center items-center justify-center p-1 transition-opacity transition-colors ${
-          m.favourite || alwaysShowRowChrome
-            ? "opacity-100 pointer-events-auto"
-            : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
-        } ${
-          m.favourite ? "text-selected" : "text-muted"
-        } ${
-          favouriteDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-        }`}
-      >
-        <IconHeart filled={m.favourite} strokeWidth={2.5} />
-      </button>
-    );
+    if (isPendingRow(m)) {
+      return (
+        <LibraryMeditationCard
+          key={rowKey}
+          item={m}
+          viewMode={viewMode}
+          onRemovePending={removePendingJob}
+          itemRef={(el) => {
+            if (el) itemElsRef.current.set(m.pendingKey, el);
+            else itemElsRef.current.delete(m.pendingKey);
+          }}
+        />
+      );
+    }
 
-    const canEditMix = m.liveMix === true && Boolean(m.sk) && !m.isDraft;
-    const mixerBtn = canEditMix ? (
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (mixEditor?.sk === m.sk) {
-            mixCloseRef.current?.();
-            return;
-          }
-          setMixAnchorEl(e.currentTarget);
-          openMixEditor(m);
-        }}
-        aria-expanded={mixEditor?.sk === m.sk}
-        aria-label="Edit background mix"
-        className={`self-center items-center justify-center p-1 text-muted transition-opacity ${
-          alwaysShowRowChrome || mixEditor?.sk === m.sk
-            ? "opacity-100 pointer-events-auto"
-            : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
-        } cursor-pointer`}
-      >
-        <IconMixer />
-      </button>
-    ) : null;
+    const cardKey = m.s3Key;
+    const fishCostText = showFishCostTooltip ? fishCostTooltipText(m) : null;
+    const shareId = m.id?.trim() || "";
 
-    const archiveDisabled =
-      !m.sk || archiveBusySk === m.sk || ratingBusy === m.sk || favouriteBusySk === m.sk;
-    const publicDisabled = !m.sk;
-    const rowChrome =
-      alwaysShowRowChrome
-        ? "opacity-100 pointer-events-auto"
-        : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto";
-    const publicBtn =
-      !hideOwnerActions && m.sk && !m.isDraft ? (
-        <div
-          className={`flex items-center gap-2 transition-opacity ${rowChrome} ${
-            publicDisabled ? "cursor-not-allowed opacity-50" : ""
-          }`}
-          title={
-            m.isPublic === true
-              ? "Public — in Community"
-              : "Make public in Community"
-          }
-        >
-          <span
-            className={`text-[11px] font-medium tracking-wide ${
-              m.isPublic === true ? "text-accent-link" : "text-muted"
-            }`}
-          >
-            Public
-          </span>
-          <Switch.Root
-            checked={m.isPublic === true}
-            onCheckedChange={(v) => void setPublic(m, Boolean(v))}
-            disabled={publicDisabled}
-            aria-label={
-              m.isPublic ? "Remove from community library" : "Make public"
-            }
-            className="relative h-5 w-9 shrink-0 rounded-full border border-border bg-muted/40 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed"
-          >
-            <Switch.Thumb className="block h-4 w-4 translate-x-[2px] rounded-full bg-surface shadow-sm transition-transform will-change-transform data-[state=checked]:translate-x-[16px]" />
-          </Switch.Root>
-        </div>
-      ) : null;
-    const archiveBtn = hideOwnerActions ? null : (
-      <button
-        type="button"
-        onClick={() => {
+    return (
+      <LibraryMeditationCard
+        key={rowKey}
+        item={m}
+        viewMode={viewMode}
+        hideOwnerActions={hideOwnerActions}
+        showRating={!isCommunity}
+        ratingDisabled={isProgramShelf}
+        allowShare={
+          Boolean(shareId) &&
+          !isProgramShelf &&
+          (isCommunity || m.isPublic === true)
+        }
+        alwaysShowRowChrome={alwaysShowRowChrome}
+        isSelected={nowPlaying?.s3Key === m.s3Key}
+        isPlaying={playingS3Key === m.s3Key}
+        playingTimeSeconds={playingTimeSeconds}
+        onPlay={() => playItem(m)}
+        onTogglePlay={() => toggleCurrent()}
+        scriptExpanded={m.sk != null && expandedSk === m.sk}
+        onToggleScript={() =>
+          setExpandedSk((v) => (v === m.sk ? null : (m.sk ?? null)))
+        }
+        mobileOpen={Boolean(mobileCardOpen[cardKey])}
+        onToggleMobile={() =>
+          setMobileCardOpen((prev) => ({
+            ...prev,
+            [cardKey]: !prev[cardKey],
+          }))
+        }
+        ratingBusy={m.sk != null && ratingBusy === m.sk}
+        favouriteBusy={m.sk != null && favouriteBusySk === m.sk}
+        archiveBusy={m.sk != null && archiveBusySk === m.sk}
+        onRating={(rating) => void setRating(m, rating)}
+        onFavourite={(favourite) => void setFavourite(m, favourite)}
+        onArchive={() => {
           if (!m.sk) return;
           setArchiveConfirm({ sk: m.sk, title: m.title });
         }}
-        disabled={archiveDisabled}
-        aria-label="Archive meditation"
-        className={`rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted transition-opacity transition-colors hover:border-accent/40 hover:text-foreground ${rowChrome} ${
-          archiveDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-        }`}
-        title="Archive"
-      >
-        Archive
-      </button>
-    );
-
-    const shareId = m.id?.trim() || "";
-    const canShare =
-      Boolean(shareId) &&
-      !isProgramShelf &&
-      (isCommunity || m.isPublic === true);
-    const shareBtn = canShare ? (
-      <button
-        type="button"
-        onClick={() => {
+        onPublicChange={(isPublic) => void setPublic(m, isPublic)}
+        onOpenMix={(anchorEl) => {
+          setMixAnchorEl(anchorEl);
+          openMixEditor(m);
+        }}
+        mixEditorSk={mixEditor?.sk ?? null}
+        onCloseMix={() => mixCloseRef.current?.()}
+        shareCopiedId={shareCopiedId}
+        onShare={() => {
           const url = `https://consciously.live/meditate/library/community?id=${encodeURIComponent(shareId)}`;
           void (async () => {
             try {
@@ -2720,360 +2364,14 @@ export default function LibraryView({
             }
           })();
         }}
-        aria-label="Copy share link"
-        className={`rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted transition-opacity transition-colors hover:border-accent/40 hover:text-foreground ${
-          isCommunity ? "" : rowChrome
-        } cursor-pointer`}
-        title={
-          shareCopiedId === shareId
-            ? "Link copied"
-            : "Copy link to this meditation"
-        }
-      >
-        {shareCopiedId === shareId ? "Copied!" : "Share"}
-      </button>
-    ) : null;
-
-    const scriptToggleBtn =
-      m.scriptText && m.sk != null ? (
-        <button
-          type="button"
-          onClick={() =>
-            setExpandedSk((v) => (v === m.sk ? null : (m.sk ?? null)))
-          }
-          className={`ml-2 ${
-            open
-              ? "inline-flex"
-              : alwaysShowRowChrome
-                ? "inline-flex"
-                : "hidden group-hover:inline-flex"
-          } items-center font-bold text-accent-link hover:text-accent-link/80 cursor-pointer`}
-          style={{ lineHeight: "1.35" }}
-        >
-          {open ? "hide script" : "show script"}
-        </button>
-      ) : null;
-
-    const cardKey = m.s3Key;
-    const mobileOpen = Boolean(mobileCardOpen[cardKey]);
-    function toggleMobileCard() {
-      setMobileCardOpen((prev) => ({
-        ...prev,
-        [cardKey]: !prev[cardKey],
-      }));
-    }
-
-    const playControl = isPlaying ? (
-      <div className="flex items-center gap-2">
-        <span className="tabular-nums text-xs font-semibold text-muted sm:inline">
-          {formatAudioClock(playingTimeSeconds)}
-        </span>
-        <button
-          type="button"
-          onClick={() => toggleCurrent()}
-          className="flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent sm:h-11 sm:w-11"
-          aria-label="Pause"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="22"
-            height="22"
-            fill="currentColor"
-            aria-hidden
-          >
-            <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
-          </svg>
-        </button>
-      </div>
-    ) : (
-      <button
-        type="button"
-        onClick={() =>
-          isSelected
-            ? toggleCurrent()
-            : playItem(m)
-        }
-        className={
-          alwaysShowRowChrome
-            ? "flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent opacity-100 pointer-events-auto transition-opacity sm:h-11 sm:w-11"
-            : "flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent opacity-100 pointer-events-auto transition-opacity sm:h-11 sm:w-11 sm:opacity-0 sm:pointer-events-none sm:group-hover:opacity-100 sm:group-hover:pointer-events-auto"
-        }
-        aria-label="Play"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          width="22"
-          height="22"
-          fill="currentColor"
-          aria-hidden
-        >
-          <path d="M8 5v14l11-7L8 5z" />
-        </svg>
-      </button>
-    );
-
-    const actions = (
-      <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
-        {playControl}
-      </div>
-    );
-
-    const mobileFavouriteBtn = hideOwnerActions ? null : (
-      <button
-        type="button"
-        onClick={() => void setFavourite(m, !m.favourite)}
-        disabled={favouriteDisabled}
-        aria-label={m.favourite ? "Unfavourite meditation" : "Favourite meditation"}
-        className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full border border-border bg-background transition-colors ${
-          m.favourite ? "text-selected border-selected/40" : "text-muted"
-        } ${
-          favouriteDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-        }`}
-      >
-        <IconHeart filled={m.favourite} strokeWidth={2.5} />
-      </button>
-    );
-
-    const mobileMixerBtn = canEditMix ? (
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (mixEditor?.sk === m.sk) {
-            mixCloseRef.current?.();
-            return;
-          }
-          setMixAnchorEl(e.currentTarget);
-          openMixEditor(m);
+        itemRef={(el) => {
+          if (el) itemElsRef.current.set(m.s3Key, el);
+          else itemElsRef.current.delete(m.s3Key);
         }}
-        aria-expanded={mixEditor?.sk === m.sk}
-        aria-label="Edit background mix"
-        className="flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-border bg-background text-muted"
-      >
-        <IconMixer />
-      </button>
-    ) : null;
-
-    const scriptBlock =
-      open && m.scriptText ? (
-        <div className="max-h-64 overflow-y-auto rounded-xl border border-border bg-background/80 p-3">
-          <ChatMarkdown
-            text={stripPauseMarkers(m.scriptText)}
-            className="font-serif text-[13px] leading-relaxed text-foreground/95"
-          />
-          {m.scriptTruncated ? (
-            <p className="mt-2 text-xs text-muted">
-              Script was truncated for storage.
-            </p>
-          ) : null}
-        </div>
-      ) : null;
-
-    const mobileCardBody = (
-      <div className="sm:hidden">
-        <div className="flex items-start justify-between gap-3">
-          <h2 className="min-w-0 flex-1 font-display text-lg font-medium leading-snug">
-            {m.title}
-          </h2>
-          <span className="mt-1.5 shrink-0 tabular-nums text-xs font-semibold text-muted">
-            {lengthLine}
-          </span>
-        </div>
-        <span className="mt-2 inline-block rounded-full bg-accent-soft/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
-          {styleLine}
-        </span>
-        <p className="mt-2 line-clamp-2 text-sm text-muted">
-          {m.description ?? "—"}
-        </p>
-        <div className="mt-3 flex items-center gap-2">
-          {playControl}
-          {mobileOpen ? mobileMixerBtn : null}
-          {mobileFavouriteBtn}
-          {!mobileOpen ? (
-            <button
-              type="button"
-              onClick={toggleMobileCard}
-              className="ml-auto cursor-pointer text-sm font-semibold text-accent-link"
-              aria-expanded={false}
-            >
-              More ⌄
-            </button>
-          ) : (
-            <span className="ml-auto" aria-hidden />
-          )}
-        </div>
-        {mobileOpen ? (
-          <div className="mt-3 space-y-3">
-            {m.scriptText && m.sk != null ? (
-              <button
-                type="button"
-                onClick={() =>
-                  setExpandedSk((v) => (v === m.sk ? null : (m.sk ?? null)))
-                }
-                className="cursor-pointer font-bold text-accent-link hover:text-accent-link/80"
-                style={{ lineHeight: "1.35" }}
-              >
-                {open ? "Hide script" : "Show script"}
-              </button>
-            ) : null}
-            {scriptBlock}
-            {stars}
-            <p className="text-xs text-muted">
-              {formatWhen(m.createdAt)}
-              {m.speakerName ? ` · ${m.speakerName}` : ""}
-            </p>
-            {publicBtn || archiveBtn || shareBtn ? (
-              <div className="flex items-center gap-3 border-t border-border/70 pt-3 [&_*]:!opacity-100 [&_*]:!pointer-events-auto">
-                {publicBtn}
-                {shareBtn}
-                {archiveBtn}
-              </div>
-            ) : null}
-            <button
-              type="button"
-              onClick={toggleMobileCard}
-              className="w-full cursor-pointer text-right text-sm font-semibold text-accent-link"
-              aria-expanded={true}
-            >
-              Show less ⌃
-            </button>
-          </div>
-        ) : null}
-      </div>
-    );
-
-    if (viewMode === "grid") {
-      return (
-        <li
-          key={m.s3Key}
-          ref={(el) => {
-            if (el) itemElsRef.current.set(m.s3Key, el);
-            else itemElsRef.current.delete(m.s3Key);
-          }}
-          className={`group relative flex min-w-0 flex-col overflow-visible rounded-2xl border bg-card p-5 shadow-sm ${
-            isPlaying
-              ? "border-accent"
-              : "border-border hover:border-accent/80 transition-colors"
-          }`}
-        >
-          {fishCostText ? <FishCostDevTooltip text={fishCostText} /> : null}
-          {isPlaying ? (
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent border-accent-pulse"
-            />
-          ) : null}
-          {mobileCardBody}
-          <div className="hidden min-w-0 flex-1 flex-col sm:flex">
-          <div className="flex items-start justify-between gap-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-accent-link">
-              {styleLine}
-            </p>
-          </div>
-          <div className="mt-2 flex items-start gap-3">
-            <h2 className="font-display text-lg font-medium leading-snug">
-              {m.title}
-            </h2>
-            <span className="mt-1.5 shrink-0 tabular-nums text-xs font-semibold text-muted">
-              {lengthLine}
-            </span>
-          </div>
-          <div className="mt-1 text-sm text-muted">
-            {m.description ?? "—"}
-            {scriptToggleBtn}
-          </div>
-          <div className="mt-3 flex w-full items-center gap-3 text-xs text-muted">
-            <span className="min-w-0 flex-1">
-              {formatWhen(m.createdAt)}
-              {m.speakerName ? ` · ${m.speakerName}` : ""}
-            </span>
-            {publicBtn || archiveBtn || shareBtn ? (
-            <span className="shrink-0 flex items-center gap-3">
-              {publicBtn}
-              {shareBtn}
-              {archiveBtn}
-            </span>
-            ) : null}
-          </div>
-          {scriptBlock ? <div className="mt-4">{scriptBlock}</div> : null}
-          <div className="mt-auto flex items-center justify-between gap-3 translate-y-2">
-            <div>{stars}</div>
-            <div className="flex items-center gap-2">
-              {actions}
-              {mixerBtn}
-              {favouriteBtn}
-            </div>
-          </div>
-          </div>
-        </li>
-      );
-    }
-
-    return (
-      <li
-        key={m.s3Key}
-        className={`group relative min-w-0 overflow-visible rounded-2xl border bg-card p-4 shadow-sm ${
-          isPlaying
-            ? "border-accent"
-            : "border-border hover:border-accent/80 transition-colors"
-        }`}
-      >
-        {fishCostText ? <FishCostDevTooltip text={fishCostText} /> : null}
-        {isPlaying ? (
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent border-accent-pulse"
-          />
-        ) : null}
-        {mobileCardBody}
-        <div className="hidden sm:block">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 flex-wrap items-center gap-2 gap-y-1">
-                <div className="flex items-start gap-3">
-                  <h2 className="min-w-0 font-display text-lg font-medium leading-snug">
-                    {m.title}
-                  </h2>
-                  <span className="mt-1.5 shrink-0 tabular-nums text-xs font-semibold text-muted">
-                    {lengthLine}
-                  </span>
-                </div>
-                <span className="rounded-full bg-accent-soft/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
-                  {styleLine}
-                </span>
-              </div>
-            </div>
-            <div className="mt-1 text-sm text-muted">
-              {m.description ?? "—"}
-              {scriptToggleBtn}
-            </div>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:flex-col lg:items-end xl:flex-col xl:items-end">
-            {stars}
-            <div className="flex items-center gap-2 lg:self-end">
-              {actions}
-              {mixerBtn}
-              {favouriteBtn}
-            </div>
-          </div>
-        </div>
-        <div className="mt-2 flex w-full items-center gap-3 text-xs text-muted">
-          <span className="min-w-0 flex-1">
-            {formatWhen(m.createdAt)}
-            {m.speakerName ? ` · ${m.speakerName}` : ""}
-          </span>
-          {publicBtn || archiveBtn || shareBtn ? (
-            <span className="shrink-0 flex items-center gap-3">
-              {publicBtn}
-              {shareBtn}
-              {archiveBtn}
-            </span>
-          ) : null}
-        </div>
-        {scriptBlock ? <div className="mt-4 border-t border-border pt-4">{scriptBlock}</div> : null}
-        </div>
-      </li>
+        devOverlay={
+          fishCostText ? <FishCostDevTooltip text={fishCostText} /> : null
+        }
+      />
     );
   }
 

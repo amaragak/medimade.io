@@ -65,6 +65,10 @@ type OutItem = {
   catalogued: boolean;
   mp3Bytes: number | null;
   isDraft: boolean;
+  /** Ideate life-area this meditation was created for (when linked). */
+  lifeAreaId: string | null;
+  /** Create-job id when this library row was produced by Generate. */
+  jobId: string | null;
   liveMix: boolean;
   backgroundNatureKey: string | null;
   backgroundMusicKey: string | null;
@@ -493,6 +497,14 @@ function buildLibraryItems(params: {
       catalogued: !isDraft,
       mp3Bytes,
       isDraft,
+      lifeAreaId:
+        typeof row.lifeAreaId === "string" && row.lifeAreaId.trim()
+          ? row.lifeAreaId.trim()
+          : null,
+      jobId:
+        typeof row.jobId === "string" && row.jobId.trim()
+          ? row.jobId.trim()
+          : null,
       liveMix: row.liveMix === true,
       backgroundNatureKey: optTrimKey(row.backgroundNatureKey),
       backgroundMusicKey: optTrimKey(row.backgroundMusicKey),
@@ -583,6 +595,8 @@ function buildLibraryItems(params: {
       catalogued: false,
       mp3Bytes: obj.size,
       isDraft: false,
+      lifeAreaId: null,
+      jobId: null,
       liveMix: false,
       backgroundNatureKey: null,
       backgroundMusicKey: null,

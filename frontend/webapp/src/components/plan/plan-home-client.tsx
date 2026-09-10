@@ -841,7 +841,7 @@ export function PlanHomeClient() {
       {/* Vision board hero — editable mandala band */}
       <section
         ref={heroRef}
-        className={`home-hero group/hero relative w-full ${heroBgOption.className}`}
+        className={`home-hero home-hero--ideate-depth group/hero relative w-full ${heroBgOption.className}`}
         aria-label="Vision board"
       >
         <div
@@ -916,25 +916,33 @@ export function PlanHomeClient() {
                 sizeClassName="w-full"
                 gapClassName="gap-2.5 sm:gap-3"
                 radiusClassName="rounded-none"
-                cellRadiusClassName="rounded-md shadow-[0_10px_28px_rgb(30_37_48_/_0.32),0_2px_8px_rgb(30_37_48_/_0.18)]"
+                cellRadiusClassName="rounded-md shadow-[0_12px_32px_rgb(30_37_48_/_0.42),0_4px_12px_rgb(30_37_48_/_0.28)]"
               />
             </div>
 
             <div className="absolute left-1/2 top-1/2 z-[2] w-[min(100%,34rem)] -translate-x-1/2 -translate-y-1/2 px-6 text-center sm:w-[min(100%,38rem)]">
               <div
-                className="pointer-events-none absolute -inset-x-4 -inset-y-5 -z-10 overflow-hidden rounded-2xl sm:-inset-x-5 sm:-inset-y-6"
+                className="pointer-events-none absolute -inset-x-4 -inset-y-5 -z-10 sm:-inset-x-5 sm:-inset-y-6"
                 style={{
-                  background:
-                    "radial-gradient(ellipse 85% 80% at center, rgba(0,0,0,0.74) 0%, rgba(0,0,0,0.52) 45%, rgba(0,0,0,0.24) 72%, transparent 100%)",
-                  backdropFilter: "blur(8px)",
-                  WebkitBackdropFilter: "blur(8px)",
-                  maskImage:
-                    "radial-gradient(ellipse 85% 80% at center, #000 0%, #000 45%, rgba(0,0,0,0.65) 72%, transparent 100%)",
-                  WebkitMaskImage:
-                    "radial-gradient(ellipse 85% 80% at center, #000 0%, #000 45%, rgba(0,0,0,0.65) 72%, transparent 100%)",
+                  filter:
+                    "drop-shadow(0 10px 24px rgba(0,0,0,0.4)) drop-shadow(0 2px 8px rgba(0,0,0,0.25))",
                 }}
                 aria-hidden
-              />
+              >
+                <div
+                  className="absolute inset-0 overflow-hidden rounded-2xl"
+                  style={{
+                    background:
+                      "radial-gradient(ellipse 85% 80% at center, rgba(0,0,0,0.74) 0%, rgba(0,0,0,0.52) 45%, rgba(0,0,0,0.24) 72%, transparent 100%)",
+                    backdropFilter: "blur(8px)",
+                    WebkitBackdropFilter: "blur(8px)",
+                    maskImage:
+                      "radial-gradient(ellipse 85% 80% at center, #000 0%, #000 45%, rgba(0,0,0,0.65) 72%, transparent 100%)",
+                    WebkitMaskImage:
+                      "radial-gradient(ellipse 85% 80% at center, #000 0%, #000 45%, rgba(0,0,0,0.65) 72%, transparent 100%)",
+                  }}
+                />
+              </div>
               {valueTexts.length === 0 ? (
                 <p className="font-display text-[23px] font-normal italic leading-[1.45] text-white/80">
                   Add a few values below — we&apos;ll distil what you stand for
@@ -1082,7 +1090,7 @@ export function PlanHomeClient() {
                 <li key={d.id} className="min-w-0">
                   <Link
                     href={`/ideate/goal/${encodeURIComponent(d.id)}`}
-                    className="life-area-card group relative flex aspect-square cursor-pointer flex-col rounded-[4px] p-[22px] shadow-[0_4px_14px_rgba(0,0,0,0.06)] transition-[transform,box-shadow] duration-150 hover:-translate-y-[3px] hover:shadow-[0_10px_28px_rgba(0,0,0,0.09)] dark:shadow-none dark:hover:shadow-none"
+                    className="life-area-card group relative flex aspect-square cursor-pointer flex-col rounded-[4px] p-[22px] shadow-[0_8px_24px_rgba(0,0,0,0.12),0_2px_8px_rgba(0,0,0,0.08)] transition-[transform,box-shadow] duration-150 hover:-translate-y-[3px] hover:shadow-[0_16px_40px_rgba(0,0,0,0.16),0_4px_12px_rgba(0,0,0,0.1)] dark:shadow-[0_8px_24px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.3)] dark:hover:shadow-[0_16px_40px_rgba(0,0,0,0.55),0_4px_12px_rgba(0,0,0,0.35)]"
                     style={bgVars}
                   >
                     <h3 className="shrink-0 pr-2 font-display text-xl font-medium leading-snug tracking-tight text-[#1E2530] dark:text-[#F4F0E8] sm:text-[1.375rem]">
@@ -1153,14 +1161,20 @@ export function PlanHomeClient() {
             </div>
           ) : null}
         </section>
+      </section>
 
-        {/* —— Values —— */}
-        <IdeateCollapsibleSection
-          eyebrow="Values"
-          summary={valuesSummary}
-          collapsed={collapsed.values}
-          onToggle={() => toggleSection("values")}
-        >
+      {/* Values → onwards: alternating full-bleed marketing bands */}
+      <div className="w-full">
+        <div className="w-full border-b-[0.5px] border-marketing-ink/15 bg-marketing-band-ideate">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
+            {/* —— Values —— */}
+            <IdeateCollapsibleSection
+              variant="band"
+              eyebrow="Values"
+              summary={valuesSummary}
+              collapsed={collapsed.values}
+              onToggle={() => toggleSection("values")}
+            >
           {values.length === 0 ? (
             <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
               Principles you want to live by — name a few that feel true.
@@ -1295,15 +1309,20 @@ export function PlanHomeClient() {
               </button>
             </div>
           )}
-        </IdeateCollapsibleSection>
+            </IdeateCollapsibleSection>
+          </div>
+        </div>
 
-        {/* —— Meaningful quotes —— */}
-        <IdeateCollapsibleSection
-          eyebrow="Meaningful quotes"
-          summary={quotesSummary}
-          collapsed={collapsed.quotes}
-          onToggle={() => toggleSection("quotes")}
-        >
+        <div className="w-full border-b-[0.5px] border-marketing-ink/15 bg-marketing-band-d">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
+            {/* —— Meaningful quotes —— */}
+            <IdeateCollapsibleSection
+              variant="band"
+              eyebrow="Meaningful quotes"
+              summary={quotesSummary}
+              collapsed={collapsed.quotes}
+              onToggle={() => toggleSection("quotes")}
+            >
           {quotes.length === 0 ? (
             <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
               Lines that keep you oriented — from thinkers you admire, or your
@@ -1631,15 +1650,20 @@ export function PlanHomeClient() {
               </button>
             </div>
           )}
-        </IdeateCollapsibleSection>
+            </IdeateCollapsibleSection>
+          </div>
+        </div>
 
-        {/* —— Questions —— */}
-        <IdeateCollapsibleSection
-          eyebrow="Questions to yourself"
-          summary={questionsSummary}
-          collapsed={collapsed.questions}
-          onToggle={() => toggleSection("questions")}
-        >
+        <div className="w-full border-b-[0.5px] border-marketing-ink/15 bg-marketing-band-ideate">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
+            {/* —— Questions —— */}
+            <IdeateCollapsibleSection
+              variant="band"
+              eyebrow="Questions to yourself"
+              summary={questionsSummary}
+              collapsed={collapsed.questions}
+              onToggle={() => toggleSection("questions")}
+            >
           {questions.length === 0 ? (
             <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
               Questions worth sitting with — add a few and answer when
@@ -1849,16 +1873,21 @@ export function PlanHomeClient() {
               ) : null}
             </div>
           </div>
-        </IdeateCollapsibleSection>
+            </IdeateCollapsibleSection>
+          </div>
+        </div>
 
         {/* —— Regrets — temporarily hidden —— */}
         {false && (
-        <IdeateCollapsibleSection
-          eyebrow="Regret minimisation"
-          summary={regretsSummary}
-          collapsed={collapsed.regrets}
-          onToggle={() => toggleSection("regrets")}
-        >
+          <div className="w-full border-b-[0.5px] border-marketing-ink/15 bg-marketing-band-d">
+            <div className="mx-auto max-w-6xl px-4 sm:px-6">
+              <IdeateCollapsibleSection
+                variant="band"
+                eyebrow="Regret minimisation"
+                summary={regretsSummary}
+                collapsed={collapsed.regrets}
+                onToggle={() => toggleSection("regrets")}
+              >
           {regrets.length === 0 ? (
             <p className="mb-5 max-w-2xl font-sans text-[13px] font-normal italic leading-relaxed text-muted">
               Imagine yourself at 80, looking back. What would you regret not
@@ -1960,9 +1989,11 @@ export function PlanHomeClient() {
               </button>
             </div>
           )}
-        </IdeateCollapsibleSection>
+              </IdeateCollapsibleSection>
+            </div>
+          </div>
         )}
-      </section>
+      </div>
 
       {modalOpen ? (
         <div

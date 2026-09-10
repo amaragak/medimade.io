@@ -2,206 +2,223 @@
 
 /**
  * Surfaced journal + meditation context for a life area.
- * Guest demos show curated sample links; personal areas stay empty until
- * real matching exists.
+ * Only real soft-matched links — never demo stubs.
  */
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { isDemoIdeateDream } from "@/lib/ideate-demo-seed";
 import type { PlanDream } from "@/lib/plan-dreams";
+import {
+  fetchLinkedMeditationsForLifeArea,
+  journalEntriesLinkedToLifeArea,
+  type LinkedJournalHit,
+  type LinkedMeditationHit,
+} from "@/lib/plan-life-area-links";
 
-function formatStubDate(iso: string): string {
+function formatShortDate(iso: string): string {
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return "—";
     return d.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
-      year: "numeric",
     });
   } catch {
     return "—";
   }
 }
 
-const DEMO_CONTEXT: Record<
-  string,
-  {
-    journal: { id: string; date: string; title: string; href: string }[];
-    meditations: {
-      id: string;
-      title: string;
-      type: string;
-      date: string;
-    }[];
-  }
-> = {
-  "demo-ideate-mornings": {
-    journal: [
-      {
-        id: "demo-j-morning",
-        date: "2026-08-02T20:00:00.000Z",
-        title: "A quieter morning",
-        href: "/journal/my",
-      },
-      {
-        id: "demo-j-quiet",
-        date: "2026-07-19T09:15:00.000Z",
-        title: "Quiet for twenty minutes",
-        href: "/journal/my",
-      },
-    ],
-    meditations: [
-      {
-        id: "demo-m1",
-        title: "Soft morning light",
-        type: "Visualisation",
-        date: "2026-08-11T14:00:00.000Z",
-      },
-      {
-        id: "demo-m2",
-        title: "Phone stays in the hall",
-        type: "Manifestation",
-        date: "2026-07-22T16:30:00.000Z",
-      },
-    ],
-  },
-  "demo-ideate-project": {
-    journal: [
-      {
-        id: "demo-j-resist",
-        date: "2026-07-28T21:00:00.000Z",
-        title: "What I keep putting off",
-        href: "/journal/my",
-      },
-    ],
-    meditations: [
-      {
-        id: "demo-m3",
-        title: "Fifteen minutes only",
-        type: "Focus",
-        date: "2026-07-30T16:00:00.000Z",
-      },
-    ],
-  },
-  "demo-ideate-body": {
-    journal: [
-      {
-        id: "demo-j-grat",
-        date: "2026-07-15T07:00:00.000Z",
-        title: "Three things",
-        href: "/journal/my/gratitudes",
-      },
-    ],
-    meditations: [
-      {
-        id: "demo-m4",
-        title: "Shoulders down before work",
-        type: "Body scan",
-        date: "2026-07-04T10:00:00.000Z",
-      },
-    ],
-  },
-};
-
 type Props = {
   dream: PlanDream;
 };
 
-/** Unified surfaced-context panel — journal + meditations side by side. */
-export function PlanSurfacedContextPanel({ dream }: Props) {
-  const demo = isDemoIdeateDream(dream);
-  const pack = DEMO_CONTEXT[dream.id];
-  const journal = pack?.journal ?? [];
-  const meditations = pack?.meditations ?? [];
+const sidebarCardClass =
+  "rounded-2xl border border-border bg-card p-4 shadow-sm";
 
-  if (!demo) {
-    return (
-      <section className="mt-12 rounded-[14px] bg-[#F5F1E7] px-8 py-7 dark:bg-accent-soft/20">
-        <p className="text-sm leading-relaxed text-muted">
-          Related journal pages and meditations will show up here as you write
-          and create — nothing linked to this life area yet.
-        </p>
-      </section>
-    );
-  }
+export function PlanReflectSidebarJournal({ dream }: Props) {
+  const [journal, setJournal] = useState<LinkedJournalHit[]>([]);
+
+  useEffect(() => {
+    setJournal(journalEntriesLinkedToLifeArea(dream));
+  }, [dream]);
+
+  if (journal.length === 0) return null;
 
   return (
-    <section className="mt-12 rounded-[14px] bg-[#F5F1E7] px-8 py-7 dark:bg-accent-soft/20">
-      <div className="grid gap-8 md:grid-cols-2 md:gap-10">
-        <div>
-          <h2 className="text-sm font-medium uppercase tracking-widest text-[#8A7566]">
-            From your journal
-          </h2>
-          {journal.length === 0 ? (
-            <p className="mt-3 text-sm italic text-[#A39C8C]">Nothing linked yet.</p>
-          ) : (
-            <ul className="mt-3 space-y-2">
-              {journal.map((e) => (
-                <li key={e.id}>
-                  <Link
-                    href={e.href}
-                    className="flex items-baseline justify-between gap-3 rounded-lg bg-card px-3 py-2.5 transition-opacity hover:opacity-80"
-                  >
-                    <span className="min-w-0 truncate text-sm font-medium text-[#1E2530] dark:text-foreground">
-                      {e.title}
-                    </span>
-                    <span className="shrink-0 text-xs text-muted">
-                      {formatStubDate(e.date)}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+    <div className={sidebarCardClass}>
+      <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+        From your journal
+      </h2>
+      <ul className="mt-3">
+        {journal.map((e) => (
+          <li
+            key={e.id}
+            className="border-b border-border/80 last:border-b-0"
+          >
+            <Link
+              href={e.href}
+              className="flex items-baseline justify-between gap-3 py-2.5 transition-opacity hover:opacity-80"
+            >
+              <span className="min-w-0 truncate text-sm font-medium text-[#1E2530] dark:text-foreground">
+                {e.title}
+              </span>
+              <span className="shrink-0 text-xs text-muted">
+                {formatShortDate(e.date)}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
-        <div>
-          <h2 className="text-sm font-medium uppercase tracking-widest text-[#8A7566]">
-            Meditations from this area
-          </h2>
-          {meditations.length === 0 ? (
-            <p className="mt-3 text-sm italic text-[#A39C8C]">None yet.</p>
-          ) : (
-            <ul className="mt-3 space-y-2">
-              {meditations.map((m) => (
-                <li
-                  key={m.id}
-                  className="flex items-center gap-2 rounded-lg bg-card px-3 py-2.5"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-[#1E2530] dark:text-foreground">
-                      {m.title}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted">
-                      {m.type} · {formatStubDate(m.date)}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    disabled
-                    title="Sample — play not wired"
-                    className="flex h-8 w-8 shrink-0 cursor-not-allowed items-center justify-center rounded-full border border-[#E5DFD0] text-muted opacity-60 dark:border-border"
-                    aria-label={`${m.title} (sample)`}
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                      aria-hidden
-                    >
-                      <path d="M8 5v14l11-7z" />
-                    </svg>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </section>
+export function PlanReflectSidebarMeditations({ dream }: Props) {
+  const [meditations, setMeditations] = useState<LinkedMeditationHit[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchLinkedMeditationsForLifeArea(dream).then((hits) => {
+      if (!cancelled) setMeditations(hits);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [dream]);
+
+  if (meditations.length === 0) return null;
+
+  return (
+    <div className={sidebarCardClass}>
+      <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">
+        Meditations
+      </h2>
+      <ul className="mt-3">
+        {meditations.map((m) => (
+          <li
+            key={m.id}
+            className="flex items-baseline justify-between gap-3 border-b border-border/80 py-2.5 last:border-b-0"
+          >
+            <Link
+              href={m.href}
+              className="min-w-0 truncate text-sm font-medium text-[#1E2530] transition-opacity hover:opacity-80 dark:text-foreground"
+            >
+              {m.title}
+            </Link>
+            <span className="shrink-0 text-xs text-muted">
+              {formatShortDate(m.date)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function lifeAreaActivityStats(dream: PlanDream): {
+  lastCheckIn: string;
+  thoughtsThisMonth: number;
+  meditationCount: number;
+  daysAgoLabel: string;
+} {
+  const thoughts = [
+    ...(dream.dreamEntries ?? []),
+    ...(dream.obstacleEntries ?? []),
+    ...(dream.visionEntries ?? []),
+  ];
+  const now = new Date();
+  const thoughtsThisMonth = thoughts.filter((e) => {
+    const d = new Date(e.createdAt);
+    return (
+      d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()
+    );
+  }).length;
+
+  const lastCheckInIso = dream.checkIns?.[0]?.createdAt;
+  const meditationCount = dream.meditationsGenerated ?? 0;
+
+  let daysAgoLabel = "recently";
+  try {
+    const raw = dream.updatedAt || dream.createdAt;
+    const then = new Date(raw).getTime();
+    if (!Number.isNaN(then)) {
+      const days = Math.max(
+        0,
+        Math.floor((Date.now() - then) / (1000 * 60 * 60 * 24)),
+      );
+      if (days === 0) daysAgoLabel = "today";
+      else if (days === 1) daysAgoLabel = "1 day ago";
+      else daysAgoLabel = `${days} days ago`;
+    }
+  } catch {
+    /* keep recently */
+  }
+
+  return {
+    lastCheckIn: lastCheckInIso ? formatShortDate(lastCheckInIso) : "—",
+    thoughtsThisMonth,
+    meditationCount,
+    daysAgoLabel,
+  };
+}
+
+/** @deprecated Prefer lifeAreaActivityStats; kept for card sidebar. */
+export function lifeAreaActivityRows(
+  dream: PlanDream,
+): { label: string; value: string }[] {
+  const s = lifeAreaActivityStats(dream);
+  return [
+    { label: "Last check-in", value: s.lastCheckIn },
+    { label: "Thoughts this month", value: String(s.thoughtsThisMonth) },
+    { label: "Meditations", value: String(s.meditationCount) },
+  ];
+}
+
+/** Single-line muted meta for the life-area header — no card chrome. */
+export function PlanLifeAreaHeaderSummary({ dream }: Props) {
+  const s = lifeAreaActivityStats(dream);
+  return (
+    <p className="whitespace-nowrap text-[12px] leading-snug text-muted sm:text-[13px]">
+      Last check-in {s.lastCheckIn}
+      <span aria-hidden="true"> · </span>
+      {s.thoughtsThisMonth} thoughts
+      <span aria-hidden="true"> · </span>
+      {s.meditationCount} meditations
+      <span aria-hidden="true"> · </span>
+      {s.daysAgoLabel}
+    </p>
+  );
+}
+
+export function PlanReflectSidebarActivity({ dream }: Props) {
+  const rows = lifeAreaActivityRows(dream);
+
+  return (
+    <div className={sidebarCardClass}>
+      <ul>
+        {rows.map((row) => (
+          <li
+            key={row.label}
+            className="flex items-baseline justify-between gap-3 border-b border-border/80 py-2 last:border-b-0"
+          >
+            <span className="text-[12px] text-muted">{row.label}</span>
+            <span className="text-[12px] text-[#8A8272] dark:text-muted">
+              {row.value}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** @deprecated Prefer sidebar cards; kept for any leftover imports. */
+export function PlanSurfacedContextPanel({ dream }: Props) {
+  return (
+    <div className="mt-10 space-y-4">
+      <PlanReflectSidebarJournal dream={dream} />
+      <PlanReflectSidebarMeditations dream={dream} />
+    </div>
   );
 }
 

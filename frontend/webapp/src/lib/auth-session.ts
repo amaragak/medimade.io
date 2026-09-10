@@ -3,8 +3,9 @@
  * HttpOnly cookies are still set when the browser allows them; body refresh is the
  * durable fallback so cross-origin / localhost cookie blocks cannot sign you out.
  *
- * Sign-out happens ONLY via clearMedimadeSession() (explicit Log out).
- * Soft refresh failures and even "expired" API responses never wipe the session.
+ * Explicit Log out ONLY: clearMedimadeSession().
+ * Never auto-clear ACTIVE_KEY / refresh / access on a failed refresh — parallel
+ * tab rotation and stale cookies routinely return one-off "invalid" responses.
  */
 
 const EMAIL_KEY = "mm_session_email_v1";
@@ -67,6 +68,13 @@ function readJwtExpMs(jwt: string): number | null {
   }
 }
 
+function accessJwtNeedsRefresh(jwt: string | null): boolean {
+  if (!jwt) return true;
+  const expMs = readJwtExpMs(jwt);
+  if (!expMs) return false; // unparseable — keep using until API 401s
+  return expMs - Date.now() <= ACCESS_REFRESH_LEAD_MS;
+}
+
 function scheduleAccessRefresh(): void {
   if (typeof window === "undefined") return;
   clearAccessRefreshTimer();
@@ -91,7 +99,8 @@ function bindVisibilityRefresh(): void {
   const kick = () => {
     if (!isMedimadeSessionActive()) return;
     if (document.visibilityState && document.visibilityState !== "visible") return;
-    void ensureMedimadeSession({ force: true });
+    // Soft kick only — forced refresh on every focus races tabs and signs people out.
+    void ensureMedimadeSession({ force: false });
   };
   document.addEventListener("visibilitychange", kick);
   window.addEventListener("focus", kick);
@@ -148,8 +157,15 @@ function hydrateAccessJwtFromStorage(): void {
           memoryAccessJwt = next;
           if (next) scheduleAccessRefresh();
         }
+        if (ev.key === REFRESH_TOKEN_KEY && ev.newValue) {
+          // Another tab rotated — keep sticky session; next refresh uses new token.
+        }
         if (ev.key === ACTIVE_KEY && ev.newValue !== "1") {
-          memoryAccessJwt = null;
+          // Only explicit logout in another tab clears activity. Do not wipe JWT
+          // here on a transient null write race.
+          if (ev.newValue === null || ev.newValue === "") {
+            memoryAccessJwt = null;
+          }
         }
       });
     } catch {
@@ -247,7 +263,7 @@ export function clearMedimadeSession(): void {
   // Wipe before notifying UI so a fast re-login cannot revive stale memory.
   void import("@/lib/ideate-cloud")
     .then((m) => {
-      m.wipeIdeateDeviceData();
+      m.wipeIdeateDeviceData({ clearBackup: true });
     })
     .finally(() => {
       try {
@@ -271,17 +287,18 @@ export function clearMedimadeSession(): void {
 /**
  * Restore / rotate access JWT from refresh cookie or durable local refresh token.
  * Safe to call often — coalesces concurrent calls (including across HMR).
- * Never signs the user out; only clearMedimadeSession does that.
+ *
+ * Never clears the session here. Failed refresh keeps sticky signed-in state;
+ * only clearMedimadeSession() (Log out) may wipe credentials.
  */
 export async function ensureMedimadeSession(opts?: {
   force?: boolean;
 }): Promise<boolean> {
   if (typeof window === "undefined") return false;
   hydrateAccessJwtFromStorage();
-  if (!opts?.force && memoryAccessJwt) {
-    const expMs = readJwtExpMs(memoryAccessJwt);
-    // Proactively refresh if the access JWT is about to expire.
-    if (expMs && expMs - Date.now() > ACCESS_REFRESH_LEAD_MS) return true;
+  if (!opts?.force && !accessJwtNeedsRefresh(memoryAccessJwt)) {
+    scheduleAccessRefresh();
+    return true;
   }
   if (!isMedimadeSessionActive() && !getMedimadeSessionEmail()) return false;
 
@@ -305,13 +322,32 @@ export async function ensureMedimadeSession(opts?: {
         return true;
       }
 
-      // Any failure (missing / invalid / expired / network): keep session.
-      // Another tab may have rotated the refresh token — adopt its storage if newer.
+      // Another tab may have rotated — adopt newer access JWT / refresh from storage.
       hydrateAccessJwtFromStorage();
-      if (previousJwt) {
-        memoryAccessJwt = previousJwt;
-        writeStorage(ACCESS_JWT_KEY, previousJwt);
+      const adopted = memoryAccessJwt;
+      const adoptedExp = adopted ? readJwtExpMs(adopted) : null;
+      const adoptedLive =
+        Boolean(adopted) &&
+        (!adoptedExp || adoptedExp - Date.now() > 30_000);
+
+      if (adoptedLive) {
+        scheduleAccessRefresh();
+        return true;
       }
+
+      if (previousJwt) {
+        const prevExp = readJwtExpMs(previousJwt);
+        const prevLive = !prevExp || prevExp - Date.now() > 30_000;
+        if (prevLive) {
+          memoryAccessJwt = previousJwt;
+          writeStorage(ACCESS_JWT_KEY, previousJwt);
+          scheduleAccessRefresh();
+          return true;
+        }
+      }
+
+      // Keep sticky session + refresh token. One-off invalid/expired is usually a
+      // race (another tab rotated) or a stale cookie — wiping signs people out.
       scheduleAccessRefresh();
       return Boolean(memoryAccessJwt);
     } catch {

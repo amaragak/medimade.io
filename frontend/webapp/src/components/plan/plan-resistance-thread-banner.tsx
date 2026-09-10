@@ -24,6 +24,7 @@ export function PlanResistanceThreadBanner({
       goalTitle: projectTitle?.trim() || "Something I'm sitting with",
       visionText: theme.sampleText || `Sitting with: ${theme.label}`,
       obstacleText: theme.sampleText || `A recurring feeling: ${theme.label}`,
+      ...(projectId?.trim() ? { lifeAreaId: projectId.trim() } : {}),
       project: {
         dreamText: "",
         resistanceText: theme.sampleText || theme.label,

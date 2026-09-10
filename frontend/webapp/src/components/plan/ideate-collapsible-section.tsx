@@ -8,6 +8,8 @@ type Props = {
   collapsed: boolean;
   onToggle: () => void;
   children: React.ReactNode;
+  /** Full-bleed band sections — no top hairline; rhythm comes from band colour. */
+  variant?: "default" | "band";
 };
 
 /**
@@ -20,15 +22,22 @@ export function IdeateCollapsibleSection({
   collapsed,
   onToggle,
   children,
+  variant = "default",
 }: Props) {
+  const band = variant === "band";
+
   return (
-    <section className="group cursor-pointer border-t border-border pt-8">
+    <section
+      className={`group cursor-pointer ${
+        band ? "pt-6" : "border-t border-border pt-8"
+      }`}
+    >
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
         className={`flex w-full cursor-pointer items-center justify-between gap-4 text-left ${
-          collapsed ? "pb-8" : "pb-2"
+          collapsed ? (band ? "pb-6" : "pb-8") : "pb-2"
         }`}
       >
         <div className="flex min-w-0 items-center gap-4">
@@ -51,8 +60,8 @@ export function IdeateCollapsibleSection({
         />
       </button>
 
-      {/* Hairline only when collapsed — overlaps next section’s border-t so dividers read as one line */}
-      {collapsed ? (
+      {/* Hairline only when collapsed — default stack only (bands use colour). */}
+      {collapsed && !band ? (
         <div
           aria-hidden
           className="-mb-px border-b border-border transition-[border-color] duration-200 ease-[ease] group-hover:border-[#F0A855]"
@@ -66,7 +75,9 @@ export function IdeateCollapsibleSection({
         <div
           className={`min-h-0 ${collapsed ? "overflow-hidden" : "overflow-visible"}`}
         >
-          <div className={collapsed ? "" : "pb-8 pt-4"}>{children}</div>
+          <div className={collapsed ? "" : band ? "pb-7 pt-4" : "pb-8 pt-4"}>
+            {children}
+          </div>
         </div>
       </div>
     </section>

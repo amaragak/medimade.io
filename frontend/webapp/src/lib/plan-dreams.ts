@@ -15,11 +15,68 @@ export type DreamState =
   | "released";
 
 /** Append-only reflection entries for Dream / Resistance / Vision. */
+export type ThoughtSentiment =
+  | "bad"
+  | "okay"
+  | "good"
+  | "great";
+
+export const THOUGHT_SENTIMENT_OPTIONS: {
+  id: ThoughtSentiment;
+  label: string;
+}[] = [
+  { id: "bad", label: "Bad" },
+  { id: "okay", label: "Okay" },
+  { id: "good", label: "Good" },
+  { id: "great", label: "Great" },
+];
+
+export function thoughtSentimentLabel(
+  sentiment: ThoughtSentiment | null | undefined,
+): string | null {
+  if (!sentiment) return null;
+  return THOUGHT_SENTIMENT_OPTIONS.find((o) => o.id === sentiment)?.label ?? null;
+}
+
+/** Optional type tag on a Thoughts log entry. */
+export type ThoughtKind =
+  | "win"
+  | "hard_blocker"
+  | "resistance"
+  | "insight"
+  | "question"
+  | "intention"
+  | "progress";
+
+export const THOUGHT_KIND_OPTIONS: {
+  id: ThoughtKind;
+  label: string;
+}[] = [
+  { id: "win", label: "Win" },
+  { id: "hard_blocker", label: "Hard blocker" },
+  { id: "resistance", label: "Resistance" },
+  { id: "insight", label: "Insight" },
+  { id: "question", label: "Question" },
+  { id: "intention", label: "Intention" },
+  { id: "progress", label: "Progress" },
+];
+
+export function thoughtKindLabel(
+  kind: ThoughtKind | null | undefined,
+): string | null {
+  if (!kind) return null;
+  return THOUGHT_KIND_OPTIONS.find((o) => o.id === kind)?.label ?? null;
+}
+
 export type DrvTimelineEntry = {
   id: string;
   text: string;
   createdAt: string;
   coachReply: string;
+  /** Optional feeling tag for Thoughts log entries. */
+  sentiment?: ThoughtSentiment;
+  /** Optional type tag (Win, Resistance, …). */
+  kind?: ThoughtKind;
 };
 
 /** Outer-world progress notes on a life area (feedback loop). */
@@ -28,6 +85,34 @@ export type LifeAreaCheckIn = {
   note: string;
   createdAt: string;
 };
+
+/** Saved Insights tab synthesis — lives on the dream in ideate cloud. */
+export type LifeAreaInsightSectionId =
+  | "summary"
+  | "working"
+  | "not_working"
+  | "patterns"
+  | "next";
+
+export type LifeAreaInsightSection = {
+  id: LifeAreaInsightSectionId;
+  label: string;
+  body: string;
+};
+
+export type LifeAreaInsightEntry = {
+  id: string;
+  /** Summary / fallback plain text (also used in Past insights list). */
+  text: string;
+  createdAt: string;
+  /** Content fingerprint when this insight was generated (stale detection). */
+  fingerprint: string;
+  /** Structured breakdown when available. */
+  sections?: LifeAreaInsightSection[];
+};
+
+export const MAX_LIFE_AREA_INSIGHTS = 40;
+export const MAX_INSIGHT_TEXT_CHARS = 8000;
 
 export type PlanDream = {
   id: string;
@@ -55,6 +140,11 @@ export type PlanDream = {
   looseNotes: string;
   /** Outer check-ins — newest first. */
   checkIns: LifeAreaCheckIn[];
+  /**
+   * Claude (or manual) insight syntheses for this life area — newest first.
+   * Persisted in the ideate cloud store (Dynamo), not device storage.
+   */
+  insights: LifeAreaInsightEntry[];
   /** @deprecated Unused — card colour is assigned from a fixed palette by creation order. */
   cardColor: string | null;
   /** Guest sample — device-only; stripped after sign-in. */
@@ -117,6 +207,7 @@ export function createPlanDream(input: {
     visionEntries: [],
     looseNotes: "",
     checkIns: [],
+    insights: [],
     cardColor: null,
     meditationsGenerated: 0,
     completedAt: null,
@@ -141,15 +232,35 @@ export function loadPlanDreamsStore(): PlanDreamsStoreV1 {
   return { v: 1, dreams: v2.dreams };
 }
 
+function normalizeSentiment(raw: unknown): ThoughtSentiment | undefined {
+  if (typeof raw !== "string") return undefined;
+  const id = raw.trim().toLowerCase();
+  return THOUGHT_SENTIMENT_OPTIONS.some((o) => o.id === id)
+    ? (id as ThoughtSentiment)
+    : undefined;
+}
+
+function normalizeThoughtKind(raw: unknown): ThoughtKind | undefined {
+  if (typeof raw !== "string") return undefined;
+  const id = raw.trim().toLowerCase().replace(/\s+/g, "_");
+  return THOUGHT_KIND_OPTIONS.some((o) => o.id === id)
+    ? (id as ThoughtKind)
+    : undefined;
+}
+
 function normalizeTimelineEntry(x: unknown): DrvTimelineEntry | null {
   if (!x || typeof x !== "object") return null;
   const o = x as Record<string, unknown>;
   if (typeof o.id !== "string" || typeof o.text !== "string") return null;
+  const sentiment = normalizeSentiment(o.sentiment);
+  const kind = normalizeThoughtKind(o.kind);
   return {
     id: o.id,
     text: o.text,
     createdAt: typeof o.createdAt === "string" ? o.createdAt : safeIso(),
     coachReply: typeof o.coachReply === "string" ? o.coachReply : "",
+    ...(sentiment ? { sentiment } : {}),
+    ...(kind ? { kind } : {}),
   };
 }
 
@@ -182,6 +293,91 @@ function normalizeCheckIns(raw: unknown): LifeAreaCheckIn[] {
     .slice(0, 40);
 }
 
+const INSIGHT_SECTION_IDS: LifeAreaInsightSectionId[] = [
+  "summary",
+  "working",
+  "not_working",
+  "patterns",
+  "next",
+];
+
+function normalizeInsightSection(x: unknown): LifeAreaInsightSection | null {
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  if (typeof o.id !== "string" || typeof o.label !== "string") return null;
+  if (typeof o.body !== "string") return null;
+  const id = o.id.trim() as LifeAreaInsightSectionId;
+  if (!INSIGHT_SECTION_IDS.includes(id)) return null;
+  const body = o.body.trim().slice(0, 2000);
+  if (!body) return null;
+  return {
+    id,
+    label: o.label.trim().slice(0, 80) || id,
+    body,
+  };
+}
+
+function normalizeInsight(x: unknown): LifeAreaInsightEntry | null {
+  if (!x || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  if (typeof o.id !== "string" || typeof o.text !== "string") return null;
+  const text = o.text.trim().slice(0, MAX_INSIGHT_TEXT_CHARS);
+  if (!text) return null;
+  const sections = Array.isArray(o.sections)
+    ? o.sections
+        .map(normalizeInsightSection)
+        .filter((s): s is LifeAreaInsightSection => Boolean(s))
+        .slice(0, 8)
+    : undefined;
+  return {
+    id: o.id,
+    text,
+    createdAt: typeof o.createdAt === "string" ? o.createdAt : safeIso(),
+    fingerprint: typeof o.fingerprint === "string" ? o.fingerprint : "",
+    ...(sections && sections.length ? { sections } : {}),
+  };
+}
+
+function normalizeInsights(raw: unknown): LifeAreaInsightEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(normalizeInsight)
+    .filter((e): e is LifeAreaInsightEntry => Boolean(e))
+    .slice(0, MAX_LIFE_AREA_INSIGHTS);
+}
+
+export function normalizeLifeAreaInsights(raw: unknown): LifeAreaInsightEntry[] {
+  return normalizeInsights(raw);
+}
+
+export function prependLifeAreaInsight(
+  dream: PlanDream,
+  input: {
+    text: string;
+    fingerprint: string;
+    sections?: LifeAreaInsightSection[];
+  },
+): PlanDream {
+  const trimmed = input.text.trim().slice(0, MAX_INSIGHT_TEXT_CHARS);
+  if (!trimmed) return dream;
+  const sections = (input.sections ?? [])
+    .map((s) => normalizeInsightSection(s))
+    .filter((s): s is LifeAreaInsightSection => Boolean(s))
+    .slice(0, 8);
+  const entry: LifeAreaInsightEntry = {
+    id: newDreamId().replace(/^dream_/, "insight_"),
+    text: trimmed,
+    createdAt: safeIso(),
+    fingerprint: input.fingerprint,
+    ...(sections.length ? { sections } : {}),
+  };
+  return {
+    ...dream,
+    updatedAt: entry.createdAt,
+    insights: [entry, ...(dream.insights ?? [])].slice(0, MAX_LIFE_AREA_INSIGHTS),
+  };
+}
+
 function normalizeDreams(raw: unknown[]): PlanDream[] {
   const out: PlanDream[] = [];
   for (const x of raw) {
@@ -211,6 +407,7 @@ function normalizeDreams(raw: unknown[]): PlanDream[] {
       visionEntries: normalizeTimeline(d.visionEntries),
       looseNotes: typeof d.looseNotes === "string" ? d.looseNotes : "",
       checkIns: normalizeCheckIns(d.checkIns),
+      insights: normalizeInsights(d.insights),
       cardColor:
         typeof d.cardColor === "string" && d.cardColor.trim()
           ? d.cardColor.trim()
@@ -300,6 +497,7 @@ function migrateLegacyPlanIfNeeded(): PlanDreamsStoreV1 {
         visionEntries: [],
         looseNotes: "",
         checkIns: [],
+        insights: [],
         cardColor: null,
         meditationsGenerated: 0,
         completedAt: null,

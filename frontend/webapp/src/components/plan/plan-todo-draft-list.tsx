@@ -1,8 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { GripVertical } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
-export type TodoDraftRow = { id: string; title: string };
+export type TodoDraftRow = {
+  id: string;
+  title: string;
+  /** @deprecated Kept for row shape; all listed rows are saved unless removed. */
+  selected: boolean;
+  /** User-laid-out steps vs model proposals. */
+  kind: "yours" | "suggestion";
+};
 
 type Props = {
   rows: TodoDraftRow[];
@@ -22,100 +30,163 @@ export function PlanTodoDraftList({
   saving = false,
 }: Props) {
   const [newTitle, setNewTitle] = useState("");
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editInputRef = useRef<HTMLInputElement | null>(null);
+  const saveCount = rows.filter((r) => r.title.trim()).length;
 
-  function updateRow(id: string, title: string) {
-    onChange(rows.map((r) => (r.id === id ? { ...r, title } : r)));
+  useEffect(() => {
+    if (!editingId) return;
+    editInputRef.current?.focus();
+    editInputRef.current?.select();
+  }, [editingId]);
+
+  function updateRow(id: string, patch: Partial<TodoDraftRow>) {
+    onChange(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
 
   function removeRow(id: string) {
     onChange(rows.filter((r) => r.id !== id));
+    if (editingId === id) setEditingId(null);
   }
 
-  function moveRow(id: string, dir: -1 | 1) {
-    const i = rows.findIndex((r) => r.id === id);
-    if (i < 0) return;
-    const j = i + dir;
-    if (j < 0 || j >= rows.length) return;
+  function reorderByDrag(fromId: string, toId: string) {
+    if (fromId === toId) return;
+    const from = rows.findIndex((r) => r.id === fromId);
+    const to = rows.findIndex((r) => r.id === toId);
+    if (from < 0 || to < 0) return;
     const next = [...rows];
-    const tmp = next[i];
-    next[i] = next[j];
-    next[j] = tmp;
+    const [item] = next.splice(from, 1);
+    if (!item) return;
+    next.splice(to, 0, item);
     onChange(next);
   }
 
   function addRow() {
     const t = newTitle.trim();
     if (!t) return;
+    const id = `draft_${Math.random().toString(16).slice(2)}`;
     onChange([
       ...rows,
-      { id: `draft_${Math.random().toString(16).slice(2)}`, title: t },
+      {
+        id,
+        title: t,
+        selected: true,
+        kind: "yours",
+      },
     ]);
     setNewTitle("");
+    setEditingId(id);
   }
 
   return (
-    <div className="mt-4 space-y-3 rounded-2xl border border-border bg-card/50 p-4">
+    <div className="mt-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-        Proposed steps
+        Proposed tasks
       </p>
-      <p className="text-xs leading-relaxed text-muted">
-        Broad strokes — edit any line, or get specific on one when you&apos;re ready.
+      <p className="mt-1 text-xs leading-relaxed text-muted">
+        Edit or remove anything that doesn&apos;t fit, then save what&apos;s left.
       </p>
-      <ul className="space-y-2">
-        {rows.map((row) => (
-          <li
-            key={row.id}
-            className="flex flex-wrap items-center gap-2 rounded-xl border border-border/80 bg-background px-2 py-2"
-          >
-            <input
-              value={row.title}
-              onChange={(e) => updateRow(row.id, e.target.value)}
-              className="min-w-0 flex-1 rounded-lg border-0 bg-transparent px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-accent/30"
-            />
-            <div className="flex shrink-0 items-center gap-1">
+      <ul className="mt-2">
+        {rows.map((row) => {
+          const isEditing = editingId === row.id;
+          return (
+            <li
+              key={row.id}
+              className={`flex flex-wrap items-center gap-2 border-b border-border/70 py-2.5 last:border-b-0 ${
+                dragId === row.id ? "opacity-50" : ""
+              }`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                const fromId = e.dataTransfer.getData("text/plain") || dragId;
+                if (fromId) reorderByDrag(fromId, row.id);
+                setDragId(null);
+              }}
+            >
               <button
                 type="button"
-                aria-label="Move up"
-                onClick={() => moveRow(row.id, -1)}
-                className="cursor-pointer rounded-lg px-2 py-1 text-xs text-muted hover:bg-accent-soft/30"
+                draggable
+                aria-label="Drag to reorder"
+                onDragStart={(e) => {
+                  setDragId(row.id);
+                  e.dataTransfer.setData("text/plain", row.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+                onDragEnd={() => setDragId(null)}
+                className="flex h-8 w-6 shrink-0 cursor-grab items-center justify-center text-muted active:cursor-grabbing"
               >
-                ↑
+                <GripVertical className="h-4 w-4" aria-hidden />
               </button>
-              <button
-                type="button"
-                aria-label="Move down"
-                onClick={() => moveRow(row.id, 1)}
-                className="cursor-pointer rounded-lg px-2 py-1 text-xs text-muted hover:bg-accent-soft/30"
-              >
-                ↓
-              </button>
-              {onSpecifyRow ? (
+              <div className="min-w-0 flex-1">
+                {isEditing ? (
+                  <input
+                    ref={editInputRef}
+                    value={row.title}
+                    onChange={(e) =>
+                      updateRow(row.id, { title: e.target.value })
+                    }
+                    onBlur={() => setEditingId(null)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === "Escape") {
+                        e.preventDefault();
+                        setEditingId(null);
+                      }
+                    }}
+                    className="w-full border-0 bg-transparent px-1 py-1 text-sm outline-none ring-1 ring-accent/30"
+                    aria-label="Edit task title"
+                  />
+                ) : (
+                  <p className="px-1 py-1 text-sm leading-snug text-foreground">
+                    {row.title.trim() || (
+                      <span className="text-muted">Untitled task</span>
+                    )}
+                  </p>
+                )}
+              </div>
+              <div className="ml-auto flex shrink-0 items-center gap-3">
                 <button
                   type="button"
-                  disabled={specifyingId === row.id}
-                  onClick={() => void onSpecifyRow(row)}
-                  className="cursor-pointer rounded-lg px-2 py-1 text-xs font-medium text-accent-link hover:bg-accent-soft/30 disabled:opacity-50"
+                  onClick={() =>
+                    setEditingId(isEditing ? null : row.id)
+                  }
+                  className="cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline"
                 >
-                  {specifyingId === row.id ? "Getting specific…" : "Get specific"}
+                  {isEditing ? "Done" : "Edit"}
                 </button>
-              ) : null}
-              <button
-                type="button"
-                aria-label="Remove"
-                onClick={() => removeRow(row.id)}
-                className="cursor-pointer rounded-lg px-2 py-1 text-xs text-muted hover:bg-accent-soft/30"
-              >
-                Remove
-              </button>
-            </div>
-          </li>
-        ))}
+                {onSpecifyRow ? (
+                  <button
+                    type="button"
+                    disabled={specifyingId === row.id}
+                    onClick={() => void onSpecifyRow(row)}
+                    className="cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline disabled:opacity-50"
+                  >
+                    {specifyingId === row.id
+                      ? "Getting specific…"
+                      : "Get specific"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label="Remove"
+                  onClick={() => removeRow(row.id)}
+                  className="cursor-pointer text-xs text-muted hover:text-foreground"
+                >
+                  Remove
+                </button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
-      <div className="flex flex-wrap gap-2 pt-1">
+      <div className="mt-3 flex flex-wrap gap-2">
         <input
           value={newTitle}
           onChange={(e) => setNewTitle(e.target.value)}
-          placeholder="Add your own step"
+          placeholder="Add your own task"
           className="min-w-[12rem] flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none ring-accent/25 focus:ring-2"
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -134,11 +205,15 @@ export function PlanTodoDraftList({
       </div>
       <button
         type="button"
-        disabled={saving || rows.length === 0 || rows.every((r) => !r.title.trim())}
+        disabled={saving || saveCount === 0}
         onClick={onSave}
-        className="cursor-pointer rounded-full border border-border bg-card px-4 py-2 text-sm font-medium transition-colors hover:border-accent/40 hover:bg-accent-soft/20 disabled:opacity-50"
+        className="mt-3 cursor-pointer rounded-full border border-border bg-card px-4 py-2 text-sm font-medium transition-colors hover:border-accent/40 hover:bg-accent-soft/20 disabled:opacity-50"
       >
-        {saving ? "Saving…" : "Save as todos"}
+        {saving
+          ? "Saving…"
+          : saveCount === 0
+            ? "Save tasks"
+            : `Save ${saveCount} task${saveCount === 1 ? "" : "s"}`}
       </button>
     </div>
   );

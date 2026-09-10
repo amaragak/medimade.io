@@ -239,6 +239,34 @@ function stripManifesto(manifesto: unknown): unknown {
   };
 }
 
+function bundleHasUserContent(bundle: IdeateCloudBundle): boolean {
+  const ideate = bundle.ideate as { dreams?: unknown[] } | null | undefined;
+  const vision = bundle.visionBoard as
+    | {
+        items?: unknown[];
+        selfReference?: { url?: string; key?: string } | null;
+      }
+    | null
+    | undefined;
+  const qs = bundle.reflectionQuestions as
+    | { questions?: unknown[] }
+    | null
+    | undefined;
+  const values = bundle.values as { values?: unknown[] } | null | undefined;
+  const regrets = bundle.regrets as { regrets?: unknown[] } | null | undefined;
+  const quotes = bundle.quotes as { quotes?: unknown[] } | null | undefined;
+  const manifesto = bundle.manifesto as { text?: string } | null | undefined;
+  if ((ideate?.dreams?.length ?? 0) > 0) return true;
+  if ((vision?.items?.length ?? 0) > 0) return true;
+  if (vision?.selfReference?.url || vision?.selfReference?.key) return true;
+  if ((qs?.questions?.length ?? 0) > 0) return true;
+  if ((values?.values?.length ?? 0) > 0) return true;
+  if ((regrets?.regrets?.length ?? 0) > 0) return true;
+  if ((quotes?.quotes?.length ?? 0) > 0) return true;
+  if ((manifesto?.text?.trim().length ?? 0) > 0) return true;
+  return false;
+}
+
 export async function handler(
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> {
@@ -307,6 +335,7 @@ export async function handler(
     }
     const o = incoming as Record<string, unknown>;
 
+    let existingStore: IdeateCloudBundle | null = null;
     let existingValues: unknown = { v: 1, values: [] };
     let existingRegrets: unknown = { v: 1, regrets: [] };
     let existingQuotes: unknown = { v: 1, quotes: [] };
@@ -327,6 +356,9 @@ export async function handler(
         existingRow?.store &&
         typeof existingRow.store === "object"
       ) {
+        if (isBundle(existingRow.store)) {
+          existingStore = existingRow.store;
+        }
         const es = existingRow.store as {
           values?: unknown;
           regrets?: unknown;
@@ -362,6 +394,18 @@ export async function handler(
           ? stripManifesto(o.manifesto)
           : stripManifesto(existingManifesto),
     };
+
+    // Never let an empty PUT overwrite a non-empty account.
+    if (
+      existingStore &&
+      bundleHasUserContent(existingStore) &&
+      !bundleHasUserContent(bundle)
+    ) {
+      return json(409, {
+        error: "Refusing to overwrite Ideate store with empty payload",
+        store: existingStore,
+      });
+    }
 
     const encoded = JSON.stringify(bundle);
     if (Buffer.byteLength(encoded, "utf8") > MAX_STORE_BYTES) {

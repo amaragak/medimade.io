@@ -1450,6 +1450,8 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     transcript?: string;
     meditationStyle?: string;
     journalMode?: boolean;
+    excludeFromLibrary?: boolean;
+    lifeAreaId?: string;
     meditationTargetMinutes?: number;
     claudeModel?: string;
     scriptText?: string;
@@ -1473,6 +1475,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     meditationStyle: jobItem.meditationStyle,
     journalMode: jobItem.journalMode,
     excludeFromLibrary: jobItem.excludeFromLibrary,
+    lifeAreaId: jobItem.lifeAreaId,
     meditationTargetMinutes: jobItem.meditationTargetMinutes,
     claudeModel: jobItem.claudeModel,
     scriptText: jobItem.scriptText,
@@ -1515,6 +1518,10 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
     typeof body.meditationStyle === "string" ? body.meditationStyle : "";
   const journalModeFromJob = body.journalMode === true;
   const excludeFromLibrary = body.excludeFromLibrary === true;
+  const lifeAreaId =
+    typeof body.lifeAreaId === "string" && body.lifeAreaId.trim()
+      ? body.lifeAreaId.trim().slice(0, 128)
+      : undefined;
   /** Dev A/B from the create flow; unsupported ids fall back to Haiku. */
   const claudeModel = coerceClaudeModel(body.claudeModel);
   const targetMinutes = coerceMeditationTargetMinutes(
@@ -2020,6 +2027,7 @@ export async function handler(event: JobBody): Promise<APIGatewayProxyStructured
           title: libraryTitle,
           meditationType: libraryMeditationType,
           description: libraryDescription,
+          ...(lifeAreaId ? { lifeAreaId } : {}),
           scriptText: scriptForLibrary,
           scriptTruncated,
           rating: null,

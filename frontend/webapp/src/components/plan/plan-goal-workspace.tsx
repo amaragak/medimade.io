@@ -3,21 +3,25 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { PlanLifeAreaReflectSections } from "@/components/plan/plan-life-area-reflect-sections";
 import {
-  formatLastTouched,
-  PlanLooseNotesScratchpad,
-  PlanSurfacedContextPanel,
+  PlanLifeAreaThoughtsLog,
+  PlanLifeAreaVisionSections,
+} from "@/components/plan/plan-life-area-reflect-sections";
+import { PlanLifeAreaWhiteboard } from "@/components/plan/plan-life-area-whiteboard";
+import { PlanLifeAreaMeditationsPanel } from "@/components/plan/plan-life-area-meditations-panel";
+import {
+  PlanLifeAreaHeaderSummary,
+  PlanReflectSidebarJournal,
+  PlanReflectSidebarMeditations,
 } from "@/components/plan/plan-goal-reflect-stubs";
 import { PlanInsightsPanel } from "@/components/plan/plan-insights-panel";
-import { PlanProjectStageChip } from "@/components/plan/plan-project-stage-chip";
 import { PlanSubtasksPanel } from "@/components/plan/plan-subtasks-panel";
 import { activeResistanceThemesForProject } from "@/lib/plan-resistance-threads";
 import {
   writePlanCreateHandoff,
   type PlanCreateHandoffV2,
 } from "@/lib/plan-create-handoff";
-import { type DreamState, type PlanDream } from "@/lib/plan-dreams";
+import { type PlanDream } from "@/lib/plan-dreams";
 import {
   loadIdeateStore,
   saveIdeateStore,
@@ -27,10 +31,24 @@ import {
 import { useIdeateCloud } from "@/components/plan/ideate-cloud-provider";
 import { isMedimadeSessionActive } from "@/lib/auth-session";
 
-type ProjectTab = "reflect" | "steps";
+type ProjectTab =
+  | "vision"
+  | "thoughts"
+  | "insights"
+  | "whiteboard"
+  | "steps"
+  | "meditations";
 
 function tabFromSearchParams(sp: URLSearchParams): ProjectTab {
-  return sp.get("tab") === "steps" ? "steps" : "reflect";
+  const t = sp.get("tab");
+  if (t === "steps") return "steps";
+  if (t === "thoughts") return "thoughts";
+  if (t === "insights") return "insights";
+  if (t === "whiteboard") return "whiteboard";
+  if (t === "meditations") return "meditations";
+  // Legacy Reflect URL → Vision
+  if (t === "reflect") return "vision";
+  return "vision";
 }
 
 function persistDream(next: PlanDream) {
@@ -44,11 +62,16 @@ type Props = { dreamId: string };
 export function PlanGoalWorkspace({ dreamId }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const tab = tabFromSearchParams(searchParams);
+  const urlTab = tabFromSearchParams(searchParams);
+  const [tab, setTabLocal] = useState<ProjectTab>(urlTab);
   const [dream, setDream] = useState<PlanDream | null>(null);
   const [missing, setMissing] = useState(false);
   const [storeTick, setStoreTick] = useState(0);
   const { ready: cloudReady, revision } = useIdeateCloud();
+
+  useEffect(() => {
+    setTabLocal(urlTab);
+  }, [urlTab]);
 
   const load = useCallback(() => {
     const d = loadIdeateStore().dreams.find((x) => x.id === dreamId);
@@ -89,27 +112,18 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
   }, []);
 
   function setTab(next: ProjectTab) {
+    setTabLocal(next);
     const params = new URLSearchParams(searchParams.toString());
-    if (next === "steps") params.set("tab", "steps");
-    else params.delete("tab");
+    if (next === "vision") params.delete("tab");
+    else params.set("tab", next);
     const q = params.toString();
+    // Stay on /ideate/goal — /dream/goal redirects and remounts the whole page.
     router.replace(
       q
-        ? `/dream/goal/${encodeURIComponent(dreamId)}?${q}`
-        : `/dream/goal/${encodeURIComponent(dreamId)}`,
+        ? `/ideate/goal/${encodeURIComponent(dreamId)}?${q}`
+        : `/ideate/goal/${encodeURIComponent(dreamId)}`,
       { scroll: false },
     );
-  }
-
-  function setState(next: DreamState) {
-    if (!dream) return;
-    if (next === "released") {
-      const ok = window.confirm(
-        "Releasing a goal is different from failing — it's a conscious choice. Continue?",
-      );
-      if (!ok) return;
-    }
-    patch({ state: next });
   }
 
   function generateMeditation() {
@@ -124,6 +138,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
       visionText: vision,
       dreamText: dream.dreamText.trim() || undefined,
       obstacleText: dream.obstacleText.trim() || undefined,
+      lifeAreaId: dream.id,
       project: {
         dreamText: dream.dreamText.trim(),
         resistanceText: dream.obstacleText.trim(),
@@ -169,7 +184,7 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
 
   return (
     <div className="min-h-[calc(100vh-3.5rem)]">
-      <div className="mx-auto max-w-6xl px-4 pt-3 pb-10 sm:px-6 sm:py-14">
+      <div className="mx-auto max-w-6xl px-4 pt-3 sm:px-6 sm:pt-14">
         <div className="pb-0">
           <Link
             href="/ideate/my"
@@ -177,112 +192,124 @@ export function PlanGoalWorkspace({ dreamId }: Props) {
           >
             ← Ideate
           </Link>
-          <div className="mt-2 flex items-start justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <h1 className="font-display text-3xl font-medium tracking-tight text-[#1E2530] dark:text-foreground sm:text-4xl">
-                {dream.title.trim() || "Untitled"}
-              </h1>
-              <p className="mt-2 text-sm text-muted">
-                A quiet place to think—with a little help when you want it.
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-col items-end gap-1.5">
-              <button
-                type="button"
-                disabled={!canGenerate}
-                onClick={() => generateMeditation()}
-                title={
-                  canGenerate
-                    ? undefined
-                    : "Add a few lines to your vision first"
-                }
-                className="pro-header-cta cursor-pointer rounded-xl px-4 py-2 text-sm font-medium transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Generate meditation
-              </button>
-              <PlanProjectStageChip state={dream.state} onChange={setState} />
-              <p className="text-xs text-muted">
-                {formatLastTouched(dream.updatedAt, dream.createdAt)}
-              </p>
-            </div>
+
+          <div className="mt-2 flex items-center justify-between gap-4">
+            <h1 className="min-w-0 font-display text-3xl font-medium tracking-tight text-[#1E2530] dark:text-foreground sm:text-4xl">
+              {dream.title.trim() || "Untitled"}
+            </h1>
+            <button
+              type="button"
+              disabled={!canGenerate}
+              onClick={() => generateMeditation()}
+              title={
+                canGenerate
+                  ? undefined
+                  : "Add a few lines to your vision first"
+              }
+              className="pro-header-cta shrink-0 cursor-pointer rounded-xl px-4 py-2.5 text-sm font-medium transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Generate meditation
+            </button>
           </div>
 
-          <nav
-            className="mt-6 flex gap-6 border-b border-border/70"
-            role="tablist"
-            aria-label="Project views"
-          >
-            {(
-              [
-                { id: "reflect" as const, label: "Reflect" },
-                { id: "steps" as const, label: "Steps", count: stepCount },
-              ] as const
-            ).map((item) => {
-              const active = tab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setTab(item.id)}
-                  className={`-mb-px cursor-pointer border-b-2 pb-2.5 text-sm transition-colors ${
-                    active
-                      ? "border-selected font-semibold text-foreground"
-                      : "border-transparent text-muted hover:border-border hover:text-foreground"
-                  }`}
-                >
-                  {item.label}
-                  {"count" in item && item.count > 0 ? (
-                    <span className="ml-1 font-normal text-muted">
-                      · {item.count}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
-
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-10">
-          <div className="min-w-0">
-            {tab === "reflect" ? (
-              <>
-                <PlanLifeAreaReflectSections
-                  dreamText={dream.dreamText}
-                  obstacleText={dream.obstacleText}
-                  visionText={dream.visionText}
-                  dreamEntries={dream.dreamEntries ?? []}
-                  obstacleEntries={dream.obstacleEntries ?? []}
-                  visionEntries={dream.visionEntries ?? []}
-                  showRecurringResistanceNote={
-                    dream.id === "demo-ideate-mornings"
-                  }
-                  onPatch={(p) => patch(p)}
-                />
-
-                <PlanSurfacedContextPanel dream={dream} />
-
-                <PlanLooseNotesScratchpad
-                  value={dream.looseNotes ?? ""}
-                  onChange={(looseNotes) => patch({ looseNotes })}
-                />
-              </>
-            ) : (
-              <PlanSubtasksPanel
-                project={dream}
-                onRefresh={load}
-                storeTick={storeTick}
-                embedded
-              />
-            )}
-          </div>
-
-          <div className="lg:sticky lg:top-20 lg:self-start">
-            <PlanInsightsPanel key={dream.id} dream={dream} />
+          <div className="@container mt-4 flex items-end justify-between gap-4 border-b border-border/70">
+            <nav
+              className="flex min-w-0 flex-wrap gap-x-6 gap-y-1"
+              role="tablist"
+              aria-label="Project views"
+            >
+              {(
+                [
+                  { id: "vision" as const, label: "Vision" },
+                  { id: "steps" as const, label: "Tasks", count: stepCount },
+                  { id: "thoughts" as const, label: "Thoughts" },
+                  { id: "insights" as const, label: "Insights" },
+                  { id: "meditations" as const, label: "Meditations" },
+                  { id: "whiteboard" as const, label: "Whiteboard" },
+                ] as const
+              ).map((item) => {
+                const active = tab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setTab(item.id)}
+                    className={`-mb-px cursor-pointer border-b-2 pb-2.5 text-sm transition-colors ${
+                      active
+                        ? "border-selected font-semibold text-foreground"
+                        : "border-transparent text-muted hover:border-border hover:text-foreground"
+                    }`}
+                  >
+                    {item.label}
+                    {"count" in item && item.count > 0 ? (
+                      <span className="ml-1 font-normal text-muted">
+                        · {item.count}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </nav>
+            <div className="hidden shrink-0 pb-2.5 @[40rem]:block">
+              <PlanLifeAreaHeaderSummary dream={dream} />
+            </div>
           </div>
         </div>
       </div>
+
+      {tab === "vision" ? (
+        /* Truly full-bleed: outside max-w container */
+        <div className="mt-8 w-full pb-10">
+          <PlanLifeAreaVisionSections
+            dreamText={dream.dreamText}
+            obstacleText={dream.obstacleText}
+            visionText={dream.visionText}
+            onPatch={(p) => patch(p)}
+          />
+        </div>
+      ) : tab === "steps" ? (
+        <div className="mt-8 w-full pb-10">
+          <PlanSubtasksPanel
+            project={dream}
+            onRefresh={load}
+            storeTick={storeTick}
+            embedded
+          />
+        </div>
+      ) : (
+        <div className="mx-auto max-w-6xl px-4 pb-10 sm:px-6 sm:pb-14">
+          {tab === "thoughts" ? (
+            <PlanLifeAreaThoughtsLog
+              dreamEntries={dream.dreamEntries ?? []}
+              obstacleEntries={dream.obstacleEntries ?? []}
+              visionEntries={dream.visionEntries ?? []}
+              onPatch={(p) => patch(p)}
+            />
+          ) : tab === "insights" ? (
+            <div className="mt-8 space-y-6">
+              <div className="max-w-2xl">
+                <PlanInsightsPanel
+                  key={dream.id}
+                  dream={dream}
+                  storeTick={storeTick}
+                  variant="page"
+                  onPatch={(p) => patch(p)}
+                />
+              </div>
+              <div className="grid max-w-3xl grid-cols-1 gap-4 sm:grid-cols-2">
+                <PlanReflectSidebarJournal dream={dream} />
+                <PlanReflectSidebarMeditations dream={dream} />
+              </div>
+            </div>
+          ) : tab === "meditations" ? (
+            <PlanLifeAreaMeditationsPanel lifeAreaId={dream.id} />
+          ) : (
+            <PlanLifeAreaWhiteboard dreamId={dream.id} />
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -5,7 +5,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -15,11 +14,8 @@ import {
 } from "@/lib/auth-session";
 import {
   clearIdeateCloudSessionCache,
-  clearIdeateSignedInWorkingCopy,
   pullIdeateStoreFromCloud,
-  signedInIdeateMemoryHasContent,
   subscribeIdeateCloud,
-  wasIdeateStorePulledThisSession,
   wipeIdeateDeviceData,
 } from "@/lib/ideate-cloud";
 
@@ -43,15 +39,15 @@ export function useIdeateCloud(): IdeateCloudContextValue {
 }
 
 /**
- * Pulls cloud Ideate for signed-in users before children read the store.
- * Guests become ready immediately with forced local demos.
+ * Signed-in: await GET /ideate/store, then ready.
+ * Guests: demos, ready immediately.
+ * Never cancels an in-flight pull by bumping epoch mid-request.
  */
 export function IdeateCloudProvider({ children }: { children: ReactNode }) {
   const [signedIn, setSignedIn] = useState(false);
   const [authEpoch, setAuthEpoch] = useState(0);
   const [ready, setReady] = useState(false);
   const [revision, setRevision] = useState(0);
-  const wasSignedInRef = useRef<boolean | null>(null);
 
   const refresh = useCallback(() => setRevision((n) => n + 1), []);
 
@@ -60,23 +56,16 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const syncAuth = () => {
       const next = isMedimadeSessionActive();
-      const jwt = getMedimadeSessionJwt();
       setSignedIn((prev) => {
-        if (prev !== next) {
-          clearIdeateCloudSessionCache();
-          if (!next) {
-            wipeIdeateDeviceData();
-          }
-          setAuthEpoch((e) => e + 1);
-          setReady(false);
+        if (prev === next) return prev;
+        clearIdeateCloudSessionCache();
+        if (!next) {
+          wipeIdeateDeviceData();
         }
-        return next;
-      });
-      // JWT arrived after sticky session flag — pull cloud (removed in earlier refactor).
-      if (next && jwt && !wasIdeateStorePulledThisSession()) {
         setAuthEpoch((e) => e + 1);
         setReady(false);
-      }
+        return next;
+      });
     };
     void import("@/lib/auth-session").then((m) =>
       m.ensureMedimadeSession().finally(syncAuth),
@@ -87,59 +76,43 @@ export function IdeateCloudProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    let alive = true;
     setReady(false);
+
     void (async () => {
       await import("@/lib/auth-session").then((m) => m.ensureMedimadeSession());
+      if (!alive) return;
+
       const active = isMedimadeSessionActive();
       setSignedIn(active);
 
-      const wasSignedIn = wasSignedInRef.current;
-      wasSignedInRef.current = active;
-      const justSignedIn = active && wasSignedIn === false;
-
       if (active) {
-        // Only wipe memory on guest → signed-in (drop demos) or when memory is empty.
-        // Remounts must keep an existing in-memory account store.
-        if (justSignedIn || !signedInIdeateMemoryHasContent()) {
-          clearIdeateSignedInWorkingCopy();
-        }
-
         let jwt = getMedimadeSessionJwt();
         if (!jwt) {
           await import("@/lib/auth-session").then((m) =>
             m.ensureMedimadeSession({ force: true }),
           );
+          if (!alive) return;
           jwt = getMedimadeSessionJwt();
         }
-
         if (jwt) {
-          const needPull =
-            !wasIdeateStorePulledThisSession() ||
-            !signedInIdeateMemoryHasContent();
-          if (needPull) {
-            await pullIdeateStoreFromCloud({
-              force:
-                wasIdeateStorePulledThisSession() &&
-                !signedInIdeateMemoryHasContent(),
-            });
-          }
+          // Always fetch. force so a cancelled prior attempt cannot skip us.
+          await pullIdeateStoreFromCloud({ force: true });
         }
       } else {
-        // Guests always get seeded samples — never leftover account rows in LS.
         const { resetIdeateLocalToGuestDemos } = await import(
           "@/lib/ideate-demo-seed"
         );
         resetIdeateLocalToGuestDemos();
       }
 
-      if (!cancelled) {
-        setReady(true);
-        setRevision((n) => n + 1);
-      }
+      if (!alive) return;
+      setReady(true);
+      setRevision((n) => n + 1);
     })();
+
     return () => {
-      cancelled = true;
+      alive = false;
     };
   }, [authEpoch]);
 

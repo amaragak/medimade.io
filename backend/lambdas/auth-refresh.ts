@@ -21,7 +21,6 @@ import {
   parseCookieHeader,
   REFRESH_COOKIE,
   REFRESH_TOKEN_TTL_SEC,
-  sessionClearCookieHeaders,
   sessionSetCookieHeaders,
   sha256Hex,
 } from "../lib/medimade-auth-tokens";
@@ -68,58 +67,66 @@ export async function handler(
   }
 
   const cookieRaw = parseCookieHeader(event, REFRESH_COOKIE);
-  // Prefer cookie when present (freshest after rotation); body is localhost / ITP fallback.
-  const raw = cookieRaw || bodyRefresh;
-  if (!raw) {
-    // Cookie may be blocked/omitted by the browser — do NOT clear cookies here.
-    // Clearing would permanently destroy a valid refresh cookie the browser still holds.
-    return json(event, 401, { error: "No refresh session", code: "missing" });
-  }
-
-  const tokenHash = sha256Hex(raw);
+  // Try cookie and body independently. Preferring cookie-only broke localhost /
+  // ITP when a stale HttpOnly cookie shadowed a valid localStorage refreshToken
+  // (body was ignored → perpetual "Invalid refresh session").
   type RefreshRow = {
     userId?: string;
     email?: string;
     displayName?: string;
     ttl?: number;
   };
-  let row: RefreshRow | null = null;
-  try {
-    const got = await ddb.send(
-      new GetCommand({ TableName: refreshTable, Key: { tokenHash } }),
-    );
-    row = (got.Item as RefreshRow | undefined) ?? null;
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Refresh lookup failed";
-    return json(event, 500, { error: msg });
+
+  async function lookupRefresh(raw: string | null): Promise<{
+    row: RefreshRow;
+    raw: string;
+    tokenHash: string;
+  } | null> {
+    if (!raw) return null;
+    const tokenHash = sha256Hex(raw);
+    try {
+      const got = await ddb.send(
+        new GetCommand({ TableName: refreshTable, Key: { tokenHash } }),
+      );
+      const row = (got.Item as RefreshRow | undefined) ?? null;
+      if (!row?.userId || !row.email) return null;
+      const ttl = typeof row.ttl === "number" ? row.ttl : 0;
+      if (ttl < Math.floor(Date.now() / 1000)) {
+        try {
+          await ddb.send(
+            new DeleteCommand({ TableName: refreshTable, Key: { tokenHash } }),
+          );
+        } catch {
+          /* */
+        }
+        return null;
+      }
+      return { row, raw, tokenHash };
+    } catch {
+      return null;
+    }
   }
 
-  if (!row?.userId || !row.email) {
-    // Likely a parallel refresh already rotated this token. Do NOT clear cookies —
-    // another response may have just set a newer mm_refresh; wiping would sign the user out.
+  if (!cookieRaw && !bodyRefresh) {
+    return json(event, 401, { error: "No refresh session", code: "missing" });
+  }
+
+  // Prefer body (localStorage) when present — SPA source of truth. Cookie-first
+  // let stale HttpOnly cookies win over a live body token and break sessions.
+  let matched = await lookupRefresh(bodyRefresh);
+  if (!matched && cookieRaw && cookieRaw !== bodyRefresh) {
+    matched = await lookupRefresh(cookieRaw);
+  }
+  if (!matched) {
+    // Neither cookie nor body maps to a live row — do not clear cookies here
+    // (parallel rotation may have set a newer cookie we didn't receive yet).
     return json(event, 401, {
       error: "Invalid refresh session",
       code: "invalid",
     });
   }
-  const ttl = typeof row.ttl === "number" ? row.ttl : 0;
-  if (ttl < Math.floor(Date.now() / 1000)) {
-    // Truly expired — safe to clear.
-    try {
-      await ddb.send(
-        new DeleteCommand({ TableName: refreshTable, Key: { tokenHash } }),
-      );
-    } catch {
-      /* */
-    }
-    return json(
-      event,
-      401,
-      { error: "Refresh session expired", code: "expired" },
-      sessionClearCookieHeaders(),
-    );
-  }
 
+  const { row, tokenHash } = matched;
   const displayName =
     typeof row.displayName === "string" && row.displayName.trim()
       ? row.displayName.trim()
@@ -127,8 +134,8 @@ export async function handler(
 
   try {
     const accessToken = await signMedimadeJwt({
-      sub: row.userId,
-      email: row.email,
+      sub: row.userId!,
+      email: row.email!,
       name: displayName ?? undefined,
     });
     const refreshToken = newOpaqueToken(32);

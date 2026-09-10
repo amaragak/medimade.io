@@ -59,6 +59,8 @@ export async function handler(
     fishPauseMode?: string;
     /** When true, do not index the result in the personal library (program shelf audio). */
     excludeFromLibrary?: boolean;
+    /** Ideate life-area id when generated from that area / goal path. */
+    lifeAreaId?: string;
     backgroundSoundKey?: string;
     backgroundNatureKey?: string;
     backgroundMusicKey?: string;
@@ -139,6 +141,10 @@ export async function handler(
 
   const journalMode = body.journalMode === true;
   const excludeFromLibrary = body.excludeFromLibrary === true;
+  const lifeAreaId =
+    typeof body.lifeAreaId === "string" && body.lifeAreaId.trim()
+      ? body.lifeAreaId.trim().slice(0, 128)
+      : undefined;
 
   const meditationTargetMinutes = coerceMeditationTargetMinutes(
     body.meditationTargetMinutes,
@@ -178,6 +184,7 @@ export async function handler(
         speed,
         ...(journalMode ? { journalMode: true } : {}),
         ...(excludeFromLibrary ? { excludeFromLibrary: true } : {}),
+        ...(lifeAreaId ? { lifeAreaId } : {}),
         meditationTargetMinutes,
         claudeModel,
         fishPauseMode:

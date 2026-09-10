@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PlanDrvSection } from "@/components/plan/plan-drv-section";
+import { IconChevronDown } from "@tabler/icons-react";
 import { PlanResistanceNudge } from "@/components/plan/plan-resistance-nudge";
 import {
   PlanTodoDraftList,
   type TodoDraftRow,
 } from "@/components/plan/plan-todo-draft-list";
-import { breakDownIntoTodoTitles } from "@/lib/plan-breakdown-claude";
+import { breakDownIntoTodoDraft, titlesLikelySameTask } from "@/lib/plan-breakdown-claude";
 import {
   createTodo,
   deleteSubtask,
@@ -20,31 +20,6 @@ import {
   type IdeateSubtask,
   type IdeateTodo,
 } from "@/lib/plan-ideate-store";
-import { findStalledTodo } from "@/lib/plan-stalled-todos";
-
-const SUBTASK_REFLECT_PREFIX =
-  "You are a warm thinking partner. The user is exploring one piece of a larger project. Reply in 2–6 short sentences.\n\nTheir words:\n\n";
-
-const SUBTASK_OBSTACLE_PREFIX =
-  "You are a gentle thinking partner. The user named what feels in the way of this specific piece—not the whole project. Respond in 2–6 sentences.\n\nWhat they shared:\n\n";
-
-const SUBTASK_VISION_PREFIX =
-  "Help them deepen one moment when this single piece is done. Present tense, sensory, intimate. Two short paragraphs max.\n\nTheir draft:\n\n";
-
-const SUBTASK_DRV_COPY = {
-  dreamTitle: "What would doing this well look like?",
-  dreamHint: "Stay with this one piece—not the whole project.",
-  dreamPlaceholder: "Describe what good enough would feel like here.",
-  dreamButton: "Reflect",
-  obstacleTitle: "What's in the way of this piece?",
-  obstacleHint: "Resistance for this step, not the whole dream.",
-  obstaclePlaceholder: "Name it without fixing it yet.",
-  obstacleButton: "Explore",
-  visionTitle: "A moment where this is done",
-  visionHint: "One specific moment—not the whole album, just this reel.",
-  visionPlaceholder: "Where are you, what happened, what do you notice?",
-  visionButton: "Build my vision",
-};
 
 type Props = {
   subtask: IdeateSubtask;
@@ -52,8 +27,6 @@ type Props = {
   projectTitle: string;
   projectVision?: string;
   onRefresh: () => void;
-  allowNudge: boolean;
-  onNudgeUsed: () => void;
   defaultExpanded?: boolean;
 };
 
@@ -71,27 +44,123 @@ function formatStepDate(iso: string): string {
   }
 }
 
+function normStepTitle(title: string): string {
+  return title.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Local fallback when the model returns no fromYou: split obvious lists
+ * (newlines, bullets, comma / semicolon chains of short clauses).
+ */
+function extractListedSteps(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  function push(raw: string) {
+    const line = raw.replace(/^[-*•–—\d.)]+\s+/, "").trim();
+    if (line.length < 3 || line.length > 140) return;
+    if (line.length > 90 && /[.!?].+\s/.test(line)) return;
+    const key = normStepTitle(line);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(line);
+  }
+
+  for (const raw of text.split(/\n+/)) {
+    const line = raw.replace(/^[-*•–—\d.)]+\s+/, "").trim();
+    if (!line) continue;
+    const commaParts = line
+      .split(/[,;]+/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    // Several short clauses → treat as a list; one long clause → keep whole.
+    const looksLikeList =
+      commaParts.length >= 2 &&
+      commaParts.every((p) => p.length <= 60) &&
+      commaParts.filter((p) => p.split(/\s+/).length <= 10).length >=
+        commaParts.length - 1;
+    if (looksLikeList) {
+      for (const p of commaParts) push(p);
+    } else {
+      push(line);
+    }
+  }
+  return out;
+}
+
+function draftId(): string {
+  return `draft_${Math.random().toString(16).slice(2)}`;
+}
+
+function mergeBreakdownDraftRows(input: {
+  existingTodoTitles: string[];
+  fromYou: string[];
+  suggestions: string[];
+  /** Only used if the model left fromYou empty. */
+  listedFromContextFallback: string[];
+}): TodoDraftRow[] {
+  const yours: string[] = [];
+  const seen = new Set<string>();
+
+  function takeYours(title: string) {
+    const t = title.trim();
+    if (!t) return;
+    const key = normStepTitle(t);
+    if (seen.has(key)) return;
+    if ([...yours].some((y) => titlesLikelySameTask(y, t))) return;
+    seen.add(key);
+    yours.push(t);
+  }
+
+  for (const title of input.existingTodoTitles) takeYours(title);
+  for (const title of input.fromYou) takeYours(title);
+  if (input.fromYou.length === 0) {
+    for (const title of input.listedFromContextFallback) takeYours(title);
+  }
+
+  const suggestions: string[] = [];
+  for (const title of input.suggestions) {
+    const t = title.trim();
+    if (!t) continue;
+    const key = normStepTitle(t);
+    if (seen.has(key)) continue;
+    if (yours.some((y) => titlesLikelySameTask(y, t))) continue;
+    if (suggestions.some((s) => titlesLikelySameTask(s, t))) continue;
+    seen.add(key);
+    suggestions.push(t);
+  }
+
+  return [
+    ...yours.map((title) => ({
+      id: draftId(),
+      title,
+      selected: true,
+      kind: "yours" as const,
+    })),
+    ...suggestions.map((title) => ({
+      id: draftId(),
+      title,
+      selected: true,
+      kind: "suggestion" as const,
+    })),
+  ];
+}
+
 export function PlanSubtaskCard({
   subtask,
   todos,
   projectTitle,
   projectVision,
   onRefresh,
-  allowNudge,
-  onNudgeUsed,
   defaultExpanded = true,
 }: Props) {
   const [open, setOpen] = useState(defaultExpanded);
-  const [showFullFlow, setShowFullFlow] = useState(subtask.usedFullFlow);
   const [draftRows, setDraftRows] = useState<TodoDraftRow[] | null>(null);
   const [breakdownLoading, setBreakdownLoading] = useState(false);
   const [specifyingId, setSpecifyingId] = useState<string | null>(null);
   const [breakdownErr, setBreakdownErr] = useState<string | null>(null);
   const [showUndoDone, setShowUndoDone] = useState(false);
-  const [nudgeTodoId, setNudgeTodoId] = useState<string | null>(null);
-  const [dismissedNudge, setDismissedNudge] = useState(false);
   const autoDoneTimer = useRef<number | null>(null);
-  const suppressNudgeUntil = useRef(0);
 
   const patchSubtask = useCallback(
     (partial: Partial<IdeateSubtask>) => {
@@ -134,19 +203,6 @@ export function PlanSubtaskCard({
     };
   }, []);
 
-  useEffect(() => {
-    if (!allowNudge || dismissedNudge || todos.length === 0) return;
-    if (Date.now() < suppressNudgeUntil.current) return;
-    const stalled = findStalledTodo(todos, subtask);
-    if (!stalled) return;
-    if (stalled.todo.stalledNudgeShownAt) {
-      const shown = new Date(stalled.todo.stalledNudgeShownAt).getTime();
-      if (Date.now() - shown < 1000 * 60 * 60 * 24) return;
-    }
-    setNudgeTodoId(stalled.todo.id);
-    onNudgeUsed();
-  }, [allowNudge, dismissedNudge, todos, subtask, onNudgeUsed]);
-
   const viewedTodos = useRef(new Set<string>());
 
   useEffect(() => {
@@ -157,21 +213,15 @@ export function PlanSubtaskCard({
     }
   }, [todos, patchTodo]);
 
-  const breakdownContext = useMemo(() => {
-    if (subtask.usedFullFlow || showFullFlow) {
-      return [
-        subtask.dreamText.trim() && `Dream:\n${subtask.dreamText.trim()}`,
-        subtask.resistanceText.trim() &&
-          `Resistance:\n${subtask.resistanceText.trim()}`,
-        subtask.visionText.trim() && `Vision:\n${subtask.visionText.trim()}`,
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-    }
-    return subtask.dreamText.trim();
-  }, [subtask, showFullFlow]);
+  const breakdownContext = useMemo(
+    () => subtask.dreamText.trim(),
+    [subtask.dreamText],
+  );
 
-  async function runBreakdown(opts?: { specifyItem?: string; replaceRowId?: string }) {
+  async function runBreakdown(opts?: {
+    specifyItem?: string;
+    replaceRowId?: string;
+  }) {
     const specifyItem = opts?.specifyItem;
     if (!breakdownContext.trim() && !specifyItem) {
       setBreakdownErr("Write a little context first.");
@@ -180,7 +230,7 @@ export function PlanSubtaskCard({
     setBreakdownErr(null);
     setBreakdownLoading(true);
     try {
-      const titles = await breakDownIntoTodoTitles({
+      const draft = await breakDownIntoTodoDraft({
         projectTitle,
         subtaskTitle: subtask.title,
         contextText: breakdownContext,
@@ -191,26 +241,27 @@ export function PlanSubtaskCard({
         const i = opts?.replaceRowId
           ? draftRows.findIndex((r) => r.id === opts.replaceRowId)
           : draftRows.findIndex((r) => r.title === specifyItem);
-        const expanded = titles.map((title, idx) => ({
-          id: `draft_${idx}_${Math.random().toString(16).slice(2)}`,
+        const expanded = draft.suggestions.map((title) => ({
+          id: draftId(),
           title,
+          selected: true,
+          kind: "suggestion" as const,
         }));
         if (i >= 0) {
           const next = [...draftRows];
           next.splice(i, 1, ...expanded);
           setDraftRows(next);
         } else {
-          setDraftRows([
-            ...draftRows,
-            ...expanded.map((r) => ({ id: r.id, title: r.title })),
-          ]);
+          setDraftRows([...draftRows, ...expanded]);
         }
       } else {
         setDraftRows(
-          titles.map((title, idx) => ({
-            id: `draft_${idx}_${Math.random().toString(16).slice(2)}`,
-            title,
-          })),
+          mergeBreakdownDraftRows({
+            existingTodoTitles: todos.map((t) => t.title),
+            fromYou: draft.fromYou,
+            suggestions: draft.suggestions,
+            listedFromContextFallback: extractListedSteps(breakdownContext),
+          }),
         );
       }
     } catch (e) {
@@ -225,13 +276,17 @@ export function PlanSubtaskCard({
     if (!draftRows?.length) return;
     let store = loadIdeateStore();
     const existing = todosForSubtask(store, subtask.id);
+    const existingKeys = new Set(existing.map((t) => normStepTitle(t.title)));
     let order = existing.length
       ? Math.max(...existing.map((t) => t.order)) + 1
       : 0;
     for (const row of draftRows) {
       const title = row.title.trim();
       if (!title) continue;
+      const key = normStepTitle(title);
+      if (existingKeys.has(key)) continue;
       store = upsertTodo(store, createTodo(subtask.id, title, order));
+      existingKeys.add(key);
       order += 1;
     }
     store = recomputeSubtaskStatus(store, subtask.id);
@@ -244,13 +299,6 @@ export function PlanSubtaskCard({
 
   function toggleTodo(todo: IdeateTodo) {
     const nextChecked = !todo.isChecked;
-    if (nextChecked) {
-      suppressNudgeUntil.current = Date.now() + 10_000;
-      setDismissedNudge(false);
-      setNudgeTodoId(null);
-    } else {
-      suppressNudgeUntil.current = 0;
-    }
     patchTodo(todo.id, {
       isChecked: nextChecked,
       checkedAt: nextChecked ? new Date().toISOString() : null,
@@ -276,254 +324,248 @@ export function PlanSubtaskCard({
   }
 
   const isDone = subtask.status === "done";
+
+  function toggleSubtaskChecked() {
+    if (isDone) {
+      markSubtaskNotDone();
+      return;
+    }
+    patchSubtask({
+      status: "done",
+      completedAt: new Date().toISOString(),
+      completedManually: true,
+    });
+    setShowUndoDone(false);
+  }
+
+  const collapsed = !open;
   const nudgeTodo =
-    nudgeTodoId && !dismissedNudge
-      ? todos.find((t) => t.id === nudgeTodoId) ?? null
-      : null;
+    todos.find((t) => !t.isChecked) ?? todos[0] ?? null;
   const todoDone = todos.filter((t) => t.isChecked).length;
   const todoTotal = todos.length;
   const createdLabel = formatStepDate(subtask.createdAt);
   const updatedLabel = formatStepDate(subtask.updatedAt);
+  const collapsedSummary =
+    subtask.dreamText.trim() ||
+    (todoTotal > 0 ? `${todoDone} of ${todoTotal} done` : "Nothing written yet");
+
+  const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const el = descriptionRef.current;
+    if (!el || collapsed) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 24)}px`;
+  }, [subtask.dreamText, collapsed, isDone]);
 
   return (
     <article
-      className={`rounded-2xl border shadow-sm transition-all ${
-        isDone
-          ? "border-border/60 bg-card/40 opacity-80"
-          : "border-border bg-card"
-      }`}
+      className={`group cursor-pointer pt-6 ${isDone ? "opacity-80" : ""}`}
     >
-      <div className="flex items-start gap-2 p-4 pb-3">
-        <button
-          type="button"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-          className="mt-0.5 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted transition-colors hover:bg-accent-soft/25 hover:text-foreground"
-        >
-          <span
-            aria-hidden
-            className={`inline-block text-xs transition-transform ${open ? "rotate-90" : ""}`}
-          >
-            ›
-          </span>
-        </button>
-        <div className="min-w-0 flex-1">
+      <div
+        className={`flex w-full items-start justify-between gap-4 text-left ${
+          collapsed ? "pb-6" : "pb-2"
+        }`}
+      >
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <input
+            type="checkbox"
+            checked={isDone}
+            onChange={() => toggleSubtaskChecked()}
+            onClick={(e) => e.stopPropagation()}
+            aria-label={isDone ? "Mark task not done" : "Mark task done"}
+            className="mt-1.5 h-4 w-4 shrink-0 cursor-pointer accent-accent"
+          />
           <button
             type="button"
+            aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
-            className="w-full cursor-pointer text-left"
+            className="flex min-w-0 flex-1 cursor-pointer items-start gap-4 text-left"
           >
-            <h3 className="font-display text-lg font-medium leading-snug text-foreground">
-              {isDone ? (
-                <span className="inline-flex items-center gap-2">
-                  <span aria-hidden className="text-accent-link">
-                    ✓
-                  </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1">
+                <h3
+                  className={`shrink-0 font-display text-[18px] font-normal leading-snug text-foreground ${
+                    isDone ? "line-through text-muted" : ""
+                  }`}
+                >
                   {subtask.title}
-                </span>
-              ) : (
-                subtask.title
-              )}
-            </h3>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
-              <span>Created {createdLabel}</span>
-              <span>Updated {updatedLabel}</span>
-              {todoTotal > 0 ? (
-                <span>
-                  {todoDone} of {todoTotal}
-                </span>
+                </h3>
+                {collapsed ? (
+                  <span className="max-w-[320px] overflow-hidden text-ellipsis whitespace-nowrap font-sans text-[14px] font-normal italic text-muted/50">
+                    {collapsedSummary}
+                  </span>
+                ) : null}
+              </div>
+              {!collapsed ? (
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-muted">
+                  <span>Created {createdLabel}</span>
+                  <span>Updated {updatedLabel}</span>
+                  {todoTotal > 0 ? (
+                    <span>
+                      {todoDone} of {todoTotal}
+                    </span>
+                  ) : null}
+                </div>
               ) : null}
             </div>
           </button>
-          {open && isDone && showUndoDone ? (
-            <button
-              type="button"
-              onClick={() => undoSubtaskDone()}
-              className="mt-1 cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline"
-            >
-              Mark not actually done
-            </button>
-          ) : open && isDone ? (
-            <button
-              type="button"
-              onClick={() => markSubtaskNotDone()}
-              className="mt-1 cursor-pointer text-xs text-muted hover:text-foreground"
-            >
-              Reopen
-            </button>
-          ) : null}
         </div>
-        <button
-          type="button"
-          aria-label="Remove subtask"
-          onClick={() => {
-            if (!window.confirm("Remove this subtask and its todos?")) return;
-            let store = loadIdeateStore();
-            store = deleteSubtask(store, subtask.id);
-            saveIdeateStore(store);
-            onRefresh();
-          }}
-          className="cursor-pointer shrink-0 text-xs text-muted hover:text-foreground"
-        >
-          Remove
-        </button>
-      </div>
-
-      {open ? (
-        <div className="border-t border-border/60 px-4 pb-4 pt-3">
-      {!isDone && !showFullFlow ? (
-        <div className="mt-4">
-          <label className="block text-sm font-medium text-foreground">
-            What does this actually involve?
-            <textarea
-              value={subtask.dreamText}
-              onChange={(e) => patchSubtask({ dreamText: e.target.value })}
-              rows={4}
-              className="mt-1.5 w-full resize-y rounded-xl border border-border bg-background px-3 py-2 text-sm leading-relaxed outline-none ring-accent/25 focus:ring-2"
-              placeholder="A sentence or two is enough."
-            />
-          </label>
+        <div className="flex shrink-0 items-center gap-3 pt-0.5">
           <button
             type="button"
-            disabled={breakdownLoading}
-            onClick={() => void runBreakdown()}
-            className="mt-3 cursor-pointer rounded-full border border-border bg-card px-4 py-2 text-sm font-medium transition-colors hover:border-accent/40 hover:bg-accent-soft/20 disabled:opacity-50"
+            aria-label="Remove subtask"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!window.confirm("Remove this subtask and its todos?")) return;
+              let store = loadIdeateStore();
+              store = deleteSubtask(store, subtask.id);
+              saveIdeateStore(store);
+              onRefresh();
+            }}
+            className="cursor-pointer text-[12px] text-muted hover:text-foreground"
           >
-            {breakdownLoading ? "Breaking it down…" : "Break it down"}
+            Remove
           </button>
-          {!subtask.usedFullFlow ? (
-            <button
-              type="button"
-              onClick={() => {
-                setShowFullFlow(true);
-                patchSubtask({ usedFullFlow: true });
-              }}
-              className="mt-2 block cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline"
-            >
-              Go deeper on this
-            </button>
-          ) : null}
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={collapsed ? "Expand task" : "Collapse task"}
+            onClick={() => setOpen((v) => !v)}
+            className="cursor-pointer text-muted"
+          >
+            <IconChevronDown
+              size={18}
+              stroke={2}
+              aria-hidden
+              className={`transition-transform duration-200 ease-[ease] ${
+                collapsed ? "" : "rotate-180"
+              }`}
+            />
+          </button>
         </div>
-      ) : null}
+      </div>
 
-      {!isDone && showFullFlow ? (
-        <div className="mt-2">
-          <PlanDrvSection
-            copy={SUBTASK_DRV_COPY}
-            values={{
-              dreamText: subtask.dreamText,
-              obstacleText: subtask.resistanceText,
-              visionText: subtask.visionText,
-              dreamReflectReply: subtask.dreamReflectReply,
-              obstacleExploreReply: subtask.obstacleExploreReply,
-              visionBuildReply: subtask.visionBuildReply,
-            }}
-            onPatch={(p) => {
-              patchSubtask({
-                ...(p.dreamText !== undefined ? { dreamText: p.dreamText } : {}),
-                ...(p.obstacleText !== undefined
-                  ? { resistanceText: p.obstacleText }
-                  : {}),
-                ...(p.visionText !== undefined ? { visionText: p.visionText } : {}),
-                ...(p.dreamReflectReply !== undefined
-                  ? { dreamReflectReply: p.dreamReflectReply }
-                  : {}),
-                ...(p.obstacleExploreReply !== undefined
-                  ? { obstacleExploreReply: p.obstacleExploreReply }
-                  : {}),
-                ...(p.visionBuildReply !== undefined
-                  ? { visionBuildReply: p.visionBuildReply }
-                  : {}),
-                usedFullFlow: true,
-              });
-            }}
-            reflectPrefix={SUBTASK_REFLECT_PREFIX}
-            obstaclePrefix={SUBTASK_OBSTACLE_PREFIX}
-            visionPrefix={SUBTASK_VISION_PREFIX}
-            afterVision={
-              subtask.visionBuildReply || subtask.visionText.trim() ? (
-                <button
-                  type="button"
-                  disabled={breakdownLoading}
-                  onClick={() => void runBreakdown()}
-                  className="mt-4 cursor-pointer rounded-full border border-border bg-card px-4 py-2 text-sm font-medium transition-colors hover:border-accent/40 hover:bg-accent-soft/20 disabled:opacity-50"
-                >
-                  {breakdownLoading ? "Breaking it down…" : "Break into steps"}
-                </button>
-              ) : null
-            }
-          />
-          {!subtask.usedFullFlow ? (
-            <button
-              type="button"
-              onClick={() => setShowFullFlow(false)}
-              className="mt-2 cursor-pointer text-xs text-muted hover:text-foreground"
-            >
-              Use light flow instead
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
-      {breakdownErr ? (
-        <p className="mt-2 text-sm text-danger">
-          {breakdownErr}
-        </p>
-      ) : null}
-
-      {draftRows ? (
-        <PlanTodoDraftList
-          rows={draftRows}
-          onChange={setDraftRows}
-          specifyingId={specifyingId}
-          onSpecifyRow={async (row) => {
-            setSpecifyingId(row.id);
-            await runBreakdown({ specifyItem: row.title, replaceRowId: row.id });
-          }}
-          onSave={() => saveDraftAsTodos()}
+      {collapsed ? (
+        <div
+          aria-hidden
+          className="-mb-px border-b border-border transition-[border-color] duration-200 ease-[ease] group-hover:border-[#F0A855]"
         />
       ) : null}
 
-      {todos.length > 0 ? (
-        <div className="mt-4">
-          <ul className="space-y-2">
-            {todos.map((todo) => (
-              <li key={todo.id}>
-                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-background/80 px-3 py-2.5">
-                  <input
-                    type="checkbox"
-                    checked={todo.isChecked}
-                    onChange={() => toggleTodo(todo)}
-                    className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+      <div
+        className="grid transition-[grid-template-rows] duration-200 ease-[ease]"
+        style={{ gridTemplateRows: collapsed ? "0fr" : "1fr" }}
+      >
+        <div
+          className={`min-h-0 ${collapsed ? "overflow-hidden" : "overflow-visible"}`}
+        >
+          <div className={collapsed ? "" : "pb-7 pt-4"}>
+            {open && isDone && showUndoDone ? (
+              <button
+                type="button"
+                onClick={() => undoSubtaskDone()}
+                className="mb-2 cursor-pointer text-xs font-medium text-accent-link underline-offset-2 hover:underline"
+              >
+                Mark not actually done
+              </button>
+            ) : open && isDone ? (
+              <button
+                type="button"
+                onClick={() => markSubtaskNotDone()}
+                className="mb-2 cursor-pointer text-xs text-muted hover:text-foreground"
+              >
+                Reopen
+              </button>
+            ) : null}
+
+            {!isDone ? (
+              <div>
+                <textarea
+                  ref={descriptionRef}
+                  value={subtask.dreamText}
+                  onChange={(e) => {
+                    patchSubtask({ dreamText: e.target.value });
+                    const el = e.target;
+                    el.style.height = "auto";
+                    el.style.height = `${Math.max(el.scrollHeight, 24)}px`;
+                  }}
+                  rows={1}
+                  aria-label="What this involves"
+                  className="w-full resize-none overflow-hidden border-0 bg-transparent px-0 py-0 text-[14px] italic leading-relaxed text-muted outline-none ring-0 placeholder:text-muted/50 focus:ring-0"
+                  placeholder="What this involves…"
+                />
+                <button
+                  type="button"
+                  disabled={breakdownLoading || !subtask.dreamText.trim()}
+                  onClick={() => void runBreakdown()}
+                  className="mt-3 cursor-pointer rounded-full border border-[#1E2530] bg-transparent px-4 py-2 text-sm font-medium text-[#1E2530] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40 dark:border-[#F4F0E8] dark:text-[#F4F0E8]"
+                >
+                  {breakdownLoading ? "Creating…" : "Create subtasks"}
+                </button>
+              </div>
+            ) : null}
+
+            {breakdownErr ? (
+              <p className="mt-2 text-sm text-danger">{breakdownErr}</p>
+            ) : null}
+
+            {draftRows ? (
+              <PlanTodoDraftList
+                rows={draftRows}
+                onChange={setDraftRows}
+                specifyingId={specifyingId}
+                onSpecifyRow={async (row) => {
+                  setSpecifyingId(row.id);
+                  await runBreakdown({
+                    specifyItem: row.title,
+                    replaceRowId: row.id,
+                  });
+                }}
+                onSave={() => saveDraftAsTodos()}
+              />
+            ) : null}
+
+            {todos.length > 0 ? (
+              <div className="mt-4">
+                <ul className="space-y-1">
+                  {todos.map((todo) => (
+                    <li key={todo.id}>
+                      <label className="flex cursor-pointer items-start gap-3 py-2">
+                        <input
+                          type="checkbox"
+                          checked={todo.isChecked}
+                          onChange={() => toggleTodo(todo)}
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-accent"
+                        />
+                        <span
+                          className={`text-sm leading-relaxed ${
+                            todo.isChecked
+                              ? "text-muted line-through"
+                              : "text-foreground"
+                          }`}
+                        >
+                          {todo.title}
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+                {nudgeTodo ? (
+                  <PlanResistanceNudge
+                    todo={nudgeTodo}
+                    projectId={subtask.projectId}
+                    subtaskId={subtask.id}
+                    copySeed={nudgeTodo.id}
+                    persistent
+                    onRecorded={() => onRefresh()}
                   />
-                  <span
-                    className={`text-sm leading-relaxed ${
-                      todo.isChecked ? "text-muted line-through" : "text-foreground"
-                    }`}
-                  >
-                    {todo.title}
-                  </span>
-                </label>
-              </li>
-            ))}
-          </ul>
-          {nudgeTodo ? (
-            <PlanResistanceNudge
-              todo={nudgeTodo}
-              projectId={subtask.projectId}
-              subtaskId={subtask.id}
-              copySeed={nudgeTodo.id}
-              onDismiss={() => {
-                setDismissedNudge(true);
-                setNudgeTodoId(null);
-              }}
-              onRecorded={() => onRefresh()}
-            />
-          ) : null}
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
-      ) : null}
-        </div>
-      ) : null}
+      </div>
     </article>
   );
 }

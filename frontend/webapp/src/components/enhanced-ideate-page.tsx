@@ -39,7 +39,7 @@ const LIFE_AREA_BREAKDOWN = [
   {
     label: "The dream",
     hint: "What you’re quietly hoping for",
-    sample: "Evenings that end with a song, not a scroll.",
+    sample: "Publish a weekly cooking newsletter — 100 subscribers by summer.",
     Icon: IconSparkles,
     iconColor: "#B8703A",
     iconBg: "rgb(184 112 58 / 0.15)",
@@ -47,7 +47,7 @@ const LIFE_AREA_BREAKDOWN = [
   {
     label: "What’s in the way",
     hint: "Resistance, fear, logistics",
-    sample: "I wait for the ‘right’ mood — and then it’s late.",
+    sample: "I rewrite the about page instead of hitting Publish.",
     Icon: IconWind,
     iconColor: "#A65252",
     iconBg: "rgb(166 82 82 / 0.15)",
@@ -55,7 +55,7 @@ const LIFE_AREA_BREAKDOWN = [
   {
     label: "Describe the moment",
     hint: "A concrete scene where it’s already true",
-    sample: "Guitar in my lap. Ten minutes. No audience needed.",
+    sample: "Issue #8 is live. Three new subs. I screenshot the stats.",
     Icon: IconEye,
     iconColor: "#5A7A5E",
     iconBg: "rgb(90 122 94 / 0.15)",

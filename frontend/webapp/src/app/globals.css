@@ -133,11 +133,15 @@ body {
   font-family: var(--font-hand), "Segoe Print", "Bradley Hand", cursive;
 }
 
-/* iMessage-style chat tails. The ::after mask matches the create chat card. */
+/* iMessage-style chat tails (clip-path — no page-color mask that shows as a white square). */
 .chat-bubble {
-  box-shadow:
-    0 1px 3px color-mix(in srgb, var(--foreground) 10%, transparent),
-    0 3px 10px color-mix(in srgb, var(--foreground) 12%, transparent);
+  /* drop-shadow follows the tail shape; box-shadow would square-clip oddly */
+  filter: drop-shadow(
+      0 1px 2px color-mix(in srgb, var(--foreground) 12%, transparent)
+    )
+    drop-shadow(
+      0 3px 8px color-mix(in srgb, var(--foreground) 10%, transparent)
+    );
 }
 
 .chat-bubble-tail-right,
@@ -149,44 +153,27 @@ body {
 .chat-bubble-tail-left::before {
   content: "";
   position: absolute;
-  z-index: 0;
+  z-index: -1;
   bottom: 0;
-  width: 20px;
-  height: 20px;
-  background: inherit;
+  width: 14px;
+  height: 16px;
+  background-color: inherit;
 }
 
 .chat-bubble-tail-right::before {
-  right: -8px;
-  border-bottom-left-radius: 16px;
-  box-shadow: 2px 3px 6px color-mix(in srgb, var(--foreground) 14%, transparent);
+  right: -5px;
+  clip-path: path("M 0 0 C 2 8 8 14 14 16 L 0 16 Z");
 }
 
 .chat-bubble-tail-left::before {
-  left: -8px;
-  border-bottom-right-radius: 16px;
-  box-shadow: -2px 3px 6px color-mix(in srgb, var(--foreground) 14%, transparent);
+  left: -5px;
+  clip-path: path("M 14 0 C 12 8 6 14 0 16 L 14 16 Z");
 }
 
 .chat-bubble-tail-right::after,
 .chat-bubble-tail-left::after {
-  content: "";
-  position: absolute;
-  z-index: 1;
-  bottom: -1px;
-  width: 10px;
-  height: 21px;
-  background: var(--card);
-}
-
-.chat-bubble-tail-right::after {
-  right: -10px;
-  border-bottom-left-radius: 10px;
-}
-
-.chat-bubble-tail-left::after {
-  left: -10px;
-  border-bottom-right-radius: 10px;
+  content: none;
+  display: none;
 }
 
 @keyframes chat-typing-bounce {
@@ -609,6 +596,19 @@ body {
   opacity: 0.92;
 }
 
+/* Ideate home: recessed hero band — inset top/bottom so the patterned field sits lower. */
+.home-hero.home-hero--ideate-depth {
+  box-shadow:
+    inset 0 22px 36px -10px rgb(0 0 0 / 0.55),
+    inset 0 -22px 36px -10px rgb(0 0 0 / 0.55);
+}
+
+.dark .home-hero.home-hero--ideate-depth {
+  box-shadow:
+    inset 0 22px 40px -10px rgb(0 0 0 / 0.7),
+    inset 0 -22px 40px -10px rgb(0 0 0 / 0.7);
+}
+
 /* Ideate life-area cards — light sandy / dark slate via inline CSS vars. */
 .life-area-card {
   background-color: var(--life-area-bg);
@@ -913,4 +913,62 @@ main[data-page-kind="standard"] {
     scrollbar-color: color-mix(in srgb, var(--accent-button) 35%, transparent)
       transparent;
   }
+}
+
+/* Life-area whiteboard — light remap of tldraw chrome to app paper / peach. */
+.mm-life-area-whiteboard {
+  background: var(--background);
+}
+
+.mm-life-area-whiteboard .tl-theme__light {
+  --tl-color-background: #faf8f3;
+  --tl-color-grid: hsl(40, 8%, 62%);
+  --tl-color-low: #f3efe6;
+  --tl-color-low-border: #e5e0d2;
+  --tl-color-divider: #e5e0d2;
+  --tl-color-panel: #ffffff;
+  --tl-color-panel-contrast: #ffffff;
+  --tl-color-panel-overlay: rgb(255 255 255 / 0.88);
+  --tl-color-text: #1e2530;
+  --tl-color-text-0: #1e2530;
+  --tl-color-text-1: #3a3540;
+  --tl-color-text-3: #7a7566;
+  --tl-color-primary: #b8703a;
+  --tl-color-selected: #b8703a;
+  --tl-color-selected-contrast: #ffffff;
+  --tl-color-focus: #b8703a;
+  --tl-color-selection-fill: color-mix(in srgb, #f0a855 28%, transparent);
+  --tl-color-selection-stroke: #b8703a;
+  --tl-shadow-1: 0 1px 2px rgb(30 37 48 / 0.08), 0 1px 3px rgb(30 37 48 / 0.06);
+  --tl-shadow-2:
+    0 1px 2px rgb(30 37 48 / 0.06), 0 4px 12px rgb(30 37 48 / 0.08),
+    inset 0 0 0 1px var(--tl-color-panel-contrast);
+}
+
+.mm-life-area-whiteboard .tl-theme__dark {
+  --tl-color-background: #1e2530;
+  --tl-color-grid: hsl(214, 10%, 40%);
+  --tl-color-low: #243040;
+  --tl-color-low-border: #3d4a5c;
+  --tl-color-divider: #3d4a5c;
+  --tl-color-panel: #2a3544;
+  --tl-color-panel-contrast: #33465c;
+  --tl-color-panel-overlay: rgb(42 53 68 / 0.9);
+  --tl-color-text: #faf8f3;
+  --tl-color-text-0: #faf8f3;
+  --tl-color-text-1: #e8e2d4;
+  --tl-color-text-3: #a39c8c;
+  --tl-color-primary: #f0a855;
+  --tl-color-selected: #f0a855;
+  --tl-color-selected-contrast: #3d2e10;
+  --tl-color-focus: #f0a855;
+  --tl-color-selection-fill: color-mix(in srgb, #f0a855 22%, transparent);
+  --tl-color-selection-stroke: #f0a855;
+}
+
+.mm-life-area-whiteboard .tlui-layout,
+.mm-life-area-whiteboard .tlui-button,
+.mm-life-area-whiteboard .tlui-menu,
+.mm-life-area-whiteboard .tlui-popover__content {
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
 }

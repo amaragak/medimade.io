@@ -37,9 +37,9 @@ export function findStalledTodo(
 }
 
 export const NUDGE_COPY_VARIANTS = [
-  "This one's been sitting a while — anything in the way?",
-  "Still here when you're ready — anything making this harder?",
-  "No rush — is something quietly in the way of this step?",
+  "This one’s been sitting a while — what’s in the way?",
+  "Still here — what’s making this harder?",
+  "Stuck on this step — anything blocking you?",
 ];
 
 export function pickNudgeCopy(seed: string): string {
