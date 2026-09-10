@@ -204,25 +204,65 @@ function isComplete(flags: {
   return flags.gratitude && flags.meditation && flags.lifeArea;
 }
 
+function isPartial(flags: {
+  gratitude: boolean;
+  meditation: boolean;
+  lifeArea: boolean;
+}): boolean {
+  return flags.gratitude || flags.meditation || flags.lifeArea;
+}
+
+type DayPredicate = (flags: {
+  gratitude: boolean;
+  meditation: boolean;
+  lifeArea: boolean;
+}) => boolean;
+
+/** Consecutive qualifying days ending yesterday if today does not qualify, else including today. */
 function computeStreak(
   todayKey: string,
   gratitudeDays: Set<string>,
   lifeAreaDays: Set<string>,
   habits: Map<string, DayRecord>,
+  predicate: DayPredicate,
 ): number {
   let cursor = todayKey;
-  if (!isComplete(dayFlags(cursor, gratitudeDays, lifeAreaDays, habits))) {
+  if (!predicate(dayFlags(cursor, gratitudeDays, lifeAreaDays, habits))) {
     cursor = shiftDateKey(todayKey, -1);
   }
   let streak = 0;
   for (let i = 0; i < 365; i++) {
-    if (!isComplete(dayFlags(cursor, gratitudeDays, lifeAreaDays, habits))) {
+    if (!predicate(dayFlags(cursor, gratitudeDays, lifeAreaDays, habits))) {
       break;
     }
     streak += 1;
     cursor = shiftDateKey(cursor, -1);
   }
   return streak;
+}
+
+/** Longest consecutive run in the trailing window (includes broken streaks). */
+function computeRecord(
+  todayKey: string,
+  gratitudeDays: Set<string>,
+  lifeAreaDays: Set<string>,
+  habits: Map<string, DayRecord>,
+  predicate: DayPredicate,
+  windowDays = 730,
+): number {
+  let best = 0;
+  let run = 0;
+  const start = shiftDateKey(todayKey, -(windowDays - 1));
+  for (let i = 0; i < windowDays; i++) {
+    const key = shiftDateKey(start, i);
+    if (predicate(dayFlags(key, gratitudeDays, lifeAreaDays, habits))) {
+      run += 1;
+      if (run > best) best = run;
+    } else {
+      run = 0;
+    }
+  }
+  return best;
 }
 
 async function loadDay(
@@ -313,18 +353,45 @@ export async function handler(
       );
       const habits = habitsByDate(habitsItems);
       const flags = dayFlags(todayKey, gratitudeDays, lifeAreaDays, habits);
-      const streak = computeStreak(
+      const fullStreak = computeStreak(
         todayKey,
         gratitudeDays,
         lifeAreaDays,
         habits,
+        isComplete,
+      );
+      const partialStreak = computeStreak(
+        todayKey,
+        gratitudeDays,
+        lifeAreaDays,
+        habits,
+        isPartial,
+      );
+      const fullStreakRecord = computeRecord(
+        todayKey,
+        gratitudeDays,
+        lifeAreaDays,
+        habits,
+        isComplete,
+      );
+      const partialStreakRecord = computeRecord(
+        todayKey,
+        gratitudeDays,
+        lifeAreaDays,
+        habits,
+        isPartial,
       );
 
       return json(200, {
         gratitude: flags.gratitude,
         meditation: flags.meditation,
         lifeArea: flags.lifeArea,
-        streak,
+        // Legacy alias — full (all three) streak.
+        streak: fullStreak,
+        fullStreak,
+        partialStreak,
+        fullStreakRecord,
+        partialStreakRecord,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load daily status";

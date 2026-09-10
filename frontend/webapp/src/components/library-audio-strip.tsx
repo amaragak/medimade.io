@@ -8,6 +8,8 @@ import {
   useState,
   type MutableRefObject,
 } from "react";
+import { isMedimadeSessionActive } from "@/lib/auth-session";
+import { isMarketingPreviewMode } from "@/lib/marketing-preview";
 import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
 import {
   backgroundAudioPlaybackKey,
@@ -171,6 +173,19 @@ export function LibraryAudioStrip({
     track?.liveMix === true && isSoundscapeKey(compositionItems, track.musicKey);
   const soundscapeActiveRef = useRef(soundscapeActive);
   soundscapeActiveRef.current = soundscapeActive;
+
+  /** Desktop app chrome: keep the strip in the main column so the sidebar sits beside (over the left edge). */
+  const [besideSidebar, setBesideSidebar] = useState(false);
+  useEffect(() => {
+    const sync = () => {
+      setBesideSidebar(
+        isMedimadeSessionActive() && !isMarketingPreviewMode(),
+      );
+    };
+    sync();
+    window.addEventListener("medimade-session-changed", sync);
+    return () => window.removeEventListener("medimade-session-changed", sync);
+  }, []);
 
   const reportTime = useCallback(
     (t: number) => {
@@ -453,7 +468,9 @@ export function LibraryAudioStrip({
   return (
     <div
       ref={rootRef}
-      className={`fixed inset-x-0 bottom-0 z-[140] border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_8%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_35%,transparent)] sm:px-4`}
+      className={`fixed bottom-0 right-0 z-50 border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_8%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_35%,transparent)] sm:px-4 ${
+        besideSidebar ? "left-0 md:left-[200px]" : "left-0"
+      }`}
       style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
       role="region"
       aria-label="Now playing"

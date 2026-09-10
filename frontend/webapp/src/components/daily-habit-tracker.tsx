@@ -45,7 +45,16 @@ const ITEMS: {
 ];
 
 function emptyStatus(): DailyStatus {
-  return { gratitude: false, meditation: false, lifeArea: false, streak: 0 };
+  return {
+    gratitude: false,
+    meditation: false,
+    lifeArea: false,
+    streak: 0,
+    fullStreak: 0,
+    partialStreak: 0,
+    fullStreakRecord: 0,
+    partialStreakRecord: 0,
+  };
 }
 
 function localStatusNow(): DailyStatus {
@@ -62,18 +71,12 @@ function StreakDots({
   todayComplete: boolean;
 }) {
   const filled = Math.min(Math.max(0, streak), 7);
-  // indices 0..6, 6 = today (rightmost)
+  // Fill left → right; glow the newest filled day when today counts.
   return (
-    <div className="mt-2.5 flex items-center gap-1.5" aria-hidden>
+    <div className="mt-2 flex items-center gap-1.5" aria-hidden>
       {Array.from({ length: 7 }, (_, i) => {
-        let on = false;
-        if (todayComplete) {
-          on = i >= 7 - filled;
-        } else {
-          on = filled > 0 && i >= 6 - filled && i < 6;
-        }
-        const isToday = i === 6;
-        const glow = isToday && todayComplete && on;
+        const on = i < filled;
+        const glow = on && todayComplete && i === filled - 1;
         return (
           <span
             key={i}
@@ -87,6 +90,43 @@ function StreakDots({
           />
         );
       })}
+    </div>
+  );
+}
+
+function StreakBlock({
+  label,
+  days,
+  help,
+  record,
+  showDots,
+  todayComplete,
+}: {
+  label: string;
+  days: number;
+  help: string;
+  record: number;
+  showDots?: boolean;
+  todayComplete?: boolean;
+}) {
+  return (
+    <div>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
+        {label}
+      </p>
+      <p className="mt-1 flex items-baseline gap-1.5">
+        <span className="font-display text-[28px] font-normal leading-none text-accent-link sm:text-[32px]">
+          {days}
+        </span>
+        <span className="text-[13px] text-muted">days</span>
+      </p>
+      <p className="mt-1.5 text-[11px] leading-[1.4] text-muted">{help}</p>
+      <p className="mt-1 text-[10px] tabular-nums text-muted/80">
+        Record · {record} {record === 1 ? "day" : "days"}
+      </p>
+      {showDots ? (
+        <StreakDots streak={days} todayComplete={Boolean(todayComplete)} />
+      ) : null}
     </div>
   );
 }
@@ -143,12 +183,23 @@ export function DailyHabitTracker() {
         .then((remote) => {
           if (cancelled) return;
           const local = localStatusNow();
-          // OR remote with local so in-session play/manual aren't lost before sync.
+          // OR flags; take the higher streak figures so undeployed API
+          // (missing partial fields → 0) cannot wipe a correct local count.
           setStatus({
             gratitude: remote.gratitude || local.gratitude,
             meditation: remote.meditation || local.meditation,
             lifeArea: remote.lifeArea || local.lifeArea,
-            streak: remote.streak,
+            streak: Math.max(remote.fullStreak, local.fullStreak),
+            fullStreak: Math.max(remote.fullStreak, local.fullStreak),
+            partialStreak: Math.max(remote.partialStreak, local.partialStreak),
+            fullStreakRecord: Math.max(
+              remote.fullStreakRecord,
+              local.fullStreakRecord,
+            ),
+            partialStreakRecord: Math.max(
+              remote.partialStreakRecord,
+              local.partialStreakRecord,
+            ),
           });
         })
         .catch(() => {
@@ -172,11 +223,13 @@ export function DailyHabitTracker() {
 
   const doneCount = ITEMS.filter((item) => status[item.pillar]).length;
   const todayComplete = doneCount === 3;
+  const todayPartial = doneCount >= 1;
 
   const toggle = (pillar: DailyHabitPillar) => {
     const next = !status[pillar];
-    setStatus((prev) => ({ ...prev, [pillar]: next }));
     setLocalManualCheck(pillar, next, dateKey);
+    // Recompute streaks immediately so today counts as soon as a daily is done.
+    setStatus(localStatusNow());
     if (isMedimadeSessionActive()) {
       void putDashboardDailyManualCheck({
         dateKey,
@@ -185,19 +238,29 @@ export function DailyHabitTracker() {
       })
         .then(() =>
           fetchDashboardDailyStatus({ dateKey }).then((remote) => {
-            setStatus((prev) => ({
-              ...prev,
-              ...remote,
-              // Keep optimistic manual if auto not yet true and user checked on.
-              [pillar]: next || remote[pillar],
-            }));
+            const local = localStatusNow();
+            setStatus({
+              gratitude: remote.gratitude || local.gratitude,
+              meditation: remote.meditation || local.meditation,
+              lifeArea: remote.lifeArea || local.lifeArea,
+              streak: Math.max(remote.fullStreak, local.fullStreak),
+              fullStreak: Math.max(remote.fullStreak, local.fullStreak),
+              partialStreak: Math.max(remote.partialStreak, local.partialStreak),
+              fullStreakRecord: Math.max(
+                remote.fullStreakRecord,
+                local.fullStreakRecord,
+              ),
+              partialStreakRecord: Math.max(
+                remote.partialStreakRecord,
+                local.partialStreakRecord,
+              ),
+              [pillar]: next || remote[pillar] || local[pillar],
+            });
           }),
         )
         .catch(() => {
-          /* local already saved */
+          setStatus(localStatusNow());
         });
-    } else {
-      setStatus(localStatusNow());
     }
   };
 
@@ -207,18 +270,27 @@ export function DailyHabitTracker() {
       style={{ borderTopWidth: 0.5, borderBottomWidth: 0.5 }}
     >
       <div className="mx-auto flex max-w-6xl flex-col gap-5 px-6 py-5 sm:flex-row sm:items-start sm:gap-8">
-        {/* Streak */}
-        <div className="w-[120px] shrink-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
-            Streak
-          </p>
-          <p className="mt-1 flex items-baseline gap-1.5">
-            <span className="font-display text-[32px] font-normal leading-none text-accent-link">
-              {status.streak}
-            </span>
-            <span className="text-[13px] text-muted">days</span>
-          </p>
-          <StreakDots streak={status.streak} todayComplete={todayComplete} />
+        <div className="flex w-full shrink-0 gap-6 sm:w-auto sm:gap-8">
+          <div className="min-w-0 flex-1 sm:w-[148px] sm:flex-none">
+            <StreakBlock
+              label="Full streak"
+              days={status.fullStreak}
+              help="Consecutive days you did all your dailies"
+              record={status.fullStreakRecord}
+              showDots
+              todayComplete={todayComplete}
+            />
+          </div>
+          <div className="min-w-0 flex-1 sm:w-[148px] sm:flex-none">
+            <StreakBlock
+              label="Partial streak"
+              days={status.partialStreak}
+              help="Consecutive days you did at least one of your dailies"
+              record={status.partialStreakRecord}
+              showDots
+              todayComplete={todayPartial}
+            />
+          </div>
         </div>
 
         {/* Today */}

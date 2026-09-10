@@ -20,7 +20,12 @@ export type DailyStatus = {
   gratitude: boolean;
   meditation: boolean;
   lifeArea: boolean;
+  /** Full streak — all three dailies. Alias of fullStreak for older callers. */
   streak: number;
+  fullStreak: number;
+  partialStreak: number;
+  fullStreakRecord: number;
+  partialStreakRecord: number;
 };
 
 export type DailyManualChecks = Partial<Record<DailyHabitPillar, boolean>>;
@@ -183,6 +188,25 @@ function shiftDateKey(dateKey: string, deltaDays: number): string {
   return localDateKey(dt);
 }
 
+function dayFlagsForDate(
+  entries: JournalEntry[],
+  ideate: IdeateStoreV2,
+  dateKey: string,
+  playStore: PlayEventsStore,
+  manualStore: ManualStore,
+): { gratitude: boolean; meditation: boolean; lifeArea: boolean } {
+  const manual = manualStore[dateKey] ?? {};
+  return {
+    gratitude:
+      Boolean(manual.gratitude) || gratitudeDoneForDate(entries, dateKey),
+    meditation:
+      Boolean(manual.meditation) ||
+      Boolean(playStore[dateKey]?.playProgress60At),
+    lifeArea:
+      Boolean(manual.lifeArea) || lifeAreaDoneForDate(ideate, dateKey),
+  };
+}
+
 function dayComplete(
   entries: JournalEntry[],
   ideate: IdeateStoreV2,
@@ -190,17 +214,75 @@ function dayComplete(
   playStore: PlayEventsStore,
   manualStore: ManualStore,
 ): boolean {
-  const manual = manualStore[dateKey] ?? {};
-  const gratitude =
-    Boolean(manual.gratitude) || gratitudeDoneForDate(entries, dateKey);
-  const meditation =
-    Boolean(manual.meditation) || Boolean(playStore[dateKey]?.playProgress60At);
-  const lifeArea =
-    Boolean(manual.lifeArea) || lifeAreaDoneForDate(ideate, dateKey);
-  return gratitude && meditation && lifeArea;
+  const f = dayFlagsForDate(entries, ideate, dateKey, playStore, manualStore);
+  return f.gratitude && f.meditation && f.lifeArea;
 }
 
-/** Consecutive complete days ending yesterday if today incomplete, else including today. */
+function dayPartial(
+  entries: JournalEntry[],
+  ideate: IdeateStoreV2,
+  dateKey: string,
+  playStore: PlayEventsStore,
+  manualStore: ManualStore,
+): boolean {
+  const f = dayFlagsForDate(entries, ideate, dateKey, playStore, manualStore);
+  return f.gratitude || f.meditation || f.lifeArea;
+}
+
+type LocalDayPredicate = (
+  entries: JournalEntry[],
+  ideate: IdeateStoreV2,
+  dateKey: string,
+  playStore: PlayEventsStore,
+  manualStore: ManualStore,
+) => boolean;
+
+function computeLocalStreakWith(
+  entries: JournalEntry[],
+  ideate: IdeateStoreV2,
+  todayKey: string,
+  playStore: PlayEventsStore,
+  manualStore: ManualStore,
+  predicate: LocalDayPredicate,
+): number {
+  let cursor = todayKey;
+  if (!predicate(entries, ideate, cursor, playStore, manualStore)) {
+    cursor = shiftDateKey(todayKey, -1);
+  }
+  let streak = 0;
+  for (let i = 0; i < 365; i++) {
+    if (!predicate(entries, ideate, cursor, playStore, manualStore)) break;
+    streak += 1;
+    cursor = shiftDateKey(cursor, -1);
+  }
+  return streak;
+}
+
+function computeLocalRecordWith(
+  entries: JournalEntry[],
+  ideate: IdeateStoreV2,
+  todayKey: string,
+  playStore: PlayEventsStore,
+  manualStore: ManualStore,
+  predicate: LocalDayPredicate,
+  windowDays = 730,
+): number {
+  let best = 0;
+  let run = 0;
+  const start = shiftDateKey(todayKey, -(windowDays - 1));
+  for (let i = 0; i < windowDays; i++) {
+    const key = shiftDateKey(start, i);
+    if (predicate(entries, ideate, key, playStore, manualStore)) {
+      run += 1;
+      if (run > best) best = run;
+    } else {
+      run = 0;
+    }
+  }
+  return best;
+}
+
+/** Consecutive complete (all three) days ending yesterday if today incomplete, else including today. */
 export function computeLocalStreak(
   entries: JournalEntry[],
   ideate: IdeateStoreV2,
@@ -208,17 +290,14 @@ export function computeLocalStreak(
 ): number {
   const playStore = readJson<PlayEventsStore>(PLAY_LS_KEY, {});
   const manualStore = readJson<ManualStore>(MANUAL_LS_KEY, {});
-  let cursor = todayKey;
-  if (!dayComplete(entries, ideate, cursor, playStore, manualStore)) {
-    cursor = shiftDateKey(todayKey, -1);
-  }
-  let streak = 0;
-  for (let i = 0; i < 365; i++) {
-    if (!dayComplete(entries, ideate, cursor, playStore, manualStore)) break;
-    streak += 1;
-    cursor = shiftDateKey(cursor, -1);
-  }
-  return streak;
+  return computeLocalStreakWith(
+    entries,
+    ideate,
+    todayKey,
+    playStore,
+    manualStore,
+    dayComplete,
+  );
 }
 
 export function computeLocalDailyStatus(
@@ -226,13 +305,49 @@ export function computeLocalDailyStatus(
   ideate: IdeateStoreV2,
   dateKey = localDateKey(),
 ): DailyStatus {
+  const playStore = readJson<PlayEventsStore>(PLAY_LS_KEY, {});
+  const manualStore = readJson<ManualStore>(MANUAL_LS_KEY, {});
   const manual = loadLocalManualChecks(dateKey);
+  const fullStreak = computeLocalStreakWith(
+    entries,
+    ideate,
+    dateKey,
+    playStore,
+    manualStore,
+    dayComplete,
+  );
+  const partialStreak = computeLocalStreakWith(
+    entries,
+    ideate,
+    dateKey,
+    playStore,
+    manualStore,
+    dayPartial,
+  );
   return {
     gratitude: Boolean(manual.gratitude) || gratitudeDoneForDate(entries, dateKey),
     meditation:
       Boolean(manual.meditation) || hasLocalMeditationProgress(dateKey),
     lifeArea: Boolean(manual.lifeArea) || lifeAreaDoneForDate(ideate, dateKey),
-    streak: computeLocalStreak(entries, ideate, dateKey),
+    streak: fullStreak,
+    fullStreak,
+    partialStreak,
+    fullStreakRecord: computeLocalRecordWith(
+      entries,
+      ideate,
+      dateKey,
+      playStore,
+      manualStore,
+      dayComplete,
+    ),
+    partialStreakRecord: computeLocalRecordWith(
+      entries,
+      ideate,
+      dateKey,
+      playStore,
+      manualStore,
+      dayPartial,
+    ),
   };
 }
 

@@ -943,7 +943,17 @@ export type DashboardDailyStatus = {
   meditation: boolean;
   lifeArea: boolean;
   streak: number;
+  fullStreak: number;
+  partialStreak: number;
+  fullStreakRecord: number;
+  partialStreakRecord: number;
 };
+
+function nonNegInt(raw: unknown): number {
+  return typeof raw === "number" && Number.isFinite(raw)
+    ? Math.max(0, Math.floor(raw))
+    : 0;
+}
 
 /** Loads today’s habit tracker flags + streak from `GET /api/dashboard/daily-status`. */
 export async function fetchDashboardDailyStatus(opts?: {
@@ -976,13 +986,16 @@ export async function fetchDashboardDailyStatus(opts?: {
       res.statusText;
     throw new Error(msg);
   }
+  const fullStreak = nonNegInt(data.fullStreak ?? data.streak);
   return {
     gratitude: data.gratitude === true,
     meditation: data.meditation === true,
     lifeArea: data.lifeArea === true,
-    streak: typeof data.streak === "number" && Number.isFinite(data.streak)
-      ? Math.max(0, Math.floor(data.streak))
-      : 0,
+    streak: fullStreak,
+    fullStreak,
+    partialStreak: nonNegInt(data.partialStreak),
+    fullStreakRecord: nonNegInt(data.fullStreakRecord),
+    partialStreakRecord: nonNegInt(data.partialStreakRecord),
   };
 }
 
