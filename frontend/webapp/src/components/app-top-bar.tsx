@@ -13,6 +13,10 @@ import {
 import { enterMarketingPreviewMode } from "@/lib/marketing-preview";
 import { loadIdeateStore } from "@/lib/plan-ideate-store";
 import { subscribeIdeateCloud } from "@/lib/ideate-cloud";
+import {
+  CREATE_SESSION_CHANGED_EVENT,
+  readCreateSession,
+} from "@/lib/create-session-storage";
 
 type Props = {
   onOpenSidebar?: () => void;
@@ -30,6 +34,10 @@ function lifeAreaTitleFromPath(pathname: string): string | null {
   }
 }
 
+function createMeditationStyleFromSession(): string | null {
+  return readCreateSession()?.meditationStyle?.trim() || null;
+}
+
 export function AppTopBar({ onOpenSidebar }: Props) {
   const pathname = usePathname() || "/";
   const router = useRouter();
@@ -40,6 +48,7 @@ export function AppTopBar({ onOpenSidebar }: Props) {
       setCrumbs(
         buildAppBreadcrumbs(pathname, {
           lifeAreaTitle: lifeAreaTitleFromPath(pathname),
+          createMeditationStyle: createMeditationStyleFromSession(),
           hash: typeof window !== "undefined" ? window.location.hash : "",
           search: typeof window !== "undefined" ? window.location.search : "",
         }),
@@ -48,9 +57,11 @@ export function AppTopBar({ onOpenSidebar }: Props) {
     rebuild();
     const unsub = subscribeIdeateCloud(rebuild);
     window.addEventListener("storage", rebuild);
+    window.addEventListener(CREATE_SESSION_CHANGED_EVENT, rebuild);
     return () => {
       unsub();
       window.removeEventListener("storage", rebuild);
+      window.removeEventListener(CREATE_SESSION_CHANGED_EVENT, rebuild);
     };
   }, [pathname]);
 

@@ -42,7 +42,6 @@ import {
   type MeditationDraftStateV1,
   type MeditationTargetMinutes,
   MEDITATION_DRAFT_STATE_VERSION,
-  MEDITATION_TARGET_MINUTES,
   coerceMeditationTargetMinutes,
   streamMedimadeChat,
   streamMeditationScript,
@@ -526,7 +525,7 @@ function StyleIntakeField({
   return (
     <div
       ref={cardRef}
-      className={`scroll-mt-3 rounded-2xl border border-border bg-surface p-4 shadow-sm transition-[opacity,transform] duration-500 ease-out sm:scroll-mt-4 sm:p-5 dark:border-border dark:bg-surface ${
+      className={`scroll-mt-3 rounded-[6px] border border-journal-warm-border bg-journal-warm-bg p-4 shadow-none transition-[opacity,transform] duration-500 ease-out sm:scroll-mt-4 sm:p-5 dark:border-border dark:bg-surface-2 ${
         entered ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
       }`}
     >
@@ -550,7 +549,7 @@ function StyleIntakeField({
             }}
             rows={1}
             enterKeyHint={enterKeyHint}
-            className="min-h-[2.625rem] min-w-0 flex-1 resize-none overflow-hidden rounded-2xl border border-border bg-background px-3.5 py-2.5 text-base leading-relaxed text-foreground outline-none ring-accent/30 focus:ring-2"
+            className="min-h-[2.625rem] min-w-0 flex-1 resize-none overflow-hidden rounded-[6px] border border-journal-warm-border bg-journal-warm-input-bg px-3.5 py-2.5 text-base leading-relaxed text-foreground outline-none transition-colors focus:border-accent focus:ring-0 dark:border-border dark:bg-background/40 dark:focus:border-accent"
           />
           <DictationMicButton
             variant="inset"
@@ -3799,11 +3798,9 @@ export function CreateWorkspace({
 
   const createPageTitle = showPathChooser
     ? "Create a meditation"
-    : showStyleTypePick
+    : showStyleTypePick || showStyleQuestions
       ? null
-      : showStyleQuestions
-        ? meditationStyle?.trim() || "A few questions"
-        : showJournalPick
+      : showJournalPick
           ? "Which entry should this reflect on?"
           : showPromptPick
             ? "One-shot prompt"
@@ -3818,7 +3815,6 @@ export function CreateWorkspace({
   const lengthBarControl = (
     <MeditationLengthSelect
       value={meditationTargetMinutes}
-      options={MEDITATION_TARGET_MINUTES}
       onChange={(mins) =>
         setMeditationTargetMinutes(parseMeditationTargetMinutes(mins))
       }
@@ -3844,7 +3840,7 @@ export function CreateWorkspace({
         playsInline
         onEnded={() => setCompositionPlaying(false)}
       />
-      {!showPathChooser && !showStyleTypePick ? (
+      {!showPathChooser && !showStyleTypePick && !showStyleQuestions ? (
       <div className="mx-auto mb-3 w-full max-w-6xl shrink-0 px-4 sm:px-6">
           {createPageTitle || showChatReset || (showAudioPlayAll && isLocalDevHost()) ? (
           <div className="flex items-center justify-between gap-4">
@@ -4295,7 +4291,9 @@ export function CreateWorkspace({
                   <span>Type</span>
                 </button>
                 </div>
-                <div className="flex shrink-0 justify-center">{lengthBarControl}</div>
+                <div className="flex shrink-0 justify-center">
+                  {lengthBarControl}
+                </div>
                 <div className="flex min-w-0 flex-1 justify-end">
                 <button
                   type="button"

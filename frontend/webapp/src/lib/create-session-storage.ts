@@ -8,6 +8,7 @@ import type { CreateMeditationPath } from "@/lib/create-meditation-path";
 
 export const CREATE_SESSION_STORAGE_KEY = "mm_create_session_v1";
 export const CREATE_SESSION_VERSION = 1 as const;
+export const CREATE_SESSION_CHANGED_EVENT = "medimade-create-session-changed";
 
 export type CreateSessionPhase =
   | "stylePick"
@@ -271,6 +272,7 @@ export function writeCreateSession(session: CreateSessionV1): void {
   if (typeof window === "undefined") return;
   try {
     sessionStorage.setItem(CREATE_SESSION_STORAGE_KEY, JSON.stringify(session));
+    window.dispatchEvent(new Event(CREATE_SESSION_CHANGED_EVENT));
   } catch {
     /* quota / private mode */
   }

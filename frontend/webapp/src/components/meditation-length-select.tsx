@@ -1,24 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { MEDITATION_TARGET_MINUTES } from "@/lib/medimade-api";
 
 type Props = {
   value: number;
-  options: readonly number[];
   onChange: (mins: number) => void;
   disabled?: boolean;
 };
 
 /**
- * Styled length picker (same trigger/menu chrome as mixer selects).
- * Menu opens upward so it clears the create-flow bottom bar.
+ * Styled length picker for the create-flow bottom bar.
+ * Menu opens upward so it clears the bar. Options: 2 / 5 / 10 / 20.
  */
-export function MeditationLengthSelect({
-  value,
-  options,
-  onChange,
-  disabled,
-}: Props) {
+export function MeditationLengthSelect({ value, onChange, disabled }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -80,7 +75,7 @@ export function MeditationLengthSelect({
             role="listbox"
             className="absolute bottom-full left-1/2 z-[90] mb-1.5 min-w-full -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-card py-1 shadow-xl"
           >
-            {options.map((mins) => (
+            {MEDITATION_TARGET_MINUTES.map((mins) => (
               <button
                 key={mins}
                 type="button"

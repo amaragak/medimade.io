@@ -1,5 +1,6 @@
 import {
   CREATE_MEDITATE_ROOT,
+  createMeditationHref,
   parseCreateMeditationPathname,
 } from "@/lib/create-meditation-path";
 
@@ -210,10 +211,16 @@ export type AppBreadcrumbCrumb = {
 /**
  * Build breadcrumb crumbs for the logged-in top bar (no brand).
  * `lifeAreaTitle` is used when on `/ideate/goal/[id]`.
+ * `createMeditationStyle` is used on By Type questions / mix steps.
  */
 export function buildAppBreadcrumbs(
   pathname: string,
-  opts?: { lifeAreaTitle?: string | null; hash?: string; search?: string },
+  opts?: {
+    lifeAreaTitle?: string | null;
+    createMeditationStyle?: string | null;
+    hash?: string;
+    search?: string;
+  },
 ): AppBreadcrumbCrumb[] {
   const hash = opts?.hash ?? "";
   const search = opts?.search ?? "";
@@ -241,7 +248,20 @@ export function buildAppBreadcrumbs(
                 : null;
     if (pathLabel) {
       crumbs.push({ label: "Create", href: CREATE_MEDITATE_ROOT });
-      crumbs.push({ label: pathLabel, href: null });
+      const styleName = opts?.createMeditationStyle?.trim() || null;
+      const showStyleLeaf =
+        parsed.path === "style" &&
+        Boolean(styleName) &&
+        (parsed.styleStep === "questions" || parsed.mix);
+      if (showStyleLeaf && styleName) {
+        crumbs.push({
+          label: "By Type",
+          href: createMeditationHref({ path: "style" }),
+        });
+        crumbs.push({ label: styleName, href: null });
+      } else {
+        crumbs.push({ label: pathLabel, href: null });
+      }
     } else {
       crumbs.push({ label: "Create", href: null });
     }
