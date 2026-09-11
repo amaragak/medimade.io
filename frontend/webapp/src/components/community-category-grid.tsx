@@ -7,7 +7,7 @@ import {
 } from "@/lib/community-library";
 import { CATEGORY_CARD_FILLS } from "@/lib/theme-colors";
 
-/** Lucide (ISC) paths, 24×24. Body scan from Tabler Icons (MIT). */
+/** Lucide (ISC) paths, 24×24. */
 function iconProps(className: string) {
   return {
     viewBox: "0 0 24 24",
@@ -40,16 +40,11 @@ function CommunityCategoryIcon({
         </svg>
       );
     case "Body scan":
+      /* Outline full-body figure (Hugeicons user-full-view style) — stroke weight matches siblings. */
       return (
         <svg {...p}>
-          <path d="M4 8V6a2 2 0 0 1 2-2h2" />
-          <path d="M4 16v2a2 2 0 0 0 2 2h2" />
-          <path d="M16 4h2a2 2 0 0 1 2 2v2" />
-          <path d="M16 20h2a2 2 0 0 0 2-2v-2" />
-          <circle cx="12" cy="8" r="1" />
-          <path d="M10 17v-1a2 2 0 1 1 4 0v1" />
-          <path d="M8 10c.666.666 1.334 1 2 1h4c.666 0 1.334-.334 2-1" />
-          <path d="M12 11v3" />
+          <path d="M15 5c0 1.657-1.758 3.5-3 3.5S9 6.657 9 5a3 3 0 1 1 6 0Z" />
+          <path d="M16.042 9c1.522 1.335 2.51 3.597 1.623 5.705c-.19.454-.629.749-1.114.749c-.492 0-1.302-.158-1.46.483l-1.096 4.475A2.064 2.064 0 0 1 12 22a2.064 2.064 0 0 1-1.994-1.588l-1.098-4.475c-.157-.641-.966-.483-1.46-.483c-.484 0-.922-.295-1.113-.749c-.886-2.108.1-4.37 1.624-5.705" />
         </svg>
       );
     case "Visualization":
@@ -164,12 +159,15 @@ export function MeditationTypeCardGrid({
   includeAll = false,
   className = "",
   titles,
+  variant = "default",
 }: {
   selected: string;
   onSelect: (value: string) => void;
   includeAll?: boolean;
   className?: string;
   titles?: Partial<Record<string, string>>;
+  /** `picker` = Create › By type tiles; `default` keeps community / legacy chrome. */
+  variant?: "default" | "picker";
 }) {
   const cards: Array<{
     value: string;
@@ -185,6 +183,8 @@ export function MeditationTypeCardGrid({
       icon: cat,
     })),
   ];
+
+  const isPicker = variant === "picker";
 
   return (
     <div
@@ -216,18 +216,32 @@ export function MeditationTypeCardGrid({
                 "--type-card-bg-dark": `color-mix(in srgb, ${light} 85%, #1a222c 15%)`,
               } as CSSProperties
             }
-            className={`flex aspect-square w-full min-w-0 min-h-0 cursor-pointer flex-col items-center justify-center gap-2.5 self-start overflow-hidden rounded-2xl border px-2 py-2.5 text-center text-[#1E2530] shadow-sm transition-[box-shadow,filter] bg-[var(--type-card-bg)] hover:brightness-[0.97] dark:bg-[var(--type-card-bg-dark)] dark:hover:brightness-105 ${
-              active
-                ? "border-accent ring-2 ring-accent ring-offset-2 ring-offset-background"
-                : "border-transparent"
-            }`}
+            className={
+              isPicker
+                ? `flex aspect-square w-full min-w-0 min-h-0 cursor-pointer flex-col items-center justify-center gap-3 self-start overflow-hidden rounded-[6px] bg-[var(--type-card-bg)] px-2 py-2.5 text-center transition-[filter,border-color] dark:bg-[var(--type-card-bg-dark)] ${
+                    active
+                      ? "border-[1.5px] border-solid border-accent"
+                      : "border-[0.5px] border-solid border-transparent hover:border-journal-warm-border hover:brightness-[0.96] dark:hover:border-border dark:hover:brightness-[0.96]"
+                  }`
+                : `flex aspect-square w-full min-w-0 min-h-0 cursor-pointer flex-col items-center justify-center gap-2.5 self-start overflow-hidden rounded-2xl border px-2 py-2.5 text-center text-[#1E2530] shadow-sm transition-[box-shadow,filter] bg-[var(--type-card-bg)] hover:brightness-[0.97] dark:bg-[var(--type-card-bg-dark)] dark:hover:brightness-105 ${
+                    active
+                      ? "border-accent ring-2 ring-accent ring-offset-2 ring-offset-background"
+                      : "border-transparent"
+                  }`
+            }
           >
             <CommunityCategoryIcon name={card.icon} />
-            <span className="flex h-[2.5rem] w-full shrink-0 items-center justify-center sm:h-[2.75rem]">
-              <span className="line-clamp-2 text-center text-sm font-semibold leading-tight sm:text-base">
+            {isPicker ? (
+              <span className="w-full font-display text-[16px] font-normal leading-[1.3] text-foreground">
                 {card.label}
               </span>
-            </span>
+            ) : (
+              <span className="flex h-[2.5rem] w-full shrink-0 items-center justify-center sm:h-[2.75rem]">
+                <span className="line-clamp-2 text-center text-sm font-semibold leading-tight sm:text-base">
+                  {card.label}
+                </span>
+              </span>
+            )}
           </button>
         );
       })}

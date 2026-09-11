@@ -617,6 +617,71 @@ body {
   background-color: var(--life-area-bg-dark);
 }
 
+/* Create meditation path cards — warm cream in light; navy surface-2 in dark. */
+.create-path-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem; /* rounded-2xl */
+  border: 1px solid var(--journal-warm-border);
+  background-color: var(--journal-warm-bg);
+  box-shadow: none;
+  transition:
+    transform 150ms ease,
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+.dark .create-path-card {
+  border-color: var(--border);
+  background-color: var(--surface-2);
+}
+.create-path-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: var(--accent);
+  opacity: 0;
+  transition: opacity 150ms ease;
+  pointer-events: none;
+}
+.create-path-card:hover:not(:disabled):not([aria-disabled="true"]),
+.create-path-card[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--journal-warm-border));
+  transform: translateY(-1px);
+}
+.dark .create-path-card:hover:not(:disabled):not([aria-disabled="true"]),
+.dark .create-path-card[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+.create-path-card:hover:not(:disabled):not([aria-disabled="true"])::before,
+.create-path-card[aria-pressed="true"]::before {
+  opacity: 1;
+}
+.create-path-card:disabled,
+.create-path-card[aria-disabled="true"] {
+  opacity: 0.62;
+  cursor: not-allowed;
+  transform: none;
+}
+.create-path-card:disabled::before,
+.create-path-card[aria-disabled="true"]::before {
+  opacity: 0;
+}
+.create-path-card[aria-disabled="true"] a {
+  opacity: calc(1 / 0.62);
+}
+.create-path-card-placeholder {
+  min-height: 100%;
+  border-radius: 1rem;
+  border: 1px dashed color-mix(in srgb, var(--journal-warm-border) 85%, var(--muted));
+  background: transparent;
+}
+.dark .create-path-card-placeholder {
+  border-color: color-mix(in srgb, var(--border) 85%, var(--muted));
+}
+
 main[data-page-kind="standard"] {
   --content-edge: max(
     0px,

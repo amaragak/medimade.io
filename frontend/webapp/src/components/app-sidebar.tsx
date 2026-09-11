@@ -171,12 +171,12 @@ function NavSectionBlock({
               section.id,
             );
             return (
-              <li key={sub.id}>
+              <li key={sub.id} className="flex items-center gap-0.5">
                 <Link
                   href={sub.href}
                   onClick={onNavigate}
                   aria-current={active ? "page" : undefined}
-                  className={`flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-nav-active ${
+                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:bg-nav-active ${
                     active
                       ? "font-medium text-accent-link"
                       : "text-muted"
@@ -190,6 +190,17 @@ function NavSectionBlock({
                   />
                   <span className="min-w-0 truncate">{sub.label}</span>
                 </Link>
+                {sub.actionHref ? (
+                  <Link
+                    href={sub.actionHref}
+                    onClick={onNavigate}
+                    aria-label={sub.actionAriaLabel ?? `New ${sub.label}`}
+                    title={sub.actionAriaLabel ?? `New ${sub.label}`}
+                    className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-base font-medium leading-none text-muted transition-colors hover:bg-nav-active hover:text-accent-link"
+                  >
+                    +
+                  </Link>
+                ) : null}
               </li>
             );
           })}

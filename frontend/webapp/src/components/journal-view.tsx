@@ -977,7 +977,24 @@ export function JournalView() {
     router.push(`/journal/my/${encodeURIComponent(e.id)}`);
   }, [flushSaveSync, persist, selectedFolderId, router]);
 
-  // Sidebar "New entry" deep-link (`/journal/my?new=1`).
+  const createGratitudeEntry = useCallback(() => {
+    flushSaveSync();
+    const e = newGratitudeJournalEntry();
+    setEntries((prev) => {
+      const next = [e, ...prev];
+      entriesRef.current = next;
+      persist(next, e.id);
+      return next;
+    });
+    setActiveEntryId(e.id);
+    latestHtmlRef.current = e.contentHtml;
+    latestTitleRef.current = e.title;
+    latestGratitudeRef.current = e.gratitude ?? emptyGratitudeLines();
+    setGratitudeDraft(latestGratitudeRef.current);
+    router.push(`/journal/my/gratitudes/${encodeURIComponent(e.id)}`);
+  }, [flushSaveSync, persist, router]);
+
+  // Sidebar deep-links: `/journal/my?new=1` and `/journal/my/gratitudes?new=1`.
   const newEntryHandledRef = useRef(false);
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -988,8 +1005,15 @@ export function JournalView() {
     }
     if (!hydrated || newEntryHandledRef.current) return;
     newEntryHandledRef.current = true;
+    if (
+      pathname === "/journal/my/gratitudes" ||
+      pathname.startsWith("/journal/my/gratitudes/")
+    ) {
+      createGratitudeEntry();
+      return;
+    }
     createEntry();
-  }, [pathname, hydrated, createEntry]);
+  }, [pathname, hydrated, createEntry, createGratitudeEntry]);
 
   const commitImport = useCallback(
     (rows: JournalImportPreviewRow[], batchId: string) => {

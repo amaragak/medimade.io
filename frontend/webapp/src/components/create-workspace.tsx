@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { IconChevronDown, IconClock } from "@tabler/icons-react";
 import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
+import { MeditationLengthSelect } from "@/components/meditation-length-select";
 import { MixerChannel, MixerPresetChannel, MixerVoiceChannel } from "@/components/mixer-channel";
 import { SoundscapePicker } from "@/components/soundscape-picker";
 import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
@@ -316,100 +316,6 @@ function IconChevronLeft({ className }: { className?: string }) {
       aria-hidden
     >
       <path d="M15 18l-6-6 6-6" />
-    </svg>
-  );
-}
-
-function IconGoalTarget({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      width="24"
-      height="24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="5" />
-      <circle cx="12" cy="12" r="1.5" />
-    </svg>
-  );
-}
-
-/**
- * Lucide “flower-2” (lucide-static v0.460, ISC) — creation picker, pick a style.
- * @see https://lucide.dev/icons/flower-2
- */
-function IconMeditationStyle({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M12 5a3 3 0 1 1 3 3m-3-3a3 3 0 1 0-3 3m3-3v1M9 8a3 3 0 1 0 3 3M9 8h1m5 0a3 3 0 1 1-3 3m3-3h-1m-2 3v-1" />
-      <circle cx="12" cy="8" r="2" />
-      <path d="M12 10v12" />
-      <path d="M12 22c4.2 0 7-1.667 7-5-4.2 0-7 1.667-7 5Z" />
-      <path d="M12 22c-4.2 0-7-1.667-7-5 4.2 0 7 1.667 7 5Z" />
-    </svg>
-  );
-}
-
-/**
- * Lucide “messages-square” (lucide-static v0.460, ISC) — free-flow chat card.
- * @see https://lucide.dev/icons/messages-square
- */
-function IconChatBubbles({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z" />
-      <path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" />
-    </svg>
-  );
-}
-
-/**
- * Lucide “book-open-text” (lucide-static v0.460, ISC) — journal → meditation card.
- * @see https://lucide.dev/icons/book-open-text
- */
-function IconJournalReflect({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M12 7v14" />
-      <path d="M16 12h2" />
-      <path d="M16 8h2" />
-      <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
-      <path d="M6 12h2" />
-      <path d="M6 8h2" />
     </svg>
   );
 }
@@ -1290,8 +1196,6 @@ export function CreateWorkspace({
     setStyleIntakeFocusNonce((n) => n + 1);
   }
   const chooserCardsRef = useRef<HTMLDivElement | null>(null);
-  /** Default to 2×2 until measured — avoids a one-frame “skinny 4-up” layout. */
-  const [chooserLayout, setChooserLayout] = useState<"row4" | "grid2">("grid2");
   /** Journal list for Create chooser + in-chat reflect picker (local + optional cloud). */
   const [journalPickerEntries, setJournalPickerEntries] = useState<JournalEntry[]>(
     [],
@@ -1870,26 +1774,6 @@ export function CreateWorkspace({
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const el = chooserCardsRef.current;
-    if (!el) return;
-    // Only use 4-across when each card can stay ~as wide as the old 3-card row (~300px+).
-    // Typical `max-w-6xl` viewports then use the 2×2 square grid instead of skinny quarters.
-    const CARD_MIN_PX = 280;
-    const GAP_PX = 24; // md:gap-6
-    const compute = () => {
-      const w = el.getBoundingClientRect().width;
-      // 5 options: prefer a 3-col wrap when there is room; otherwise 2-col.
-      const need = CARD_MIN_PX * 3 + GAP_PX * 2;
-      setChooserLayout(w >= need ? "row4" : "grid2");
-    };
-    compute();
-    const ro = new ResizeObserver(() => compute());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [workspaceSectionStep]);
 
   /** Chooser cards stay aligned with the active path. */
   useEffect(() => {
@@ -3913,148 +3797,33 @@ export function CreateWorkspace({
         lastVisibleChat.text.trim().length > 0
       ));
 
-  const createPageChrome: {
-    title: string;
-    crumbs: Array<{ label: string; href?: string }>;
-  } = showPathChooser
-    ? {
-        title: "Create a meditation",
-        crumbs: [],
-      }
+  const createPageTitle = showPathChooser
+    ? "Create a meditation"
     : showStyleTypePick
-      ? {
-          title: "What type of meditation?",
-          crumbs: [
-            { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
-            { label: "Type" },
-          ],
-        }
+      ? null
       : showStyleQuestions
-        ? {
-            title: meditationStyle?.trim() || "A few questions",
-            crumbs: [
-              { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
-              {
-                label: "Type",
-                href: createMeditationHref({ path: "style" }),
-              },
-              { label: meditationStyle?.trim() || "Questions" },
-            ],
-          }
+        ? meditationStyle?.trim() || "A few questions"
         : showJournalPick
-          ? {
-              title: "Which entry should this reflect on?",
-              crumbs: [
-                { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
-                { label: "Reflect on a journal entry" },
-              ],
-            }
-        : showPromptPick
-          ? {
-              title: "One-shot prompt",
-              crumbs: [
-                { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
-                { label: "One-shot prompt" },
-              ],
-            }
-        : workspaceSectionStep === 2 && creationPath === "style"
-          ? {
-              title: "Customise how your meditation will sound",
-              crumbs: [
-                { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
-                {
-                  label: "Type",
-                  href: createMeditationHref({ path: "style" }),
-                },
-                {
-                  label: meditationStyle?.trim() || "Questions",
-                  href: createMeditationHref({
-                    path: "style",
-                    styleStep: "questions",
-                  }),
-                },
-                { label: "Audio" },
-              ],
-            }
-          : workspaceSectionStep === 2
-            ? {
-                title: "Customise how your meditation will sound",
-                crumbs: [
-                  { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
-                  {
-                    label:
-                      creationPath === "freeflow"
-                        ? "Chat"
-                        : creationPath === "oneShot"
-                          ? "Prompt"
-                          : creationPath === "journalReflect"
-                            ? "Journal"
-                            : creationPath === "goal"
-                              ? "Goal"
-                              : "Script",
-                    href: createMeditationHref({
-                      path: creationPath,
-                    }),
-                  },
-                  { label: "Audio" },
-                ],
-              }
-            : {
-                title: "Shape how your meditation script is written",
-                crumbs: [
-                  { label: "Create a meditation", href: CREATE_MEDITATE_ROOT },
-                  {
-                    label:
-                      creationPath === "freeflow"
-                        ? "Chat"
-                        : creationPath === "oneShot"
-                          ? "Prompt"
-                          : "Script",
-                  },
-                ],
-              };
+          ? "Which entry should this reflect on?"
+          : showPromptPick
+            ? "One-shot prompt"
+            : workspaceSectionStep === 2
+              ? "Customise how your meditation will sound"
+              : "Shape how your meditation script is written";
 
-  const createCrumbs = createPageChrome.crumbs;
-  const createLastCrumb =
-    createCrumbs.length > 0 ? createCrumbs[createCrumbs.length - 1] : null;
-  const createBackCrumb = [...createCrumbs]
-    .slice(0, -1)
-    .reverse()
-    .find((c) => Boolean(c.href));
-  const createMobileHeading = createLastCrumb?.label ?? createPageChrome.title;
   /**
-   * Length applies to the whole meditation regardless of which type, question
-   * or audio choice is on screen, so it rides the persistent breadcrumb row
-   * rather than any one page's content.
+   * Length applies to the whole meditation — shown in the bottom bar on every
+   * create step (menu opens upward).
    */
-  const showLengthInCrumbs = createCrumbs.length > 0;
-  const lengthCrumbControl = (
-    <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-[#F0A855]/60 bg-[#F0A855]/15 px-2.5 py-1">
-      <IconClock className="h-3.5 w-3.5 shrink-0 text-[#C47A2E] dark:text-[#F0A855]" />
-      <span className="text-xs font-medium text-foreground/75">Length</span>
-      {/* Native select with its own chevron so the indicator can be gold. */}
-      <span className="relative flex items-center">
-        <select
-          className="cursor-pointer appearance-none bg-transparent pr-4 text-xs font-bold text-foreground outline-none"
-          value={meditationTargetMinutes}
-          onChange={(e) =>
-            setMeditationTargetMinutes(
-              parseMeditationTargetMinutes(Number(e.target.value)),
-            )
-          }
-          disabled={audioLoading}
-          aria-label="Target meditation length"
-          title="Target spoken length. If you change this after generating a script in chat, audio will regenerate the script to match."
-        >
-          {MEDITATION_TARGET_MINUTES.map((mins) => (
-            <option key={mins} value={mins}>
-              {mins} min
-            </option>
-          ))}
-        </select>
-        <IconChevronDown className="pointer-events-none absolute right-0 h-3.5 w-3.5 text-[#C47A2E] dark:text-[#F0A855]" />
-      </span>
-    </div>
+  const lengthBarControl = (
+    <MeditationLengthSelect
+      value={meditationTargetMinutes}
+      options={MEDITATION_TARGET_MINUTES}
+      onChange={(mins) =>
+        setMeditationTargetMinutes(parseMeditationTargetMinutes(mins))
+      }
+      disabled={audioLoading}
+    />
   );
 
   return (
@@ -4075,70 +3844,17 @@ export function CreateWorkspace({
         playsInline
         onEnded={() => setCompositionPlaying(false)}
       />
-      {(createCrumbs.length > 0 || !showPathChooser) ? (
+      {!showPathChooser && !showStyleTypePick ? (
       <div className="mx-auto mb-3 w-full max-w-6xl shrink-0 px-4 sm:px-6">
-          {createCrumbs.length > 0 ? (
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="min-w-0 flex-1">
-              {/* Full trail — tablet/desktop (sm = 640px+) */}
-              <nav aria-label="Breadcrumb" className="hidden sm:block">
-                <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm">
-                  {createCrumbs.map((crumb, i) => {
-                    const last = i === createCrumbs.length - 1;
-                    return (
-                      <li
-                        key={`${crumb.label}-${i}`}
-                        className="flex min-w-0 items-center gap-1.5"
-                      >
-                        {i > 0 ? (
-                          <IconChevronRight className="h-3.5 w-3.5 shrink-0 text-muted" />
-                        ) : null}
-                        {crumb.href && !last ? (
-                          <Link
-                            href={crumb.href}
-                            className="cursor-pointer font-medium text-accent-link transition-opacity hover:opacity-80"
-                          >
-                            {crumb.label}
-                          </Link>
-                        ) : (
-                          <span
-                            className={
-                              last
-                                ? "font-medium text-foreground"
-                                : "text-muted"
-                            }
-                            aria-current={last ? "page" : undefined}
-                          >
-                            {crumb.label}
-                          </span>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ol>
-              </nav>
-              {/* Single previous-step back-link — below sm */}
-              {createBackCrumb?.href ? (
-                <nav aria-label="Back" className="mb-0 sm:hidden">
-                  <Link
-                    href={createBackCrumb.href}
-                    className="inline-flex max-w-full cursor-pointer items-center gap-1 text-[15px] font-medium text-accent-link transition-opacity hover:opacity-80"
-                  >
-                    <IconChevronLeft className="h-4 w-4 shrink-0" />
-                    <span className="truncate">{createBackCrumb.label}</span>
-                  </Link>
-                </nav>
-              ) : null}
-              </div>
-              {showLengthInCrumbs ? lengthCrumbControl : null}
-            </div>
-          ) : null}
-          {!showPathChooser ? (
+          {createPageTitle || showChatReset || (showAudioPlayAll && isLocalDevHost()) ? (
           <div className="flex items-center justify-between gap-4">
+            {createPageTitle ? (
             <h1 className="min-w-0 font-display text-3xl font-medium tracking-tight">
-              <span className="sm:hidden">{createMobileHeading}</span>
-              <span className="hidden sm:inline">{createPageChrome.title}</span>
+              {createPageTitle}
             </h1>
+            ) : (
+              <span className="min-w-0" aria-hidden />
+            )}
             {showChatReset ? (
               <button
                 type="button"
@@ -4242,11 +3958,8 @@ export function CreateWorkspace({
         {showPathChooser ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
           <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-3 overflow-y-auto px-4 pt-0 sm:px-6">
-          <div className="flex shrink-0 items-center justify-between gap-3">
-            <h2 className="min-w-0 font-display text-lg font-medium tracking-tight text-foreground sm:text-xl">
-              How would you like to generate your script?
-            </h2>
-            {isLocalDevHost() ? (
+          {isLocalDevHost() ? (
+            <div className="flex shrink-0 justify-end">
               <button
                 type="button"
                 onClick={beginDevSkipToAudio}
@@ -4255,305 +3968,139 @@ export function CreateWorkspace({
               >
                 Skip to audio
               </button>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
           <div
             ref={chooserCardsRef}
-            className={`grid grid-cols-1 items-stretch gap-4 md:gap-6 ${
-              chooserLayout === "row4" ? "md:grid-cols-3" : "sm:grid-cols-2"
-            }`}
+            className="grid auto-rows-fr grid-cols-1 items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-3"
           >
             <button
               type="button"
               onClick={() => setPendingModeChoice("style")}
               aria-pressed={pendingModeChoice === "style"}
-              className={`flex h-full flex-col rounded-2xl border-2 bg-card text-left shadow-sm transition-colors ${
-                pendingModeChoice === "style"
-                  ? "cursor-pointer border-accent ring-2 ring-accent/25"
-                  : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
-              } ${chooserLayout === "row4" ? "min-h-[200px] p-6 sm:min-h-[260px] sm:p-8" : "p-6"}`}
+              className="create-path-card flex h-full cursor-pointer flex-col p-6 text-left"
             >
-              {chooserLayout === "row4" ? (
-                <>
-                  <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
-                    Pick a meditation style
-                  </span>
-                  <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                    You start by choosing a meditation type, then answer a few
-                    questions so that style is shaped around your mood, goals,
-                    and what you need today.
-                  </p>
-                  <span
-                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent-link shadow-inner sm:h-32 sm:w-32"
-                    aria-hidden
-                  >
-                    <IconMeditationStyle className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
-                  </span>
-                </>
-              ) : (
-                <div className="flex items-start gap-4">
-                  <span
-                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent-link shadow-inner"
-                    aria-hidden
-                  >
-                    <IconMeditationStyle className="h-9 w-9" />
-                  </span>
-                  <div className="min-w-0">
-                    <span className="block font-display text-lg font-medium tracking-tight text-foreground">
-                      Pick a meditation style
-                    </span>
-                    <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
-                      You start by choosing a meditation type, then answer a few
-                      questions so that style is shaped around your mood, goals,
-                      and what you need today.
-                    </p>
-                  </div>
-                </div>
-              )}
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
+                By type
+              </span>
+              <span className="mt-2.5 font-display text-[19px] font-normal leading-snug text-foreground">
+                Pick a meditation style
+              </span>
+              <p className="mt-2.5 min-h-[calc(1.55em*3)] text-[15px] font-normal leading-[1.55] text-muted">
+                Choose a type, then answer a few questions shaped around what you need today.
+              </p>
             </button>
             <button
               type="button"
               onClick={() => setPendingModeChoice("freeflow")}
               aria-pressed={pendingModeChoice === "freeflow"}
-              className={`flex h-full flex-col rounded-2xl border-2 bg-card text-left shadow-sm transition-colors ${
-                pendingModeChoice === "freeflow"
-                  ? "cursor-pointer border-accent ring-2 ring-accent/25"
-                  : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
-              } ${chooserLayout === "row4" ? "min-h-[200px] p-6 sm:min-h-[260px] sm:p-8" : "p-6"}`}
+              className="create-path-card flex h-full cursor-pointer flex-col p-6 text-left"
             >
-              {chooserLayout === "row4" ? (
-                <>
-                  <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
-                    Free flow chat
-                  </span>
-                  <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                    Start from mood and what is on your mind—no style label up front.
-                    The guide uses open, journal-style questions.
-                  </p>
-                  <span
-                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent-link shadow-inner sm:h-32 sm:w-32"
-                    aria-hidden
-                  >
-                    <IconChatBubbles className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
-                  </span>
-                </>
-              ) : (
-                <div className="flex items-start gap-4">
-                  <span
-                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent-link shadow-inner"
-                    aria-hidden
-                  >
-                    <IconChatBubbles className="h-9 w-9" />
-                  </span>
-                  <div className="min-w-0">
-                    <span className="block font-display text-lg font-medium tracking-tight text-foreground">
-                      Free flow chat
-                    </span>
-                    <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
-                      Start from mood and what is on your mind—no style label up front.
-                      The guide uses open, journal-style questions.
-                    </p>
-                  </div>
-                </div>
-              )}
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
+                Chat
+              </span>
+              <span className="mt-2.5 font-display text-[19px] font-normal leading-snug text-foreground">
+                Free flow chat
+              </span>
+              <p className="mt-2.5 min-h-[calc(1.55em*3)] text-[15px] font-normal leading-[1.55] text-muted">
+                Start from mood and what’s on your mind—open, journal-style questions.
+              </p>
             </button>
             <button
               type="button"
-              disabled={!journalPickerListReady || !hasReflectableJournal}
-              onClick={() => setPendingModeChoice("journalReflect")}
-              aria-pressed={pendingModeChoice === "journalReflect"}
-              className={`flex h-full flex-col rounded-2xl border-2 bg-card text-left shadow-sm transition-colors ${
-                !journalPickerListReady || !hasReflectableJournal
-                  ? "cursor-not-allowed border-border opacity-50"
-                  : pendingModeChoice === "journalReflect"
-                    ? "cursor-pointer border-accent ring-2 ring-accent/25"
-                    : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
-              } ${chooserLayout === "row4" ? "min-h-[200px] p-6 sm:min-h-[260px] sm:p-8" : "p-6"}`}
-            >
-              {chooserLayout === "row4" ? (
-                <>
-                  <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
-                    Reflect on a journal entry
-                  </span>
-                  <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                    In the next step you choose saved entries; the coach uses them as context for your meditation.
-                  </p>
-                  {!journalPickerListReady ? (
-                    <p className="mt-3 text-xs text-muted">Checking your saved journal…</p>
-                  ) : !hasReflectableJournal ? (
-                    <p className="mt-3 text-sm leading-relaxed text-muted">
-                      Start journaling to unlock this option.{" "}
-                      <Link
-                        href="/journal/my"
-                        className="font-semibold text-accent-link underline-offset-2 hover:underline"
-                      >
-                        Open Journal
-                      </Link>
-                    </p>
-                  ) : null}
-                  <span
-                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent-link shadow-inner sm:h-32 sm:w-32"
-                    aria-hidden
-                  >
-                    <IconJournalReflect className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
-                  </span>
-                </>
-              ) : (
-                <div className="flex items-start gap-4">
-                  <span
-                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent-link shadow-inner"
-                    aria-hidden
-                  >
-                    <IconJournalReflect className="h-9 w-9" />
-                  </span>
-                  <div className="min-w-0">
-                    <span className="block font-display text-lg font-medium tracking-tight text-foreground">
-                      Reflect on a journal entry
-                    </span>
-                    <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
-                      In the next step you choose saved entries; the coach uses them as context for your meditation.
-                    </p>
-                    {!journalPickerListReady ? (
-                      <p className="mt-2 text-xs text-muted">Checking your saved journal…</p>
-                    ) : !hasReflectableJournal ? (
-                      <p className="mt-2 text-sm leading-relaxed text-muted">
-                        Start journaling to unlock this option.{" "}
-                        <Link
-                          href="/journal/my"
-                          className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
-                        >
-                          Open Journal
-                        </Link>
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              )}
-            </button>
-            <button
-              type="button"
-              disabled={!planGoalsReady || !hasPlanGoals}
-              onClick={() => setPendingModeChoice("goal")}
+              onClick={() => {
+                if (!planGoalsReady || !hasPlanGoals) return;
+                setPendingModeChoice("goal");
+              }}
               aria-pressed={pendingModeChoice === "goal"}
-              className={`flex h-full flex-col rounded-2xl border-2 bg-card text-left shadow-sm transition-colors ${
+              aria-disabled={!planGoalsReady || !hasPlanGoals}
+              className={`create-path-card flex h-full flex-col p-6 text-left ${
                 !planGoalsReady || !hasPlanGoals
-                  ? "cursor-not-allowed border-border opacity-50"
-                  : pendingModeChoice === "goal"
-                    ? "cursor-pointer border-accent ring-2 ring-accent/25"
-                    : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
-              } ${chooserLayout === "row4" ? "min-h-[200px] p-6 sm:min-h-[260px] sm:p-8" : "p-6"}`}
+                  ? "cursor-not-allowed"
+                  : "cursor-pointer"
+              }`}
             >
-              {chooserLayout === "row4" ? (
-                <>
-                  <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
-                    Move towards a goal
-                  </span>
-                  <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                    Choose a goal from Ideate. The guide creates a visualization / manifestation meditation that helps you step toward it.
-                  </p>
-                  {!planGoalsReady ? (
-                    <p className="mt-3 text-xs text-muted">Checking your goals…</p>
-                  ) : !hasPlanGoals ? (
-                    <p className="mt-3 text-sm leading-relaxed text-muted">
-                      Add a project in{" "}
-                      <Link
-                        href="/ideate/my"
-                        className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
-                      >
-                        Ideate
-                      </Link>{" "}
-                      to unlock this option.
-                    </p>
-                  ) : null}
-                  <span
-                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent-link shadow-inner sm:h-32 sm:w-32"
-                    aria-hidden
-                  >
-                    <IconGoalTarget className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
-                  </span>
-                </>
-              ) : (
-                <div className="flex items-start gap-4">
-                  <span
-                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent-link shadow-inner"
-                    aria-hidden
-                  >
-                    <IconGoalTarget className="h-9 w-9" />
-                  </span>
-                  <div className="min-w-0">
-                    <span className="block font-display text-lg font-medium tracking-tight text-foreground">
-                      Move towards a goal
-                    </span>
-                    <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
-                      Choose a goal from Ideate. The guide creates a visualization / manifestation meditation that helps you step toward it.
-                    </p>
-                    {!planGoalsReady ? (
-                      <p className="mt-2 text-xs text-muted">Checking your goals…</p>
-                    ) : !hasPlanGoals ? (
-                      <p className="mt-2 text-sm leading-relaxed text-muted">
-                        Add a project in{" "}
-                        <Link
-                          href="/ideate/my"
-                          className="cursor-pointer font-semibold text-accent-link underline-offset-2 hover:underline"
-                        >
-                          Ideate
-                        </Link>{" "}
-                        to unlock this option.
-                      </p>
-                    ) : null}
-                  </div>
-                </div>
-              )}
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
+                Ideate
+              </span>
+              <span className="mt-2.5 font-display text-[19px] font-normal leading-snug text-foreground">
+                Move towards a goal
+              </span>
+              <p className="mt-2.5 min-h-[calc(1.55em*3)] text-[15px] font-normal leading-[1.55] text-muted">
+                Pick a goal from Ideate for a visualization that helps you step toward it.
+              </p>
+              {!planGoalsReady ? (
+                <p className="mt-2.5 text-[13px] text-muted">Checking your goals…</p>
+              ) : !hasPlanGoals ? (
+                <Link
+                  href="/ideate/my"
+                  onClick={(e) => e.stopPropagation()}
+                  className="mt-2.5 text-[13px] font-medium text-accent-link underline-offset-2 hover:underline"
+                >
+                  Add a life area to unlock →
+                </Link>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (!journalPickerListReady || !hasReflectableJournal) return;
+                setPendingModeChoice("journalReflect");
+              }}
+              aria-pressed={pendingModeChoice === "journalReflect"}
+              aria-disabled={!journalPickerListReady || !hasReflectableJournal}
+              className={`create-path-card flex h-full flex-col p-6 text-left ${
+                !journalPickerListReady || !hasReflectableJournal
+                  ? "cursor-not-allowed"
+                  : "cursor-pointer"
+              }`}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
+                Journal
+              </span>
+              <span className="mt-2.5 font-display text-[19px] font-normal leading-snug text-foreground">
+                Reflect on a journal entry
+              </span>
+              <p className="mt-2.5 min-h-[calc(1.55em*3)] text-[15px] font-normal leading-[1.55] text-muted">
+                Use a saved entry as context for your meditation.
+              </p>
+              {!journalPickerListReady ? (
+                <p className="mt-2.5 text-[13px] text-muted">Checking your saved journal…</p>
+              ) : !hasReflectableJournal ? (
+                <Link
+                  href="/journal/my"
+                  onClick={(e) => e.stopPropagation()}
+                  className="mt-2.5 text-[13px] font-medium text-accent-link underline-offset-2 hover:underline"
+                >
+                  Start journaling to unlock →
+                </Link>
+              ) : null}
             </button>
             <button
               type="button"
               onClick={() => setPendingModeChoice("oneShot")}
               aria-pressed={pendingModeChoice === "oneShot"}
-              className={`flex h-full flex-col rounded-2xl border-2 bg-card text-left shadow-sm transition-colors ${
-                pendingModeChoice === "oneShot"
-                  ? "cursor-pointer border-accent ring-2 ring-accent/25"
-                  : "cursor-pointer border-border hover:border-accent/40 hover:bg-accent-soft/15"
-              } ${chooserLayout === "row4" ? "min-h-[200px] p-6 sm:min-h-[260px] sm:p-8" : "p-6"}`}
+              className="create-path-card flex h-full cursor-pointer flex-col p-6 text-left"
             >
-              {chooserLayout === "row4" ? (
-                <>
-                  <span className="font-display text-xl font-medium tracking-tight text-foreground sm:text-2xl">
-                    One-shot prompt
-                  </span>
-                  <p className="mt-2 text-sm leading-relaxed text-muted sm:text-base">
-                    Write what you want in one go. We send it straight to the script generator — no coaching chat.
-                  </p>
-                  <span
-                    className="mx-auto mt-auto flex h-28 w-28 shrink-0 items-center justify-center rounded-3xl bg-accent-soft/90 text-accent-link shadow-inner sm:h-32 sm:w-32"
-                    aria-hidden
-                  >
-                    <IconChatBubbles className="h-[4.5rem] w-[4.5rem] sm:h-[5.25rem] sm:w-[5.25rem]" />
-                  </span>
-                </>
-              ) : (
-                <div className="flex items-start gap-4">
-                  <span
-                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-accent-soft/90 text-accent-link shadow-inner"
-                    aria-hidden
-                  >
-                    <IconChatBubbles className="h-9 w-9" />
-                  </span>
-                  <div className="min-w-0">
-                    <span className="block font-display text-lg font-medium tracking-tight text-foreground">
-                      One-shot prompt
-                    </span>
-                    <p className="mt-1 text-sm leading-relaxed text-muted sm:text-base">
-                      Write what you want in one go. We send it straight to the script generator — no coaching chat.
-                    </p>
-                  </div>
-                </div>
-              )}
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
+                Direct
+              </span>
+              <span className="mt-2.5 font-display text-[19px] font-normal leading-snug text-foreground">
+                One-shot prompt
+              </span>
+              <p className="mt-2.5 min-h-[calc(1.55em*3)] text-[15px] font-normal leading-[1.55] text-muted">
+                Write what you want once—straight to the script generator, no coaching chat.
+              </p>
             </button>
+            <div className="create-path-card-placeholder hidden h-full lg:block" aria-hidden />
           </div>
           <div className="min-h-8 flex-1" aria-hidden />
           </div>
           <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
-            <div className="mx-auto flex min-h-[2.75rem] w-full max-w-6xl justify-end px-4 sm:px-6">
+            <div className="mx-auto flex min-h-[2.75rem] w-full max-w-6xl items-center gap-3 px-4 sm:px-6">
+              <div className="flex min-w-0 flex-1 justify-start" />
+              <div className="flex shrink-0 justify-center">{lengthBarControl}</div>
+              <div className="flex min-w-0 flex-1 justify-end">
             {pendingModeChoice ? (
             <button
               type="button"
@@ -4609,6 +4156,7 @@ export function CreateWorkspace({
               <IconChevronRight className="text-accent-link" />
             </button>
             ) : null}
+              </div>
             </div>
           </div>
         </div>
@@ -4620,20 +4168,22 @@ export function CreateWorkspace({
                 selected={pendingStyleType ?? ""}
                 onSelect={setPendingStyleType}
                 titles={meditationStyleTooltip}
+                variant="picker"
               />
               {pendingStyleType ? (
-                <div className="shrink-0 rounded-2xl border border-border bg-card px-4 py-3 sm:px-5 sm:py-4">
-                  <p className="text-sm font-semibold text-foreground">
+                <div className="shrink-0 rounded-2xl border border-journal-warm-border bg-journal-warm-bg px-4 py-3 dark:border-border dark:bg-surface-2 sm:px-5 sm:py-4">
+                  <p className="font-display text-[19px] font-normal leading-snug text-foreground">
                     {pendingStyleType}
                   </p>
-                  <p className="mt-1.5 text-sm leading-relaxed text-muted">
+                  <p className="mt-2.5 text-[15px] font-normal leading-[1.55] text-muted">
                     {descriptionForMeditationStyle(pendingStyleType)}
                   </p>
                 </div>
               ) : null}
             </div>
             <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
-              <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
+              <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 sm:px-6">
+                <div className="flex min-w-0 flex-1 justify-start">
                 <button
                   type="button"
                   onClick={() => {
@@ -4645,16 +4195,20 @@ export function CreateWorkspace({
                   <IconChevronLeft className="shrink-0 text-accent-link" />
                   <span>Back</span>
                 </button>
+                </div>
+                <div className="flex shrink-0 justify-center">{lengthBarControl}</div>
+                <div className="flex min-w-0 flex-1 justify-end">
                 <button
                   type="button"
                   disabled={!pendingStyleType}
                   onClick={confirmStyleTypePick}
-                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full accent-fill-gradient px-4 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
                   aria-label="Continue to questions for this meditation type"
                 >
                   <span>Questions</span>
-                  <IconChevronRight className="text-accent-link" />
+                  <IconChevronRight className="shrink-0" />
                 </button>
+                </div>
               </div>
             </div>
           </div>
@@ -4727,7 +4281,8 @@ export function CreateWorkspace({
               </div>
             </div>
             <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
-              <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
+              <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 sm:px-6">
+                <div className="flex min-w-0 flex-1 justify-start">
                 <button
                   type="button"
                   onClick={() => {
@@ -4739,6 +4294,9 @@ export function CreateWorkspace({
                   <IconChevronLeft className="shrink-0 text-accent-link" />
                   <span>Type</span>
                 </button>
+                </div>
+                <div className="flex shrink-0 justify-center">{lengthBarControl}</div>
+                <div className="flex min-w-0 flex-1 justify-end">
                 <button
                   type="button"
                   disabled={!styleQuestionsReady}
@@ -4749,6 +4307,7 @@ export function CreateWorkspace({
                   <span>Audio & voice</span>
                   <IconChevronRight className="text-accent-link" />
                 </button>
+                </div>
               </div>
             </div>
           </div>
@@ -4767,7 +4326,8 @@ export function CreateWorkspace({
             />
             </div>
             <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
-              <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6">
+              <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 sm:px-6">
+                <div className="flex min-w-0 flex-1 justify-start">
                 <button
                   type="button"
                   onClick={goBackToChatStyle}
@@ -4778,6 +4338,9 @@ export function CreateWorkspace({
                   <IconChevronLeft className="shrink-0 text-accent-link" />
                   <span>Chat style</span>
                 </button>
+                </div>
+                <div className="flex shrink-0 justify-center">{lengthBarControl}</div>
+                <div className="flex min-w-0 flex-1 justify-end">
                 <button
                   type="button"
                   disabled={
@@ -4792,6 +4355,7 @@ export function CreateWorkspace({
                   <span>Audio & voice</span>
                   <IconChevronRight className="text-accent-link" />
                 </button>
+                </div>
               </div>
             </div>
           </div>
@@ -4812,7 +4376,8 @@ export function CreateWorkspace({
               />
             </div>
             <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
-              <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6">
+              <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 sm:px-6">
+                <div className="flex min-w-0 flex-1 justify-start">
                 <button
                   type="button"
                   onClick={goBackToChatStyle}
@@ -4823,6 +4388,9 @@ export function CreateWorkspace({
                   <IconChevronLeft className="shrink-0 text-accent-link" />
                   <span>Chat style</span>
                 </button>
+                </div>
+                <div className="flex shrink-0 justify-center">{lengthBarControl}</div>
+                <div className="flex min-w-0 flex-1 justify-end">
                 <button
                   type="button"
                   disabled={
@@ -4835,6 +4403,7 @@ export function CreateWorkspace({
                   <span>Audio & voice</span>
                   <IconChevronRight className="text-accent-link" />
                 </button>
+                </div>
               </div>
             </div>
           </div>
@@ -5133,7 +4702,8 @@ export function CreateWorkspace({
         </section>
         </div>
           <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
-          <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6">
+          <div className="mx-auto flex w-full max-w-6xl items-center gap-3 px-4 sm:px-6">
+            <div className="flex min-w-0 flex-1 justify-start">
             <button
               type="button"
               onClick={goBackToChatStyle}
@@ -5144,6 +4714,9 @@ export function CreateWorkspace({
               <IconChevronLeft className="shrink-0 text-accent-link" />
               <span>Chat style</span>
             </button>
+            </div>
+            <div className="flex shrink-0 justify-center">{lengthBarControl}</div>
+            <div className="flex min-w-0 flex-1 justify-end">
             <button
               type="button"
               disabled={
@@ -5158,6 +4731,7 @@ export function CreateWorkspace({
               <span>Audio & voice</span>
               <IconChevronRight className="text-accent-link" />
             </button>
+            </div>
           </div>
           </div>
         </div>
@@ -5463,7 +5037,8 @@ export function CreateWorkspace({
             </p>
           ) : null}
           <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
-            <div className="mx-auto flex min-h-[3rem] w-full max-w-6xl flex-nowrap items-center justify-between gap-4 px-4 sm:px-6">
+            <div className="mx-auto flex min-h-[3rem] w-full max-w-6xl flex-nowrap items-center gap-3 px-4 sm:px-6">
+            <div className="flex min-w-0 flex-1 justify-start">
             <button
               type="button"
               onClick={() => {
@@ -5489,7 +5064,10 @@ export function CreateWorkspace({
               <IconChevronLeft className="shrink-0 text-accent-link" />
               {creationPath === "style" ? "Questions" : "Script"}
             </button>
-            <div className="ml-auto flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
+            </div>
+            <div className="flex shrink-0 justify-center">{lengthBarControl}</div>
+            <div className="flex min-w-0 flex-1 justify-end">
+            <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
               {/* Temporarily hidden
               <button
                 type="button"
@@ -5526,6 +5104,7 @@ export function CreateWorkspace({
                   "Generate meditation"
                 )}
               </button>
+            </div>
             </div>
             </div>
           </div>

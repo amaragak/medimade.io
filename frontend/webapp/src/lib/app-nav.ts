@@ -1,3 +1,8 @@
+import {
+  CREATE_MEDITATE_ROOT,
+  parseCreateMeditationPathname,
+} from "@/lib/create-meditation-path";
+
 /**
  * Logged-in sidebar navigation tree + breadcrumb helpers.
  */
@@ -6,6 +11,9 @@ export type AppNavSubItem = {
   id: string;
   label: string;
   href: string;
+  /** Optional trailing control (e.g. Gratitudes “+”) with its own destination. */
+  actionHref?: string;
+  actionAriaLabel?: string;
 };
 
 export type AppNavSection = {
@@ -33,7 +41,14 @@ export const APP_NAV_MAIN: AppNavSection[] = [
     href: "/journal/my",
     children: [
       { id: "new", label: "New entry", href: "/journal/my?new=1" },
-      { id: "entries", label: "Entries", href: "/journal/my" },
+      {
+        id: "gratitudes",
+        label: "Gratitudes",
+        href: "/journal/my/gratitudes",
+        actionHref: "/journal/my/gratitudes?new=1",
+        actionAriaLabel: "New gratitude",
+      },
+      { id: "insights", label: "Insights", href: "/journal/my/insights" },
     ],
   },
   {
@@ -75,7 +90,28 @@ export function pathMatchesHref(pathname: string, href: string): boolean {
     return pathname === "/meditate/sounds" || pathname.startsWith("/meditate/sounds/");
   }
   if (pathOnly === "/journal/my") {
+    // Exact journal list / freeform entries — not gratitudes or insights.
+    if (
+      pathname === "/journal/my/gratitudes" ||
+      pathname.startsWith("/journal/my/gratitudes/") ||
+      pathname === "/journal/my/insights" ||
+      pathname.startsWith("/journal/my/insights/")
+    ) {
+      return false;
+    }
     return pathname === "/journal/my" || pathname.startsWith("/journal/my/");
+  }
+  if (pathOnly === "/journal/my/gratitudes") {
+    return (
+      pathname === "/journal/my/gratitudes" ||
+      pathname.startsWith("/journal/my/gratitudes/")
+    );
+  }
+  if (pathOnly === "/journal/my/insights") {
+    return (
+      pathname === "/journal/my/insights" ||
+      pathname.startsWith("/journal/my/insights/")
+    );
   }
   if (pathOnly === "/ideate/my") {
     // Exact overview only — `/ideate/my/vision-board` is a sibling link.
@@ -123,14 +159,28 @@ export function isSubItemActive(
   sectionId: string,
 ): boolean {
   if (sectionId === "journal" && sub.id === "new") {
+    if (
+      pathname.startsWith("/journal/my/gratitudes") ||
+      pathname.startsWith("/journal/my/insights")
+    ) {
+      return false;
+    }
     return (
       (pathname === "/journal/my" || pathname.startsWith("/journal/my/")) &&
       new URLSearchParams(search).get("new") === "1"
     );
   }
-  if (sectionId === "journal" && sub.id === "entries") {
-    if (new URLSearchParams(search).get("new") === "1") return false;
-    return pathMatchesHref(pathname, sub.href);
+  if (sectionId === "journal" && sub.id === "gratitudes") {
+    return (
+      pathname === "/journal/my/gratitudes" ||
+      pathname.startsWith("/journal/my/gratitudes/")
+    );
+  }
+  if (sectionId === "journal" && sub.id === "insights") {
+    return (
+      pathname === "/journal/my/insights" ||
+      pathname.startsWith("/journal/my/insights/")
+    );
   }
   if (sectionId === "ideate" && sub.id === "overview") {
     if (pathname.startsWith("/ideate/goal/")) return false;
@@ -169,10 +219,33 @@ export function buildAppBreadcrumbs(
   const search = opts?.search ?? "";
 
   if (pathname.startsWith("/meditate/create") || pathname.startsWith("/create")) {
-    return [
+    const crumbs: AppBreadcrumbCrumb[] = [
       { label: "Meditate", href: "/meditate/library/creations" },
-      { label: "Create", href: null },
     ];
+    const parsed =
+      pathname.startsWith("/meditate/create")
+        ? parseCreateMeditationPathname(pathname)
+        : { path: "pending" as const, styleStep: "type" as const, mix: false, valid: true };
+    // Match create-path card eyebrows (By Type, Chat, Ideate, Journal, Direct).
+    const pathLabel =
+      parsed.path === "style"
+        ? "By Type"
+        : parsed.path === "freeflow"
+          ? "Chat"
+          : parsed.path === "goal"
+            ? "Ideate"
+            : parsed.path === "journalReflect"
+              ? "Journal"
+              : parsed.path === "oneShot"
+                ? "Direct"
+                : null;
+    if (pathLabel) {
+      crumbs.push({ label: "Create", href: CREATE_MEDITATE_ROOT });
+      crumbs.push({ label: pathLabel, href: null });
+    } else {
+      crumbs.push({ label: "Create", href: null });
+    }
+    return crumbs;
   }
   if (pathname.startsWith("/meditate/library") || pathname.startsWith("/meditate/sounds")) {
     const leaf = pathname.startsWith("/meditate/sounds") ? "Sounds" : "Library";
@@ -189,16 +262,29 @@ export function buildAppBreadcrumbs(
   }
 
   if (pathname.startsWith("/journal")) {
+    if (
+      pathname === "/journal/my/gratitudes" ||
+      pathname.startsWith("/journal/my/gratitudes/")
+    ) {
+      const isNew = new URLSearchParams(search).get("new") === "1";
+      return [
+        { label: "Journal", href: "/journal/my" },
+        { label: isNew ? "New gratitude" : "Gratitudes", href: null },
+      ];
+    }
+    if (
+      pathname === "/journal/my/insights" ||
+      pathname.startsWith("/journal/my/insights/")
+    ) {
+      return [
+        { label: "Journal", href: "/journal/my" },
+        { label: "Insights", href: null },
+      ];
+    }
     if (new URLSearchParams(search).get("new") === "1") {
       return [
         { label: "Journal", href: "/journal/my" },
         { label: "New entry", href: null },
-      ];
-    }
-    if (pathname.startsWith("/journal/my")) {
-      return [
-        { label: "Journal", href: "/journal/my" },
-        { label: "Entries", href: null },
       ];
     }
     return [{ label: "Journal", href: null }];
