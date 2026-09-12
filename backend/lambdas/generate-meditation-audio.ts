@@ -507,28 +507,29 @@ async function mixSpeechWithBackgrounds(params: {
     if (layers.length === 1) {
       // Delay speech so background starts first.
       // If we know the duration, trim/pad the delayed speech so the mixed output can extend into the tail.
+      // Keep speech at volume 1; beds are already scaled. normalize=0 so amix does not duck the voice.
       const speechChain =
         totalDurSeconds !== undefined
-          ? `[0:a]adelay=${(introSeconds * 1000).toFixed(0)}|${(
+          ? `[0:a]volume=1.0,adelay=${(introSeconds * 1000).toFixed(0)}|${(
               introSeconds * 1000
             ).toFixed(0)},apad,atrim=0:${totalDurSeconds.toFixed(2)}[sp]`
-          : `[0:a]adelay=${(introSeconds * 1000).toFixed(0)}|${(
+          : `[0:a]volume=1.0,adelay=${(introSeconds * 1000).toFixed(0)}|${(
               introSeconds * 1000
             ).toFixed(0)}[sp]`;
       // Use a limiter on the final bus to prevent clipping without auto-attenuating beds.
-      filter = `${chainParts.join(";")};${speechChain};[sp][b0]amix=inputs=2:duration=longest:dropout_transition=0,alimiter=limit=0.95`;
+      filter = `${chainParts.join(";")};${speechChain};[sp][b0]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.95`;
     } else {
       const speechChain =
         totalDurSeconds !== undefined
-          ? `[0:a]adelay=${(introSeconds * 1000).toFixed(0)}|${(
+          ? `[0:a]volume=1.0,adelay=${(introSeconds * 1000).toFixed(0)}|${(
               introSeconds * 1000
             ).toFixed(0)},apad,atrim=0:${totalDurSeconds.toFixed(2)}[sp]`
-          : `[0:a]adelay=${(introSeconds * 1000).toFixed(0)}|${(
+          : `[0:a]volume=1.0,adelay=${(introSeconds * 1000).toFixed(0)}|${(
               introSeconds * 1000
             ).toFixed(0)}[sp]`;
-      // IMPORTANT: don't use amix normalize=1 here — it makes beds quieter than the UI preview.
+      // IMPORTANT: don't use amix normalize=1 — it ducks speech when beds are present.
       // Instead, mix at the intended per-layer volumes and apply a limiter.
-      filter = `${chainParts.join(";")};${bedLabels.join("")}amix=inputs=${layers.length}:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.95[bed];${speechChain};[sp][bed]amix=inputs=2:duration=longest:dropout_transition=0,alimiter=limit=0.95`;
+      filter = `${chainParts.join(";")};${bedLabels.join("")}amix=inputs=${layers.length}:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.95[bed];${speechChain};[sp][bed]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.95`;
     }
 
     const args = ["-y", "-i", speechPath, ...bgPaths.flatMap((p) => ["-i", p]), "-filter_complex", filter];

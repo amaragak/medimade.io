@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
+import { AppTopBarTrailingPortal } from "@/components/app-primary-tabs";
 import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
 import { MeditationLengthSelect } from "@/components/meditation-length-select";
 import { MixerChannel, MixerPresetChannel, MixerVoiceChannel } from "@/components/mixer-channel";
@@ -132,6 +133,7 @@ import {
 import { loadPlanDreamsStore, type PlanDream } from "@/lib/plan-dreams";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import {
+  applySpeechElementVolume,
   bedElementVolume,
   BED_VOICE_INTRO_SECONDS,
   SOUNDSCAPE_ELEMENT_VOLUME,
@@ -340,7 +342,7 @@ type SoloTrack = "speaker" | "nature" | "music" | "drums" | "noise";
 type SoundBedMode = "soundscape" | "mixer";
 
 /** Compositions have no fader; they sit where a music bed would in the render. */
-const SOUNDSCAPE_GAIN = 50;
+const SOUNDSCAPE_GAIN = 100;
 
 type ChatMessage = {
   role: "assistant" | "user";
@@ -1019,8 +1021,9 @@ export function CreateWorkspace({
    */
   const [scriptTargetMinutes, setScriptTargetMinutes] =
     useState<MeditationTargetMinutes | null>(null);
-  /** When on, speaker row plays CDN `*-fx.wav` (Pedalboard preset mixer); when off, dry Fish `*.mp3`. */
+  /** When on, speaker row plays CDN `*-fx.wav` (Pedalboard preset mixer); when off, dry Fish `*.mp3`. Dev-only toggle; production always on. */
   const [speakerFxPreviewOn, setSpeakerFxPreviewOn] = useState(true);
+  const voiceFxOn = isLocalDevHost() ? speakerFxPreviewOn : true;
   const [backgroundNature, setBackgroundNature] = useState<
     BackgroundAudioItem[]
   >([]);
@@ -3221,7 +3224,7 @@ export function CreateWorkspace({
         claudeModel: claudeModelChoice,
         fishPauseMode: isLocalDevHost() ? fishPauseMode : "segmented",
         speed: speechSpeed,
-        voiceFxPreset: speakerFxPreviewOn ? "mixer" : null,
+        voiceFxPreset: voiceFxOn ? "mixer" : null,
         ...(linkedLifeAreaId ? { lifeAreaId: linkedLifeAreaId } : {}),
         // A soundscape replaces the whole bed: it rides the music slot alone,
         // and the mixer's own selections stay out of this render.
@@ -3450,7 +3453,7 @@ export function CreateWorkspace({
   /** Sample for any voice in the list, honouring the FX toggle and speed. */
   function speakerPreviewUrl(modelId: string): string | null {
     if (!mediaBaseUrl || !modelId) return null;
-    const key = speakerFxPreviewOn
+    const key = voiceFxOn
       ? speakerPreviewLoudFxSampleKey(modelId, speechSpeed)
       : speakerPreviewLoudSampleKey(modelId, speechSpeed);
     return mediaFileUrl(mediaBaseUrl, key);
@@ -3522,7 +3525,7 @@ export function CreateWorkspace({
 
     const voiceId = speakerModelId;
     if (mediaBaseUrl && voiceId) {
-      const key = speakerFxPreviewOn
+      const key = voiceFxOn
         ? speakerPreviewLoudFxSampleKey(voiceId, speechSpeed)
         : speakerPreviewLoudSampleKey(voiceId, speechSpeed);
       const next = mediaFileUrl(mediaBaseUrl, key);
@@ -3530,6 +3533,7 @@ export function CreateWorkspace({
         el.src = next;
         void el.load();
       }
+      applySpeechElementVolume(el);
       if (playing.speaker) {
         speakerRepeatWantedRef.current = true;
         void el.play().catch(() => {
@@ -3547,7 +3551,7 @@ export function CreateWorkspace({
     mediaBaseUrl,
     speakerModelId,
     speechSpeed,
-    speakerFxPreviewOn,
+    voiceFxOn,
     playing.speaker,
   ]);
 
@@ -3563,7 +3567,10 @@ export function CreateWorkspace({
         speakerGapTimeoutRef.current = null;
         if (!speakerRepeatWantedRef.current) return;
         const a = speakerSampleRef.current;
-        if (a?.src) void a.play().catch(() => {});
+        if (a?.src) {
+          applySpeechElementVolume(a);
+          void a.play().catch(() => {});
+        }
       }, SPEAKER_SAMPLE_GAP_MS);
     };
     el.addEventListener("ended", onEnded);
@@ -3590,8 +3597,10 @@ export function CreateWorkspace({
       const voice = speakerSampleRef.current;
       if (voice?.src) {
         speakerRepeatWantedRef.current = true;
+        applySpeechElementVolume(voice);
         playAllVoiceDelayRef.current = window.setTimeout(() => {
           playAllVoiceDelayRef.current = null;
+          applySpeechElementVolume(voice);
           void voice.play().catch(() => {});
         }, BED_VOICE_INTRO_SECONDS * 1000);
         setPlaying((p) => ({ ...p, speaker: true }));
@@ -3610,9 +3619,11 @@ export function CreateWorkspace({
     );
     if (sp?.src) {
       speakerRepeatWantedRef.current = true;
+      applySpeechElementVolume(sp);
       if (hasBed) {
         playAllVoiceDelayRef.current = window.setTimeout(() => {
           playAllVoiceDelayRef.current = null;
+          applySpeechElementVolume(sp);
           void sp.play().catch(() => {});
         }, BED_VOICE_INTRO_SECONDS * 1000);
       } else {
@@ -3692,7 +3703,7 @@ export function CreateWorkspace({
 
     if (track === "speaker" && mediaBaseUrl) {
       if (!speakerModelId) return;
-      const key = speakerFxPreviewOn
+      const key = voiceFxOn
         ? speakerPreviewLoudFxSampleKey(speakerModelId, speechSpeed)
         : speakerPreviewLoudSampleKey(speakerModelId, speechSpeed);
       const next = mediaFileUrl(mediaBaseUrl, key);
@@ -3700,6 +3711,7 @@ export function CreateWorkspace({
         el.src = next;
         el.load();
       }
+      applySpeechElementVolume(el);
     }
 
     if (!el.src) {
@@ -3729,6 +3741,7 @@ export function CreateWorkspace({
 
       if (track === "speaker") {
         speakerRepeatWantedRef.current = true;
+        applySpeechElementVolume(el);
         await el.play();
       } else {
         setGaplessBedVolume(el, bedElementVolume(bedGainRef.current[track]));
@@ -3796,21 +3809,13 @@ export function CreateWorkspace({
         lastVisibleChat.text.trim().length > 0
       ));
 
-  const createPageTitle = showPathChooser
-    ? "Create a meditation"
-    : showStyleTypePick || showStyleQuestions
-      ? null
-      : showJournalPick
-          ? "Which entry should this reflect on?"
-          : showPromptPick
-            ? "One-shot prompt"
-            : workspaceSectionStep === 2
-              ? "Customise how your meditation will sound"
-              : "Shape how your meditation script is written";
+  // Content H1s are retired in favour of the header breadcrumb trail.
+  // By Type pick/questions already omit the chrome title — keep that behaviour.
+  const createPageTitle = null;
 
   /**
    * Length applies to the whole meditation — shown in the bottom bar on every
-   * create step (menu opens upward).
+   * create step (same upward dropdown on Audio as on earlier steps).
    */
   const lengthBarControl = (
     <MeditationLengthSelect
@@ -3822,10 +3827,18 @@ export function CreateWorkspace({
     />
   );
 
+  const showCreateChromeRow =
+    !showPathChooser &&
+    !showStyleTypePick &&
+    !showStyleQuestions &&
+    !showJournalPick &&
+    !showPromptPick &&
+    showChatReset;
+
   return (
     <div
       className={`flex h-full min-h-0 w-full flex-1 flex-col ${
-        showPathChooser ? "pt-2 sm:pt-3" : "pt-3 sm:pt-4"
+        showPathChooser || showAudioPlayAll ? "pt-2 sm:pt-3" : "pt-3 sm:pt-4"
       }`}
     >
       {/* Keep preview elements mounted on every step so src is assigned before the Audio panel. */}
@@ -3840,18 +3853,114 @@ export function CreateWorkspace({
         playsInline
         onEnded={() => setCompositionPlaying(false)}
       />
-      {!showPathChooser && !showStyleTypePick && !showStyleQuestions ? (
+      {showPathChooser && isLocalDevHost() ? (
+        <AppTopBarTrailingPortal>
+          <button
+            type="button"
+            onClick={beginDevSkipToAudio}
+            className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent-link transition-colors hover:bg-accent-soft/70"
+            aria-label="Dev: skip chat and go to audio setup with a random script on generate"
+          >
+            Skip to audio
+          </button>
+        </AppTopBarTrailingPortal>
+      ) : null}
+      {showAudioPlayAll && isLocalDevHost() ? (
+        <AppTopBarTrailingPortal>
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
+              Dev
+            </span>
+            <div
+              className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
+              role="group"
+              aria-label="Claude model"
+              title="Dev-only A/B for script generation. Production always uses Haiku. Cost per meditation shows in the library flyover."
+            >
+              {(
+                [
+                  [CLAUDE_HAIKU_45_MODEL_ID, "Haiku"],
+                  [CLAUDE_SONNET_45_MODEL_ID, "Sonnet"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={audioLoading}
+                  onClick={() => setClaudeModelChoice(value)}
+                  className={`cursor-pointer px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    claudeModelChoice === value
+                      ? "bg-accent-soft text-foreground"
+                      : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div
+              className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
+              role="group"
+              aria-label="Pause render path"
+              title="Our chunks (default): split on [[PAUSE]], ffmpeg silence at admin band lengths. Fish tags: one TTS request with [break] / [short pause] / [long pause] / [long-break]."
+            >
+              {(
+                [
+                  ["segmented", "Our chunks"],
+                  ["native", "Fish tags"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={audioLoading}
+                  onClick={() => setFishPauseMode(value)}
+                  className={`cursor-pointer px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    fishPauseMode === value
+                      ? "bg-accent-soft text-foreground"
+                      : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div
+              className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
+              role="group"
+              aria-label="Voice FX"
+              title="Dev-only. Production always applies mixer FX. On: Pedalboard preset WAV. Off: dry loudness-normalized MP3."
+            >
+              {(
+                [
+                  [true, "FX on"],
+                  [false, "FX off"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  disabled={audioLoading}
+                  onClick={() => {
+                    setSpeakerFxPreviewOn(value);
+                    setVoiceCardStopNonce((n) => n + 1);
+                  }}
+                  className={`cursor-pointer px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    speakerFxPreviewOn === value
+                      ? "bg-accent-soft text-foreground"
+                      : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </AppTopBarTrailingPortal>
+      ) : null}
+      {showCreateChromeRow ? (
       <div className="mx-auto mb-3 w-full max-w-6xl shrink-0 px-4 sm:px-6">
-          {createPageTitle || showChatReset || (showAudioPlayAll && isLocalDevHost()) ? (
-          <div className="flex items-center justify-between gap-4">
-            {createPageTitle ? (
-            <h1 className="min-w-0 font-display text-3xl font-medium tracking-tight">
-              {createPageTitle}
-            </h1>
-            ) : (
-              <span className="min-w-0" aria-hidden />
-            )}
-            {showChatReset ? (
+          <div className="flex items-center justify-end gap-4">
               <button
                 type="button"
                 onClick={resetChatKeepMode}
@@ -3862,69 +3971,7 @@ export function CreateWorkspace({
                 <IconResetArrow className="h-3.5 w-3.5" />
                 Reset
               </button>
-            ) : showAudioPlayAll && isLocalDevHost() ? (
-              <div className="flex shrink-0 items-center gap-2">
-                <span className="rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
-                  Dev
-                </span>
-                <div
-                  className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
-                  role="group"
-                  aria-label="Claude model"
-                  title="Dev-only A/B for script generation. Production always uses Haiku. Cost per meditation shows in the library flyover."
-                >
-                  {(
-                    [
-                      [CLAUDE_HAIKU_45_MODEL_ID, "Haiku"],
-                      [CLAUDE_SONNET_45_MODEL_ID, "Sonnet"],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      disabled={audioLoading}
-                      onClick={() => setClaudeModelChoice(value)}
-                      className={`cursor-pointer px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                        claudeModelChoice === value
-                          ? "bg-accent-soft text-foreground"
-                          : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <div
-                  className="inline-flex h-8 shrink-0 overflow-hidden rounded-lg border border-border bg-background"
-                  role="group"
-                  aria-label="Pause render path"
-                  title="Our chunks (default): split on [[PAUSE]], ffmpeg silence at admin band lengths. Fish tags: one TTS request with [break] / [short pause] / [long pause] / [long-break]."
-                >
-                  {(
-                    [
-                      ["segmented", "Our chunks"],
-                      ["native", "Fish tags"],
-                    ] as const
-                  ).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      disabled={audioLoading}
-                      onClick={() => setFishPauseMode(value)}
-                      className={`cursor-pointer px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                        fishPauseMode === value
-                          ? "bg-accent-soft text-foreground"
-                          : "text-muted hover:bg-accent-soft/40 hover:text-foreground"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
           </div>
-          ) : null}
       </div>
       ) : null}
 
@@ -3954,18 +4001,6 @@ export function CreateWorkspace({
         {showPathChooser ? (
           <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
           <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col gap-3 overflow-y-auto px-4 pt-0 sm:px-6">
-          {isLocalDevHost() ? (
-            <div className="flex shrink-0 justify-end">
-              <button
-                type="button"
-                onClick={beginDevSkipToAudio}
-                className="shrink-0 cursor-pointer rounded-full border border-dashed border-accent/50 bg-accent-soft/40 px-3 py-1.5 text-xs font-semibold text-accent-link transition-colors hover:bg-accent-soft/70"
-                aria-label="Dev: skip chat and go to audio setup with a random script on generate"
-              >
-                Skip to audio
-              </button>
-            </div>
-          ) : null}
           <div
             ref={chooserCardsRef}
             className="grid auto-rows-fr grid-cols-1 items-stretch gap-4 sm:grid-cols-2 lg:grid-cols-3"
@@ -4745,17 +4780,14 @@ export function CreateWorkspace({
               onChange={setSpeakerModelId}
               disabled={soundControlsDisabled}
               previewUrl={speakerPreviewUrl}
-              fxOn={speakerFxPreviewOn}
-              onFxChange={setSpeakerFxPreviewOn}
-              fxDisabled={soundControlsDisabled || !mediaBaseUrl}
               stopNonce={voiceCardStopNonce}
             />
           </div>
 
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-            <h2 className="font-display text-lg font-medium tracking-tight text-foreground">
+          <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-3">
+            <span className="text-xs font-semibold uppercase tracking-[0.12em] text-foreground">
               Sound
-            </h2>
+            </span>
             <div
               role="group"
               aria-label="Sound bed"
@@ -4791,6 +4823,7 @@ export function CreateWorkspace({
           {soundMode === "soundscape" ? (
             <div className="min-h-0 flex-1 overflow-y-auto pb-1">
               <SoundscapePicker
+                variant="create"
                 items={compositions}
                 value={compositionKey}
                 onChange={setCompositionKey}
@@ -5034,8 +5067,8 @@ export function CreateWorkspace({
               {audioError}
             </p>
           ) : null}
-          <div className="shrink-0 border-t border-border/60 bg-background pt-4 pb-6">
-            <div className="mx-auto flex min-h-[3rem] w-full max-w-6xl flex-nowrap items-center gap-3 px-4 sm:px-6">
+          <div className="shrink-0 border-t-[0.5px] border-[rgba(180,140,80,0.2)] bg-background pt-4 pb-6 dark:border-border">
+            <div className="mx-auto flex min-h-[3rem] w-full max-w-6xl flex-nowrap items-center justify-between gap-3 px-4 sm:px-6">
             <div className="flex min-w-0 flex-1 justify-start">
             <button
               type="button"

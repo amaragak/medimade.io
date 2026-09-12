@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Fragment, useEffect, useState } from "react";
 import { LogoMark } from "@/components/logo-mark";
-import { AppPrimaryTabsSlot } from "@/components/app-primary-tabs";
+import { AppPrimaryTabsSlot, AppTopBarTrailingSlot } from "@/components/app-primary-tabs";
 import { AlphaChromeButton } from "@/components/dev-chrome-button";
 import {
   buildAppBreadcrumbs,
@@ -175,7 +175,8 @@ export function AppTopBar({ onOpenSidebar }: Props) {
         </div>
       </div>
 
-      <div className="absolute right-3 top-1/2 z-20 -translate-y-1/2 sm:right-4">
+      <div className="absolute right-3 top-1/2 z-20 flex -translate-y-1/2 items-center gap-2 sm:right-4">
+        <AppTopBarTrailingSlot className="flex max-w-[min(100vw-11rem,28rem)] items-center justify-end overflow-x-auto" />
         <AlphaChromeButton
           title="Alpha — show marketing site without clearing session"
           onClick={() => {

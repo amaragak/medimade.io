@@ -598,6 +598,7 @@ export function MixerSoundsStudio({
         el.src = next;
         void el.load();
       }
+      el.volume = 1;
       if (speakerPlaying) {
         void el.play().catch(() => setSpeakerPlaying(false));
       }

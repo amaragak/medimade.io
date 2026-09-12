@@ -249,16 +249,33 @@ export function buildAppBreadcrumbs(
     if (pathLabel) {
       crumbs.push({ label: "Create", href: CREATE_MEDITATE_ROOT });
       const styleName = opts?.createMeditationStyle?.trim() || null;
-      const showStyleLeaf =
-        parsed.path === "style" &&
-        Boolean(styleName) &&
-        (parsed.styleStep === "questions" || parsed.mix);
-      if (showStyleLeaf && styleName) {
-        crumbs.push({
-          label: "By Type",
-          href: createMeditationHref({ path: "style" }),
+      if (parsed.path === "style") {
+        const byTypeHref = createMeditationHref({ path: "style" });
+        const questionsHref = createMeditationHref({
+          path: "style",
+          styleStep: "questions",
         });
-        crumbs.push({ label: styleName, href: null });
+        if (parsed.mix) {
+          // Audio settings — keep By Type / type name trail, then Audio.
+          crumbs.push({ label: "By Type", href: byTypeHref });
+          if (styleName) {
+            crumbs.push({ label: styleName, href: questionsHref });
+          }
+          crumbs.push({ label: "Audio", href: null });
+        } else if (parsed.styleStep === "questions" && styleName) {
+          // Already correct: By Type › [Type]
+          crumbs.push({ label: "By Type", href: byTypeHref });
+          crumbs.push({ label: styleName, href: null });
+        } else {
+          // Type picker
+          crumbs.push({ label: "By Type", href: null });
+        }
+      } else if (parsed.mix) {
+        crumbs.push({
+          label: pathLabel,
+          href: createMeditationHref({ path: parsed.path }),
+        });
+        crumbs.push({ label: "Audio", href: null });
       } else {
         crumbs.push({ label: pathLabel, href: null });
       }

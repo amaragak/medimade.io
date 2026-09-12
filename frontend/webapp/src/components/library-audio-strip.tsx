@@ -24,6 +24,7 @@ import {
   syncGaplessBed,
 } from "@/lib/gapless-bed-loop";
 import {
+  applySpeechElementVolume,
   bedElementVolume,
   BED_VOICE_INTRO_SECONDS,
   SOUNDSCAPE_ELEMENT_VOLUME,
@@ -223,12 +224,14 @@ export function LibraryAudioStrip({
   function startOrResumePlayback() {
     const el = audioRef.current;
     if (!el || !track) return;
+    applySpeechElementVolume(el);
     clearVoiceIntro();
     if (shouldDelayVoice(el.currentTime)) {
       setPlaying(true);
       onPlayingChange?.(track.s3Key, true);
       voiceIntroTimerRef.current = window.setTimeout(() => {
         voiceIntroTimerRef.current = null;
+        applySpeechElementVolume(el);
         void el.play().catch(() => {});
       }, BED_VOICE_INTRO_SECONDS * 1000);
       return;
@@ -299,6 +302,7 @@ export function LibraryAudioStrip({
     const el = audioRef.current;
     if (!el) return;
     el.load();
+    applySpeechElementVolume(el);
     startOrResumePlayback();
     return () => {
       clearVoiceIntro();

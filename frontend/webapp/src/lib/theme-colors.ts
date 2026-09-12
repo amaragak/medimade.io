@@ -188,8 +188,8 @@ export function rel(hex: string, dh: number, ds: number, dl: number): string {
 }
 
 /**
- * Brighter gold for filled CTAs (header Pro, accent-fill-gradient buttons).
- * Matches dark-mode `--accent`; light mode keeps `--accent` at PRIMARY for borders/tabs.
+ * Brighter gold for filled CTAs in light mode (header Pro, accent-fill-gradient).
+ * Dark mode uses `DARK_PRIMARY` (breadcrumb-link copper) instead.
  */
 export const ACCENT_BUTTON_FILL = rel(resolveColor(PRIMARY), 1.8, 0.08, 0.12);
 
@@ -202,6 +202,12 @@ export function mixHex(a: string, b: string, t: number): string {
     A.b + (B.b - A.b) * t,
   );
 }
+
+/**
+ * Dark-mode brand / primary fill — matches early breadcrumb link colour
+ * (`accent-link` on dark). Shared bright peach is too loud on navy surfaces.
+ */
+export const DARK_PRIMARY = mixHex(ACCENT_LINK, WHITE, 0.28);
 
 export function rgbChannels(hex: string): string {
   const { r, g, b } = hexToRgb(hex);
@@ -226,7 +232,7 @@ type Semantic = {
   border: string;
   borderSubtle: string;
   accent: string;
-  /** Brighter gold for filled buttons — same in both themes (dark-mode accent). */
+  /** Filled CTAs — Pro gold in light; breadcrumb copper in dark. */
   accentButton: string;
   accentSoft: string;
   accentLink: string;
@@ -311,7 +317,8 @@ function brandFromPrimary(
   | "gradientDeep"
 > {
   const p = resolveColor(rawPrimary);
-  const accent = dark ? rel(p, 1.8, 0.08, 0.12) : p;
+  // Light: peach PRIMARY. Dark: softer copper (same as early breadcrumb links).
+  const accent = dark ? DARK_PRIMARY : p;
   return {
     accent,
     accentSoft: dark
@@ -330,13 +337,14 @@ function assemble(
   dark: boolean,
 ): Semantic {
   const brand = brandFromPrimary(PRIMARY, paper, dark);
+  const accentButton = dark ? DARK_PRIMARY : ACCENT_BUTTON_FILL;
   return {
     ...paper,
     ...brand,
-    accentButton: ACCENT_BUTTON_FILL,
+    accentButton,
     gold,
     overlay: BLACK,
-    accentLink: dark ? mixHex(ACCENT_LINK, WHITE, 0.28) : ACCENT_LINK,
+    accentLink: dark ? DARK_PRIMARY : ACCENT_LINK,
     nav: dark ? NAV : NAV_LIGHT,
     navForeground: dark ? NAV_FOREGROUND : NAV_FOREGROUND_LIGHT,
     navMuted: dark ? NAV_MUTED : NAV_MUTED_LIGHT,
@@ -422,16 +430,16 @@ function assemble(
     headerGlowRight: dark
       ? "radial-gradient(circle, rgb(16 26 38 / 0.4) 0%, rgb(24 36 50 / 0.22) 32%, rgb(51 70 92 / 0) 68%)"
       : "radial-gradient(circle, rgb(232 224 208 / 0.7) 0%, rgb(232 224 208 / 0.3) 36%, rgb(250 248 243 / 0) 70%)",
-    proHeaderCtaBg: ACCENT_BUTTON_FILL,
+    proHeaderCtaBg: accentButton,
     proHeaderCtaFg: ON_ACCENT,
     proHeaderCtaImage: "none",
     proHeaderCtaShadow: "none",
   };
 }
 
-/** Filled CTA / `--gold` token — same brighter Pro gold in both themes. */
+/** Filled CTA / `--gold` token — light uses Pro gold; dark uses breadcrumb copper. */
 export const light = assemble(PAPER_LIGHT, ACCENT_BUTTON_FILL, false);
-export const dark = assemble(PAPER_DARK, ACCENT_BUTTON_FILL, true);
+export const dark = assemble(PAPER_DARK, DARK_PRIMARY, true);
 
 export function accentGradientCss(s: Semantic): string {
   // Flat brand fill (legacy name kept for `--accent-gradient` consumers).

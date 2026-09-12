@@ -31,7 +31,7 @@ import {
 } from "@/lib/speaker-sample-speed";
 
 /** Mixer fader value persisted with the generate job (same as create soundscape). */
-const SOUNDSCAPE_GAIN = 50;
+const SOUNDSCAPE_GAIN = 100;
 
 function mediaFileUrl(base: string, key: string): string {
   const b = base.replace(/\/$/, "");

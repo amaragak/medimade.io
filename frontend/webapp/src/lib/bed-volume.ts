@@ -3,10 +3,13 @@ export const BED_GAIN_PEAK_VOLUME = 0.5;
 
 /**
  * Ready-made soundscapes are a whole produced bed rather than one mixer
- * channel, so they play louder than a fader ever reaches — still under the
- * narration at 1.0, but clearly present.
+ * channel. Preview volume matches mixer peak (`BED_GAIN_PEAK_VOLUME` / gain 100)
+ * so speech at 1.0 stays louder — same ceiling as the baked mix path.
  */
-export const SOUNDSCAPE_ELEMENT_VOLUME = 0.67;
+export const SOUNDSCAPE_ELEMENT_VOLUME = 0.5;
+
+/** Narration / voice sample level — always full scale in preview and bake. */
+export const SPEECH_ELEMENT_VOLUME = 1;
 
 /** Bed-only lead-in before speech starts (live mix and baked mix). */
 export const BED_VOICE_INTRO_SECONDS = 1.5;
@@ -23,4 +26,10 @@ export function applyBedElementVolume(
 ): void {
   if (!el) return;
   el.volume = bedElementVolume(gain);
+}
+
+/** Apply after src/load so voice previews stay at full scale. */
+export function applySpeechElementVolume(el: HTMLMediaElement | null): void {
+  if (!el) return;
+  el.volume = SPEECH_ELEMENT_VOLUME;
 }

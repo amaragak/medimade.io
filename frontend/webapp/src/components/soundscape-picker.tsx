@@ -16,15 +16,35 @@ type SoundscapePickerProps = {
   loading?: boolean;
   /** Single column and tighter cards, for the narrow library mix flyout. */
   compact?: boolean;
+  /** Create › Audio soundscape chrome (category pills + warm cards). */
+  variant?: "default" | "create";
 };
 
-function PlayPauseIcon({ playing }: { playing: boolean }) {
+function PlayPauseIcon({
+  playing,
+  size = 18,
+}: {
+  playing: boolean;
+  size?: number;
+}) {
   return playing ? (
-    <svg viewBox="0 0 24 24" width={18} height={18} fill="currentColor" aria-hidden>
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="currentColor"
+      aria-hidden
+    >
       <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
     </svg>
   ) : (
-    <svg viewBox="0 0 24 24" width={18} height={18} fill="currentColor" aria-hidden>
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="currentColor"
+      aria-hidden
+    >
       <path d="M8 5v14l11-7L8 5z" />
     </svg>
   );
@@ -42,7 +62,10 @@ function formatDuration(seconds: number | null): string {
  * Durations are not in the catalog, so each card asks the CDN for metadata once
  * and the answers are shared across re-renders.
  */
-function useDurations(items: BackgroundAudioItem[], previewUrl: (key: string) => string | null) {
+function useDurations(
+  items: BackgroundAudioItem[],
+  previewUrl: (key: string) => string | null,
+) {
   const [durations, setDurations] = useState<Record<string, number>>({});
   const askedRef = useRef<Set<string>>(new Set());
 
@@ -80,17 +103,32 @@ export function SoundscapePicker({
   disabled,
   loading,
   compact,
+  variant = "default",
 }: SoundscapePickerProps) {
   const durations = useDurations(items, previewUrl);
-  const sorted = useMemo(
-    () => [...items].sort((a, b) => a.name.localeCompare(b.name)),
-    [items],
-  );
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const isCreate = variant === "create" && !compact;
+
+  const categories = useMemo(() => {
+    const ids = new Set<string>();
+    for (const item of items) {
+      if (item.subcategory) ids.add(item.subcategory);
+    }
+    return [...ids].sort((a, b) =>
+      prettySubcategoryLabel(a).localeCompare(prettySubcategoryLabel(b)),
+    );
+  }, [items]);
+
+  const sorted = useMemo(() => {
+    const list = [...items].sort((a, b) => a.name.localeCompare(b.name));
+    if (!isCreate || categoryFilter === "all") return list;
+    return list.filter((item) => item.subcategory === categoryFilter);
+  }, [items, isCreate, categoryFilter]);
 
   if (loading) {
     return <p className="px-1 py-6 text-sm text-muted">Loading soundscapes…</p>;
   }
-  if (sorted.length === 0) {
+  if (items.length === 0) {
     return (
       <p className="px-1 py-6 text-sm text-muted">
         No soundscapes yet. Use Build your own to mix your own bed.
@@ -98,10 +136,121 @@ export function SoundscapePicker({
     );
   }
 
+  if (isCreate) {
+    return (
+      <div>
+        {categories.length > 0 ? (
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              aria-pressed={categoryFilter === "all"}
+              onClick={() => setCategoryFilter("all")}
+              className={`cursor-pointer rounded-[20px] border px-3 py-1.5 text-xs transition-colors ${
+                categoryFilter === "all"
+                  ? "border-accent/40 bg-accent-soft/40 text-accent-link"
+                  : "border-journal-warm-border bg-journal-warm-bg text-muted hover:border-accent/40 dark:border-border dark:bg-surface-2"
+              }`}
+            >
+              All
+            </button>
+            {categories.map((id) => {
+              const active = categoryFilter === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setCategoryFilter(id)}
+                  className={`cursor-pointer rounded-[20px] border px-3 py-1.5 text-xs transition-colors ${
+                    active
+                      ? "border-accent/40 bg-accent-soft/40 text-accent-link"
+                      : "border-journal-warm-border bg-journal-warm-bg text-muted hover:border-accent/40 dark:border-border dark:bg-surface-2"
+                  }`}
+                >
+                  {prettySubcategoryLabel(id)}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        {sorted.length === 0 ? (
+          <p className="px-1 py-6 text-sm text-muted">
+            No soundscapes in this category.
+          </p>
+        ) : (
+          <ul className="grid grid-cols-1 items-start gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {sorted.map((item) => {
+              const selected = item.key === value;
+              const playing = playingKey === item.key;
+              const title = soundDisplayName(item.name);
+              const pack = item.subcategory
+                ? prettySubcategoryLabel(item.subcategory)
+                : "";
+              const canPreview = Boolean(previewUrl(item.key));
+              return (
+                <li key={item.key}>
+                  <button
+                    type="button"
+                    disabled={disabled || !canPreview}
+                    aria-pressed={selected}
+                    aria-label={
+                      playing
+                        ? `Pause and keep ${title} selected`
+                        : `Select and play ${title}`
+                    }
+                    onClick={() => {
+                      if (value !== item.key) onChange(item.key);
+                      onTogglePreview(item.key);
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-[6px] border px-4 py-3.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                      selected
+                        ? "border-accent bg-journal-warm-bg dark:border-accent dark:bg-surface-2"
+                        : "border-journal-warm-border bg-journal-warm-bg hover:border-accent/40 dark:border-border dark:bg-surface-2 dark:hover:border-accent/40"
+                    }`}
+                  >
+                    <span
+                      className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full transition-colors ${
+                        selected
+                          ? "bg-accent-button text-on-accent"
+                          : "bg-accent/20 text-accent-link"
+                      }`}
+                      aria-hidden
+                    >
+                      <PlayPauseIcon playing={playing} size={14} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-display text-[14px] font-normal text-foreground">
+                        {title}
+                      </span>
+                      <span className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted">
+                        {pack ? (
+                          <span className="rounded-[8px] bg-accent-soft/50 px-1.5 py-0.5 text-accent-link">
+                            {pack}
+                          </span>
+                        ) : (
+                          <span />
+                        )}
+                        <span className="shrink-0 tabular-nums">
+                          {formatDuration(durations[item.key] ?? null)}
+                        </span>
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <p className="mt-3 px-1 text-xs text-muted">
+          Longer than your meditation? It fades out naturally when the narration
+          ends.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div>
-      {/* items-start keeps each card at its content height rather than
-          stretching it to the tallest card in the grid. */}
       <ul
         className={
           compact
@@ -113,7 +262,9 @@ export function SoundscapePicker({
           const selected = item.key === value;
           const playing = playingKey === item.key;
           const title = soundDisplayName(item.name);
-          const pack = item.subcategory ? prettySubcategoryLabel(item.subcategory) : "";
+          const pack = item.subcategory
+            ? prettySubcategoryLabel(item.subcategory)
+            : "";
           return (
             <li key={item.key}>
               <div
@@ -142,9 +293,6 @@ export function SoundscapePicker({
                     aria-pressed={selected}
                     className="flex min-h-[2.6em] min-w-0 flex-1 cursor-pointer items-center text-left disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {/* Two lines are reserved on every card so titles that wrap
-                        don't make the grid ragged. A one-line title is centred
-                        in that space so it sits level with the play button. */}
                     <span className="line-clamp-2 font-display text-[15px] font-medium leading-[1.3] text-foreground">
                       {title}
                     </span>
@@ -163,7 +311,8 @@ export function SoundscapePicker({
       </ul>
       {compact ? null : (
         <p className="mt-3 px-1 text-xs text-muted">
-          Longer than your meditation? It fades out naturally when the narration ends.
+          Longer than your meditation? It fades out naturally when the narration
+          ends.
         </p>
       )}
     </div>

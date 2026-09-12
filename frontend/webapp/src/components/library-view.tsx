@@ -71,7 +71,7 @@ import {
 } from "@/components/library-meditation-card";
 
 /** Mixer gain persisted for a soundscape; live playback uses its own volume. */
-const SOUNDSCAPE_MIX_GAIN = 50;
+const SOUNDSCAPE_MIX_GAIN = 100;
 
 function isLocalDevHost(): boolean {
   if (process.env.NODE_ENV !== "production") return true;

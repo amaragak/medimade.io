@@ -13,18 +13,26 @@ import { createPortal } from "react-dom";
 type PrimaryTabsContextValue = {
   target: HTMLElement | null;
   setTarget: (el: HTMLElement | null) => void;
+  trailingTarget: HTMLElement | null;
+  setTrailingTarget: (el: HTMLElement | null) => void;
 };
 
 const PrimaryTabsContext = createContext<PrimaryTabsContextValue | null>(null);
 
 export function AppPrimaryTabsProvider({ children }: { children: ReactNode }) {
   const [target, setTargetState] = useState<HTMLElement | null>(null);
+  const [trailingTarget, setTrailingTargetState] = useState<HTMLElement | null>(
+    null,
+  );
   const setTarget = useCallback((el: HTMLElement | null) => {
     setTargetState((prev) => (prev === el ? prev : el));
   }, []);
+  const setTrailingTarget = useCallback((el: HTMLElement | null) => {
+    setTrailingTargetState((prev) => (prev === el ? prev : el));
+  }, []);
   const value = useMemo(
-    () => ({ target, setTarget }),
-    [target, setTarget],
+    () => ({ target, setTarget, trailingTarget, setTrailingTarget }),
+    [target, setTarget, trailingTarget, setTrailingTarget],
   );
   return (
     <PrimaryTabsContext.Provider value={value}>
@@ -57,4 +65,17 @@ export function AppPrimaryTabsDesktop({ children }: { children: ReactNode }) {
   const { target } = usePrimaryTabsContext();
   if (!target) return null;
   return createPortal(children, target);
+}
+
+/** Mount point in the top bar trailing cluster (left of marketing CTA). */
+export function AppTopBarTrailingSlot({ className }: { className?: string }) {
+  const { setTrailingTarget } = usePrimaryTabsContext();
+  return <div ref={setTrailingTarget} className={className} />;
+}
+
+/** Renders into the top-bar trailing slot (create-audio Dev controls, etc.). */
+export function AppTopBarTrailingPortal({ children }: { children: ReactNode }) {
+  const { trailingTarget } = usePrimaryTabsContext();
+  if (!trailingTarget) return null;
+  return createPortal(children, trailingTarget);
 }

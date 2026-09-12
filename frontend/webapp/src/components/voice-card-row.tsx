@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import * as Switch from "@radix-ui/react-switch";
+import { applySpeechElementVolume } from "@/lib/bed-volume";
+
+const LAST_VOICE_STORAGE_KEY = "mm_last_fish_voice_v1";
+/** Pause between preview sample repeats (matches create-flow speaker bed). */
+const PREVIEW_REPEAT_GAP_MS = 3000;
 
 type Voice = {
   modelId: string;
@@ -18,24 +22,54 @@ type VoiceCardRowProps = {
   /** Null while the media base URL is unknown, which disables previews. */
   previewUrl: (modelId: string) => string | null;
   disabled?: boolean;
-  /**
-   * FX is a single Pedalboard preset applied to the rendered narration, not a
-   * per-voice capability, so one control governs whichever voice is selected.
-   */
-  fxOn: boolean;
-  onFxChange: (on: boolean) => void;
-  fxDisabled?: boolean;
   /** Bump to stop a running preview from outside, e.g. when generation starts. */
   stopNonce?: number;
 };
 
-function PlayPauseIcon({ playing }: { playing: boolean }) {
+function readLastVoiceId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LAST_VOICE_STORAGE_KEY)?.trim();
+    return raw || null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLastVoiceId(modelId: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_VOICE_STORAGE_KEY, modelId);
+  } catch {
+    /* ignore */
+  }
+}
+
+function PlayPauseIcon({
+  playing,
+  size = 14,
+}: {
+  playing: boolean;
+  size?: number;
+}) {
   return playing ? (
-    <svg viewBox="0 0 24 24" width={14} height={14} fill="currentColor" aria-hidden>
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="currentColor"
+      aria-hidden
+    >
       <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
     </svg>
   ) : (
-    <svg viewBox="0 0 24 24" width={14} height={14} fill="currentColor" aria-hidden>
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="currentColor"
+      aria-hidden
+    >
       <path d="M8 5v14l11-7L8 5z" />
     </svg>
   );
@@ -47,16 +81,56 @@ export function VoiceCardRow({
   onChange,
   previewUrl,
   disabled,
-  fxOn,
-  onFxChange,
-  fxDisabled,
   stopNonce = 0,
 }: VoiceCardRowProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const gapTimeoutRef = useRef<number | null>(null);
+  const repeatWantedRef = useRef(false);
+  const previewingIdRef = useRef<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const hydratedRef = useRef(false);
+
+  function clearGapSchedule() {
+    if (gapTimeoutRef.current !== null) {
+      window.clearTimeout(gapTimeoutRef.current);
+      gapTimeoutRef.current = null;
+    }
+  }
+
+  function stopPreview() {
+    clearGapSchedule();
+    repeatWantedRef.current = false;
+    previewingIdRef.current = null;
+    const el = audioRef.current;
+    if (el) {
+      el.pause();
+      el.currentTime = 0;
+    }
+    setPreviewingId(null);
+  }
+
+  useEffect(() => {
+    if (hydratedRef.current || voices.length === 0) return;
+    hydratedRef.current = true;
+    const last = readLastVoiceId();
+    const hasHistory = Boolean(
+      last && voices.some((v) => v.modelId === last),
+    );
+    setExpanded(!hasHistory);
+    if (hasHistory && last && last !== value) {
+      onChange(last);
+    } else if (!value || !voices.some((v) => v.modelId === value)) {
+      onChange(voices[0]!.modelId);
+    }
+    // Only on first voices load — parent may also set a default.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional one-shot hydrate
+  }, [voices]);
 
   useEffect(
     () => () => {
+      clearGapSchedule();
+      repeatWantedRef.current = false;
       const el = audioRef.current;
       if (el) {
         el.pause();
@@ -66,133 +140,208 @@ export function VoiceCardRow({
     [],
   );
 
-  // Flipping FX changes which sample every card plays, so a running preview is
-  // stale; `stopNonce` is the caller silencing it for the same reason.
   useEffect(() => {
-    audioRef.current?.pause();
-    setPreviewingId(null);
-  }, [fxOn, stopNonce]);
+    stopPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stop on external nonce only
+  }, [stopNonce]);
 
-  async function togglePreview(modelId: string) {
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el) return;
+    const onEnded = () => {
+      if (!repeatWantedRef.current || !previewingIdRef.current) return;
+      clearGapSchedule();
+      // Keep playing UI during the gap between sample repeats.
+      gapTimeoutRef.current = window.setTimeout(() => {
+        gapTimeoutRef.current = null;
+        if (!repeatWantedRef.current) return;
+        const a = audioRef.current;
+        if (!a?.src) return;
+        applySpeechElementVolume(a);
+        void a.play().catch(() => {
+          stopPreview();
+        });
+      }, PREVIEW_REPEAT_GAP_MS);
+    };
+    el.addEventListener("ended", onEnded);
+    return () => {
+      el.removeEventListener("ended", onEnded);
+      clearGapSchedule();
+    };
+  }, []);
+
+  async function startPreview(modelId: string) {
     const el = audioRef.current;
     const url = previewUrl(modelId);
     if (!el || !url) return;
-    if (previewingId === modelId && !el.paused) {
-      el.pause();
-      setPreviewingId(null);
-      return;
-    }
+    clearGapSchedule();
+    repeatWantedRef.current = true;
+    previewingIdRef.current = modelId;
+    setPreviewingId(modelId);
     if (el.src !== url) {
       el.src = url;
       el.load();
+    } else {
+      el.currentTime = 0;
     }
+    // load() resets volume — keep narration at full scale.
+    applySpeechElementVolume(el);
     try {
       await el.play();
-      setPreviewingId(modelId);
+      applySpeechElementVolume(el);
     } catch {
-      setPreviewingId(null);
+      stopPreview();
     }
   }
 
-  return (
-    <section>
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h2 className="font-display text-lg font-medium tracking-tight text-foreground">
-          Voice
-        </h2>
-        <div
-          className="flex shrink-0 items-center gap-2"
-          title={
-            fxOn
-              ? "Preview uses mixer FX (WAV on CDN)."
-              : "Preview uses loudness-normalized MP3 on CDN."
-          }
-        >
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">
-            FX
-          </span>
-          <Switch.Root
-            checked={fxOn}
-            onCheckedChange={(v) => onFxChange(Boolean(v))}
-            disabled={fxDisabled}
-            aria-label={fxOn ? "Turn voice FX off" : "Turn voice FX on"}
-            className="relative h-4 w-8 cursor-pointer rounded-full border border-border bg-muted/30 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Switch.Thumb className="block h-3 w-3 translate-x-[2px] rounded-full bg-surface shadow transition-transform will-change-transform data-[state=checked]:translate-x-[18px]" />
-          </Switch.Root>
-        </div>
-      </div>
+  /** Select the voice and play (or pause if already previewing this one). */
+  function activateVoice(modelId: string) {
+    if (disabled) return;
+    writeLastVoiceId(modelId);
+    if (modelId !== value) onChange(modelId);
+    if (previewingIdRef.current === modelId) {
+      stopPreview();
+      return;
+    }
+    void startPreview(modelId);
+  }
 
-      {/* One row, so the cards stretch to a shared height — the tallest
-          description sets it, and the bottom edge stays level. */}
-      <div className="flex items-stretch gap-3 overflow-x-auto pb-1">
-        {voices.map((voice) => {
-          const selected = voice.modelId === value;
-          const playing = previewingId === voice.modelId;
-          // Gender leads the pills when set; "not specified" simply has none.
-          const tags = [...(voice.gender ? [voice.gender] : []), ...(voice.goodFor ?? [])];
-          return (
-            <div
-              key={voice.modelId}
-              className={`flex w-[196px] min-w-[196px] max-w-[196px] shrink-0 grow-0 flex-col gap-1.5 rounded-2xl bg-card p-3.5 shadow-sm transition-colors ${
-                selected
-                  ? "border-2 border-accent"
-                  : "border border-border hover:border-accent/50"
-              }`}
+  const labelClass =
+    "w-12 shrink-0 text-xs font-semibold uppercase tracking-[0.12em] text-foreground";
+
+  return (
+    <section className="mb-7 border-b border-journal-warm-border pb-7 dark:border-border">
+      {expanded ? (
+        <>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <span className={labelClass}>Voice</span>
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              className="cursor-pointer text-xs text-muted transition-colors hover:text-foreground"
             >
-              <div className="flex items-center gap-2">
+              Collapse ↑
+            </button>
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {voices.map((voice) => {
+              const selected = voice.modelId === value;
+              const playing = previewingId === voice.modelId;
+              const tags = [
+                ...(voice.gender ? [voice.gender] : []),
+                ...(voice.goodFor ?? []),
+              ];
+              const canPreview = Boolean(previewUrl(voice.modelId));
+              return (
                 <button
+                  key={voice.modelId}
                   type="button"
-                  disabled={disabled || !previewUrl(voice.modelId)}
-                  onClick={() => void togglePreview(voice.modelId)}
-                  aria-label={
-                    playing ? `Pause ${voice.name} sample` : `Play ${voice.name} sample`
-                  }
-                  className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border bg-background text-accent-link transition-colors hover:bg-accent-soft/40 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <PlayPauseIcon playing={playing} />
-                </button>
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onChange(voice.modelId)}
+                  disabled={disabled || !canPreview}
                   aria-pressed={selected}
-                  className="min-w-0 flex-1 cursor-pointer truncate text-left font-display text-[15px] font-medium leading-tight text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+                  aria-label={
+                    playing
+                      ? `Pause ${voice.name} sample`
+                      : `Select and play ${voice.name}`
+                  }
+                  onClick={() => activateVoice(voice.modelId)}
+                  className={`cursor-pointer rounded-[6px] border p-3.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    selected
+                      ? "border-accent bg-journal-warm-bg dark:border-accent dark:bg-surface-2"
+                      : "border-journal-warm-border bg-journal-warm-bg hover:border-accent/40 dark:border-border dark:bg-surface-2 dark:hover:border-accent/40"
+                  }`}
                 >
-                  {voice.name}
-                </button>
-              </div>
-              <button
-                type="button"
-                disabled={disabled}
-                onClick={() => onChange(voice.modelId)}
-                aria-pressed={selected}
-                className="cursor-pointer text-left disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                    {/* Two lines are reserved whatever the description length,
-                        so the tag pills sit level across the row. */}
-                    <span className="block min-h-[2.75em] text-xs leading-snug text-muted">
-                      {voice.description?.trim() ?? ""}
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors ${
+                        selected
+                          ? "bg-accent-button text-on-accent"
+                          : "bg-accent/20 text-accent-link"
+                      }`}
+                      aria-hidden
+                    >
+                      <PlayPauseIcon playing={playing} size={12} />
                     </span>
-                {tags.length > 0 ? (
-                  <span className="mt-1.5 flex flex-wrap gap-1">
-                    {tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="rounded-full border border-accent/30 bg-accent-soft/50 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-accent-link"
-                      >
-                        {tag}
-                      </span>
-                    ))}
+                    <span className="min-w-0 flex-1 truncate font-display text-[15px] font-normal text-foreground">
+                      {voice.name}
+                    </span>
+                  </div>
+                  <p className="mt-2 min-h-[2.25em] text-xs leading-[1.5] text-muted">
+                    {voice.description?.trim() ?? ""}
+                  </p>
+                  {tags.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-[8px] bg-accent-soft/50 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-accent-link"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div className="flex items-center gap-3">
+          <span className={labelClass}>Voice</span>
+          <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-x-auto py-0.5">
+            {voices.map((voice) => {
+              const selected = voice.modelId === value;
+              const playing = previewingId === voice.modelId;
+              const canPreview = Boolean(previewUrl(voice.modelId));
+              return (
+                <button
+                  key={voice.modelId}
+                  type="button"
+                  disabled={disabled || !canPreview}
+                  aria-pressed={selected}
+                  aria-label={
+                    playing
+                      ? `Pause ${voice.name} sample`
+                      : `Select and play ${voice.name}`
+                  }
+                  onClick={() => activateVoice(voice.modelId)}
+                  className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-2 transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    selected
+                      ? "border-accent bg-journal-warm-bg dark:border-accent dark:bg-surface-2"
+                      : "border-journal-warm-border bg-journal-warm-bg dark:border-border dark:bg-surface-2"
+                  }`}
+                >
+                  <span
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full transition-colors ${
+                      selected
+                        ? "bg-accent-button text-on-accent"
+                        : "bg-accent/20 text-accent-link"
+                    }`}
+                    aria-hidden
+                  >
+                    <PlayPauseIcon playing={playing} size={10} />
                   </span>
-                ) : null}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      {/* Samples are short, so they loop until the card is toggled off. */}
-      <audio ref={audioRef} className="hidden" playsInline loop />
+                  <span
+                    className={`text-sm leading-none ${
+                      selected ? "font-medium" : "font-normal"
+                    } text-foreground`}
+                  >
+                    {voice.name}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="ml-auto shrink-0 cursor-pointer text-xs text-muted transition-colors hover:text-foreground"
+          >
+            Details ↓
+          </button>
+        </div>
+      )}
+      <audio ref={audioRef} className="hidden" playsInline />
     </section>
   );
 }
