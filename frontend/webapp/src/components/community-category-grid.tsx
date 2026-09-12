@@ -6,6 +6,10 @@ import {
   type LibraryMeditationCategory,
 } from "@/lib/community-library";
 import { CATEGORY_CARD_FILLS } from "@/lib/theme-colors";
+import {
+  MEDITATION_TYPE_PILL_CLASS,
+  meditationTypePillColors,
+} from "@/lib/meditation-type-pill";
 
 /** Lucide (ISC) paths, 24×24. */
 function iconProps(className: string) {
@@ -221,7 +225,7 @@ export function MeditationTypeCardGrid({
                 ? `flex aspect-square w-full min-w-0 min-h-0 cursor-pointer flex-col items-center justify-center gap-3 self-start overflow-hidden rounded-[6px] bg-[var(--type-card-bg)] px-2 py-2.5 text-center transition-[filter,border-color] dark:bg-[var(--type-card-bg-dark)] ${
                     active
                       ? "border-[1.5px] border-solid border-accent"
-                      : "border-[0.5px] border-solid border-transparent hover:border-journal-warm-border hover:brightness-[0.96] dark:hover:border-border dark:hover:brightness-[0.96]"
+                      : "border-[0.5px] border-solid border-transparent hover:border-card-warm-border hover:brightness-[0.96] dark:hover:brightness-[0.96]"
                   }`
                 : `flex aspect-square w-full min-w-0 min-h-0 cursor-pointer flex-col items-center justify-center gap-2.5 self-start overflow-hidden rounded-2xl border px-2 py-2.5 text-center text-[#1E2530] shadow-sm transition-[box-shadow,filter] bg-[var(--type-card-bg)] hover:brightness-[0.97] dark:bg-[var(--type-card-bg-dark)] dark:hover:brightness-105 ${
                     active
@@ -258,14 +262,14 @@ export function MeditationTypeCard({
   className?: string;
   size?: "default" | "lg";
 }) {
+  const colors = meditationTypePillColors(name);
   const sizeClass =
-    size === "lg"
-      ? "px-3 py-1.5 text-xs sm:text-[13px]"
-      : "px-2.5 py-1 text-[10px] sm:text-[11px]";
+    size === "lg" ? "px-3 py-1.5 text-xs sm:text-[13px]" : "";
   return (
     <span
       aria-label={name}
-      className={`inline-block rounded-full bg-accent-soft/60 font-semibold uppercase tracking-wide text-accent-link ${sizeClass} ${className}`}
+      className={`${MEDITATION_TYPE_PILL_CLASS} ${sizeClass} ${className}`}
+      style={{ backgroundColor: colors.bg, color: colors.fg }}
     >
       {name}
     </span>

@@ -10,6 +10,8 @@ import type { MixerFactoryPreset } from "@/lib/mixer-factory-presets";
 import type { MixerPreset } from "@/lib/mixer-preset-storage";
 
 export type MixerLayout = "column" | "row";
+/** `toolbar` = dropdown only (label/chrome provided by the parent preset row). */
+export type MixerPresetLayout = MixerLayout | "toolbar";
 
 const ROW_LABEL =
   "w-[3.75rem] shrink-0 text-xs font-semibold uppercase tracking-wide text-muted";
@@ -88,7 +90,7 @@ function MixerStrip({
   playAriaLabel: string;
 }) {
   return (
-    <div className="flex h-full min-w-[5.75rem] w-full flex-1 flex-col items-stretch gap-2.5 rounded-2xl border border-border bg-background px-2 py-3">
+    <div className="flex h-full min-w-[5.75rem] w-full flex-1 flex-col items-stretch gap-2.5 rounded-2xl border border-border bg-card px-2 py-3">
       <span className="shrink-0 text-center text-sm font-semibold uppercase tracking-wide text-muted">
         {label}
       </span>
@@ -96,15 +98,18 @@ function MixerStrip({
       <div className="flex min-h-0 flex-1 flex-col items-center gap-1">
         {meter}
       </div>
-      <button
-        type="button"
-        onClick={onTogglePreview}
-        disabled={playDisabled}
-        aria-label={playAriaLabel}
-        className="mx-auto flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <MixerPlayPauseIcon playing={playing} />
-      </button>
+      {/* Centered under the fader — same horizontal axis as the fader track. */}
+      <div className="flex shrink-0 justify-center">
+        <button
+          type="button"
+          onClick={onTogglePreview}
+          disabled={playDisabled}
+          aria-label={playAriaLabel}
+          className="flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <MixerPlayPauseIcon playing={playing} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -195,7 +200,7 @@ function MixerGainFader({
 
   if (orientation === "horizontal") {
     return (
-      <>
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         <div className="mixer-fader-h-well min-w-0 flex-1">
           <input
             ref={inputRef}
@@ -225,7 +230,7 @@ function MixerGainFader({
         >
           {initialGain}%
         </span>
-      </>
+      </div>
     );
   }
 
@@ -328,20 +333,23 @@ export function MixerChannel({
         {active ? (
           <div className="mt-2 flex min-w-0 items-center gap-2">
             <span className="w-[3.75rem] shrink-0" aria-hidden />
-            <MixerGainFader
-              label={label}
-              initialGain={gain}
-              onLiveGainChange={onLiveGainChange}
-              onGainChange={onGainChange}
-              disabled={faderDisabled}
-              orientation="horizontal"
-            />
-            <MixerRowPlayButton
-              playing={playing}
-              onTogglePreview={onTogglePreview}
-              playDisabled={playDisabled}
-              playAriaLabel={playAriaLabel}
-            />
+            {/* Fader + play share one row; play stays with the fader, not under the label. */}
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <MixerGainFader
+                label={label}
+                initialGain={gain}
+                onLiveGainChange={onLiveGainChange}
+                onGainChange={onGainChange}
+                disabled={faderDisabled}
+                orientation="horizontal"
+              />
+              <MixerRowPlayButton
+                playing={playing}
+                onTogglePreview={onTogglePreview}
+                playDisabled={playDisabled}
+                playAriaLabel={playAriaLabel}
+              />
+            </div>
           </div>
         ) : null}
       </div>
@@ -695,7 +703,7 @@ export function MixerPresetChannel({
   showSave?: boolean;
   modified?: boolean;
   defaultSaveName?: string;
-  layout?: MixerLayout;
+  layout?: MixerPresetLayout;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -735,7 +743,12 @@ export function MixerPresetChannel({
   }
 
   const dropdown = (
-    <div ref={rootRef} className="relative min-w-0 flex-1">
+    <div
+      ref={rootRef}
+      className={`relative min-w-0 ${
+        layout === "toolbar" ? "w-full min-w-[12rem] sm:w-56" : "flex-1"
+      }`}
+    >
       <button
         type="button"
         disabled={disabled || loading}
@@ -748,7 +761,7 @@ export function MixerPresetChannel({
           setOpen((v) => !v);
         }}
         className={`flex w-full min-w-0 items-center gap-2 rounded-xl border border-border bg-surface text-left disabled:opacity-50 ${
-          layout === "row" ? "px-2 py-1.5 text-sm" : "px-2 py-2 text-base"
+          layout === "column" ? "px-2 py-2 text-base" : "px-2 py-1.5 text-sm"
         }`}
       >
         {selectedFactory ? (
@@ -784,9 +797,9 @@ export function MixerPresetChannel({
       {open ? (
         <div
           className={`absolute top-full z-[90] mt-1 max-h-64 min-w-[13rem] overflow-auto rounded-xl border border-border bg-card py-1 shadow-xl ${
-            layout === "row"
-              ? "left-0 right-0"
-              : "left-1/2 -translate-x-1/2"
+            layout === "column"
+              ? "left-1/2 -translate-x-1/2"
+              : "left-0 right-0"
           }`}
           role="listbox"
         >
@@ -867,7 +880,9 @@ export function MixerPresetChannel({
       className={`flex gap-1.5 ${
         layout === "row"
           ? "mt-2 flex-row items-center pl-[4.25rem]"
-          : "h-full min-h-0 flex-col justify-end"
+          : layout === "toolbar"
+            ? "mt-2 flex-row items-center"
+            : "h-full min-h-0 flex-col justify-end"
       }`}
     >
       <label className="sr-only" htmlFor="mixer-save-preset-name">
@@ -897,6 +912,15 @@ export function MixerPresetChannel({
       </button>
     </div>
   ) : null;
+
+  if (layout === "toolbar") {
+    return (
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2">{dropdown}</div>
+        {saveBlock}
+      </div>
+    );
+  }
 
   if (layout === "row") {
     return (

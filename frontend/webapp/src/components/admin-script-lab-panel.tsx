@@ -78,6 +78,7 @@ import {
 import { ScriptLabSegmentPropertiesPanel } from "@/components/script-lab-segment-properties-panel";
 import { AdminPauseLengthsPanel } from "@/components/admin-pause-lengths-panel";
 import { ScriptLabCostStatsPanel } from "@/components/script-lab-cost-stats-panel";
+import { SegmentedPillTabs } from "@/components/segmented-pill-tabs";
 import {
   buildScriptLabCostSummary,
   characterCountsFromBeats,
@@ -1115,22 +1116,12 @@ export function AdminScriptLabPanel() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-display text-lg font-medium">Script preview</h2>
             <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex rounded-full border border-border bg-background p-0.5 text-xs">
-                {PREVIEW_MODES.map(({ id, label }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setPreviewMode(id)}
-                    className={`cursor-pointer rounded-full px-3 py-1 font-medium ${
-                      previewMode === id
-                        ? "bg-accent-soft text-accent-link"
-                        : "text-muted hover:text-foreground"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <SegmentedPillTabs
+                aria-label="Script preview mode"
+                value={previewMode}
+                onChange={setPreviewMode}
+                options={PREVIEW_MODES}
+              />
               <button
                 type="button"
                 disabled={!previewCopyText}
@@ -1492,26 +1483,16 @@ export function AdminScriptLabPanel() {
                 Copy export to clipboard
               </button>
             </div>
-            <div className="mt-3 inline-flex rounded-full border border-border bg-background p-0.5 text-xs">
-              {(
-                [
-                  ["metadata", "Tag metadata"],
-                  ["segments", "Segments + variants"],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setImportMode(id)}
-                  className={`cursor-pointer rounded-full px-3 py-1 font-medium ${
-                    importMode === id
-                      ? "bg-accent-soft text-accent-link"
-                      : "text-muted hover:text-foreground"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="mt-3">
+              <SegmentedPillTabs
+                aria-label="Segment import mode"
+                value={importMode}
+                onChange={setImportMode}
+                options={[
+                  { id: "metadata", label: "Tag metadata" },
+                  { id: "segments", label: "Segments + variants" },
+                ]}
+              />
             </div>
             <p className="mt-2 text-xs text-muted">
               {importMode === "metadata"
@@ -1935,28 +1916,16 @@ export function AdminScriptLabPanel() {
 
         <fieldset className="space-y-1">
           <legend className="text-xs font-medium text-foreground">Generation</legend>
-          <div className="inline-flex rounded-full border border-border bg-background p-0.5 text-xs">
-            {(
-              [
-                { id: "v1" as const, label: "V1 (current)" },
-                { id: "v2" as const, label: "V2 (experimental)" },
-                { id: "v3" as const, label: "V3 (vector)" },
-              ] as const
-            ).map(({ id, label }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setGenerationPath(id)}
-                className={`cursor-pointer rounded-full px-3 py-1 font-medium ${
-                  generationPath === id
-                    ? "bg-accent-soft text-accent-link"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <SegmentedPillTabs
+            aria-label="Generation path"
+            value={generationPath}
+            onChange={setGenerationPath}
+            options={[
+              { id: "v1", label: "V1 (current)" },
+              { id: "v2", label: "V2 (experimental)" },
+              { id: "v3", label: "V3 (vector)" },
+            ]}
+          />
         </fieldset>
 
         <button

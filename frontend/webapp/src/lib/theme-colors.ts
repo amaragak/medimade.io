@@ -57,8 +57,12 @@ const NAV_MUTED = "rgb(255 255 255 / 0.68)";
 const NAV_ACTIVE = "rgb(255 255 255 / 0.14)";
 const NAV_FOREGROUND_LIGHT = "#1E2530";
 const NAV_MUTED_LIGHT = "#5A5648";
-/** Unrated star glyphs. */
-export const STAR_IDLE = "#B5AF9F";
+/** Rated / filled library stars. */
+export const STAR_FILLED = "#D4B080";
+/** Unrated star glyphs — filled gold at 30% opacity. */
+export const STAR_IDLE = "rgb(212 176 128 / 0.3)";
+/** Dark-mode empty stars (slightly higher contrast on navy). */
+export const STAR_IDLE_DARK = "#B5AF9F";
 
 const GOLD_LIGHT = "#F0A855";
 
@@ -88,6 +92,20 @@ const PAPER_DARK = {
   deep: "#0F141A",
   surface: "#2A3544",
 } as const;
+
+/**
+ * Secondary raised surface (sidebar, questions grid cells) — warmer/deeper than
+ * canvas in light; slate panel in dark. Independent of `--card` / card-warm.
+ */
+const SURFACE_2_LIGHT = "#f1ebe0";
+const SURFACE_2_DARK = "#243041";
+
+/**
+ * Light-mode cream mixes shared by journal + create “warm card” tokens so both
+ * start identical; change either assemble() field alone to diverge later.
+ */
+const WARM_CREAM_BG_MIX = 0.94;
+const WARM_CREAM_BORDER_MIX = 0.72;
 
 type Rgb = { r: number; g: number; b: number };
 type Hsl = { h: number; s: number; l: number };
@@ -239,6 +257,8 @@ type Semantic = {
   gold: string;
   deep: string;
   surface: string;
+  /** Secondary raised surface — see SURFACE_2_* (not `--card`). */
+  surface2: string;
   onAccent: string;
   overlay: string;
   nav: string;
@@ -249,6 +269,7 @@ type Semantic = {
   selected: string;
   onSelected: string;
   starIdle: string;
+  starFilled: string;
   danger: string;
   dangerSoft: string;
   success: string;
@@ -289,9 +310,22 @@ type Semantic = {
   marketingMenuBorder: string;
   marketingMenuHover: string;
   marketingMenuMuted: string;
+  /**
+   * Journal editor shell — warm cream in light; brown-tinted panel in dark.
+   * Separate from `--card` (white/slate) and `--card-warm-*` (create flow).
+   */
   journalWarmBg: string;
   journalWarmBorder: string;
   journalWarmInputBg: string;
+  /**
+   * Create-flow / path / mixer warm cards. Light matches journal cream today;
+   * dark matches prior `surface-2` override (not journal’s brown panel).
+   */
+  cardWarmBg: string;
+  cardWarmBorder: string;
+  cardWarmInputBg: string;
+  /** Create audio footer rule — exact prior light rgba; dark = `--border`. */
+  createHairlineBorder: string;
   headerBorder: string;
   headerShadow: string;
   headerGlowSun: string;
@@ -338,11 +372,14 @@ function assemble(
 ): Semantic {
   const brand = brandFromPrimary(PRIMARY, paper, dark);
   const accentButton = dark ? DARK_PRIMARY : ACCENT_BUTTON_FILL;
+  const warmCreamBg = mixHex(PRIMARY, paper.background, WARM_CREAM_BG_MIX);
+  const warmCreamBorder = mixHex(PRIMARY, paper.background, WARM_CREAM_BORDER_MIX);
   return {
     ...paper,
     ...brand,
     accentButton,
     gold,
+    surface2: dark ? SURFACE_2_DARK : SURFACE_2_LIGHT,
     overlay: BLACK,
     accentLink: dark ? DARK_PRIMARY : ACCENT_LINK,
     nav: dark ? NAV : NAV_LIGHT,
@@ -354,7 +391,8 @@ function assemble(
     // Light: Pro/button gold for active fills. Dark: navy selected.
     selected: dark ? NAV : ACCENT_BUTTON_FILL,
     onSelected: dark ? WHITE : ON_ACCENT,
-    starIdle: STAR_IDLE,
+    starIdle: dark ? STAR_IDLE_DARK : STAR_IDLE,
+    starFilled: STAR_FILLED,
     danger: dark ? mixHex(DANGER, WHITE, 0.35) : DANGER,
     dangerSoft: dark ? mixHex(DANGER, BLACK, 0.78) : mixHex(DANGER, WHITE, 0.92),
     success: dark ? mixHex(SUCCESS, WHITE, 0.2) : SUCCESS,
@@ -413,13 +451,14 @@ function assemble(
     marketingMenuBorder: dark ? "rgba(255,255,255,0.15)" : "#D8D2C4",
     marketingMenuHover: dark ? "rgba(255,255,255,0.1)" : "#F4F0E8",
     marketingMenuMuted: dark ? "#C8C0B2" : "#5A5548",
-    journalWarmBg: dark
-      ? "#2A261F"
-      : mixHex(PRIMARY, paper.background, 0.94),
-    journalWarmBorder: dark
-      ? "#5A4F3A"
-      : mixHex(PRIMARY, paper.background, 0.72),
+    journalWarmBg: dark ? "#2A261F" : warmCreamBg,
+    journalWarmBorder: dark ? "#5A4F3A" : warmCreamBorder,
     journalWarmInputBg: dark ? "#1C1914" : "#FFFFFF",
+    // Create warm cards: light = cream; dark = former dark:bg-surface-2 / border.
+    cardWarmBg: dark ? SURFACE_2_DARK : warmCreamBg,
+    cardWarmBorder: dark ? paper.border : warmCreamBorder,
+    cardWarmInputBg: dark ? rgba(paper.background, 0.4) : "#FFFFFF",
+    createHairlineBorder: dark ? paper.border : "rgba(180, 140, 80, 0.2)",
     headerBorder: dark ? "rgba(255,255,255,0.1)" : "#E5E0D2",
     headerShadow: dark
       ? "0 4px 18px rgb(20 28 38 / 0.28)"
@@ -506,6 +545,7 @@ function varsFor(s: Semantic, dark: boolean): Record<string, string> {
     "--gold": s.gold,
     "--deep": s.deep,
     "--surface": s.surface,
+    "--surface-2": s.surface2,
     "--on-accent": s.onAccent,
     "--overlay": s.overlay,
     "--nav": s.nav,
@@ -515,6 +555,7 @@ function varsFor(s: Semantic, dark: boolean): Record<string, string> {
     "--selected": s.selected,
     "--on-selected": s.onSelected,
     "--star-idle": s.starIdle,
+    "--star-filled": s.starFilled,
     "--danger": s.danger,
     "--danger-soft": s.dangerSoft,
     "--success": s.success,
@@ -559,6 +600,10 @@ function varsFor(s: Semantic, dark: boolean): Record<string, string> {
     "--journal-warm-bg": s.journalWarmBg,
     "--journal-warm-border": s.journalWarmBorder,
     "--journal-warm-input-bg": s.journalWarmInputBg,
+    "--card-warm-bg": s.cardWarmBg,
+    "--card-warm-border": s.cardWarmBorder,
+    "--card-warm-input-bg": s.cardWarmInputBg,
+    "--create-hairline-border": s.createHairlineBorder,
     "--header-border": s.headerBorder,
     "--header-shadow": s.headerShadow,
     "--header-glow-sun": s.headerGlowSun,

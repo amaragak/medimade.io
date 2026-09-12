@@ -210,7 +210,7 @@ export function VoiceCardRow({
     "w-12 shrink-0 text-xs font-semibold uppercase tracking-[0.12em] text-foreground";
 
   return (
-    <section className="mb-7 border-b border-journal-warm-border pb-7 dark:border-border">
+    <section className="mb-7 border-b border-border pb-7">
       {expanded ? (
         <>
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -244,10 +244,10 @@ export function VoiceCardRow({
                       : `Select and play ${voice.name}`
                   }
                   onClick={() => activateVoice(voice.modelId)}
-                  className={`cursor-pointer rounded-[6px] border p-3.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                  className={`cursor-pointer rounded-[6px] border-2 p-3.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                     selected
-                      ? "border-accent bg-journal-warm-bg dark:border-accent dark:bg-surface-2"
-                      : "border-journal-warm-border bg-journal-warm-bg hover:border-accent/40 dark:border-border dark:bg-surface-2 dark:hover:border-accent/40"
+                      ? "border-accent bg-card"
+                      : "border-border bg-card hover:border-accent/40"
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
@@ -305,10 +305,10 @@ export function VoiceCardRow({
                       : `Select and play ${voice.name}`
                   }
                   onClick={() => activateVoice(voice.modelId)}
-                  className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-2 transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                  className={`inline-flex shrink-0 items-center gap-2 rounded-full border-2 px-3.5 py-2 transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                     selected
-                      ? "border-accent bg-journal-warm-bg dark:border-accent dark:bg-surface-2"
-                      : "border-journal-warm-border bg-journal-warm-bg dark:border-border dark:bg-surface-2"
+                      ? "border-accent bg-card"
+                      : "border-border bg-card"
                   }`}
                 >
                   <span

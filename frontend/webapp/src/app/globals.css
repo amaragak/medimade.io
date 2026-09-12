@@ -8,8 +8,6 @@
   --site-header-h: 3.5rem;
   /* App content column — matches Tailwind `max-w-6xl` (72rem). */
   --content-max-width: 72rem;
-  /* Slightly warmer/deeper than canvas — questions grid cells. */
-  --surface-2: #f1ebe0;
   /*
    * Ideate vision-board frosted overlays (hero + mood board chips).
    * Tune --ideate-overlay-bg-opacity after checking brightest/darkest tiles.
@@ -21,7 +19,6 @@
 }
 
 :root.dark {
-  --surface-2: #243041;
   /* Slightly heavier frosted tint on dark UI / brighter tile edges */
   --ideate-overlay-bg-opacity: 0.4;
   color-scheme: dark;
@@ -70,6 +67,7 @@
   --color-selected: var(--selected);
   --color-on-selected: var(--on-selected);
   --color-star-idle: var(--star-idle);
+  --color-star-filled: var(--star-filled);
   --color-danger: var(--danger);
   --color-danger-soft: var(--danger-soft);
   --color-success: var(--success);
@@ -105,6 +103,10 @@
   --color-journal-warm-bg: var(--journal-warm-bg);
   --color-journal-warm-border: var(--journal-warm-border);
   --color-journal-warm-input-bg: var(--journal-warm-input-bg);
+  --color-card-warm-bg: var(--card-warm-bg);
+  --color-card-warm-border: var(--card-warm-border);
+  --color-card-warm-input-bg: var(--card-warm-input-bg);
+  --color-create-hairline: var(--create-hairline-border);
   --font-sans: var(--font-dm-sans);
   --font-display: var(--font-fraunces);
 }
@@ -617,22 +619,15 @@ body {
   background-color: var(--life-area-bg-dark);
 }
 
-/* Create meditation path cards — warm cream in light; navy surface-2 in dark. */
+/* Create path cards — chrome via Tailwind bg-card; class keeps hover accent bar. */
 .create-path-card {
   position: relative;
   overflow: hidden;
-  border-radius: 1rem; /* rounded-2xl */
-  border: 1px solid var(--journal-warm-border);
-  background-color: var(--journal-warm-bg);
   box-shadow: none;
   transition:
     transform 150ms ease,
     border-color 150ms ease,
     background-color 150ms ease;
-}
-.dark .create-path-card {
-  border-color: var(--border);
-  background-color: var(--surface-2);
 }
 .create-path-card::before {
   content: "";
@@ -648,12 +643,8 @@ body {
 }
 .create-path-card:hover:not(:disabled):not([aria-disabled="true"]),
 .create-path-card[aria-pressed="true"] {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--journal-warm-border));
-  transform: translateY(-1px);
-}
-.dark .create-path-card:hover:not(:disabled):not([aria-disabled="true"]),
-.dark .create-path-card[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  transform: translateY(-1px);
 }
 .create-path-card:hover:not(:disabled):not([aria-disabled="true"])::before,
 .create-path-card[aria-pressed="true"]::before {
@@ -674,12 +665,9 @@ body {
 }
 .create-path-card-placeholder {
   min-height: 100%;
-  border-radius: 1rem;
-  border: 1px dashed color-mix(in srgb, var(--journal-warm-border) 85%, var(--muted));
+  border-radius: 6px;
+  border: 1px dashed color-mix(in srgb, var(--border) 85%, var(--muted));
   background: transparent;
-}
-.dark .create-path-card-placeholder {
-  border-color: color-mix(in srgb, var(--border) 85%, var(--muted));
 }
 
 main[data-page-kind="standard"] {

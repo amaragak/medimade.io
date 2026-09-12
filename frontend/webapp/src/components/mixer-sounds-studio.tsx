@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { ChevronLeft } from "lucide-react";
+import { ChevronDown, ChevronLeft, MoreHorizontal } from "lucide-react";
 import { IconPlus } from "@tabler/icons-react";
 import { MixerChannel, MixerVoiceChannel } from "@/components/mixer-channel";
 import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
@@ -156,6 +156,20 @@ export function MixerSoundsStudio({
   const [factoryPreviewId, setFactoryPreviewId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [mixMenuId, setMixMenuId] = useState<string | null>(null);
+  const [mixMenuPos, setMixMenuPos] = useState<{
+    top: number;
+    right: number;
+  } | null>(null);
+  const mixMenuRef = useRef<HTMLDivElement | null>(null);
+  const [factoryPresetsOpen, setFactoryPresetsOpen] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return window.localStorage.getItem("mm_sounds_factory_open_v1") !== "0";
+    } catch {
+      return true;
+    }
+  });
 
   const [backgroundNature, setBackgroundNature] = useState<BackgroundAudioItem[]>(
     [],
@@ -214,6 +228,62 @@ export function MixerSoundsStudio({
       noise: mix.noiseGain,
     };
   }, [mix.natureGain, mix.musicGain, mix.drumsGain, mix.noiseGain]);
+
+  useEffect(() => {
+    if (!mixMenuId) return;
+    function onDoc(e: MouseEvent) {
+      const t = e.target as Node | null;
+      if (mixMenuRef.current?.contains(t)) return;
+      if (
+        t instanceof Element &&
+        t.closest("[data-mix-menu-trigger]")
+      ) {
+        return;
+      }
+      setMixMenuId(null);
+      setMixMenuPos(null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setMixMenuId(null);
+        setMixMenuPos(null);
+      }
+    }
+    function onReposition() {
+      setMixMenuId(null);
+      setMixMenuPos(null);
+    }
+    // Defer so the opening click doesn’t immediately close the menu.
+    const t = window.setTimeout(() => {
+      document.addEventListener("mousedown", onDoc);
+      document.addEventListener("keydown", onKey);
+      window.addEventListener("resize", onReposition);
+      window.addEventListener("scroll", onReposition, true);
+    }, 0);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", onReposition);
+      window.removeEventListener("scroll", onReposition, true);
+    };
+  }, [mixMenuId]);
+
+  function closeMixMenu() {
+    setMixMenuId(null);
+    setMixMenuPos(null);
+  }
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "mm_sounds_factory_open_v1",
+        factoryPresetsOpen ? "1" : "0",
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [factoryPresetsOpen]);
 
   function applyLiveBedGain(track: BedTrack, gain: number) {
     bedGainRef.current[track] = gain;
@@ -929,6 +999,39 @@ export function MixerSoundsStudio({
     }
   }
 
+  function renameUserMix(id: string) {
+    const current = presets.find((p) => p.id === id);
+    if (!current) return;
+    closeMixMenu();
+    const next = window.prompt("Rename mix", current.name);
+    if (next == null) return;
+    const name = next.trim().slice(0, 80) || "Untitled mix";
+    const now = new Date().toISOString();
+    setPresets((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, name, updatedAt: now } : p)),
+    );
+    if (activeId === id) setNameDraft(name);
+  }
+
+  function deleteUserMix(id: string) {
+    const current = presets.find((p) => p.id === id);
+    if (!current) return;
+    closeMixMenu();
+    if (!window.confirm(`Delete “${current.name}”? This can’t be undone.`)) {
+      return;
+    }
+    setPresets((prev) => prev.filter((p) => p.id !== id));
+    if (activeId === id) {
+      stopFactoryPreview();
+      stopAll();
+      setActiveId(null);
+      setLoadedFactoryId(null);
+      setNameDraft("Untitled mix");
+      setMix(emptyMixerMix());
+      openSoundsList();
+    }
+  }
+
   function patchMix(partial: Partial<MixerPresetMix>) {
     const next = { ...mix, ...partial };
     setMix(next);
@@ -972,27 +1075,57 @@ export function MixerSoundsStudio({
       <audio ref={factoryDrumsRef} className="hidden" playsInline />
       <audio ref={factoryNoiseRef} className="hidden" playsInline />
 
-      <div
-        className={`mb-3 flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 ${
-          mobileEditorOpen ? "max-sm:hidden" : ""
-        }`}
-      >
-        {isAdmin ? (
+      {mixMenuId && mixMenuPos ? (
+        <div
+          ref={mixMenuRef}
+          role="menu"
+          style={{
+            position: "fixed",
+            top: mixMenuPos.top,
+            right: mixMenuPos.right,
+          }}
+          className="z-[200] min-w-[9.5rem] overflow-hidden rounded-xl border border-border bg-card py-1 shadow-xl"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => renameUserMix(mixMenuId)}
+            className="flex w-full cursor-pointer px-3 py-2 text-left text-sm text-foreground hover:bg-background"
+          >
+            Rename
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => deleteUserMix(mixMenuId)}
+            className="flex w-full cursor-pointer px-3 py-2 text-left text-sm text-danger hover:bg-background"
+          >
+            Delete
+          </button>
+        </div>
+      ) : null}
+
+      {isAdmin ? (
+        <div
+          className={`mb-3 flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 ${
+            mobileEditorOpen ? "max-sm:hidden" : ""
+          }`}
+        >
           <p className="text-sm text-muted">
             Factory presets shown on the Sounds page. Save publishes to everyone.
           </p>
-        ) : null}
-        <button
-          type="button"
-          onClick={createNew}
-          className="ml-auto inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 sm:px-3"
-          aria-label="New mix"
-        >
-          <IconPlus size={18} stroke={2} className="sm:hidden" aria-hidden />
-          <span className="sm:hidden">New</span>
-          <span className="hidden sm:inline">+ New mix</span>
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={createNew}
+            className="ml-auto inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 sm:px-3"
+            aria-label="New mix"
+          >
+            <IconPlus size={18} stroke={2} className="sm:hidden" aria-hidden />
+            <span className="sm:hidden">New</span>
+            <span className="hidden sm:inline">+ New mix</span>
+          </button>
+        </div>
+      ) : null}
 
       {mobileEditorOpen ? (
         <div className="mb-3 flex shrink-0 items-center justify-between gap-2 sm:hidden">
@@ -1023,70 +1156,129 @@ export function MixerSoundsStudio({
             }
           >
             <div>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                Factory presets
-              </h2>
-              {factoryPresetsLoading ? (
-                <FactoryPresetListSkeleton />
-              ) : factoryPresets.length === 0 ? (
-                <p className="text-sm text-muted">
-                  {isAdmin
-                    ? "No factory mixes yet. Start with + New mix, then Save."
-                    : "No factory mixes yet."}
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {factoryPresets.map((p) => (
-                    <li key={p.id}>
-                      <FactoryPresetRow
-                        preset={p}
-                        loaded={p.id === loadedFactoryId}
-                        previewing={p.id === factoryPreviewId}
-                        onLoad={() => applyFactoryPreset(p)}
-                        onPreview={() => void toggleFactoryPreview(p)}
-                      />
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <button
+                type="button"
+                onClick={() => setFactoryPresetsOpen((o) => !o)}
+                aria-expanded={factoryPresetsOpen}
+                className="mb-2 flex w-full cursor-pointer items-center justify-between gap-2 text-left"
+              >
+                <span className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  Factory presets
+                </span>
+                <ChevronDown
+                  aria-hidden
+                  className={`size-4 shrink-0 text-muted transition-transform ${
+                    factoryPresetsOpen ? "rotate-0" : "-rotate-90"
+                  }`}
+                  strokeWidth={2}
+                />
+              </button>
+              {factoryPresetsOpen ? (
+                factoryPresetsLoading ? (
+                  <FactoryPresetListSkeleton />
+                ) : factoryPresets.length === 0 ? (
+                  <p className="text-sm text-muted">
+                    {isAdmin
+                      ? "No factory mixes yet. Start with + New mix, then Save."
+                      : "No factory mixes yet."}
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {factoryPresets.map((p) => (
+                      <li key={p.id}>
+                        <FactoryPresetRow
+                          preset={p}
+                          loaded={p.id === loadedFactoryId}
+                          previewing={p.id === factoryPreviewId}
+                          onLoad={() => applyFactoryPreset(p)}
+                          onPreview={() => void toggleFactoryPreview(p)}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )
+              ) : null}
             </div>
 
             {isAdmin ? null : (
               <div className="border-t-[0.5px] border-solid border-border pt-4">
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                Your mixes
-              </h2>
-              {!hydrated ? (
-                <p className="text-sm text-muted">Loading…</p>
-              ) : presets.length === 0 ? (
-                <p className="text-sm text-muted">
-                  Nothing saved yet — start from a preset above, or build your
-                  own with + New mix.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {presets.map((p) => {
-                    const isActive = p.id === activeId;
-                    return (
-                      <li key={p.id}>
-                        <button
-                          type="button"
-                          onClick={() => applyPreset(p)}
-                          className={`w-full cursor-pointer rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                            isActive
-                              ? "border-border border-l-[3px] border-l-accent bg-card text-foreground shadow-sm"
-                              : "border-border bg-background text-foreground hover:border-accent/40"
-                          }`}
-                        >
-                          <span className="line-clamp-2 text-sm font-semibold">
-                            {p.name}
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-muted">
+                    Your mixes
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={createNew}
+                    className="inline-flex shrink-0 cursor-pointer items-center justify-center gap-1 rounded-lg accent-fill-gradient px-2.5 py-1.5 text-xs font-semibold text-on-accent transition-opacity hover:opacity-90"
+                    aria-label="New mix"
+                  >
+                    <IconPlus size={14} stroke={2} aria-hidden />
+                    <span>New mix</span>
+                  </button>
+                </div>
+                {!hydrated ? (
+                  <p className="text-sm text-muted">Loading…</p>
+                ) : presets.length === 0 ? (
+                  <p className="text-sm text-muted">
+                    Nothing saved yet — start from a preset above, or build your
+                    own with New mix.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {presets.map((p) => {
+                      const isActive = p.id === activeId;
+                      const menuOpen = mixMenuId === p.id;
+                      return (
+                        <li key={p.id} className="relative">
+                          <div
+                            className={`flex items-stretch rounded-xl border transition-colors ${
+                              isActive
+                                ? "border-border border-l-[3px] border-l-accent bg-card text-foreground shadow-sm"
+                                : "border-border bg-background text-foreground hover:border-accent/40"
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => applyPreset(p)}
+                              className="min-w-0 flex-1 cursor-pointer px-3 py-2.5 text-left"
+                            >
+                              <span className="line-clamp-2 text-sm font-semibold">
+                                {p.name}
+                              </span>
+                            </button>
+                            <div className="relative shrink-0">
+                              <button
+                                type="button"
+                                data-mix-menu-trigger
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  if (mixMenuId === p.id) {
+                                    closeMixMenu();
+                                    return;
+                                  }
+                                  const rect =
+                                    e.currentTarget.getBoundingClientRect();
+                                  setMixMenuPos({
+                                    top: rect.bottom + 4,
+                                    right: window.innerWidth - rect.right,
+                                  });
+                                  setMixMenuId(p.id);
+                                }}
+                                aria-label={`Actions for ${p.name}`}
+                                aria-expanded={menuOpen}
+                                aria-haspopup="menu"
+                                className="flex h-full min-h-[2.75rem] cursor-pointer items-center px-2 text-muted transition-colors hover:text-foreground"
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             )}
           </nav>

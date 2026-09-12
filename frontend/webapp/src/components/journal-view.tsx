@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { JournalInsightsView } from "@/components/journal-insights-view";
@@ -27,6 +26,7 @@ import { SearchInput } from "@/components/search-input";
 import { Calendar, ChevronLeft, Folder, Import } from "lucide-react";
 import { JournalLockGate } from "@/components/journal-lock-gate";
 import { AppPrimaryTabsDesktop } from "@/components/app-primary-tabs";
+import { SegmentedPillTabs } from "@/components/segmented-pill-tabs";
 import {
   fetchJournalStoreRemote,
   getMedimadeApiBase,
@@ -74,6 +74,12 @@ const JOURNAL_SECTION_HREF = {
   gratitude: "/journal/my/gratitudes",
   insights: "/journal/my/insights",
 } as const;
+
+const JOURNAL_SECTION_TABS = [
+  { id: "journal" as const, label: "Journal" },
+  { id: "gratitude" as const, label: "Gratitudes" },
+  { id: "insights" as const, label: "Insights" },
+];
 
 function journalSectionFromPath(pathname: string): JournalSection {
   if (
@@ -1203,98 +1209,28 @@ export function JournalView() {
         }`}
       >
         <AppPrimaryTabsDesktop>
-          <div
-            className="inline-flex max-w-full flex-nowrap rounded-xl border border-border bg-background p-1"
-            role="tablist"
+          <SegmentedPillTabs
             aria-label="Journal section"
-          >
-            <Link
-              href={JOURNAL_SECTION_HREF.journal}
-              role="tab"
-              aria-selected={section === "journal"}
-              onClick={() => flushSaveSync()}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                section === "journal"
-                  ? "bg-selected text-on-selected"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              Journal
-            </Link>
-            <Link
-              href={JOURNAL_SECTION_HREF.gratitude}
-              role="tab"
-              aria-selected={section === "gratitude"}
-              onClick={() => flushSaveSync()}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                section === "gratitude"
-                  ? "bg-selected text-on-selected"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              Gratitudes
-            </Link>
-            <Link
-              href={JOURNAL_SECTION_HREF.insights}
-              role="tab"
-              aria-selected={section === "insights"}
-              onClick={() => flushSaveSync()}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                section === "insights"
-                  ? "bg-selected text-on-selected"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              Insights
-            </Link>
-          </div>
+            value={section}
+            onChange={(id) => {
+              flushSaveSync();
+              router.push(JOURNAL_SECTION_HREF[id]);
+            }}
+            options={JOURNAL_SECTION_TABS}
+          />
         </AppPrimaryTabsDesktop>
         <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 md:hidden">
-          <div
-            className="inline-flex max-w-full flex-wrap rounded-xl border border-border bg-background p-1"
-            role="tablist"
+          <SegmentedPillTabs
+            className="min-w-0 flex-1"
+            equalWidth
             aria-label="Journal section"
-          >
-            <Link
-              href={JOURNAL_SECTION_HREF.journal}
-              role="tab"
-              aria-selected={section === "journal"}
-              onClick={() => flushSaveSync()}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                section === "journal"
-                  ? "bg-selected text-on-selected"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              Journal
-            </Link>
-            <Link
-              href={JOURNAL_SECTION_HREF.gratitude}
-              role="tab"
-              aria-selected={section === "gratitude"}
-              onClick={() => flushSaveSync()}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                section === "gratitude"
-                  ? "bg-selected text-on-selected"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              Gratitudes
-            </Link>
-            <Link
-              href={JOURNAL_SECTION_HREF.insights}
-              role="tab"
-              aria-selected={section === "insights"}
-              onClick={() => flushSaveSync()}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                section === "insights"
-                  ? "bg-selected text-on-selected"
-                  : "text-muted hover:text-foreground"
-              }`}
-            >
-              Insights
-            </Link>
-          </div>
+            value={section}
+            onChange={(id) => {
+              flushSaveSync();
+              router.push(JOURNAL_SECTION_HREF[id]);
+            }}
+            options={JOURNAL_SECTION_TABS}
+          />
         </div>
         {importBatchId ? (
           <p className="mt-2 text-sm text-muted">

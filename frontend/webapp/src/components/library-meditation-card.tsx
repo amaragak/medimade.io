@@ -2,14 +2,58 @@
 
 import Link from "next/link";
 import * as Switch from "@radix-ui/react-switch";
-import { type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { ChatMarkdown } from "@/components/chat-markdown";
 import {
   type LibraryMeditationItem,
   libraryMeditationCategoryLabel,
 } from "@/lib/medimade-api";
+import {
+  MEDITATION_TYPE_PILL_CLASS,
+  meditationTypePillColors,
+} from "@/lib/meditation-type-pill";
 import { type PendingLibraryGeneration } from "@/lib/pending-library-generations";
 import { stripPauseMarkers } from "@/lib/meditation-analytics";
+
+function MeditationTypePill({
+  label,
+  className = "",
+}: {
+  label: string;
+  className?: string;
+}) {
+  const colors = meditationTypePillColors(label);
+  return (
+    <span
+      className={`${MEDITATION_TYPE_PILL_CLASS} ${className}`}
+      style={{ backgroundColor: colors.bg, color: colors.fg }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function IconDotsHorizontal({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="currentColor"
+      aria-hidden
+    >
+      <circle cx="4" cy="12" r="2.15" />
+      <circle cx="12" cy="12" r="2.15" />
+      <circle cx="20" cy="12" r="2.15" />
+    </svg>
+  );
+}
 
 export function formatAudioClock(sec: number): string {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
@@ -182,8 +226,8 @@ export function LibraryMeditationCard({
   onTogglePlay,
   scriptExpanded = false,
   onToggleScript,
-  mobileOpen = false,
-  onToggleMobile,
+  mobileOpen: _mobileOpen = false,
+  onToggleMobile: _onToggleMobile,
   ratingBusy = false,
   favouriteBusy = false,
   archiveBusy = false,
@@ -200,6 +244,26 @@ export function LibraryMeditationCard({
   itemRef,
   devOverlay,
 }: LibraryMeditationCardProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
   if (isPendingRow(item)) {
     const isFailed = item.status === "failed";
     const spinner = (
@@ -233,7 +297,7 @@ export function LibraryMeditationCard({
     return (
       <li
         ref={itemRef}
-        className={`relative min-w-0 overflow-hidden rounded-2xl border p-4 shadow-sm ${
+        className={`relative min-w-0 overflow-hidden rounded-[6px] border p-4 shadow-sm ${
           isFailed
             ? "border-danger/35 bg-danger/5"
             : "border-accent/35 bg-accent-soft/20"
@@ -320,7 +384,7 @@ export function LibraryMeditationCard({
       return (
         <li
           ref={itemRef}
-          className="group relative flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card p-5 shadow-sm"
+          className="group relative flex min-w-0 flex-col overflow-hidden rounded-[6px] border border-border bg-card p-5 shadow-sm"
         >
           <p className="text-xs font-medium uppercase tracking-wide text-muted">
             Draft
@@ -339,11 +403,11 @@ export function LibraryMeditationCard({
     return (
       <li
         ref={itemRef}
-        className="group relative min-w-0 overflow-hidden rounded-2xl border border-border bg-card p-4 shadow-sm"
+        className="group relative min-w-0 overflow-hidden rounded-[6px] border border-border bg-card p-4"
       >
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1">
-            <span className="inline-block rounded-full border border-border bg-accent-soft/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
+            <span className="inline-block rounded-[10px] border border-border bg-background px-[9px] py-[3px] text-[10px] font-medium uppercase tracking-[0.06em] text-muted">
               Draft
             </span>
             <h2 className="font-display mt-2 text-lg font-medium leading-snug">
@@ -376,9 +440,9 @@ export function LibraryMeditationCard({
           type="button"
           disabled={!m.sk || ratingBusy || ratingDisabled}
           onClick={() => onRating?.(m.rating === star ? null : star)}
-          className={`rounded px-0.5 text-base leading-none sm:text-lg ${
+          className={`rounded px-0.5 text-[13px] leading-none ${
             m.rating != null && star <= m.rating
-              ? "text-accent"
+              ? "text-star-filled"
               : "text-star-idle"
           } ${!m.sk || ratingDisabled ? "cursor-not-allowed opacity-40" : ""}`}
           title={
@@ -396,144 +460,23 @@ export function LibraryMeditationCard({
   ) : null;
 
   const favouriteDisabled = !m.sk || favouriteBusy;
-  const favouriteBtn = hideOwnerActions ? null : (
-    <button
-      type="button"
-      onClick={() => onFavourite?.(!m.favourite)}
-      disabled={favouriteDisabled}
-      aria-label={m.favourite ? "Unfavourite meditation" : "Favourite meditation"}
-      className={`self-center items-center justify-center p-1 transition-opacity transition-colors ${
-        m.favourite || alwaysShowRowChrome
-          ? "opacity-100 pointer-events-auto"
-          : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
-      } ${
-        m.favourite ? "text-selected" : "text-muted"
-      } ${
-        favouriteDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-      }`}
-    >
-      <IconHeart filled={m.favourite} strokeWidth={2.5} />
-    </button>
-  );
-
   const canEditMix = m.liveMix === true && Boolean(m.sk) && !m.isDraft;
-  const mixerBtn =
-    canEditMix && onOpenMix ? (
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (mixEditorSk === m.sk) {
-            onCloseMix?.();
-            return;
-          }
-          onOpenMix(e.currentTarget);
-        }}
-        aria-expanded={mixEditorSk === m.sk}
-        aria-label="Edit background mix"
-        className={`self-center items-center justify-center p-1 text-muted transition-opacity ${
-          alwaysShowRowChrome || mixEditorSk === m.sk
-            ? "opacity-100 pointer-events-auto"
-            : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto"
-        } cursor-pointer`}
-      >
-        <IconMixer />
-      </button>
-    ) : null;
-
   const archiveDisabled = !m.sk || archiveBusy || ratingBusy || favouriteBusy;
   const publicDisabled = !m.sk;
-  const rowChrome = alwaysShowRowChrome
-    ? "opacity-100 pointer-events-auto"
-    : "opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto";
-  const publicBtn =
-    !hideOwnerActions && m.sk && !m.isDraft && onPublicChange ? (
-      <div
-        className={`flex items-center gap-2 transition-opacity ${rowChrome} ${
-          publicDisabled ? "cursor-not-allowed opacity-50" : ""
-        }`}
-        title={
-          m.isPublic === true
-            ? "Public — in Community"
-            : "Make public in Community"
-        }
-      >
-        <span
-          className={`text-[11px] font-medium tracking-wide ${
-            m.isPublic === true ? "text-accent-link" : "text-muted"
-          }`}
-        >
-          Public
-        </span>
-        <Switch.Root
-          checked={m.isPublic === true}
-          onCheckedChange={(v) => onPublicChange(Boolean(v))}
-          disabled={publicDisabled}
-          aria-label={
-            m.isPublic ? "Remove from community library" : "Make public"
-          }
-          className="relative h-5 w-9 shrink-0 rounded-full border border-border bg-muted/40 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed"
-        >
-          <Switch.Thumb className="block h-4 w-4 translate-x-[2px] rounded-full bg-surface shadow-sm transition-transform will-change-transform data-[state=checked]:translate-x-[16px]" />
-        </Switch.Root>
-      </div>
-    ) : null;
-  const archiveBtn =
-    hideOwnerActions || !onArchive ? null : (
-      <button
-        type="button"
-        onClick={() => {
-          if (!m.sk) return;
-          onArchive();
-        }}
-        disabled={archiveDisabled}
-        aria-label="Archive meditation"
-        className={`rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted transition-opacity transition-colors hover:border-accent/40 hover:text-foreground ${rowChrome} ${
-          archiveDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-        }`}
-        title="Archive"
-      >
-        Archive
-      </button>
-    );
-
   const shareId = m.id?.trim() || "";
-  const shareBtn =
-    allowShare && shareId && onShare ? (
-      <button
-        type="button"
-        onClick={onShare}
-        aria-label="Copy share link"
-        className={`rounded-lg border border-border bg-background px-2.5 py-1 text-xs font-semibold text-muted transition-opacity transition-colors hover:border-accent/40 hover:text-foreground ${
-          !showRating ? "" : rowChrome
-        } cursor-pointer`}
-        title={
-          shareCopiedId === shareId
-            ? "Link copied"
-            : "Copy link to this meditation"
-        }
-      >
-        {shareCopiedId === shareId ? "Copied!" : "Share"}
-      </button>
-    ) : null;
-
-  const scriptToggleBtn =
-    m.scriptText && m.sk != null && onToggleScript ? (
-      <button
-        type="button"
-        onClick={onToggleScript}
-        className={`ml-2 ${
-          open
-            ? "inline-flex"
-            : alwaysShowRowChrome
-              ? "inline-flex"
-              : "hidden group-hover:inline-flex"
-        } items-center font-bold text-accent-link hover:text-accent-link/80 cursor-pointer`}
-        style={{ lineHeight: "1.35" }}
-      >
-        {open ? "hide script" : "show script"}
-      </button>
-    ) : null;
+  const canShare = Boolean(allowShare && shareId && onShare);
+  const canFavourite = !hideOwnerActions && Boolean(onFavourite);
+  const canArchive = !hideOwnerActions && Boolean(onArchive);
+  const canPublic =
+    !hideOwnerActions && Boolean(m.sk) && !m.isDraft && Boolean(onPublicChange);
+  const canScript = Boolean(m.scriptText && m.sk != null && onToggleScript);
+  const hasMenuItems =
+    canFavourite ||
+    (canEditMix && Boolean(onOpenMix)) ||
+    canPublic ||
+    canArchive ||
+    canShare ||
+    canScript;
 
   const playControl = isPlaying ? (
     <div className="flex items-center gap-2">
@@ -580,47 +523,157 @@ export function LibraryMeditationCard({
     </button>
   );
 
-  const actions = (
-    <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
-      {playControl}
-    </div>
-  );
+  const menuItemClass =
+    "flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-background disabled:cursor-not-allowed disabled:opacity-40";
 
-  const mobileFavouriteBtn = hideOwnerActions ? null : (
-    <button
-      type="button"
-      onClick={() => onFavourite?.(!m.favourite)}
-      disabled={favouriteDisabled}
-      aria-label={m.favourite ? "Unfavourite meditation" : "Favourite meditation"}
-      className={`flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full border border-border bg-background transition-colors ${
-        m.favourite ? "text-selected border-selected/40" : "text-muted"
-      } ${
-        favouriteDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-      }`}
-    >
-      <IconHeart filled={m.favourite} strokeWidth={2.5} />
-    </button>
-  );
-
-  const mobileMixerBtn =
-    canEditMix && onOpenMix ? (
+  const cardMenu = hasMenuItems ? (
+    <div ref={menuRef} className="relative shrink-0">
       <button
+        ref={menuButtonRef}
         type="button"
         onClick={(e) => {
           e.stopPropagation();
-          if (mixEditorSk === m.sk) {
-            onCloseMix?.();
-            return;
-          }
-          onOpenMix(e.currentTarget);
+          setMenuOpen((v) => !v);
         }}
-        aria-expanded={mixEditorSk === m.sk}
-        aria-label="Edit background mix"
-        className="flex h-[38px] w-[38px] shrink-0 cursor-pointer items-center justify-center rounded-full border border-border bg-background text-muted"
+        aria-label="More actions"
+        aria-expanded={menuOpen}
+        aria-haspopup="menu"
+        className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-muted transition-colors hover:bg-background/80 hover:text-foreground"
       >
-        <IconMixer />
+        <IconDotsHorizontal />
       </button>
-    ) : null;
+      {menuOpen ? (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-[90] mt-1 min-w-[12.5rem] overflow-hidden rounded-xl border border-border bg-card py-1 shadow-xl"
+        >
+          {canFavourite ? (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={favouriteDisabled}
+              onClick={() => {
+                onFavourite?.(!m.favourite);
+                setMenuOpen(false);
+              }}
+              className={menuItemClass}
+            >
+              <IconHeart
+                filled={m.favourite}
+                strokeWidth={2.5}
+                className="h-4 w-4"
+              />
+              <span>{m.favourite ? "Unfavourite" : "Favourite"}</span>
+            </button>
+          ) : null}
+          {canEditMix && onOpenMix ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const anchor = menuButtonRef.current;
+                setMenuOpen(false);
+                if (!anchor) return;
+                if (mixEditorSk === m.sk) {
+                  onCloseMix?.();
+                  return;
+                }
+                onOpenMix(anchor);
+              }}
+              className={menuItemClass}
+            >
+              <IconMixer className="h-4 w-4" />
+              <span>{mixEditorSk === m.sk ? "Close mix" : "Edit mix"}</span>
+            </button>
+          ) : null}
+          {canScript ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onToggleScript?.();
+                setMenuOpen(false);
+              }}
+              className={menuItemClass}
+            >
+              {open ? "Hide script" : "Show script"}
+            </button>
+          ) : null}
+          {canShare ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                onShare?.();
+                setMenuOpen(false);
+              }}
+              className={menuItemClass}
+            >
+              {shareCopiedId === shareId ? "Copied!" : "Share"}
+            </button>
+          ) : null}
+          {canPublic ? (
+            <div
+              role="menuitem"
+              className="flex items-center justify-between gap-3 px-3 py-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span
+                className={`text-sm ${
+                  m.isPublic === true ? "text-accent-link" : "text-foreground"
+                }`}
+              >
+                Public
+              </span>
+              <Switch.Root
+                checked={m.isPublic === true}
+                onCheckedChange={(v) => onPublicChange?.(Boolean(v))}
+                disabled={publicDisabled}
+                aria-label={
+                  m.isPublic ? "Remove from community library" : "Make public"
+                }
+                className="relative h-5 w-9 shrink-0 cursor-pointer rounded-full border border-border bg-muted/40 transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed"
+              >
+                <Switch.Thumb className="block h-4 w-4 translate-x-[2px] rounded-full bg-surface shadow-sm transition-transform will-change-transform data-[state=checked]:translate-x-[16px]" />
+              </Switch.Root>
+            </div>
+          ) : null}
+          {canArchive ? (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={archiveDisabled}
+              onClick={() => {
+                if (!m.sk) return;
+                onArchive?.();
+                setMenuOpen(false);
+              }}
+              className={`${menuItemClass} text-muted`}
+            >
+              Archive
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  const dateLine = (
+    <span className="text-xs text-muted">
+      {formatWhen(m.createdAt)}
+      {m.speakerName ? ` · ${m.speakerName}` : ""}
+    </span>
+  );
+
+  const metaRow = (
+    <div className="mt-2 flex w-full flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+      <span className="min-w-0 flex-1">
+        {formatWhen(m.createdAt)}
+        {m.speakerName ? ` · ${m.speakerName}` : ""}
+      </span>
+      {stars}
+    </div>
+  );
 
   const scriptBlock =
     open && m.scriptText ? (
@@ -639,7 +692,7 @@ export function LibraryMeditationCard({
 
   const mobileCardBody = (
     <div className="sm:hidden">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex items-start justify-between gap-2 pr-9">
         <h2 className="min-w-0 flex-1 font-display text-lg font-medium leading-snug">
           {m.title}
         </h2>
@@ -647,66 +700,13 @@ export function LibraryMeditationCard({
           {lengthLine}
         </span>
       </div>
-      <span className="mt-2 inline-block rounded-full bg-accent-soft/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
-        {styleLine}
-      </span>
+      <MeditationTypePill label={styleLine} className="mt-2" />
       <p className="mt-2 line-clamp-2 text-sm text-muted">
         {m.description ?? "—"}
       </p>
-      <div className="mt-3 flex items-center gap-2">
-        {playControl}
-        {mobileOpen ? mobileMixerBtn : null}
-        {mobileFavouriteBtn}
-        {!mobileOpen && onToggleMobile ? (
-          <button
-            type="button"
-            onClick={onToggleMobile}
-            className="ml-auto cursor-pointer text-sm font-semibold text-accent-link"
-            aria-expanded={false}
-          >
-            More ⌄
-          </button>
-        ) : (
-          <span className="ml-auto" aria-hidden />
-        )}
-      </div>
-      {mobileOpen ? (
-        <div className="mt-3 space-y-3">
-          {m.scriptText && m.sk != null && onToggleScript ? (
-            <button
-              type="button"
-              onClick={onToggleScript}
-              className="cursor-pointer font-bold text-accent-link hover:text-accent-link/80"
-              style={{ lineHeight: "1.35" }}
-            >
-              {open ? "Hide script" : "Show script"}
-            </button>
-          ) : null}
-          {scriptBlock}
-          {stars}
-          <p className="text-xs text-muted">
-            {formatWhen(m.createdAt)}
-            {m.speakerName ? ` · ${m.speakerName}` : ""}
-          </p>
-          {publicBtn || archiveBtn || shareBtn ? (
-            <div className="flex items-center gap-3 border-t border-border/70 pt-3 [&_*]:!opacity-100 [&_*]:!pointer-events-auto">
-              {publicBtn}
-              {shareBtn}
-              {archiveBtn}
-            </div>
-          ) : null}
-          {onToggleMobile ? (
-            <button
-              type="button"
-              onClick={onToggleMobile}
-              className="w-full cursor-pointer text-right text-sm font-semibold text-accent-link"
-              aria-expanded={true}
-            >
-              Show less ⌃
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="mt-3 flex items-center gap-2">{playControl}</div>
+      {metaRow}
+      {scriptBlock ? <div className="mt-3">{scriptBlock}</div> : null}
     </div>
   );
 
@@ -714,7 +714,7 @@ export function LibraryMeditationCard({
     return (
       <li
         ref={itemRef}
-        className={`group relative flex min-w-0 flex-col overflow-visible rounded-2xl border bg-card p-5 shadow-sm ${
+        className={`group relative flex min-w-0 flex-col overflow-visible rounded-[6px] border bg-card p-5 shadow-sm ${
           isPlaying
             ? "border-accent"
             : "border-border hover:border-accent/80 transition-colors"
@@ -724,12 +724,15 @@ export function LibraryMeditationCard({
         {isPlaying ? (
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent border-accent-pulse"
+            className="pointer-events-none absolute inset-0 rounded-[6px] border-2 border-accent border-accent-pulse"
           />
+        ) : null}
+        {cardMenu ? (
+          <div className="absolute right-3 top-3 z-20">{cardMenu}</div>
         ) : null}
         {mobileCardBody}
         <div className="hidden min-w-0 flex-1 flex-col sm:flex">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start justify-between gap-3 pr-8">
             <p className="text-xs font-medium uppercase tracking-wide text-accent-link">
               {styleLine}
             </p>
@@ -742,31 +745,11 @@ export function LibraryMeditationCard({
               {lengthLine}
             </span>
           </div>
-          <div className="mt-1 text-sm text-muted">
-            {m.description ?? "—"}
-            {scriptToggleBtn}
-          </div>
-          <div className="mt-3 flex w-full items-center gap-3 text-xs text-muted">
-            <span className="min-w-0 flex-1">
-              {formatWhen(m.createdAt)}
-              {m.speakerName ? ` · ${m.speakerName}` : ""}
-            </span>
-            {publicBtn || archiveBtn || shareBtn ? (
-              <span className="shrink-0 flex items-center gap-3">
-                {publicBtn}
-                {shareBtn}
-                {archiveBtn}
-              </span>
-            ) : null}
-          </div>
+          <div className="mt-1 text-sm text-muted">{m.description ?? "—"}</div>
+          {metaRow}
           {scriptBlock ? <div className="mt-4">{scriptBlock}</div> : null}
-          <div className="mt-auto flex items-center justify-between gap-3 translate-y-2">
-            <div>{stars}</div>
-            <div className="flex items-center gap-2">
-              {actions}
-              {mixerBtn}
-              {favouriteBtn}
-            </div>
+          <div className="mt-auto flex translate-y-2 items-center justify-end gap-3">
+            {playControl}
           </div>
         </div>
       </li>
@@ -776,7 +759,7 @@ export function LibraryMeditationCard({
   return (
     <li
       ref={itemRef}
-      className={`group relative min-w-0 overflow-visible rounded-2xl border bg-card p-4 shadow-sm ${
+      className={`group relative min-w-0 overflow-visible rounded-[6px] border bg-card p-4 ${
         isPlaying
           ? "border-accent"
           : "border-border hover:border-accent/80 transition-colors"
@@ -786,59 +769,49 @@ export function LibraryMeditationCard({
       {isPlaying ? (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-2xl border-2 border-accent border-accent-pulse"
+          className="pointer-events-none absolute inset-0 rounded-[6px] border-2 border-accent border-accent-pulse"
         />
       ) : null}
+      {cardMenu ? (
+        <div className="absolute right-2 top-2 z-20 sm:hidden">{cardMenu}</div>
+      ) : null}
       {mobileCardBody}
-      <div className="hidden sm:block">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 flex-wrap items-center gap-2 gap-y-1">
-                <div className="flex items-start gap-3">
-                  <h2 className="min-w-0 font-display text-lg font-medium leading-snug">
-                    {m.title}
-                  </h2>
-                  <span className="mt-1.5 shrink-0 tabular-nums text-xs font-semibold text-muted">
-                    {lengthLine}
-                  </span>
-                </div>
-                <span className="rounded-full bg-accent-soft/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-link">
-                  {styleLine}
-                </span>
-              </div>
-            </div>
-            <div className="mt-1 text-sm text-muted">
-              {m.description ?? "—"}
-              {scriptToggleBtn}
-            </div>
+      {/* Desktop: play at card center; menu/stars flush to matching card-edge insets. */}
+      <div className="pointer-events-none absolute inset-0 z-10 hidden sm:block">
+        {cardMenu ? (
+          <div className="pointer-events-auto absolute right-1.5 top-1.5 z-20">
+            {cardMenu}
           </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center lg:flex-col lg:items-end xl:flex-col xl:items-end">
+        ) : null}
+        <div className="pointer-events-auto absolute right-3 top-1/2 -translate-y-1/2">
+          {playControl}
+        </div>
+        {stars ? (
+          <div className="pointer-events-auto absolute right-3 bottom-3">
             {stars}
-            <div className="flex items-center gap-2 lg:self-end">
-              {actions}
-              {mixerBtn}
-              {favouriteBtn}
-            </div>
           </div>
-        </div>
-        <div className="mt-2 flex w-full items-center gap-3 text-xs text-muted">
-          <span className="min-w-0 flex-1">
-            {formatWhen(m.createdAt)}
-            {m.speakerName ? ` · ${m.speakerName}` : ""}
-          </span>
-          {publicBtn || archiveBtn || shareBtn ? (
-            <span className="shrink-0 flex items-center gap-3">
-              {publicBtn}
-              {shareBtn}
-              {archiveBtn}
-            </span>
-          ) : null}
-        </div>
-        {scriptBlock ? (
-          <div className="mt-4 border-t border-border pt-4">{scriptBlock}</div>
         ) : null}
       </div>
+      <div className="relative hidden min-w-0 pr-[8.5rem] sm:block">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 gap-y-1">
+          <div className="flex items-start gap-3">
+            <h2 className="min-w-0 font-display text-lg font-medium leading-snug">
+              {m.title}
+            </h2>
+            <span className="mt-1.5 shrink-0 tabular-nums text-xs font-semibold text-muted">
+              {lengthLine}
+            </span>
+          </div>
+          <MeditationTypePill label={styleLine} />
+        </div>
+        <div className="mt-1 text-sm text-muted">{m.description ?? "—"}</div>
+        <div className="mt-2">{dateLine}</div>
+      </div>
+      {scriptBlock ? (
+        <div className="mt-4 hidden border-t border-border pt-4 sm:block">
+          {scriptBlock}
+        </div>
+      ) : null}
     </li>
   );
 }

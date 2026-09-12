@@ -145,10 +145,10 @@ export function SoundscapePicker({
               type="button"
               aria-pressed={categoryFilter === "all"}
               onClick={() => setCategoryFilter("all")}
-              className={`cursor-pointer rounded-[20px] border px-3 py-1.5 text-xs transition-colors ${
+              className={`cursor-pointer rounded-[20px] border-2 px-3 py-1.5 text-sm transition-colors ${
                 categoryFilter === "all"
-                  ? "border-accent/40 bg-accent-soft/40 text-accent-link"
-                  : "border-journal-warm-border bg-journal-warm-bg text-muted hover:border-accent/40 dark:border-border dark:bg-surface-2"
+                  ? "border-accent bg-accent-soft/40 text-foreground"
+                  : "border-border bg-card text-foreground hover:border-accent/40"
               }`}
             >
               All
@@ -161,10 +161,10 @@ export function SoundscapePicker({
                   type="button"
                   aria-pressed={active}
                   onClick={() => setCategoryFilter(id)}
-                  className={`cursor-pointer rounded-[20px] border px-3 py-1.5 text-xs transition-colors ${
+                  className={`cursor-pointer rounded-[20px] border-2 px-3 py-1.5 text-sm transition-colors ${
                     active
-                      ? "border-accent/40 bg-accent-soft/40 text-accent-link"
-                      : "border-journal-warm-border bg-journal-warm-bg text-muted hover:border-accent/40 dark:border-border dark:bg-surface-2"
+                      ? "border-accent bg-accent-soft/40 text-foreground"
+                      : "border-border bg-card text-foreground hover:border-accent/40"
                   }`}
                 >
                   {prettySubcategoryLabel(id)}
@@ -202,10 +202,10 @@ export function SoundscapePicker({
                       if (value !== item.key) onChange(item.key);
                       onTogglePreview(item.key);
                     }}
-                    className={`flex w-full items-center gap-3 rounded-[6px] border px-4 py-3.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                    className={`flex w-full items-center gap-3 rounded-[6px] border-2 px-4 py-3.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                       selected
-                        ? "border-accent bg-journal-warm-bg dark:border-accent dark:bg-surface-2"
-                        : "border-journal-warm-border bg-journal-warm-bg hover:border-accent/40 dark:border-border dark:bg-surface-2 dark:hover:border-accent/40"
+                        ? "border-accent bg-card"
+                        : "border-border bg-card hover:border-accent/40"
                     }`}
                   >
                     <span
@@ -219,10 +219,10 @@ export function SoundscapePicker({
                       <PlayPauseIcon playing={playing} size={14} />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-display text-[14px] font-normal text-foreground">
+                      <span className="block truncate font-display text-[15px] font-normal text-foreground">
                         {title}
                       </span>
-                      <span className="mt-1 flex items-center justify-between gap-2 text-[11px] text-muted">
+                      <span className="mt-1 flex items-center justify-between gap-2 text-xs text-muted">
                         {pack ? (
                           <span className="rounded-[8px] bg-accent-soft/50 px-1.5 py-0.5 text-accent-link">
                             {pack}

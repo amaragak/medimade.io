@@ -9,6 +9,7 @@ import { DrumsLockedWrap } from "@/components/drums-locked-wrap";
 import { MeditationLengthSelect } from "@/components/meditation-length-select";
 import { MixerChannel, MixerPresetChannel, MixerVoiceChannel } from "@/components/mixer-channel";
 import { SoundscapePicker } from "@/components/soundscape-picker";
+import { SegmentedPillTabs } from "@/components/segmented-pill-tabs";
 import { isMelodicMusicKey } from "@/lib/sound-taxonomy";
 import {
   CLAUDE_HAIKU_45_MODEL_ID,
@@ -527,7 +528,7 @@ function StyleIntakeField({
   return (
     <div
       ref={cardRef}
-      className={`scroll-mt-3 rounded-[6px] border border-journal-warm-border bg-journal-warm-bg p-4 shadow-none transition-[opacity,transform] duration-500 ease-out sm:scroll-mt-4 sm:p-5 dark:border-border dark:bg-surface-2 ${
+      className={`scroll-mt-3 rounded-[6px] border border-border bg-card p-4 shadow-none transition-[opacity,transform] duration-500 ease-out sm:scroll-mt-4 sm:p-5 ${
         entered ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
       }`}
     >
@@ -551,7 +552,7 @@ function StyleIntakeField({
             }}
             rows={1}
             enterKeyHint={enterKeyHint}
-            className="min-h-[2.625rem] min-w-0 flex-1 resize-none overflow-hidden rounded-[6px] border border-journal-warm-border bg-journal-warm-input-bg px-3.5 py-2.5 text-base leading-relaxed text-foreground outline-none transition-colors focus:border-accent focus:ring-0 dark:border-border dark:bg-background/40 dark:focus:border-accent"
+            className="min-h-[2.625rem] min-w-0 flex-1 resize-none overflow-hidden rounded-[6px] border border-border bg-background px-3.5 py-2.5 text-base leading-relaxed text-foreground outline-none transition-colors focus:border-accent focus:ring-0 dark:focus:border-accent"
           />
           <DictationMicButton
             variant="inset"
@@ -563,15 +564,13 @@ function StyleIntakeField({
             }}
           />
           {onAdvance ? (
-            /* Filled to match the mic beside it — an outlined gold circle had
-               too little contrast against the cream background. */
             <button
               type="button"
               onClick={tryAdvance}
               disabled={!canAdvance}
               aria-label="Confirm answer, next question"
               title="Next question"
-              className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full accent-fill-gradient text-on-accent transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border bg-surface text-accent-link shadow-sm transition-colors hover:bg-accent-soft/40 disabled:cursor-not-allowed disabled:opacity-40 dark:border-border dark:bg-surface dark:hover:bg-accent-soft/30"
             >
               <svg
                 viewBox="0 0 24 24"
@@ -4009,7 +4008,7 @@ export function CreateWorkspace({
               type="button"
               onClick={() => setPendingModeChoice("style")}
               aria-pressed={pendingModeChoice === "style"}
-              className="create-path-card flex h-full cursor-pointer flex-col p-6 text-left"
+              className="create-path-card flex h-full cursor-pointer flex-col rounded-[6px] border border-border bg-card p-6 text-left"
             >
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
                 By type
@@ -4025,7 +4024,7 @@ export function CreateWorkspace({
               type="button"
               onClick={() => setPendingModeChoice("freeflow")}
               aria-pressed={pendingModeChoice === "freeflow"}
-              className="create-path-card flex h-full cursor-pointer flex-col p-6 text-left"
+              className="create-path-card flex h-full cursor-pointer flex-col rounded-[6px] border border-border bg-card p-6 text-left"
             >
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
                 Chat
@@ -4045,7 +4044,7 @@ export function CreateWorkspace({
               }}
               aria-pressed={pendingModeChoice === "goal"}
               aria-disabled={!planGoalsReady || !hasPlanGoals}
-              className={`create-path-card flex h-full flex-col p-6 text-left ${
+              className={`create-path-card flex h-full flex-col rounded-[6px] border border-border bg-card p-6 text-left ${
                 !planGoalsReady || !hasPlanGoals
                   ? "cursor-not-allowed"
                   : "cursor-pointer"
@@ -4080,7 +4079,7 @@ export function CreateWorkspace({
               }}
               aria-pressed={pendingModeChoice === "journalReflect"}
               aria-disabled={!journalPickerListReady || !hasReflectableJournal}
-              className={`create-path-card flex h-full flex-col p-6 text-left ${
+              className={`create-path-card flex h-full flex-col rounded-[6px] border border-border bg-card p-6 text-left ${
                 !journalPickerListReady || !hasReflectableJournal
                   ? "cursor-not-allowed"
                   : "cursor-pointer"
@@ -4111,7 +4110,7 @@ export function CreateWorkspace({
               type="button"
               onClick={() => setPendingModeChoice("oneShot")}
               aria-pressed={pendingModeChoice === "oneShot"}
-              className="create-path-card flex h-full cursor-pointer flex-col p-6 text-left"
+              className="create-path-card flex h-full cursor-pointer flex-col rounded-[6px] border border-border bg-card p-6 text-left"
             >
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">
                 Direct
@@ -4202,7 +4201,7 @@ export function CreateWorkspace({
                 variant="picker"
               />
               {pendingStyleType ? (
-                <div className="shrink-0 rounded-2xl border border-journal-warm-border bg-journal-warm-bg px-4 py-3 dark:border-border dark:bg-surface-2 sm:px-5 sm:py-4">
+                <div className="shrink-0 rounded-[6px] border border-border bg-card px-4 py-3 sm:px-5 sm:py-4">
                   <p className="font-display text-[19px] font-normal leading-snug text-foreground">
                     {pendingStyleType}
                   </p>
@@ -4233,11 +4232,11 @@ export function CreateWorkspace({
                   type="button"
                   disabled={!pendingStyleType}
                   onClick={confirmStyleTypePick}
-                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full accent-fill-gradient px-4 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
+                  className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full border border-border bg-surface px-4 py-2.5 text-sm font-semibold text-foreground shadow-sm transition-colors hover:bg-accent-soft/40 disabled:pointer-events-none disabled:opacity-40 dark:border-border dark:bg-surface dark:text-foreground dark:hover:bg-accent-soft/30"
                   aria-label="Continue to questions for this meditation type"
                 >
                   <span>Questions</span>
-                  <IconChevronRight className="shrink-0" />
+                  <IconChevronRight className="shrink-0 text-accent-link" />
                 </button>
                 </div>
               </div>
@@ -4784,40 +4783,23 @@ export function CreateWorkspace({
             />
           </div>
 
-          <div className="mb-3 flex shrink-0 flex-wrap items-center justify-between gap-3">
+          <div className="mb-1 flex shrink-0 flex-wrap items-center justify-between gap-3">
             <span className="text-xs font-semibold uppercase tracking-[0.12em] text-foreground">
               Sound
             </span>
-            <div
-              role="group"
+            <SegmentedPillTabs
               aria-label="Sound bed"
-              className="inline-flex shrink-0 overflow-hidden rounded-full border border-border bg-background p-0.5"
-            >
-              {(
-                [
-                  ["soundscape", "Soundscapes"],
-                  ["mixer", "Build your own"],
-                ] as const
-              ).map(([mode, label]) => (
-                <button
-                  key={mode}
-                  type="button"
-                  aria-pressed={soundMode === mode}
-                  onClick={() => {
-                    if (soundMode === mode) return;
-                    stopAllAudioPreview();
-                    setSoundMode(mode);
-                  }}
-                  className={`cursor-pointer rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-                    soundMode === mode
-                      ? "accent-fill-gradient text-on-accent"
-                      : "text-muted hover:text-foreground"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+              value={soundMode}
+              onChange={(mode) => {
+                if (soundMode === mode) return;
+                stopAllAudioPreview();
+                setSoundMode(mode);
+              }}
+              options={[
+                { id: "soundscape", label: "Soundscapes" },
+                { id: "mixer", label: "Build your own" },
+              ]}
+            />
           </div>
 
           {soundMode === "soundscape" ? (
@@ -4839,12 +4821,14 @@ export function CreateWorkspace({
             </div>
           ) : (
           <>
-          {/* Stacked mixer — below lg: bed cards share one scroll */}
-          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto lg:hidden">
-            <section className="shrink-0 rounded-2xl border border-border bg-card shadow-sm">
-              <div className="px-4 py-1">
+          <div className="shrink-0 pb-2 pt-0">
+            <div className="flex items-center justify-start gap-3">
+              <span className="shrink-0 text-xs font-semibold uppercase tracking-wide text-muted">
+                Preset
+              </span>
+              <div className="min-w-0 w-full max-w-sm sm:w-auto sm:max-w-none">
                 <MixerPresetChannel
-                  layout="row"
+                  layout="toolbar"
                   factoryPresets={factoryMixes}
                   userPresets={userMixPresets}
                   selectedKey={selectedMixKey}
@@ -4856,197 +4840,189 @@ export function CreateWorkspace({
                   modified={mixDirty}
                   defaultSaveName={mixSaveDefaultName}
                 />
-                <MixerChannel
-                  layout="row"
-                  label="Music"
-                  category="music"
-                  items={backgroundMusic}
-                  value={backgroundMusicKey}
-                  onChange={setBackgroundMusicKey}
-                  gain={backgroundMusicGain}
-                  onGainChange={setBackgroundMusicGain}
-                  onLiveGainChange={(g) => applyLiveBedGain("music", g)}
-                  disabled={soundControlsDisabled}
-                  faderDisabled={soundControlsDisabled || !backgroundMusicKey}
-                  playing={playing.music}
-                  onTogglePreview={() => void toggleRowPreview("music")}
-                  playDisabled={soundControlsDisabled || !backgroundMusicKey}
-                  playAriaLabel={playing.music ? "Pause music" : "Play music"}
-                />
-                <MixerChannel
-                  layout="row"
-                  label="Ambience"
-                  category="ambience"
-                  items={backgroundNature}
-                  value={backgroundNatureKey}
-                  onChange={setBackgroundNatureKey}
-                  gain={backgroundNatureGain}
-                  onGainChange={setBackgroundNatureGain}
-                  onLiveGainChange={(g) => applyLiveBedGain("nature", g)}
-                  disabled={soundControlsDisabled}
-                  faderDisabled={soundControlsDisabled || !backgroundNatureKey}
-                  playing={playing.nature}
-                  onTogglePreview={() => void toggleRowPreview("nature")}
-                  playDisabled={soundControlsDisabled || !backgroundNatureKey}
-                  playAriaLabel={
-                    playing.nature ? "Pause ambience" : "Play ambience"
-                  }
-                />
-                <DrumsLockedWrap
-                  locked={drumsLockedForMelodic}
-                  className="block"
-                >
-                  <MixerChannel
-                    layout="row"
-                    label="Drums"
-                    category="drums"
-                    items={backgroundDrums}
-                    value={backgroundDrumsKey}
-                    onChange={setBackgroundDrumsKey}
-                    gain={backgroundDrumsGain}
-                    onGainChange={setBackgroundDrumsGain}
-                    onLiveGainChange={(g) => applyLiveBedGain("drums", g)}
-                    disabled={soundControlsDisabled || drumsLockedForMelodic}
-                    faderDisabled={
-                      soundControlsDisabled ||
-                      drumsLockedForMelodic ||
-                      !backgroundDrumsKey
-                    }
-                    playing={playing.drums}
-                    onTogglePreview={() => void toggleRowPreview("drums")}
-                    playDisabled={
-                      soundControlsDisabled ||
-                      drumsLockedForMelodic ||
-                      !backgroundDrumsKey
-                    }
-                    playAriaLabel={
-                      playing.drums ? "Pause drums" : "Play drums"
-                    }
-                  />
-                </DrumsLockedWrap>
-                <MixerChannel
-                  layout="row"
-                  label="Noise"
-                  category="noise"
-                  items={backgroundNoise}
-                  value={backgroundNoiseKey}
-                  onChange={setBackgroundNoiseKey}
-                  gain={backgroundNoiseGain}
-                  onGainChange={setBackgroundNoiseGain}
-                  onLiveGainChange={(g) => applyLiveBedGain("noise", g)}
-                  disabled={soundControlsDisabled}
-                  faderDisabled={soundControlsDisabled || !backgroundNoiseKey}
-                  playing={playing.noise}
-                  onTogglePreview={() => void toggleRowPreview("noise")}
-                  playDisabled={soundControlsDisabled || !backgroundNoiseKey}
-                  playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
-                />
               </div>
+            </div>
+          </div>
+          {/* Stacked mixer — below lg: each bed is its own card */}
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-4 lg:hidden">
+            <section className="w-full max-w-xl shrink-0 rounded-2xl border border-border bg-card px-4 py-1">
+              <MixerChannel
+                layout="row"
+                label="Music"
+                category="music"
+                items={backgroundMusic}
+                value={backgroundMusicKey}
+                onChange={setBackgroundMusicKey}
+                gain={backgroundMusicGain}
+                onGainChange={setBackgroundMusicGain}
+                onLiveGainChange={(g) => applyLiveBedGain("music", g)}
+                disabled={soundControlsDisabled}
+                faderDisabled={soundControlsDisabled || !backgroundMusicKey}
+                playing={playing.music}
+                onTogglePreview={() => void toggleRowPreview("music")}
+                playDisabled={soundControlsDisabled || !backgroundMusicKey}
+                playAriaLabel={playing.music ? "Pause music" : "Play music"}
+              />
+            </section>
+            <section className="w-full max-w-xl shrink-0 rounded-2xl border border-border bg-card px-4 py-1">
+              <MixerChannel
+                layout="row"
+                label="Ambience"
+                category="ambience"
+                items={backgroundNature}
+                value={backgroundNatureKey}
+                onChange={setBackgroundNatureKey}
+                gain={backgroundNatureGain}
+                onGainChange={setBackgroundNatureGain}
+                onLiveGainChange={(g) => applyLiveBedGain("nature", g)}
+                disabled={soundControlsDisabled}
+                faderDisabled={soundControlsDisabled || !backgroundNatureKey}
+                playing={playing.nature}
+                onTogglePreview={() => void toggleRowPreview("nature")}
+                playDisabled={soundControlsDisabled || !backgroundNatureKey}
+                playAriaLabel={
+                  playing.nature ? "Pause ambience" : "Play ambience"
+                }
+              />
+            </section>
+            <DrumsLockedWrap locked={drumsLockedForMelodic} className="block">
+              <section className="w-full max-w-xl shrink-0 rounded-2xl border border-border bg-card px-4 py-1">
+                <MixerChannel
+                  layout="row"
+                  label="Drums"
+                  category="drums"
+                  items={backgroundDrums}
+                  value={backgroundDrumsKey}
+                  onChange={setBackgroundDrumsKey}
+                  gain={backgroundDrumsGain}
+                  onGainChange={setBackgroundDrumsGain}
+                  onLiveGainChange={(g) => applyLiveBedGain("drums", g)}
+                  disabled={soundControlsDisabled || drumsLockedForMelodic}
+                  faderDisabled={
+                    soundControlsDisabled ||
+                    drumsLockedForMelodic ||
+                    !backgroundDrumsKey
+                  }
+                  playing={playing.drums}
+                  onTogglePreview={() => void toggleRowPreview("drums")}
+                  playDisabled={
+                    soundControlsDisabled ||
+                    drumsLockedForMelodic ||
+                    !backgroundDrumsKey
+                  }
+                  playAriaLabel={playing.drums ? "Pause drums" : "Play drums"}
+                />
+              </section>
+            </DrumsLockedWrap>
+            <section className="w-full max-w-xl shrink-0 rounded-2xl border border-border bg-card px-4 py-1">
+              <MixerChannel
+                layout="row"
+                label="Noise"
+                category="noise"
+                items={backgroundNoise}
+                value={backgroundNoiseKey}
+                onChange={setBackgroundNoiseKey}
+                gain={backgroundNoiseGain}
+                onGainChange={setBackgroundNoiseGain}
+                onLiveGainChange={(g) => applyLiveBedGain("noise", g)}
+                disabled={soundControlsDisabled}
+                faderDisabled={soundControlsDisabled || !backgroundNoiseKey}
+                playing={playing.noise}
+                onTogglePreview={() => void toggleRowPreview("noise")}
+                playDisabled={soundControlsDisabled || !backgroundNoiseKey}
+                playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
+              />
             </section>
           </div>
 
-          {/* Column mixer — lg+ */}
-          <section className="hidden min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm lg:flex">
-            <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto p-4">
-                  <div className="flex h-full min-w-[5.75rem] w-full flex-1 flex-col gap-2">
-                    <div className="shrink-0">
-                      <MixerPresetChannel
-                        factoryPresets={factoryMixes}
-                        userPresets={userMixPresets}
-                        selectedKey={selectedMixKey}
-                        onSelect={onSelectMixPreset}
-                        onSaveNew={saveNewMixPreset}
-                        disabled={soundControlsDisabled}
-                        loading={factoryMixesLoading}
-                        showSave={mixDirty}
-                        modified={mixDirty}
-                        defaultSaveName={mixSaveDefaultName}
-                      />
-                    </div>
-                  </div>
-                  <MixerChannel
-                    label="Music"
-                    category="music"
-                    items={backgroundMusic}
-                    value={backgroundMusicKey}
-                    onChange={setBackgroundMusicKey}
-                    gain={backgroundMusicGain}
-                    onGainChange={setBackgroundMusicGain}
-                    onLiveGainChange={(g) => applyLiveBedGain("music", g)}
-                    disabled={soundControlsDisabled}
-                    faderDisabled={soundControlsDisabled || !backgroundMusicKey}
-                    playing={playing.music}
-                    onTogglePreview={() => void toggleRowPreview("music")}
-                    playDisabled={soundControlsDisabled || !backgroundMusicKey}
-                    playAriaLabel={playing.music ? "Pause music" : "Play music"}
-                  />
-                  <MixerChannel
-                    label="Ambience"
-                    category="ambience"
-                    items={backgroundNature}
-                    value={backgroundNatureKey}
-                    onChange={setBackgroundNatureKey}
-                    gain={backgroundNatureGain}
-                    onGainChange={setBackgroundNatureGain}
-                    onLiveGainChange={(g) => applyLiveBedGain("nature", g)}
-                    disabled={soundControlsDisabled}
-                    faderDisabled={soundControlsDisabled || !backgroundNatureKey}
-                    playing={playing.nature}
-                    onTogglePreview={() => void toggleRowPreview("nature")}
-                    playDisabled={soundControlsDisabled || !backgroundNatureKey}
-                    playAriaLabel={
-                      playing.nature ? "Pause ambience" : "Play ambience"
-                    }
-                  />
-                  <DrumsLockedWrap
-                    locked={drumsLockedForMelodic}
-                    className="flex h-full min-w-[5.75rem] flex-1 items-stretch"
-                  >
-                    <MixerChannel
-                      label="Drums"
-                      category="drums"
-                      items={backgroundDrums}
-                      value={backgroundDrumsKey}
-                      onChange={setBackgroundDrumsKey}
-                      gain={backgroundDrumsGain}
-                      onGainChange={setBackgroundDrumsGain}
-                      onLiveGainChange={(g) => applyLiveBedGain("drums", g)}
-                      disabled={soundControlsDisabled || drumsLockedForMelodic}
-                      faderDisabled={
-                        soundControlsDisabled ||
-                        drumsLockedForMelodic ||
-                        !backgroundDrumsKey
-                      }
-                      playing={playing.drums}
-                      onTogglePreview={() => void toggleRowPreview("drums")}
-                      playDisabled={
-                        soundControlsDisabled ||
-                        drumsLockedForMelodic ||
-                        !backgroundDrumsKey
-                      }
-                      playAriaLabel={
-                        playing.drums ? "Pause drums" : "Play drums"
-                      }
-                    />
-                  </DrumsLockedWrap>
-                  <MixerChannel
-                    label="Noise"
-                    category="noise"
-                    items={backgroundNoise}
-                    value={backgroundNoiseKey}
-                    onChange={setBackgroundNoiseKey}
-                    gain={backgroundNoiseGain}
-                    onGainChange={setBackgroundNoiseGain}
-                    onLiveGainChange={(g) => applyLiveBedGain("noise", g)}
-                    disabled={soundControlsDisabled}
-                    faderDisabled={soundControlsDisabled || !backgroundNoiseKey}
-                    playing={playing.noise}
-                    onTogglePreview={() => void toggleRowPreview("noise")}
-                    playDisabled={soundControlsDisabled || !backgroundNoiseKey}
-                    playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
-                  />
+          {/* Column mixer — lg+: individual channel cards, no global wrapper */}
+          <div className="hidden min-h-0 flex-1 items-stretch gap-2 overflow-x-auto pb-4 lg:flex">
+            <div className="flex h-full min-w-[5.75rem] w-full max-w-[250px] flex-1 items-stretch">
+              <MixerChannel
+                label="Music"
+                category="music"
+                items={backgroundMusic}
+                value={backgroundMusicKey}
+                onChange={setBackgroundMusicKey}
+                gain={backgroundMusicGain}
+                onGainChange={setBackgroundMusicGain}
+                onLiveGainChange={(g) => applyLiveBedGain("music", g)}
+                disabled={soundControlsDisabled}
+                faderDisabled={soundControlsDisabled || !backgroundMusicKey}
+                playing={playing.music}
+                onTogglePreview={() => void toggleRowPreview("music")}
+                playDisabled={soundControlsDisabled || !backgroundMusicKey}
+                playAriaLabel={playing.music ? "Pause music" : "Play music"}
+              />
             </div>
-           </section>
+            <div className="flex h-full min-w-[5.75rem] w-full max-w-[250px] flex-1 items-stretch">
+              <MixerChannel
+                label="Ambience"
+                category="ambience"
+                items={backgroundNature}
+                value={backgroundNatureKey}
+                onChange={setBackgroundNatureKey}
+                gain={backgroundNatureGain}
+                onGainChange={setBackgroundNatureGain}
+                onLiveGainChange={(g) => applyLiveBedGain("nature", g)}
+                disabled={soundControlsDisabled}
+                faderDisabled={soundControlsDisabled || !backgroundNatureKey}
+                playing={playing.nature}
+                onTogglePreview={() => void toggleRowPreview("nature")}
+                playDisabled={soundControlsDisabled || !backgroundNatureKey}
+                playAriaLabel={
+                  playing.nature ? "Pause ambience" : "Play ambience"
+                }
+              />
+            </div>
+            <DrumsLockedWrap
+              locked={drumsLockedForMelodic}
+              className="flex h-full min-w-[5.75rem] w-full max-w-[250px] flex-1 items-stretch"
+            >
+              <MixerChannel
+                label="Drums"
+                category="drums"
+                items={backgroundDrums}
+                value={backgroundDrumsKey}
+                onChange={setBackgroundDrumsKey}
+                gain={backgroundDrumsGain}
+                onGainChange={setBackgroundDrumsGain}
+                onLiveGainChange={(g) => applyLiveBedGain("drums", g)}
+                disabled={soundControlsDisabled || drumsLockedForMelodic}
+                faderDisabled={
+                  soundControlsDisabled ||
+                  drumsLockedForMelodic ||
+                  !backgroundDrumsKey
+                }
+                playing={playing.drums}
+                onTogglePreview={() => void toggleRowPreview("drums")}
+                playDisabled={
+                  soundControlsDisabled ||
+                  drumsLockedForMelodic ||
+                  !backgroundDrumsKey
+                }
+                playAriaLabel={playing.drums ? "Pause drums" : "Play drums"}
+              />
+            </DrumsLockedWrap>
+            <div className="flex h-full min-w-[5.75rem] w-full max-w-[250px] flex-1 items-stretch">
+              <MixerChannel
+                label="Noise"
+                category="noise"
+                items={backgroundNoise}
+                value={backgroundNoiseKey}
+                onChange={setBackgroundNoiseKey}
+                gain={backgroundNoiseGain}
+                onGainChange={setBackgroundNoiseGain}
+                onLiveGainChange={(g) => applyLiveBedGain("noise", g)}
+                disabled={soundControlsDisabled}
+                faderDisabled={soundControlsDisabled || !backgroundNoiseKey}
+                playing={playing.noise}
+                onTogglePreview={() => void toggleRowPreview("noise")}
+                playDisabled={soundControlsDisabled || !backgroundNoiseKey}
+                playAriaLabel={playing.noise ? "Pause noise" : "Play noise"}
+              />
+            </div>
+          </div>
            </>
           )}
          </div>
@@ -5067,7 +5043,7 @@ export function CreateWorkspace({
               {audioError}
             </p>
           ) : null}
-          <div className="shrink-0 border-t-[0.5px] border-[rgba(180,140,80,0.2)] bg-background pt-4 pb-6 dark:border-border">
+          <div className="shrink-0 border-t-[0.5px] border-create-hairline bg-background pt-4 pb-6">
             <div className="mx-auto flex min-h-[3rem] w-full max-w-6xl flex-nowrap items-center justify-between gap-3 px-4 sm:px-6">
             <div className="flex min-w-0 flex-1 justify-start">
             <button

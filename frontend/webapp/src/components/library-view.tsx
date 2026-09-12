@@ -59,6 +59,7 @@ import {
 } from "@/lib/pending-library-generations";
 import { CommunityCategoryGrid } from "@/components/community-category-grid";
 import { AppPrimaryTabsDesktop } from "@/components/app-primary-tabs";
+import { SegmentedPillTabs } from "@/components/segmented-pill-tabs";
 import { SoundscapePicker } from "@/components/soundscape-picker";
 import { playWithLeadBuffer } from "@/lib/audio-lead-buffer";
 import {
@@ -914,34 +915,25 @@ function LibraryMixEditorModal({
           <IconMixReset />
         </button>
       </div>
-      <div className="mt-3 inline-flex rounded-full border border-border bg-background p-0.5 text-xs">
-        {([
-          { id: "soundscape" as const, label: "Soundscape" },
-          { id: "mixer" as const, label: "Build your own" },
-        ]).map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => {
-              // Leaving a soundscape frees the music slot for a mixer sample.
-              if (t.id === "mixer" && soundscapeSelected) {
-                const next = mixWithKey(mixRef.current, "music", "");
-                setMusicKey("");
-                mixRef.current = next;
-                previewNow(next);
-              }
-              setBedTab(t.id);
-            }}
-            aria-pressed={bedTab === t.id}
-            className={`cursor-pointer rounded-full px-3 py-1 font-medium transition-colors ${
-              bedTab === t.id
-                ? "bg-accent-soft text-accent-link"
-                : "text-muted hover:text-foreground"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="mt-3">
+        <SegmentedPillTabs
+          aria-label="Sound bed"
+          value={bedTab}
+          onChange={(id) => {
+            // Leaving a soundscape frees the music slot for a mixer sample.
+            if (id === "mixer" && soundscapeSelected) {
+              const next = mixWithKey(mixRef.current, "music", "");
+              setMusicKey("");
+              mixRef.current = next;
+              previewNow(next);
+            }
+            setBedTab(id);
+          }}
+          options={[
+            { id: "soundscape" as const, label: "Soundscape" },
+            { id: "mixer" as const, label: "Build your own" },
+          ]}
+        />
       </div>
       {bedTab === "soundscape" ? (
         <div className="mt-3 max-h-72 overflow-y-auto pr-1">
@@ -2547,53 +2539,29 @@ export default function LibraryView({
     >
       <header className="w-full min-w-0">
         <AppPrimaryTabsDesktop>
-          <div
-            className="inline-flex max-w-full flex-nowrap rounded-xl border border-border bg-card p-1"
-            role="tablist"
+          <SegmentedPillTabs
             aria-label="Library section"
-          >
-            {LIBRARY_MAIN_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={libraryTab === tab.id}
-                onClick={() => goToLibraryTab(tab.id)}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
-                  libraryTab === tab.id
-                    ? "bg-nav-active text-nav-foreground"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+            value={libraryTab}
+            onChange={(id) => goToLibraryTab(id)}
+            options={LIBRARY_MAIN_TABS.map((tab) => ({
+              id: tab.id,
+              label: tab.label,
+            }))}
+          />
         </AppPrimaryTabsDesktop>
         {/* Mobile: compact tabs + icon create on one row */}
         <div className="flex items-center gap-2 md:hidden">
-          <div
-            className="inline-flex min-w-0 flex-1 rounded-xl border border-border bg-card p-0.5"
-            role="tablist"
+          <SegmentedPillTabs
+            className="min-w-0 flex-1"
+            equalWidth
             aria-label="Library section"
-          >
-              {LIBRARY_MAIN_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={libraryTab === tab.id}
-                  onClick={() => goToLibraryTab(tab.id)}
-                  className={`min-w-0 flex-1 rounded-lg px-1.5 py-1.5 text-[12px] font-semibold transition-colors sm:text-[13px] ${
-                    libraryTab === tab.id
-                      ? "bg-nav-active text-nav-foreground"
-                      : "text-muted hover:text-foreground"
-                  }`}
-                >
-                  {tab.shortLabel}
-                </button>
-              ))}
-          </div>
+            value={libraryTab}
+            onChange={(id) => goToLibraryTab(id)}
+            options={LIBRARY_MAIN_TABS.map((tab) => ({
+              id: tab.id,
+              label: tab.shortLabel,
+            }))}
+          />
           <Link
             href="/meditate/create"
             aria-label="Create new meditation"

@@ -5,6 +5,7 @@ import {
   duplicateBeatTypeIndexSet,
   type ScriptLabBeat,
 } from "@/lib/script-lab-beats";
+import { SegmentedPillTabs } from "@/components/segmented-pill-tabs";
 
 const TEXT_PREVIEW_CHARS = 160;
 
@@ -188,22 +189,12 @@ export function ScriptLabBeatsVerificationToggle({
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
-      <div className="inline-flex rounded-full border border-border bg-background p-0.5 text-xs">
-        {options.map(({ id, label }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => onChange(id)}
-            className={`cursor-pointer rounded-full px-3 py-1 font-medium ${
-              view === id
-                ? "bg-accent-soft text-accent-link"
-                : "text-muted hover:text-foreground"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <SegmentedPillTabs
+        aria-label="Beats verification view"
+        value={view}
+        onChange={onChange}
+        options={options}
+      />
       {view === "after" && correctionsApplied ? (
         <span className="text-[11px] text-muted">
           Green rows = beats added by verification (split or conversion)

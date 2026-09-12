@@ -5,6 +5,7 @@ import {
   ScriptLabBeatsPreview,
   type BeatsVerificationView,
 } from "@/components/script-lab-beats-preview";
+import { SegmentedPillTabs } from "@/components/segmented-pill-tabs";
 import type { ScriptLabBeat } from "@/lib/script-lab-beats";
 
 export type V3PreviewView = "raw" | "classification" | "substitution" | "verification";
@@ -97,22 +98,12 @@ export function ScriptLabV3PreviewToggle({
 }) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
-      <div className="inline-flex max-w-full flex-wrap rounded-full border border-border bg-background p-0.5 text-xs">
-        {V3_PREVIEW_OPTIONS.map(({ id, label }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => onChange(id)}
-            className={`cursor-pointer rounded-full px-2.5 py-1 font-medium ${
-              view === id
-                ? "bg-accent-soft text-accent-link"
-                : "text-muted hover:text-foreground"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <SegmentedPillTabs
+        aria-label="V3 preview stage"
+        value={view}
+        onChange={onChange}
+        options={V3_PREVIEW_OPTIONS}
+      />
     </div>
   );
 }
