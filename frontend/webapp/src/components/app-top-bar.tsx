@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useLayoutEffect, useState } from "react";
 import { LogoMark } from "@/components/logo-mark";
 import { AppPrimaryTabsSlot, AppTopBarTrailingSlot } from "@/components/app-primary-tabs";
 import { AlphaChromeButton } from "@/components/dev-chrome-button";
@@ -17,6 +17,7 @@ import {
   CREATE_SESSION_CHANGED_EVENT,
   readCreateSession,
 } from "@/lib/create-session-storage";
+import { parseCreateMeditationPathname } from "@/lib/create-meditation-path";
 
 function lifeAreaTitleFromPath(pathname: string): string | null {
   const m = pathname.match(/^\/ideate\/goal\/([^/?#]+)/);
@@ -30,8 +31,23 @@ function lifeAreaTitleFromPath(pathname: string): string | null {
   }
 }
 
-function createMeditationStyleFromSession(): string | null {
-  return readCreateSession()?.meditationStyle?.trim() || null;
+function createMeditationStyleFromSession(pathname: string): string | null {
+  const s = readCreateSession();
+  if (!s) return null;
+  const style = s.meditationStyle?.trim();
+  if (style) return style;
+  // Only fall back to the pending pick once we've left the type picker URL,
+  // so selecting a card doesn't prematurely rename the current crumb.
+  const parsed = pathname.startsWith("/meditate/create")
+    ? parseCreateMeditationPathname(pathname)
+    : null;
+  if (
+    parsed?.path === "style" &&
+    (parsed.styleStep === "questions" || parsed.mix)
+  ) {
+    return s.pendingStyleType?.trim() || null;
+  }
+  return null;
 }
 
 function BreadcrumbChevron() {
@@ -78,7 +94,7 @@ function BreadcrumbCrumb({
   return (
     <Link
       href={crumb.href}
-      className="min-w-0 truncate italic text-neutral-600 underline-offset-2 hover:underline dark:text-accent-link"
+      className="min-w-0 truncate italic text-accent-link underline-offset-2 hover:underline"
     >
       {crumb.label}
     </Link>
@@ -96,12 +112,12 @@ export function AppTopBar({
   const router = useRouter();
   const [crumbs, setCrumbs] = useState<AppBreadcrumbCrumb[]>([]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const rebuild = () => {
       setCrumbs(
         buildAppBreadcrumbs(pathname, {
           lifeAreaTitle: lifeAreaTitleFromPath(pathname),
-          createMeditationStyle: createMeditationStyleFromSession(),
+          createMeditationStyle: createMeditationStyleFromSession(pathname),
           hash: typeof window !== "undefined" ? window.location.hash : "",
           search: typeof window !== "undefined" ? window.location.search : "",
         }),

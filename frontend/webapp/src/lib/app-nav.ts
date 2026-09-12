@@ -262,10 +262,10 @@ export function buildAppBreadcrumbs(
             crumbs.push({ label: styleName, href: questionsHref });
           }
           crumbs.push({ label: "Audio", href: null });
-        } else if (parsed.styleStep === "questions" && styleName) {
-          // Already correct: By Type › [Type]
+        } else if (parsed.styleStep === "questions") {
+          // Always parent-link By Type; type name is current when known.
           crumbs.push({ label: "By Type", href: byTypeHref });
-          crumbs.push({ label: styleName, href: null });
+          crumbs.push({ label: styleName || "Questions", href: null });
         } else {
           // Type picker
           crumbs.push({ label: "By Type", href: null });

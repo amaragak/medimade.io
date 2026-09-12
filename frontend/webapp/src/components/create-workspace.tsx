@@ -27,6 +27,7 @@ import {
 import {
   clearCreateSession,
   createSessionSatisfiesRoute,
+  patchCreateSession,
   readCreateSession,
   readLinkedLifeAreaId,
   writeCreateSession,
@@ -2497,7 +2498,17 @@ export function CreateWorkspace({
     setScriptLoading(false);
     setIntroTypingDone(true);
     setPhase("styleQuestions");
-    pushCreate({ path: "style", styleStep: "questions" });
+    const href = createHrefForNav({ path: "style", styleStep: "questions" });
+    // Sync before router.push so breadcrumbs see the type name in one update.
+    patchCreateSession({
+      meditationStyle: label,
+      pendingStyleType: label,
+      phase: "styleQuestions",
+      pathname: pathOnly(href),
+      creationPath: "style",
+    });
+    pendingUrlSyncRef.current = pathOnly(href);
+    router.push(href);
   }
 
   function confirmStyleQuestions() {
@@ -2516,7 +2527,22 @@ export function CreateWorkspace({
     setScriptTargetMinutes(null);
     setMobileCreateStep("audio");
     setCreateStripStep(2);
-    pushCreate({ path: "style", styleStep: "questions", mix: true });
+    const href = createHrefForNav({
+      path: "style",
+      styleStep: "questions",
+      mix: true,
+    });
+    patchCreateSession({
+      meditationStyle: style,
+      messages: built.messages,
+      claudeThread: built.claudeThread,
+      mobileCreateStep: "audio",
+      createStripStep: 2,
+      pathname: pathOnly(href),
+      creationPath: "style",
+    });
+    pendingUrlSyncRef.current = pathOnly(href);
+    router.push(href);
   }
 
   function beginFreeFlowPath(opts?: { resetLifeArea?: boolean }) {

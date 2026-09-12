@@ -278,6 +278,24 @@ export function writeCreateSession(session: CreateSessionV1): void {
   }
 }
 
+/**
+ * Merge fields into the current create session and write immediately.
+ * Used before URL transitions so breadcrumbs/chrome don't lag the debounced snapshot.
+ */
+export function patchCreateSession(
+  patch: Partial<Omit<CreateSessionV1, "v">>,
+): CreateSessionV1 | null {
+  const current = readCreateSession();
+  if (!current) return null;
+  const next: CreateSessionV1 = {
+    ...current,
+    ...patch,
+    v: CREATE_SESSION_VERSION,
+  };
+  writeCreateSession(next);
+  return next;
+}
+
 /** Ideate → Create life-area link; survives handoff clear + remounts. */
 export const CREATE_LINKED_LIFE_AREA_KEY = "mm_create_linked_life_area_v1";
 
