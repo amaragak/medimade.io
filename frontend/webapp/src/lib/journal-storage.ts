@@ -921,3 +921,52 @@ export function groupJournalEntriesForSidebar(
 
   return groups;
 }
+
+function startOfWeekMonday(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  const day = x.getDay();
+  const diff = day === 0 ? 6 : day - 1;
+  x.setDate(x.getDate() - diff);
+  return x;
+}
+
+function weekGroupLabel(weekStart: Date, now: Date): string {
+  const thisWeek = startOfWeekMonday(now).getTime();
+  const start = weekStart.getTime();
+  const weeksAgo = Math.round((thisWeek - start) / (7 * MS_DAY));
+  if (weeksAgo <= 0) return "This week";
+  if (weeksAgo === 1) return "Last week";
+  if (weeksAgo < 12) return `${weeksAgo} weeks ago`;
+  return formatMonthHeading(
+    `${weekStart.getFullYear()}-${String(weekStart.getMonth() + 1).padStart(2, "0")}`,
+  );
+}
+
+/** Group freeform journal entries by calendar week (Mon–Sun) for the entries sidebar. */
+export function groupJournalEntriesByWeek(
+  entries: JournalEntry[],
+  now = new Date(),
+): JournalSidebarGroup[] {
+  const sorted = [...entries].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  );
+  const byWeek = new Map<number, JournalEntry[]>();
+  for (const e of sorted) {
+    const weekStart = startOfWeekMonday(new Date(e.updatedAt));
+    const key = weekStart.getTime();
+    const arr = byWeek.get(key) ?? [];
+    arr.push(e);
+    byWeek.set(key, arr);
+  }
+  const keys = Array.from(byWeek.keys()).sort((a, b) => b - a);
+  return keys.map((key) => {
+    const weekStart = new Date(key);
+    const list = byWeek.get(key) ?? [];
+    return {
+      id: `week-${key}`,
+      label: weekGroupLabel(weekStart, now),
+      entries: list,
+    };
+  });
+}

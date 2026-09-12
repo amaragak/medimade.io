@@ -639,4 +639,6 @@ export const homeHeroPatternCriticalCss = [
   `:root.dark .home-hero::before{background-image:url("${HOME_HERO_PATTERN_DARK}")}`,
   `.page-pattern-tile{background-image:url("${HOME_HERO_PATTERN_LIGHT}")}`,
   `:root.dark .page-pattern-tile{background-image:url("${HOME_HERO_PATTERN_DARK}")}`,
+  `.journal-editor-pattern-gutter::before{background-image:url("${HOME_HERO_PATTERN_LIGHT}")}`,
+  `:root.dark .journal-editor-pattern-gutter::before{background-image:url("${HOME_HERO_PATTERN_DARK}")}`,
 ].join("\n");

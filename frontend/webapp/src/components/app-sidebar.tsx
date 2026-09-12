@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { BookOpen, Code2, Focus, Lightbulb, Moon, Shield, Sun } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
@@ -14,6 +14,7 @@ import {
   type AppNavSection,
   type AppNavSubItem,
 } from "@/lib/app-nav";
+import { AlphaChromeButton } from "@/components/dev-chrome-button";
 import {
   COLOR_SCHEME_CHANGED_EVENT,
   applyColorScheme,
@@ -22,6 +23,7 @@ import {
   type ColorScheme,
 } from "@/lib/color-scheme";
 import { clearMedimadeSession, isMedimadeSessionActive } from "@/lib/auth-session";
+import { enterMarketingPreviewMode } from "@/lib/marketing-preview";
 import { loadIdeateStore } from "@/lib/plan-ideate-store";
 import {
   pullIdeateStoreFromCloud,
@@ -126,6 +128,7 @@ function NavSectionBlock({
   const subs = items ?? section.children ?? [];
   const hasChildren = subs.length > 0 || Boolean(emptyAction);
   const sectionActive = activeNavSectionId(pathname) === section.id;
+  const icon = SECTION_ICONS[section.id];
 
   return (
     <div className="px-2">
@@ -141,7 +144,7 @@ function NavSectionBlock({
                 : "text-muted"
           }`}
         >
-          {SECTION_ICONS[section.id] ?? null}
+          {icon ?? null}
           <span className="min-w-0 truncate">{section.label}</span>
         </Link>
         {hasChildren ? (
@@ -239,6 +242,7 @@ export function AppSidebar({
   onCloseMobile,
 }: Props) {
   const pathname = usePathname() || "/";
+  const router = useRouter();
   const [hash, setHash] = useState("");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -295,7 +299,6 @@ export function AppSidebar({
         }
       }
     }
-    // Keep the active section open on navigation unless the user collapsed it.
     if (active && APP_NAV_MAIN.some((s) => s.id === active && s.children?.length)) {
       if (stored[active] !== false) next[active] = true;
     }
@@ -328,6 +331,7 @@ export function AppSidebar({
       [
         "flex w-[200px] shrink-0 flex-col border-r-[0.5px] border-border bg-surface-2",
         "fixed bottom-0 left-0 top-14 z-[120] transition-transform duration-200 ease-out",
+        // Mobile: off-canvas until hamburger opens. Desktop: always visible.
         mobileOpen ? "translate-x-0 shadow-xl" : "-translate-x-full",
         "md:translate-x-0",
       ].join(" "),
@@ -419,6 +423,17 @@ export function AppSidebar({
             >
               Pro
             </Link>
+            <AlphaChromeButton
+              className="mt-1 w-full justify-center md:hidden"
+              title="Alpha — show marketing site without clearing session"
+              onClick={() => {
+                enterMarketingPreviewMode();
+                onNavigate?.();
+                router.push("/");
+              }}
+            >
+              View marketing page
+            </AlphaChromeButton>
           </div>
         </div>
       </aside>

@@ -19,7 +19,7 @@ import {
 import { JournalTranscribeApiContext } from "@/components/journal-transcribe-api-context";
 
 const editorClass =
-  "min-h-[8rem] w-full px-4 py-3 text-base leading-relaxed text-foreground focus:outline-none " +
+  "min-h-[8rem] w-full px-7 py-6 text-[15px] leading-[1.85] text-foreground focus:outline-none " +
   "[&_.ProseMirror]:min-h-[8rem] [&_p]:my-2 [&_p.is-editor-empty:first-child::before]:text-muted/60 " +
   "[&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:font-display [&_h2]:text-lg [&_h2]:font-medium [&_h2]:tracking-tight " +
   "[&_h3]:mt-3 [&_h3]:mb-1.5 [&_h3]:font-display [&_h3]:text-base [&_h3]:font-medium " +
@@ -39,9 +39,20 @@ type Props = {
   onHtmlChange: (html: string) => void;
   onTitleChange: (title: string) => void;
   onDelete?: () => void;
+  onConnectLifeArea?: () => void;
+  connectLifeAreaLabel?: string;
+  onGenerateMeditation?: () => void;
   /** Extra classes for the overflow menu (e.g. hide on mobile when chrome is external). */
   entryMenuClassName?: string;
-  /** Footer inside the card, below a divider (e.g. mood). */
+  /** Mood row above the title (journal entries redesign). */
+  headerBefore?: ReactNode;
+  /** Connections / meta row below the title. */
+  headerAfter?: ReactNode;
+  /** Sticky bottom bar (word count + actions). */
+  bottomBar?: ReactNode;
+  /** Hide the created-date line when date is shown elsewhere. */
+  hideCreatedDate?: boolean;
+  /** Optional secondary footer above the bottom bar (e.g. tags). */
   children?: ReactNode;
 };
 
@@ -56,7 +67,14 @@ export function JournalRichEditor({
   onHtmlChange,
   onTitleChange,
   onDelete,
+  onConnectLifeArea,
+  connectLifeAreaLabel = "Connect to life area",
+  onGenerateMeditation,
   entryMenuClassName,
+  headerBefore,
+  headerAfter,
+  bottomBar,
+  hideCreatedDate = false,
   children,
 }: Props) {
   const titleSeededForEntryRef = useRef<string | null>(null);
@@ -260,74 +278,118 @@ export function JournalRichEditor({
 
   if (!editor) {
     return (
-      <div className="min-h-[12rem] flex-1 animate-pulse rounded-2xl border border-border bg-card shadow-sm" />
+      <div className="min-h-[12rem] flex-1 animate-pulse rounded-[6px] bg-surface-2/40" />
     );
   }
 
+  const showEntryMenu = Boolean(
+    onDelete || onConnectLifeArea || onGenerateMeditation,
+  );
+  const menuItemClass =
+    "block w-full cursor-pointer px-3 py-2 text-left text-sm text-foreground hover:bg-accent-soft/30";
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-      <div className="flex shrink-0 flex-col border-b border-border">
-        <div className="flex items-start gap-2 px-4 pb-2 pt-3">
-          <div className="min-w-0 flex-1">
-            <time
-              className="mb-1 block text-xs text-muted"
-              dateTime={createdAt}
-            >
-              Created {formatJournalEntryDate(createdAt)}
-            </time>
-            <label className="block">
-              <span className="sr-only">Title</span>
-              <input
-                type="text"
-                value={entryTitle}
-                onChange={(ev) => {
-                  const v = ev.target.value;
-                  setEntryTitle(v);
-                  onTitleChange(v);
-                }}
-                placeholder={titlePlaceholder}
-                autoComplete="off"
-                className="w-full border-0 bg-transparent px-0 py-0.5 font-display text-2xl font-medium tracking-tight text-foreground outline-none ring-0 placeholder:text-muted/45"
-              />
-            </label>
-          </div>
-          {onDelete ? (
-            <div
-              ref={menuRef}
-              className={`relative flex shrink-0 items-center gap-2 self-end ${entryMenuClassName ?? ""}`}
-            >
-              <span className="h-6 w-px bg-border" aria-hidden />
-              <button
-                type="button"
-                aria-label="Entry actions"
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                onClick={() => setMenuOpen((v) => !v)}
-                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted hover:bg-accent-soft/50 hover:text-foreground"
-              >
-                <IconMore />
-              </button>
-              {menuOpen ? (
-                <div
-                  role="menu"
-                  className="absolute right-0 top-full z-20 mt-1 min-w-[9rem] rounded-xl border border-border bg-card py-1 shadow-lg"
+    <div className="flex min-h-0 flex-1 overflow-hidden bg-transparent">
+      {/* Writing column — capped width; can shrink on medium so editor keeps priority. */}
+      <div className="flex min-h-0 w-full min-w-0 max-w-[680px] flex-col overflow-hidden border-r-[0.5px] border-border bg-background">
+        <div className="flex shrink-0 flex-col border-b border-border">
+          <div className="flex items-start gap-2 px-7 pb-3 pt-3">
+            <div className="min-w-0 flex-1">
+              {!hideCreatedDate ? (
+                <time
+                  className="mb-1 block text-xs text-muted"
+                  dateTime={createdAt}
                 >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onDelete();
-                    }}
-                    className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-danger hover:bg-danger-soft/40"
-                  >
-                    Delete entry
-                  </button>
-                </div>
+                  Created {formatJournalEntryDate(createdAt)}
+                </time>
               ) : null}
+              <label className="block">
+                <span className="sr-only">Title</span>
+                <input
+                  type="text"
+                  value={entryTitle}
+                  onChange={(ev) => {
+                    const v = ev.target.value;
+                    setEntryTitle(v);
+                    onTitleChange(v);
+                  }}
+                  placeholder={titlePlaceholder}
+                  autoComplete="off"
+                  className="w-full border-0 border-b border-transparent bg-transparent px-0 py-0.5 font-display text-[26px] font-normal tracking-tight text-foreground outline-none ring-0 placeholder:text-muted/45 focus:border-border"
+                />
+              </label>
+              {headerBefore ? <div className="mt-2">{headerBefore}</div> : null}
+              {headerAfter ? <div className="mt-2">{headerAfter}</div> : null}
             </div>
-          ) : null}
-        </div>
+            {showEntryMenu ? (
+              <div
+                ref={menuRef}
+                className={`relative flex shrink-0 items-center gap-2 self-start pt-1 ${entryMenuClassName ?? ""}`}
+              >
+                <button
+                  type="button"
+                  aria-label="Entry actions"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((v) => !v)}
+                  className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted hover:bg-accent-soft/50 hover:text-foreground"
+                >
+                  <IconMore />
+                </button>
+                {menuOpen ? (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full z-20 mt-1 min-w-[12.5rem] rounded-xl border border-border bg-card py-1 shadow-lg"
+                  >
+                    {onConnectLifeArea ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onConnectLifeArea();
+                        }}
+                        className={menuItemClass}
+                      >
+                        {connectLifeAreaLabel}
+                      </button>
+                    ) : null}
+                    {onGenerateMeditation ? (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onGenerateMeditation();
+                        }}
+                        className={menuItemClass}
+                      >
+                        Generate meditation
+                      </button>
+                    ) : null}
+                    {onDelete ? (
+                      <>
+                        {onConnectLifeArea || onGenerateMeditation ? (
+                          <div className="my-1 border-t border-border" />
+                        ) : null}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setMenuOpen(false);
+                            onDelete();
+                          }}
+                          className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-danger hover:bg-danger-soft/40"
+                        >
+                          Delete entry
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         {/* sm+: full toolbar (unchanged wrapping behavior) */}
         <div className="hidden flex-wrap items-center gap-1 border-t border-border px-3 py-2 sm:flex">
             {transcribeApiBase ? (
@@ -600,12 +662,19 @@ export function JournalRichEditor({
         <JournalTranscribeApiContext.Provider value={transcribeApiBase}>
           <EditorContent editor={editor} />
         </JournalTranscribeApiContext.Provider>
+        {children ? <div className="px-7 pb-4">{children}</div> : null}
       </div>
-      {children ? (
-        <div className="shrink-0 border-t border-border px-4 py-3">
-          {children}
+      {bottomBar ? (
+        <div className="shrink-0 border-t-[0.5px] border-border px-6 py-3">
+          {bottomBar}
         </div>
       ) : null}
+      </div>
+      {/* Beyond the writing column: app background + mandala fade. */}
+      <div
+        className="journal-editor-pattern-gutter min-h-0 min-w-0 flex-1"
+        aria-hidden
+      />
     </div>
   );
 }

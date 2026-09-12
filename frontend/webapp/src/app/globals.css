@@ -779,6 +779,69 @@ main[data-app-layout="signed-in"] .page-pattern-tile {
   }
 }
 
+/*
+ * Journal editor — mandala fade in the gutter past the writing-column hairline.
+ * Same tile / opacity as .page-pattern-tile; mask rises from the divider to the
+ * right edge so the off-white app background reads through with the pattern.
+ */
+.journal-editor-pattern-gutter {
+  position: relative;
+  background-color: var(--background);
+}
+
+.journal-editor-pattern-gutter::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--page-pattern-opacity, 0.24);
+  background-image: url("/patterns/paisley-tile-800-offwhite.webp");
+  background-repeat: repeat;
+  background-size: 800px 800px;
+  background-position: 0 0;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    rgb(0 0 0 / 0.04) 0,
+    rgb(0 0 0 / 0.06) 6%,
+    rgb(0 0 0 / 0.1) 14%,
+    rgb(0 0 0 / 0.16) 24%,
+    rgb(0 0 0 / 0.24) 36%,
+    rgb(0 0 0 / 0.34) 48%,
+    rgb(0 0 0 / 0.44) 60%,
+    rgb(0 0 0 / 0.54) 72%,
+    rgb(0 0 0 / 0.64) 84%,
+    rgb(0 0 0 / 0.72) 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    rgb(0 0 0 / 0.04) 0,
+    rgb(0 0 0 / 0.06) 6%,
+    rgb(0 0 0 / 0.1) 14%,
+    rgb(0 0 0 / 0.16) 24%,
+    rgb(0 0 0 / 0.24) 36%,
+    rgb(0 0 0 / 0.34) 48%,
+    rgb(0 0 0 / 0.44) 60%,
+    rgb(0 0 0 / 0.54) 72%,
+    rgb(0 0 0 / 0.64) 84%,
+    rgb(0 0 0 / 0.72) 100%
+  );
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+}
+
+:root.dark .journal-editor-pattern-gutter::before {
+  background-image: url("/patterns/paisley-tile-800-tonal-navy.webp");
+  opacity: 0.18;
+}
+
+@media (max-width: 72rem) {
+  .journal-editor-pattern-gutter::before {
+    display: none;
+  }
+}
+
 /* Explicit product alias (journal / ideate / focus — inherits shared linear mask). */
 .home-hero--product {
   /* previous radial mask — kept for easy rollback */
@@ -976,15 +1039,14 @@ main[data-app-layout="signed-in"] .page-pattern-tile {
     background: transparent;
   }
 
-  /* Muted well below the accent's full strength — a scrollbar shouldn't
-     compete with the content it sits beside. */
+  /* Light: medium-light grey thumb. */
   &::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--accent-button) 35%, transparent);
+    background: color-mix(in srgb, var(--muted) 55%, transparent);
     border-radius: 10px;
   }
 
   &::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--accent-button) 60%, transparent);
+    background: color-mix(in srgb, var(--muted) 75%, transparent);
   }
 
   /*
@@ -994,7 +1056,7 @@ main[data-app-layout="signed-in"] .page-pattern-tile {
    */
   @supports not selector(::-webkit-scrollbar) {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--accent-button) 35%, transparent)
+    scrollbar-color: color-mix(in srgb, var(--muted) 55%, transparent)
       transparent;
   }
 }

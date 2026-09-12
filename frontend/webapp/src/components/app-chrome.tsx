@@ -90,7 +90,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setMobileOpen(false);
-  }, [signedIn, marketingPreview]);
+  }, [signedIn, marketingPreview, pathname]);
 
   const showAppChrome = signedIn && !marketingPreview;
 
@@ -178,7 +178,10 @@ export function AppChrome({ children }: { children: ReactNode }) {
   return (
     <AppPrimaryTabsProvider>
       <div className="flex min-h-0 flex-1 flex-col">
-        <AppTopBar onOpenSidebar={() => setMobileOpen(true)} />
+        <AppTopBar
+          mobileSidebarOpen={mobileOpen}
+          onToggleSidebar={() => setMobileOpen((v) => !v)}
+        />
         <div className="flex min-h-0 flex-1">
           <div className="hidden w-[200px] shrink-0 md:block" aria-hidden />
           <AppSidebar

@@ -42,12 +42,16 @@ import {
   findGratitudeEntryForLocalDate,
   formatJournalEntryDate,
   gratitudeLinesToHtml,
+  groupJournalEntriesByWeek,
   groupJournalEntriesForSidebar,
   isDemoJournalEntry,
   isDemoOnlyStore,
   isGratitudeEntry,
   journalEntryDraftChanged,
   journalEntryHasMeaningfulContent,
+  journalEntryPlainForHandoff,
+  armJournalMeditationHandoffJson,
+  JOURNAL_MEDITATION_PAYLOAD_KEY,
   loadJournalStoreRaw,
   localDateKey,
   localDateKeyFromIso,
@@ -65,6 +69,11 @@ import {
   type JournalGratitudeLines,
   type JournalStoreV2,
 } from "@/lib/journal-storage";
+import {
+  journalMoodDotColor,
+} from "@/lib/journal-moods";
+import { journalEntriesLinkedToLifeArea } from "@/lib/plan-life-area-links";
+import { loadPlanDreamsStore, type PlanDream } from "@/lib/plan-dreams";
 
 type JournalMainTab = "journal" | "gratitude";
 type JournalSection = JournalMainTab | "insights";
@@ -160,23 +169,43 @@ function IconEntryMore({ className }: { className?: string }) {
 
 const FOLDER_ALL = "";
 
-function entryPreview(entry: JournalEntry): string {
+function entryPreview(entry: JournalEntry, opts?: { untruncated?: boolean }): string {
   if (isGratitudeEntry(entry)) {
     const t = (entry.gratitude ?? [])
       .map((s) => s.trim())
       .filter(Boolean)
       .join(" · ");
     if (!t) return "No gratitudes yet";
+    if (opts?.untruncated) return t;
     return t.length > 72 ? `${t.slice(0, 69)}…` : t;
   }
   const t = stripHtmlToText(entry.contentHtml);
   if (!t) return "Empty entry";
+  if (opts?.untruncated) return t;
   return t.length > 72 ? `${t.slice(0, 69)}…` : t;
 }
 
 function sidebarEntryTitle(title: string): string {
   const t = title.trim();
   return t || "Untitled entry";
+}
+
+function lifeAreaForJournalEntry(
+  entry: JournalEntry,
+  dreams: PlanDream[],
+): PlanDream | null {
+  for (const dream of dreams) {
+    if (journalEntriesLinkedToLifeArea(dream, [entry]).length > 0) {
+      return dream;
+    }
+  }
+  const tags = (entry.tags ?? []).map((t) => t.trim().toLowerCase());
+  if (!tags.length) return null;
+  for (const dream of dreams) {
+    const title = dream.title.trim().toLowerCase();
+    if (title && tags.includes(title)) return dream;
+  }
+  return null;
 }
 
 function activeIdForJournalTab(
@@ -763,10 +792,26 @@ export function JournalView() {
     });
   }, [tabEntries, searchQuery, jumpDate, importBatchId, journalTab, selectedFolderId]);
 
-  const sidebarGroups = useMemo(
-    () => groupJournalEntriesForSidebar(filteredTabEntries),
-    [filteredTabEntries],
-  );
+  const sidebarGroups = useMemo(() => {
+    if (journalTab === "journal") {
+      return groupJournalEntriesByWeek(filteredTabEntries);
+    }
+    return groupJournalEntriesForSidebar(filteredTabEntries);
+  }, [filteredTabEntries, journalTab]);
+
+  const planDreams = useMemo(() => {
+    if (typeof window === "undefined" || !hydrated) return [] as PlanDream[];
+    try {
+      return loadPlanDreamsStore().dreams;
+    } catch {
+      return [] as PlanDream[];
+    }
+  }, [hydrated, entries]);
+
+  const activeLifeArea = useMemo(() => {
+    if (!activeEntry || isGratitudeEntry(activeEntry)) return null;
+    return lifeAreaForJournalEntry(activeEntry, planDreams);
+  }, [activeEntry, planDreams]);
 
   const folderFilterLabel =
     folders.find((f) => f.id === selectedFolderId)?.name ?? "All entries";
@@ -982,6 +1027,42 @@ export function JournalView() {
     setGratitudeDraft(latestGratitudeRef.current);
     router.push(`/journal/my/${encodeURIComponent(e.id)}`);
   }, [flushSaveSync, persist, selectedFolderId, router]);
+
+  const generateMeditationFromActive = useCallback(() => {
+    const entry = activeEntry;
+    if (!entry || isGratitudeEntry(entry)) return;
+    flushSaveSync();
+    const payload = {
+      v: 1 as const,
+      at: new Date().toISOString(),
+      segments: [
+        {
+          entryId: entry.id,
+          title: entry.title.trim() || "Untitled",
+          bodyPlain: journalEntryPlainForHandoff(
+            latestHtmlRef.current || entry.contentHtml,
+          ),
+          createdAt: entry.createdAt,
+        },
+      ],
+    };
+    const json = JSON.stringify(payload);
+    armJournalMeditationHandoffJson(json);
+    try {
+      sessionStorage.setItem(JOURNAL_MEDITATION_PAYLOAD_KEY, json);
+    } catch {
+      /* ignore */
+    }
+    router.push("/meditate/create?fromJournal=1");
+  }, [activeEntry, flushSaveSync, router]);
+
+  const openLifeAreaFromActive = useCallback(() => {
+    if (activeLifeArea) {
+      router.push(`/ideate/goal/${encodeURIComponent(activeLifeArea.id)}`);
+      return;
+    }
+    router.push("/ideate/my");
+  }, [activeLifeArea, router]);
 
   const createGratitudeEntry = useCallback(() => {
     flushSaveSync();
@@ -1202,10 +1283,22 @@ export function JournalView() {
 
   return (
     <JournalLockGate>
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-1 flex-col overflow-hidden px-4 pt-2 pb-6 sm:px-6 sm:pt-4 sm:pb-6">
+    <div
+      className={`mx-auto flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden ${
+        journalTab === "journal" && !insightsOpen
+          ? "max-w-none px-0 pb-0 pt-0"
+          : "max-w-6xl px-4 pb-6 pt-2 sm:px-6 sm:pb-6 sm:pt-4"
+      }`}
+    >
       <div
-        className={`shrink-0 ${mobileComposeChrome ? "max-sm:hidden" : ""} ${
-          importBatchId ? "mb-3" : "mb-3 md:mb-0"
+        className={`shrink-0 ${
+          journalTab === "journal" && !insightsOpen ? "px-4 sm:px-6" : ""
+        } ${mobileComposeChrome ? "max-sm:hidden" : ""} ${
+          importBatchId
+            ? "mb-3"
+            : journalTab === "journal" && !insightsOpen
+              ? "mb-0"
+              : "mb-3 md:mb-0"
         }`}
       >
         <AppPrimaryTabsDesktop>
@@ -1313,6 +1406,31 @@ export function JournalView() {
                   role="menuitem"
                   onClick={() => {
                     setMobileEntryMenuOpen(false);
+                    openLifeAreaFromActive();
+                  }}
+                  className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-foreground hover:bg-accent-soft/30"
+                >
+                  {activeLifeArea
+                    ? `Life area: ${activeLifeArea.title}`
+                    : "Connect to life area"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMobileEntryMenuOpen(false);
+                    generateMeditationFromActive();
+                  }}
+                  className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-foreground hover:bg-accent-soft/30"
+                >
+                  Generate meditation
+                </button>
+                <div className="my-1 border-t border-border" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMobileEntryMenuOpen(false);
                     deleteActive();
                   }}
                   className="block w-full cursor-pointer px-3 py-2 text-left text-sm text-danger hover:bg-danger-soft/40"
@@ -1382,33 +1500,43 @@ export function JournalView() {
         </div>
       ) : null}
       {!insightsOpen ? (
-      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden lg:flex-row lg:gap-4">
+      <div
+        className={`flex min-h-0 flex-1 overflow-hidden ${
+          journalTab === "journal"
+            ? "flex-col gap-0 md:flex-row"
+            : "flex-col gap-6 lg:flex-row lg:gap-4"
+        }`}
+      >
         <aside
-          className={`flex shrink-0 flex-col gap-3 overflow-visible border-b border-border pb-4 lg:max-h-none lg:w-64 lg:border-b-0 lg:pb-0 ${
-            journalTab === "journal" || journalTab === "gratitude"
-              ? "max-h-[22rem] max-sm:max-h-none max-sm:min-h-0 max-sm:flex-1 max-sm:border-b-0 max-sm:pb-0 sm:max-h-[22rem] lg:max-h-none"
-              : "max-h-[22rem]"
-          } ${mobileComposeChrome ? "max-sm:hidden" : ""}`}
+          className={`flex shrink-0 flex-col overflow-hidden ${
+            journalTab === "journal"
+              ? `relative z-[1] min-h-0 gap-3 border-b-[0.5px] border-border bg-surface-2 px-3 pb-3 pt-3 md:w-[180px] md:shrink-0 md:self-stretch md:border-b-0 md:border-r-[0.5px] lg:w-[220px] xl:w-[260px] ${
+                  mobileComposeChrome ? "max-sm:hidden" : "max-sm:min-h-0 max-sm:flex-1"
+                }`
+              : `gap-3 overflow-visible border-b border-border pb-4 lg:max-h-none lg:w-64 lg:border-b-0 lg:pb-0 ${
+                  journalTab === "gratitude"
+                    ? "max-h-[22rem] max-sm:max-h-none max-sm:min-h-0 max-sm:flex-1 max-sm:border-b-0 max-sm:pb-0 sm:max-h-[22rem] lg:max-h-none"
+                    : "max-h-[22rem]"
+                } ${mobileComposeChrome ? "max-sm:hidden" : ""}`
+          }`}
         >
           {journalTab === "journal" ? (
             <div className="flex flex-col gap-2">
               <button
                 type="button"
                 onClick={createEntry}
-                className="cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
+                className="w-full cursor-pointer rounded-xl accent-fill-gradient px-3 py-2.5 text-sm font-semibold text-on-accent transition-opacity hover:opacity-90"
               >
                 + New entry
               </button>
-              <div className="flex items-center gap-1.5">
-                <div className="min-w-0 flex-1">
-                  <SearchInput
-                    className="w-full"
-                    inputClassName="py-2"
-                    value={searchQuery}
-                    onChange={setSearchQuery}
-                    placeholder="Search entries"
-                  />
-                </div>
+              <SearchInput
+                className="w-full"
+                inputClassName="py-2"
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search entries..."
+              />
+              <div className="flex items-center justify-end gap-1.5">
                 {/* Mobile: folder + date in one control */}
                 <div ref={filtersMenuRef} className="relative shrink-0 sm:hidden">
                   <button
@@ -1802,14 +1930,88 @@ export function JournalView() {
                       : "No entries yet."}
               </p>
             ) : (
-              sidebarGroups.map((group) => (
+              sidebarGroups.map((group) => {
+                const weekMoodDots =
+                  journalTab === "journal"
+                    ? group.entries
+                        .map((e) => journalMoodDotColor(e.mood))
+                        .filter((c): c is string => Boolean(c))
+                    : [];
+                return (
                 <div key={group.id}>
-                  <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
-                    {group.label}
-                  </h2>
-                  <ul className="space-y-2">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <h2 className="text-[10px] font-semibold uppercase tracking-wide text-muted">
+                      {group.label}
+                    </h2>
+                    {weekMoodDots.length > 0 ? (
+                      <div
+                        className="flex shrink-0 items-center gap-0.5"
+                        aria-hidden
+                      >
+                        {weekMoodDots.map((color, i) => (
+                          <span
+                            key={`${group.id}-dot-${i}`}
+                            className="inline-block size-1.5 rounded-full"
+                            style={{ backgroundColor: color }}
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                  <ul className="space-y-1.5">
                     {group.entries.map((e) => {
                       const isActive = e.id === activeEntryId;
+                      if (journalTab === "journal") {
+                        const moodColor = journalMoodDotColor(e.mood);
+                        const lifeArea = lifeAreaForJournalEntry(e, planDreams);
+                        return (
+                          <li key={e.id}>
+                            <button
+                              type="button"
+                              onClick={() => selectEntry(e.id)}
+                              className={`w-full cursor-pointer rounded-[6px] border-[0.5px] px-2.5 py-2 text-left transition-colors ${
+                                isActive
+                                  ? "border-[color:var(--card-warm-border)] bg-[color:var(--card-warm-bg)] text-foreground"
+                                  : "border-transparent bg-transparent text-foreground hover:bg-[color:var(--card-warm-bg)]/50"
+                              }`}
+                            >
+                              <span className="flex min-w-0 items-center gap-2">
+                                <span
+                                  className="inline-block size-2 shrink-0 rounded-full"
+                                  style={{
+                                    backgroundColor: moodColor ?? "transparent",
+                                    boxShadow: moodColor
+                                      ? undefined
+                                      : "inset 0 0 0 1px rgba(180,140,80,0.35)",
+                                  }}
+                                  aria-hidden
+                                />
+                                <span className="min-w-0 truncate text-[13px] font-medium text-foreground">
+                                  {sidebarEntryTitle(e.title)}
+                                </span>
+                              </span>
+                              <span className="mt-0.5 line-clamp-2 pl-4 text-[12px] text-muted">
+                                {entryPreview(e, { untruncated: true })}
+                              </span>
+                              <div className="mt-1.5 flex items-center justify-between gap-2 pl-4">
+                                <time
+                                  dateTime={e.createdAt}
+                                  className="text-[11px] text-muted"
+                                >
+                                  {formatJournalEntryDate(e.createdAt)}
+                                </time>
+                                <span className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+                                  {lifeArea ? (
+                                    <span className="rounded-full border-[0.5px] border-[color:var(--card-warm-border)] bg-[color:var(--card-warm-bg)] px-1.5 py-0.5 text-[10px] font-medium text-muted">
+                                      {lifeArea.title}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </div>
+                            </button>
+                          </li>
+                        );
+                      }
                       const metaMuted = isActive
                         ? "text-faint"
                         : "text-muted";
@@ -1844,13 +2046,16 @@ export function JournalView() {
                     })}
                   </ul>
                 </div>
-              ))
+                );
+              })
             )}
           </nav>
         </aside>
 
         <section
           className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${
+            journalTab === "journal" ? "bg-transparent" : ""
+          } ${
             (journalTab === "journal" && !mobileJournalEditor) ||
             (journalTab === "gratitude" && !mobileGratitudeCompose)
               ? "max-sm:hidden"
@@ -1904,6 +2109,7 @@ export function JournalView() {
                 initialTitle={initialTitleForEditor}
                 createdAt={activeEntry.createdAt}
                 transcribeApiBase={getMedimadeApiBase()}
+                hideCreatedDate
                 entryMenuClassName={
                   mobileJournalEditor ? "max-sm:hidden" : undefined
                 }
@@ -1916,8 +2122,31 @@ export function JournalView() {
                   scheduleSave();
                 }}
                 onDelete={deleteActive}
+                onConnectLifeArea={openLifeAreaFromActive}
+                connectLifeAreaLabel={
+                  activeLifeArea
+                    ? `Life area: ${activeLifeArea.title}`
+                    : "Connect to life area"
+                }
+                onGenerateMeditation={generateMeditationFromActive}
+                headerAfter={
+                  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1.5 text-[12px] text-muted">
+                    <time dateTime={activeEntry.createdAt}>
+                      {formatJournalEntryDate(activeEntry.createdAt)}
+                    </time>
+                    <span aria-hidden>·</span>
+                    <JournalEntryMeta
+                      variant="inline"
+                      mood={activeEntry.mood}
+                      tags={activeEntry.tags}
+                      onMoodChange={(mood) => patchActive({ mood })}
+                      onTagsChange={(tags) => patchActive({ tags })}
+                    />
+                  </div>
+                }
               >
                 <JournalEntryMeta
+                  variant="tags"
                   mood={activeEntry.mood}
                   tags={activeEntry.tags}
                   onMoodChange={(mood) => patchActive({ mood })}
