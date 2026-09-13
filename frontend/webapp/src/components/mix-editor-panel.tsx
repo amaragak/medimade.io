@@ -205,6 +205,7 @@ export function MixEditorPanel({
   disableLocalPreview = false,
   stripPlayingMusicKey = null,
   repositionToken = 0,
+  bottomInsetPx = 0,
 }: {
   title: string;
   /** Remount / reposition key (e.g. meditation sk). */
@@ -223,8 +224,8 @@ export function MixEditorPanel({
   onPersist: (mix: MixEditorValues) => void | Promise<void>;
   onClose: () => void;
   closeRef: { current: (() => void) | null };
-  /** Library: above-end. Focus Sounds (bottom-left): above-start. */
-  placement?: "above-end" | "below-start" | "above-start";
+  /** Library: above-end. Focus Sounds (top-right): below-end. */
+  placement?: "above-end" | "below-start" | "above-start" | "below-end";
   /** Library keeps reset-to-original; Focus can hide it. */
   showReset?: boolean;
   /** When true, soundscape clicks preview via onPreview only (no in-panel audio). */
@@ -233,6 +234,8 @@ export function MixEditorPanel({
   stripPlayingMusicKey?: string | null;
   /** Change when the anchor moves (e.g. audio strip lift) so the panel re-places. */
   repositionToken?: number;
+  /** Reserve space at the viewport bottom (e.g. audio strip height). */
+  bottomInsetPx?: number;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -295,6 +298,14 @@ export function MixEditorPanel({
 
   const drumsLockedForMelodic = isMelodicMusicKey(musicItems, musicKey);
   const soundscapeSelected = isSoundscapeKey(compositionItems, musicKey);
+  /** Catalog key for the current soundscape (storage key may differ by extension). */
+  const soundscapeValueKey = soundscapeSelected
+    ? (compositionItems.find(
+        (c) =>
+          backgroundAudioStreamingKey(c.key) ===
+          backgroundAudioStreamingKey(musicKey),
+      )?.key ?? musicKey)
+    : "";
   const [bedTab, setBedTab] = useState<"soundscape" | "mixer">(
     soundscapeSelected ? "soundscape" : "mixer",
   );
@@ -367,30 +378,40 @@ export function MixEditorPanel({
       const w = panel.offsetWidth;
       const h = panel.offsetHeight;
       const gap = 8;
+      const bottomLimit =
+        window.innerHeight - 8 - Math.max(0, bottomInsetPx);
       let left: number;
       let top: number;
       if (placement === "below-start") {
         left = a.left;
         top = a.bottom + gap;
         left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
-        if (top + h > window.innerHeight - 8) {
-          top = Math.max(8, window.innerHeight - h - 8);
+        if (top + h > bottomLimit) {
+          top = Math.max(8, bottomLimit - h);
+        }
+      } else if (placement === "below-end") {
+        left = a.right - w;
+        top = a.bottom + gap;
+        left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+        if (top + h > bottomLimit) {
+          top = Math.max(8, bottomLimit - h);
         }
       } else if (placement === "above-start") {
         left = a.left;
         left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+        // Prefer directly above the anchor; never flip under it into the player.
         top = a.top - h - gap;
-        if (top < 8) top = Math.max(8, a.bottom + gap);
-        if (top + h > window.innerHeight - 8) {
-          top = Math.max(8, window.innerHeight - h - 8);
+        if (top + h > bottomLimit) {
+          top = bottomLimit - h;
         }
+        if (top < 8) top = 8;
       } else {
         left = a.right - w;
         left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
         top = a.top - h - gap;
         if (top < 8) top = a.bottom + gap;
-        if (top + h > window.innerHeight - 8) {
-          top = Math.max(8, window.innerHeight - h - 8);
+        if (top + h > bottomLimit) {
+          top = Math.max(8, bottomLimit - h);
         }
       }
       setPos({ top, left });
@@ -402,7 +423,12 @@ export function MixEditorPanel({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [anchorEl, editorKey, placement, repositionToken]);
+  }, [anchorEl, editorKey, placement, repositionToken, bottomInsetPx]);
+
+  const panelMaxHeight =
+    typeof window !== "undefined"
+      ? Math.max(160, window.innerHeight - 16 - Math.max(0, bottomInsetPx))
+      : undefined;
 
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
@@ -428,10 +454,11 @@ export function MixEditorPanel({
       ref={panelRef}
       role="dialog"
       aria-label="Background mix"
-      className="fixed z-[80] w-[28rem] overflow-visible rounded-xl border border-border bg-card p-4 text-sm text-foreground shadow-xl"
+      className="fixed z-[80] w-[28rem] overflow-y-auto overflow-x-visible rounded-xl border border-border bg-card p-4 text-sm text-foreground shadow-xl transition-[top] duration-150 ease-out"
       style={{
         top: pos?.top ?? -9999,
         left: pos?.left ?? -9999,
+        maxHeight: panelMaxHeight,
       }}
     >
       {(title.trim() || showReset) ? (
@@ -485,7 +512,7 @@ export function MixEditorPanel({
             variant="create"
             compact
             items={compositionItems}
-            value={soundscapeSelected ? musicKey : ""}
+            value={soundscapeValueKey}
             onChange={chooseSoundscape}
             previewUrl={soundscapePreviewUrl}
             playingKey={
@@ -494,7 +521,16 @@ export function MixEditorPanel({
             requirePreviewUrl={!disableLocalPreview}
             onTogglePreview={(key) => {
               if (disableLocalPreview) {
-                if (musicKey !== key) chooseSoundscape(key);
+                // Always sync playback — a saved selection can look selected
+                // without the strip having started yet.
+                if (
+                  backgroundAudioStreamingKey(musicKey) !==
+                  backgroundAudioStreamingKey(key)
+                ) {
+                  chooseSoundscape(key);
+                } else {
+                  previewNow(mixRef.current);
+                }
                 return;
               }
               toggleSoundscapePreview(key);

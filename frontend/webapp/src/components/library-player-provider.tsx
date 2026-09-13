@@ -33,6 +33,9 @@ import {
 export type { LibraryActiveTrack, LibraryBedVolumeApi, BedVolumeChannel };
 export { trackFromLibraryItem, liveMixTrack };
 
+/** Used until the strip measures itself — keeps Focus chrome lifting in the same frame as play. */
+export const PLAYER_STRIP_HEIGHT_ESTIMATE_PX = 80;
+
 type LibraryPlayerContextValue = {
   nowPlaying: LibraryActiveTrack | null;
   playingS3Key: string | null;
@@ -155,13 +158,21 @@ export function LibraryPlayerProvider({ children }: { children: ReactNode }) {
   const dismiss = useCallback(() => {
     setNowPlaying(null);
     setPlayingS3Key(null);
+    setPlayerStripHeightPx(0);
   }, []);
 
   const playTrack = useCallback((track: LibraryActiveTrack) => {
+    // Lift Focus chrome / padding immediately — measured height follows in layout.
+    setPlayerStripHeightPx((h) =>
+      h > 0 ? h : PLAYER_STRIP_HEIGHT_ESTIMATE_PX,
+    );
     setNowPlaying(track);
   }, []);
 
   const playItem = useCallback((item: LibraryMeditationItem) => {
+    setPlayerStripHeightPx((h) =>
+      h > 0 ? h : PLAYER_STRIP_HEIGHT_ESTIMATE_PX,
+    );
     setNowPlaying(trackFromLibraryItem(item));
   }, []);
 

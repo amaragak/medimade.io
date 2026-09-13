@@ -240,7 +240,7 @@ export function AppTopBar({
             aria-label={mobileSidebarOpen ? "Close menu" : "Open menu"}
             aria-expanded={mobileSidebarOpen}
             onClick={onToggleSidebar}
-            className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border text-foreground md:hidden"
+            className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground md:hidden"
           >
             <svg
               viewBox="0 0 24 24"

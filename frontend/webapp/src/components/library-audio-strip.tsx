@@ -23,7 +23,6 @@ import {
   setGaplessBedVolume,
   syncGaplessBed,
 } from "@/lib/gapless-bed-loop";
-import { playWithLeadBuffer } from "@/lib/audio-lead-buffer";
 import {
   applySpeechElementVolume,
   bedElementVolume,
@@ -339,12 +338,11 @@ export function LibraryAudioStrip({
       clearVoiceIntro();
       setPlaying(true);
       onPlayingChange?.(track.s3Key, true);
-      void playWithLeadBuffer(el, { leadSec: 0.5, timeoutMs: 2500 }).catch(
-        () => {
-          setPlaying(false);
-          onPlayingChange?.(track.s3Key, false);
-        },
-      );
+      // Start immediately — lead-buffer wait made Focus soundscapes feel stalled.
+      void el.play().catch(() => {
+        setPlaying(false);
+        onPlayingChange?.(track.s3Key, false);
+      });
       return;
     }
     applySpeechElementVolume(el);
@@ -437,12 +435,16 @@ export function LibraryAudioStrip({
     }
     const el = audioRef.current;
     if (!el) return;
-    el.load();
     if (ambientSoundscape) {
+      // Src is already on the element; load() only delays first play.
       el.volume = SOUNDSCAPE_ELEMENT_VOLUME;
-    } else {
-      applySpeechElementVolume(el);
+      startOrResumePlayback();
+      return () => {
+        clearVoiceIntro();
+      };
     }
+    el.load();
+    applySpeechElementVolume(el);
     startOrResumePlayback();
     return () => {
       clearVoiceIntro();
@@ -596,7 +598,11 @@ export function LibraryAudioStrip({
     }
     const el = rootRef.current;
     if (!el || !onHeightChange) return;
-    const report = () => onHeightChange(el.getBoundingClientRect().height);
+    const report = () => {
+      const h = el.getBoundingClientRect().height;
+      // Avoid clobbering the optimistic estimate with a 0 pre-layout read.
+      if (h > 0) onHeightChange(h);
+    };
     report();
     const ro = new ResizeObserver(report);
     ro.observe(el);
@@ -634,15 +640,16 @@ export function LibraryAudioStrip({
   return (
     <div
       ref={rootRef}
-      className={`fixed bottom-0 z-50 border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_8%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_35%,transparent)] sm:px-4 ${
+      className={`pointer-events-none fixed bottom-0 z-50 ${
         besideSidebar ? "left-0 md:left-[200px]" : "left-0"
       }`}
       style={{
-        paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))",
         right: focusTasksInsetPx > 0 ? focusTasksInsetPx : 0,
+        paddingLeft: "0.75rem",
+        paddingRight: "0.75rem",
+        paddingTop: "0.75rem",
+        paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))",
       }}
-      role="region"
-      aria-label="Now playing"
     >
       {ambientMix ? null : (
         <audio
@@ -659,7 +666,12 @@ export function LibraryAudioStrip({
       <audio ref={drumsRef} className="hidden" playsInline />
       <audio ref={noiseRef} className="hidden" playsInline />
 
-      <div className="mx-auto flex w-full max-w-6xl min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+      <div
+        className="pointer-events-auto mx-auto w-full max-w-6xl min-w-0 rounded-full border border-border bg-card/95 px-4 py-3 shadow-[0_8px_28px_color-mix(in_srgb,var(--overlay)_12%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_8px_28px_color-mix(in_srgb,var(--overlay)_40%,transparent)] sm:px-5"
+        role="region"
+        aria-label="Now playing"
+      >
+      <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <div className="flex shrink-0 items-center gap-1">
             {hideTransportSeek ? null : (
@@ -682,7 +694,7 @@ export function LibraryAudioStrip({
             )}
             <button
               type="button"
-                onClick={() => togglePlayback()}
+              onClick={() => togglePlayback()}
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full accent-fill-gradient text-on-accent"
               aria-label={playing ? "Pause" : "Play"}
             >
@@ -717,7 +729,7 @@ export function LibraryAudioStrip({
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
-              <p className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">
+              <p className="min-w-0 flex-1 truncate text-center font-display text-base font-semibold text-foreground sm:text-lg">
                 {track.title}
               </p>
               <button
@@ -843,7 +855,7 @@ export function LibraryAudioStrip({
               pausePlayback();
               onDismiss();
             }}
-            className="rounded-xl border border-border px-3 py-2.5 text-sm text-muted hover:border-accent/40"
+            className="rounded-xl px-3 py-2.5 text-sm text-muted hover:bg-accent-soft/40 hover:text-foreground"
             aria-label="Close player"
           >
             <svg
@@ -862,6 +874,7 @@ export function LibraryAudioStrip({
             </svg>
           </button>
         </div>
+      </div>
       </div>
     </div>
   );

@@ -158,7 +158,7 @@ export function FocusTimerView() {
     dismiss,
     nowPlaying,
     playingS3Key,
-    playerStripHeightPx,
+    toggleCurrent,
     bedVolumeApiRef,
   } = useLibraryPlayer();
   const [name, setName] = useState("there");
@@ -314,6 +314,12 @@ export function FocusTimerView() {
         if (playingFocus) dismiss();
         return;
       }
+      // Same stem already in the strip — toggle play/pause (covers re-clicking
+      // a saved selection that looked selected but never started).
+      if (playingFocus && nowPlaying?.s3Key === next.s3Key) {
+        toggleCurrent();
+        return;
+      }
       if (
         playingFocus &&
         nowPlaying &&
@@ -325,7 +331,14 @@ export function FocusTimerView() {
       }
       playTrack(next);
     },
-    [dismiss, focusAmbientTitle, nowPlaying, patchNowPlaying, playTrack],
+    [
+      dismiss,
+      focusAmbientTitle,
+      nowPlaying,
+      patchNowPlaying,
+      playTrack,
+      toggleCurrent,
+    ],
   );
 
   const persistFocusMix = useCallback(
@@ -421,8 +434,6 @@ export function FocusTimerView() {
   }, [durationSec, remainingSec]);
 
   const clock = splitMmSs(remainingSec);
-  const stripLiftPx =
-    nowPlaying && playerStripHeightPx > 0 ? playerStripHeightPx : 0;
 
   const lifeAreas = useMemo(() => {
     if (!ideateStore) return [];
@@ -897,10 +908,7 @@ export function FocusTimerView() {
       >
         <div
           ref={patternPickerRef}
-          className="absolute right-4 z-[20] sm:right-5"
-          style={{
-            bottom: `calc(${stripLiftPx}px + max(1rem, env(safe-area-inset-bottom, 0px)) + 0.25rem)`,
-          }}
+          className="absolute bottom-4 right-4 z-[20] sm:bottom-5 sm:right-5"
         >
           <button
             type="button"
@@ -968,10 +976,7 @@ export function FocusTimerView() {
             unlockHtmlMediaPlayback();
             setMixPanelOpen(true);
           }}
-          className="absolute left-4 z-[20] cursor-pointer rounded-full border border-border bg-card/90 px-3.5 py-1.5 text-sm font-medium text-muted shadow-sm backdrop-blur-sm transition-[bottom,colors] hover:border-accent/40 hover:bg-accent-soft/40 hover:text-foreground sm:left-5"
-          style={{
-            bottom: `calc(${stripLiftPx}px + max(1rem, env(safe-area-inset-bottom, 0px)) + 0.25rem)`,
-          }}
+          className="absolute left-4 top-4 z-[20] cursor-pointer rounded-full border border-border bg-card/90 px-3.5 py-1.5 text-sm font-medium text-muted shadow-sm backdrop-blur-sm transition-colors hover:border-accent/40 hover:bg-accent-soft/40 hover:text-foreground sm:left-5 sm:top-5"
         >
           Sounds
         </button>
@@ -1010,10 +1015,9 @@ export function FocusTimerView() {
             onPersist={persistFocusMix}
             onClose={closeMixPanel}
             closeRef={mixCloseRef}
-            placement="above-start"
+            placement="below-start"
             showReset={false}
             disableLocalPreview
-            repositionToken={stripLiftPx}
             stripPlayingMusicKey={
               playingS3Key?.startsWith(FOCUS_AMBIENT_S3_PREFIX)
                 ? (nowPlaying?.musicKey ?? null)
