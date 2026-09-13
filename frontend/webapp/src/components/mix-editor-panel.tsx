@@ -491,12 +491,21 @@ export function MixEditorPanel({
           aria-label="Sound bed"
           value={bedTab}
           onChange={(id) => {
-            // Leaving a soundscape frees the music slot for a mixer sample.
+            // Leaving a soundscape frees the music slot for a mixer sample —
+            // but only when Build-your-own already has beds, or this is the
+            // Library editor (local preview). Focus with an empty mixer keeps
+            // the soundscape playing until the user picks a bed.
             if (id === "mixer" && soundscapeSelected) {
-              const next = mixWithKey(mixRef.current, "music", "");
-              setMusicKey("");
-              mixRef.current = next;
-              previewNow(next);
+              const hasMixerBeds =
+                Boolean(natureKey.trim()) ||
+                Boolean(drumsKey.trim()) ||
+                Boolean(noiseKey.trim());
+              if (hasMixerBeds || !disableLocalPreview) {
+                const next = mixWithKey(mixRef.current, "music", "");
+                setMusicKey("");
+                mixRef.current = next;
+                previewNow(next);
+              }
             }
             setBedTab(id);
           }}
@@ -624,16 +633,33 @@ export function MixEditorPanel({
                 <SoundFolderSelect
                   category={row.category}
                   items={row.items}
-                  value={row.key}
+                  value={
+                    row.channel === "music" &&
+                    isSoundscapeKey(compositionItems, row.key)
+                      ? ""
+                      : row.key
+                  }
                   compact
                   disabled={drumsLocked}
                   onChange={(value) => {
-                    row.setKey(value);
-                    const next = mixWithKey(
+                    let next = mixWithKey(
                       mixRef.current,
                       row.channel,
                       value,
                     );
+                    // First mixer pick while a soundscape still occupies music:
+                    // drop the soundscape so the strip switches to the mix.
+                    if (
+                      row.channel !== "music" &&
+                      isSoundscapeKey(
+                        compositionItems,
+                        mixRef.current.musicKey,
+                      )
+                    ) {
+                      next = { ...next, musicKey: "" };
+                      setMusicKey("");
+                    }
+                    row.setKey(value);
                     mixRef.current = next;
                     previewNow(next);
                   }}

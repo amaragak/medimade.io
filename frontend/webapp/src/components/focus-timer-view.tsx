@@ -314,10 +314,10 @@ export function FocusTimerView() {
         if (playingFocus) dismiss();
         return;
       }
-      // Same stem already in the strip — toggle play/pause (covers re-clicking
-      // a saved selection that looked selected but never started).
+      // Same stem already loaded — resume if paused; never toggle off on re-sync
+      // (closing the flyout re-persists and must not pause).
       if (playingFocus && nowPlaying?.s3Key === next.s3Key) {
-        toggleCurrent();
+        if (playingS3Key !== next.s3Key) toggleCurrent();
         return;
       }
       if (
@@ -337,6 +337,7 @@ export function FocusTimerView() {
       nowPlaying,
       patchNowPlaying,
       playTrack,
+      playingS3Key,
       toggleCurrent,
     ],
   );
@@ -349,6 +350,12 @@ export function FocusTimerView() {
     },
     [syncFocusAmbientPlayer],
   );
+
+  /** Save mix without touching the strip — used when closing the flyout. */
+  const saveFocusMixOnly = useCallback((mix: MixEditorValues) => {
+    setFocusMix(mix);
+    saveFocusMix(mix);
+  }, []);
 
   const closeMixPanel = useCallback(() => {
     setMixPanelOpen(false);
@@ -908,7 +915,7 @@ export function FocusTimerView() {
       >
         <div
           ref={patternPickerRef}
-          className="absolute bottom-4 right-4 z-[20] sm:bottom-5 sm:right-5"
+          className="absolute right-4 top-1/2 z-[20] -translate-y-1/2 sm:right-5"
         >
           <button
             type="button"
@@ -1012,7 +1019,7 @@ export function FocusTimerView() {
               bedVolumeApiRef.current?.setBedVolume(channel, gain);
             }}
             onPreview={persistFocusMix}
-            onPersist={persistFocusMix}
+            onPersist={saveFocusMixOnly}
             onClose={closeMixPanel}
             closeRef={mixCloseRef}
             placement="below-start"

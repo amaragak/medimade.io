@@ -667,24 +667,24 @@ export function LibraryAudioStrip({
       <audio ref={noiseRef} className="hidden" playsInline />
 
       <div
-        className="pointer-events-auto mx-auto w-full max-w-6xl min-w-0 rounded-full border border-border bg-card/95 px-4 py-3 shadow-[0_8px_28px_color-mix(in_srgb,var(--overlay)_12%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_8px_28px_color-mix(in_srgb,var(--overlay)_40%,transparent)] sm:px-5"
+        className="pointer-events-auto mx-auto w-full max-w-6xl min-w-0 rounded-full border border-border bg-card/95 px-4 py-2 shadow-[0_8px_28px_color-mix(in_srgb,var(--overlay)_12%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_8px_28px_color-mix(in_srgb,var(--overlay)_40%,transparent)] sm:px-5"
         role="region"
         aria-label="Now playing"
       >
-      <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+      <div className="flex w-full min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-2.5">
           <div className="flex shrink-0 items-center gap-1">
             {hideTransportSeek ? null : (
               <button
                 type="button"
                 onClick={() => skipSeconds(-10)}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background text-foreground hover:border-accent/40 sm:h-11 sm:w-11"
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-foreground hover:border-accent/40 sm:h-9 sm:w-9"
                 aria-label="Back 10 seconds"
               >
                 <svg
                   viewBox="0 0 24 24"
-                  width="20"
-                  height="20"
+                  width="18"
+                  height="18"
                   fill="currentColor"
                   aria-hidden
                 >
@@ -695,15 +695,15 @@ export function LibraryAudioStrip({
             <button
               type="button"
               onClick={() => togglePlayback()}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full accent-fill-gradient text-on-accent"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full accent-fill-gradient text-on-accent"
               aria-label={playing ? "Pause" : "Play"}
             >
               {playing ? (
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden>
                   <path d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
                 </svg>
               ) : (
-                <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden>
                   <path d="M8 5v14l11-7L8 5z" />
                 </svg>
               )}
@@ -712,13 +712,13 @@ export function LibraryAudioStrip({
               <button
                 type="button"
                 onClick={() => skipSeconds(10)}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background text-foreground hover:border-accent/40 sm:h-11 sm:w-11"
+                className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-foreground hover:border-accent/40 sm:h-9 sm:w-9"
                 aria-label="Forward 10 seconds"
               >
                 <svg
                   viewBox="0 0 24 24"
-                  width="20"
-                  height="20"
+                  width="18"
+                  height="18"
                   fill="currentColor"
                   aria-hidden
                 >
@@ -728,8 +728,8 @@ export function LibraryAudioStrip({
             )}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-start gap-2">
-              <p className="min-w-0 flex-1 truncate text-center font-display text-base font-semibold text-foreground sm:text-lg">
+            <div className="flex items-center gap-2">
+              <p className="min-w-0 flex-1 truncate text-center font-display text-base font-semibold leading-tight text-foreground sm:text-lg">
                 {track.title}
               </p>
               <button
@@ -738,13 +738,13 @@ export function LibraryAudioStrip({
                   pausePlayback();
                   onDismiss();
                 }}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-accent-soft/40 hover:text-foreground sm:hidden"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-accent-soft/40 hover:text-foreground sm:hidden"
                 aria-label="Close player"
               >
                 <svg
                   viewBox="0 0 24 24"
-                  width="18"
-                  height="18"
+                  width="16"
+                  height="16"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
@@ -757,13 +757,13 @@ export function LibraryAudioStrip({
                 </svg>
               </button>
             </div>
-            <div className="mt-1.5 flex items-center gap-2">
-              <span className="w-10 shrink-0 tabular-nums text-xs text-muted">
+            <div className="mt-1 flex items-center gap-2">
+              <span className="w-10 shrink-0 tabular-nums text-[11px] leading-none text-muted">
                 {hideTransportSeek ? "" : formatAudioClock(current)}
               </span>
               {hideTransportSeek ? (
                 <div
-                  className="relative h-1.5 w-full min-w-0 flex-1 overflow-hidden rounded-full bg-border/70"
+                  className="relative h-1 w-full min-w-0 flex-1 overflow-hidden rounded-full bg-border/70"
                   aria-hidden
                 >
                   <div
@@ -775,7 +775,7 @@ export function LibraryAudioStrip({
               ) : (
                 <input
                   type="range"
-                  className="h-1.5 w-full min-w-0 flex-1 cursor-pointer accent-accent"
+                  className="h-1 w-full min-w-0 flex-1 cursor-pointer accent-accent"
                   min={0}
                   max={max}
                   step={0.05}
@@ -815,7 +815,7 @@ export function LibraryAudioStrip({
                 />
               )}
               <span
-                className="w-10 shrink-0 text-right tabular-nums text-xs text-muted"
+                className="w-10 shrink-0 text-right tabular-nums text-[11px] leading-none text-muted"
                 aria-label={hideTransportSeek ? "Continuous loop" : undefined}
               >
                 {hideTransportSeek ? "∞" : formatAudioClock(duration)}
@@ -829,7 +829,7 @@ export function LibraryAudioStrip({
             <a
               href={track.url}
               download={downloadBasename(track.title)}
-              className="rounded-xl border border-border bg-background px-4 py-2.5 text-sm font-semibold text-foreground hover:border-accent/40"
+              className="inline-flex rounded-xl border border-border bg-background px-3 py-1.5 text-sm font-semibold text-foreground hover:border-accent/40"
               aria-label="Download audio"
             >
               <svg
@@ -855,7 +855,7 @@ export function LibraryAudioStrip({
               pausePlayback();
               onDismiss();
             }}
-            className="rounded-xl px-3 py-2.5 text-sm text-muted hover:bg-accent-soft/40 hover:text-foreground"
+            className="rounded-xl px-2.5 py-1.5 text-sm text-muted hover:bg-accent-soft/40 hover:text-foreground"
             aria-label="Close player"
           >
             <svg
