@@ -75,3 +75,29 @@ export async function playWithLeadBuffer(
     throw e;
   }
 }
+
+/** Minimal WAV — used only to satisfy HTMLMediaElement autoplay unlock. */
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+
+let htmlMediaUnlocked = false;
+
+/**
+ * Call from a user-gesture handler (click) so later `audio.play()` from effects
+ * is allowed. No-ops after the first successful unlock.
+ */
+export function unlockHtmlMediaPlayback(): void {
+  if (htmlMediaUnlocked || typeof document === "undefined") return;
+  const a = new Audio(SILENT_WAV);
+  a.volume = 0.01;
+  void a
+    .play()
+    .then(() => {
+      htmlMediaUnlocked = true;
+      a.pause();
+      a.removeAttribute("src");
+    })
+    .catch(() => {
+      /* Strip play control remains available if the browser still blocks. */
+    });
+}

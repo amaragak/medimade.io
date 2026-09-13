@@ -65,7 +65,7 @@ export const APP_NAV_MAIN: AppNavSection[] = [
   {
     id: "focus",
     label: "Focus",
-    href: "/focus",
+    href: "/focus/my",
   },
 ];
 
@@ -123,6 +123,9 @@ export function pathMatchesHref(pathname: string, href: string): boolean {
       pathname === "/ideate/my/vision-board" ||
       pathname.startsWith("/ideate/my/vision-board/")
     );
+  }
+  if (pathOnly === "/focus/my") {
+    return pathname === "/focus/my" || pathname.startsWith("/focus/my/");
   }
   if (pathOnly === "/admin") {
     return pathname === "/admin" || pathname.startsWith("/admin/");
@@ -351,7 +354,10 @@ export function buildAppBreadcrumbs(
   }
 
   if (pathname.startsWith("/focus")) {
-    return [{ label: "Focus", href: null }];
+    return [
+      { label: "Focus", href: "/focus/my" },
+      { label: "Timer", href: null },
+    ];
   }
   if (pathname.startsWith("/admin")) {
     return [{ label: "Admin", href: null }];

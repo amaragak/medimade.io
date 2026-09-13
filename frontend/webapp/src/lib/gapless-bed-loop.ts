@@ -32,6 +32,9 @@ type Controller = {
   frame: number | null;
   usingFallback: boolean;
   onBlocked: (() => void) | null;
+  /** Optional lead-buffer override for the next `startActive`. */
+  leadSec: number | null;
+  leadTimeoutMs: number | null;
   detach: () => void;
 };
 
@@ -59,6 +62,8 @@ function createController(primary: HTMLAudioElement): Controller {
     frame: null,
     usingFallback: false,
     onBlocked: null,
+    leadSec: null,
+    leadTimeoutMs: null,
     detach: () => {},
   };
 
@@ -139,7 +144,18 @@ async function startActive(controller: Controller): Promise<void> {
   el.volume = controller.state.volume;
   idle(controller).volume = 0;
   try {
-    await playWithLeadBuffer(el);
+    const leadOpts =
+      controller.leadSec != null || controller.leadTimeoutMs != null
+        ? {
+            ...(controller.leadSec != null
+              ? { leadSec: controller.leadSec }
+              : {}),
+            ...(controller.leadTimeoutMs != null
+              ? { timeoutMs: controller.leadTimeoutMs }
+              : {}),
+          }
+        : undefined;
+    await playWithLeadBuffer(el, leadOpts);
   } catch {
     controller.onBlocked?.();
   }
@@ -223,6 +239,9 @@ export function syncGaplessBed(
     playing: boolean;
     /** Called when the browser rejects playback (autoplay policy). */
     onPlaybackBlocked?: () => void;
+    /** Shorter lead for ambient Focus beds (default lead is for long compositions). */
+    leadSec?: number;
+    leadTimeoutMs?: number;
   },
 ): void {
   if (!el) return;
@@ -235,6 +254,8 @@ export function syncGaplessBed(
   const url = opts.url?.trim() ? opts.url.trim() : null;
   const urlChanged = url !== controller.state.url;
   controller.onBlocked = opts.onPlaybackBlocked ?? null;
+  controller.leadSec = opts.leadSec ?? null;
+  controller.leadTimeoutMs = opts.leadTimeoutMs ?? null;
   controller.state.fallbackUrl = opts.fallbackUrl?.trim() || null;
   controller.state.volume = opts.volume;
   controller.state.playing = opts.playing;

@@ -36,13 +36,7 @@ import {
 import { dreamExcerpt, type PlanDream } from "@/lib/plan-dreams";
 import { loadIdeateStore } from "@/lib/plan-ideate-store";
 import { DailyHabitTracker } from "@/components/daily-habit-tracker";
-
-function timeOfDayGreeting(): string {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 17) return "Good afternoon";
-  return "Good evening";
-}
+import { timeOfDayGreeting } from "@/lib/time-of-day-greeting";
 
 function greetingName(): string {
   const email = getMedimadeSessionEmail()?.trim().toLowerCase() ?? "";

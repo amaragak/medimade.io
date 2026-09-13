@@ -769,6 +769,150 @@ main[data-app-layout="signed-in"] .page-pattern-tile {
   );
 }
 
+/*
+ * Focus app: patterned edges on the timer column only (not the tasks rail).
+ * Longer edge fades, wide clear centre within the left column.
+ */
+main[data-app-layout="focus"] {
+  /* Half of theme home-hero pattern opacity (Focus only). */
+  --page-pattern-opacity: calc(var(--home-hero-pattern-opacity) * 0.5);
+  --focus-tasks-w: 320px;
+  /* Clear band as fractions of the timer column width. */
+  --focus-fade-end: 0.22;
+  --focus-fade-start-right: 0.78;
+}
+
+main[data-app-layout="focus"][data-focus-tasks="closed"] {
+  --focus-tasks-w: 0px;
+}
+
+main[data-app-layout="focus"] .page-pattern-tile {
+  /*
+   * Ease-out fades along both sides of the timer column; fully clear in
+   * the middle. Pattern under the tasks rail is irrelevant (opaque panel).
+   */
+  --page-pattern-gutter-mask: linear-gradient(
+    to right,
+    black 0%,
+    rgb(0 0 0 / 0.97) calc((100% - var(--focus-tasks-w)) * 0.03),
+    rgb(0 0 0 / 0.9) calc((100% - var(--focus-tasks-w)) * 0.07),
+    rgb(0 0 0 / 0.75) calc((100% - var(--focus-tasks-w)) * 0.11),
+    rgb(0 0 0 / 0.55) calc((100% - var(--focus-tasks-w)) * 0.15),
+    rgb(0 0 0 / 0.35) calc((100% - var(--focus-tasks-w)) * 0.18),
+    rgb(0 0 0 / 0.18) calc((100% - var(--focus-tasks-w)) * 0.2),
+    rgb(0 0 0 / 0.06) calc((100% - var(--focus-tasks-w)) * 0.21),
+    transparent calc((100% - var(--focus-tasks-w)) * var(--focus-fade-end)),
+    transparent
+      calc((100% - var(--focus-tasks-w)) * var(--focus-fade-start-right)),
+    rgb(0 0 0 / 0.06)
+      calc((100% - var(--focus-tasks-w)) * 0.79),
+    rgb(0 0 0 / 0.18)
+      calc((100% - var(--focus-tasks-w)) * 0.8),
+    rgb(0 0 0 / 0.35)
+      calc((100% - var(--focus-tasks-w)) * 0.82),
+    rgb(0 0 0 / 0.55)
+      calc((100% - var(--focus-tasks-w)) * 0.85),
+    rgb(0 0 0 / 0.75)
+      calc((100% - var(--focus-tasks-w)) * 0.89),
+    rgb(0 0 0 / 0.9)
+      calc((100% - var(--focus-tasks-w)) * 0.93),
+    rgb(0 0 0 / 0.97)
+      calc((100% - var(--focus-tasks-w)) * 0.97),
+    black calc(100% - var(--focus-tasks-w)),
+    transparent calc(100% - var(--focus-tasks-w)),
+    transparent 100%
+  );
+}
+
+/* Focus edge patterns — mask / clear band unchanged; only the tile image.
+ * Explicit opacities are half of their previous Focus values. */
+main[data-app-layout="focus"][data-focus-pattern="mandala"] .page-pattern-tile {
+  background-image: url("/patterns/hero/adobestock-1713569649.webp");
+  background-size: 520px 520px;
+  opacity: 0.36;
+}
+
+main[data-app-layout="focus"][data-focus-pattern="floral"] .page-pattern-tile {
+  background-image: url("/patterns/hero/adobestock-2156039259.webp");
+  background-size: 640px 640px;
+  opacity: 0.45;
+}
+
+main[data-app-layout="focus"][data-focus-pattern="ornate"] .page-pattern-tile {
+  background-image: url("/patterns/hero/adobestock-2162625652.webp");
+  background-size: 640px 640px;
+  opacity: 0.44;
+}
+
+main[data-app-layout="focus"][data-focus-pattern="waves"] .page-pattern-tile {
+  background-image: url("/patterns/hero/adobestock-2157180245.webp");
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.475;
+}
+
+main[data-app-layout="focus"][data-focus-pattern="celestial"] .page-pattern-tile {
+  background-image: url("/patterns/hero/adobestock-2055049378.webp");
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.46;
+}
+
+main[data-app-layout="focus"][data-focus-pattern="astrology"] .page-pattern-tile {
+  background-image: url("/patterns/hero/adobestock-2089052451.webp");
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.46;
+}
+
+:root.dark main[data-app-layout="focus"] .page-pattern-tile {
+  /* Match `.dark .home-hero::before` — full tile, no clear band. */
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* Progress bar — full width of left-column content. */
+.focus-progress-track {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Tasks column — solid warm surface; pattern stays in the timer column. */
+.focus-task-shelf {
+  background-color: rgb(255 252 247);
+}
+
+:root.dark .focus-task-shelf {
+  background-color: var(--card);
+}
+
+@keyframes focus-ideate-flyout-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.focus-ideate-flyout {
+  transform-origin: top left;
+  animation: focus-ideate-flyout-in 150ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-ideate-flyout {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
 :root.dark .page-pattern-tile {
   background-image: url("/patterns/paisley-tile-800-tonal-navy.webp");
 }
@@ -776,6 +920,11 @@ main[data-app-layout="signed-in"] .page-pattern-tile {
 @media (max-width: 72rem) {
   .page-pattern-tile {
     display: none;
+  }
+
+  /* Focus keeps the hero-style pattern at all breakpoints. */
+  main[data-app-layout="focus"] .page-pattern-tile {
+    display: block;
   }
 }
 

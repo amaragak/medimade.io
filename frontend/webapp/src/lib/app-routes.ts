@@ -73,6 +73,7 @@ const PROTECTED_PREFIXES: PrefixRule[] = [
   { prefix: "/dream/goal", marketing: "/ideate" },
   { prefix: "/plan/goal", marketing: "/ideate" },
   { prefix: "/plan/my", marketing: "/ideate" },
+  { prefix: "/focus/my", marketing: "/focus" },
   { prefix: "/admin", marketing: "/" },
   { prefix: "/schedule", marketing: "/" },
   { prefix: "/analytics", marketing: "/" },
@@ -129,6 +130,7 @@ const MARKETING_ROOT_APP_DESTINATIONS: Record<string, string> = {
   "/journal": "/journal/my",
   "/ideate": "/ideate/my",
   "/dream": "/ideate/my",
+  "/focus": "/focus/my",
 };
 
 /** Normalize pathname (no query/hash, no trailing slash except `/`). */

@@ -1,8 +1,13 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLibraryPlayer } from "@/components/library-player-provider";
+import {
+  FOCUS_PATTERN_CHANGED_EVENT,
+  loadFocusPattern,
+  type FocusPatternId,
+} from "@/lib/focus-pattern";
 import { isMarketingHeroRoute } from "@/lib/marketing-hero-routes";
 
 function usePatternTileHeight(
@@ -54,23 +59,43 @@ export function MainShell({
   /** Signed-in app: flush-left content column + right-only pattern gutter. */
   layout?: "default" | "app";
 }) {
-  const pathname = usePathname();
+  const pathname = usePathname() || "/";
   const isHeroPage =
     layout !== "app" && isMarketingHeroRoute(pathname);
+  const isFocusApp =
+    layout === "app" &&
+    (pathname === "/focus/my" || pathname.startsWith("/focus/my/"));
   const contentRef = useRef<HTMLDivElement>(null);
   const patternTileActive = !isHeroPage;
   const tileHeightPx = usePatternTileHeight(contentRef, patternTileActive);
+  const [focusPattern, setFocusPattern] = useState<FocusPatternId>("default");
   const { nowPlaying, playerStripHeightPx } = useLibraryPlayer();
+  // Focus keeps the timer composition fixed; the strip overlays instead of padding the page.
   const playerPad =
-    nowPlaying && playerStripHeightPx > 0
+    !isFocusApp && nowPlaying && playerStripHeightPx > 0
       ? playerStripHeightPx + 16
       : 0;
+
+  useEffect(() => {
+    if (!isFocusApp) return;
+    const sync = () => setFocusPattern(loadFocusPattern());
+    sync();
+    window.addEventListener(FOCUS_PATTERN_CHANGED_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(FOCUS_PATTERN_CHANGED_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, [isFocusApp]);
 
   return (
     <main
       className="relative flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain bg-background"
       data-page-kind={isHeroPage ? "hero" : "standard"}
-      data-app-layout={layout === "app" ? "signed-in" : undefined}
+      data-app-layout={
+        layout === "app" ? (isFocusApp ? "focus" : "signed-in") : undefined
+      }
+      data-focus-pattern={isFocusApp ? focusPattern : undefined}
       style={playerPad > 0 ? { paddingBottom: playerPad } : undefined}
     >
       {patternTileActive && tileHeightPx > 0 ? (

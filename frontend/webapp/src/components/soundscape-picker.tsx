@@ -14,10 +14,15 @@ type SoundscapePickerProps = {
   onTogglePreview: (key: string) => void;
   disabled?: boolean;
   loading?: boolean;
-  /** Single column and tighter cards, for the narrow library mix flyout. */
+  /** Single column layout (e.g. library / Focus mix flyout). */
   compact?: boolean;
   /** Create › Audio soundscape chrome (category pills + warm cards). */
   variant?: "default" | "create";
+  /**
+   * When false, cards stay clickable even if `previewUrl` is null
+   * (e.g. Focus plays via the app strip instead of in-panel preview).
+   */
+  requirePreviewUrl?: boolean;
 };
 
 function PlayPauseIcon({
@@ -104,10 +109,11 @@ export function SoundscapePicker({
   loading,
   compact,
   variant = "default",
+  requirePreviewUrl = true,
 }: SoundscapePickerProps) {
   const durations = useDurations(items, previewUrl);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
-  const isCreate = variant === "create" && !compact;
+  const isCreate = variant === "create";
 
   const categories = useMemo(() => {
     const ids = new Set<string>();
@@ -178,7 +184,13 @@ export function SoundscapePicker({
             No soundscapes in this category.
           </p>
         ) : (
-          <ul className="grid grid-cols-1 items-start gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <ul
+            className={
+              compact
+                ? "grid grid-cols-1 items-start gap-2"
+                : "grid grid-cols-1 items-start gap-2 sm:grid-cols-2 lg:grid-cols-3"
+            }
+          >
             {sorted.map((item) => {
               const selected = item.key === value;
               const playing = playingKey === item.key;
@@ -187,11 +199,12 @@ export function SoundscapePicker({
                 ? prettySubcategoryLabel(item.subcategory)
                 : "";
               const canPreview = Boolean(previewUrl(item.key));
+              const canSelect = !requirePreviewUrl || canPreview;
               return (
                 <li key={item.key}>
                   <button
                     type="button"
-                    disabled={disabled || !canPreview}
+                    disabled={disabled || !canSelect}
                     aria-pressed={selected}
                     aria-label={
                       playing
@@ -241,7 +254,7 @@ export function SoundscapePicker({
             })}
           </ul>
         )}
-        <p className="mt-3 px-1 text-xs text-muted">
+        <p className={`mt-3 px-1 text-xs text-muted ${compact ? "hidden" : ""}`}>
           Longer than your meditation? It fades out naturally when the narration
           ends.
         </p>

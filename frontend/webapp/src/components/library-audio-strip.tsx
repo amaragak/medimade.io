@@ -23,6 +23,7 @@ import {
   setGaplessBedVolume,
   syncGaplessBed,
 } from "@/lib/gapless-bed-loop";
+import { playWithLeadBuffer } from "@/lib/audio-lead-buffer";
 import {
   applySpeechElementVolume,
   bedElementVolume,
@@ -43,6 +44,13 @@ export type LibraryActiveTrack = {
   musicGain?: number;
   drumsGain?: number;
   noiseGain?: number;
+  /**
+   * Focus (and similar) bed without narration.
+   * - `soundscape`: seekable main audio (same chrome as meditation)
+   * - `mix`: looping multi-channel beds; progress shows ∞
+   */
+  ambientOnly?: boolean;
+  ambientKind?: "soundscape" | "mix";
 };
 
 export type BedVolumeChannel = "nature" | "music" | "drums" | "noise";
@@ -112,21 +120,91 @@ function formatAudioClock(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function downloadBasename(title: string): string {
-  const t = title.trim() || "meditation";
-  const safe = t.replace(/[^\w\- .]+/g, "_").replace(/\s+/g, " ").trim();
-  return `${safe.slice(0, 80)}.mp3`;
-}
-
+/** Stable id prefix for Focus ambient strip tracks. */
+export const FOCUS_AMBIENT_S3_PREFIX = "focus:ambient:";
 
 /** A soundscape rides the music slot alone; that is how it is recognised later. */
-function isSoundscapeKey(
+export function isSoundscapeKey(
   compositions: BackgroundAudioItem[],
   key: string | null | undefined,
 ): boolean {
   const k = backgroundAudioStreamingKey(key ?? "");
   if (!k) return false;
   return compositions.some((c) => backgroundAudioStreamingKey(c.key) === k);
+}
+
+export function trackFromFocusMix(
+  mix: {
+    natureKey: string;
+    musicKey: string;
+    drumsKey: string;
+    noiseKey: string;
+    natureGain: number;
+    musicGain: number;
+    drumsGain: number;
+    noiseGain: number;
+  },
+  opts: {
+    title: string;
+    mediaBase: string | null;
+    compositions: BackgroundAudioItem[];
+  },
+): LibraryActiveTrack | null {
+  const natureKey = backgroundAudioStreamingKey(mix.natureKey);
+  const musicKey = backgroundAudioStreamingKey(mix.musicKey);
+  const drumsKey = backgroundAudioStreamingKey(mix.drumsKey);
+  const noiseKey = backgroundAudioStreamingKey(mix.noiseKey);
+  const hasAny = Boolean(natureKey || musicKey || drumsKey || noiseKey);
+  if (!hasAny) return null;
+
+  // Soundscapes have a real duration — use the normal seekable strip player.
+  const soundscape = isSoundscapeKey(opts.compositions, musicKey);
+  if (soundscape && musicKey) {
+    if (!opts.mediaBase) return null;
+    return {
+      url: mediaFileUrl(
+        opts.mediaBase,
+        backgroundAudioStreamingKey(musicKey),
+      ),
+      title: opts.title,
+      s3Key: `${FOCUS_AMBIENT_S3_PREFIX}soundscape:${musicKey}`,
+      ambientOnly: true,
+      ambientKind: "soundscape",
+      liveMix: false,
+      musicKey,
+      musicGain: mix.musicGain,
+      natureKey: "",
+      drumsKey: "",
+      noiseKey: "",
+      natureGain: 0,
+      drumsGain: 0,
+      noiseGain: 0,
+    };
+  }
+
+  // Build-your-own only: looping gapless beds (∞ strip chrome).
+  return {
+    url: "",
+    title: opts.title,
+    s3Key: `${FOCUS_AMBIENT_S3_PREFIX}mix`,
+    ambientOnly: true,
+    ambientKind: "mix",
+    liveMix: true,
+    natureKey,
+    musicKey,
+    drumsKey,
+    noiseKey,
+    natureGain: mix.natureGain,
+    musicGain: mix.musicGain,
+    drumsGain: mix.drumsGain,
+    noiseGain: mix.noiseGain,
+  };
+}
+
+function downloadBasename(title: string): string {
+  const t = title.trim() || "meditation";
+  const safe = t.replace(/[^\w\- .]+/g, "_").replace(/\s+/g, " ").trim();
+  return `${safe.slice(0, 80)}.mp3`;
 }
 
 export function LibraryAudioStrip({
@@ -157,7 +235,7 @@ export function LibraryAudioStrip({
   const drumsRef = useRef<HTMLAudioElement>(null);
   const noiseRef = useRef<HTMLAudioElement>(null);
   const seekingRef = useRef(false);
-  const [playing, setPlaying] = useState(false);
+  const [playing, setPlaying] = useState(() => Boolean(track?.ambientOnly));
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const lastToggleNonceRef = useRef(playbackToggleNonce);
@@ -174,9 +252,14 @@ export function LibraryAudioStrip({
     track?.liveMix === true && isSoundscapeKey(compositionItems, track.musicKey);
   const soundscapeActiveRef = useRef(soundscapeActive);
   soundscapeActiveRef.current = soundscapeActive;
+  const ambientMix = track?.ambientOnly === true && track.ambientKind === "mix";
+  const ambientSoundscape =
+    track?.ambientOnly === true && track.ambientKind === "soundscape";
 
   /** Desktop app chrome: keep the strip in the main column so the sidebar sits beside (over the left edge). */
   const [besideSidebar, setBesideSidebar] = useState(false);
+  /** Focus tasks shelf — inset the strip so it doesn't run under the rail. */
+  const [focusTasksInsetPx, setFocusTasksInsetPx] = useState(0);
   useEffect(() => {
     const sync = () => {
       setBesideSidebar(
@@ -186,6 +269,27 @@ export function LibraryAudioStrip({
     sync();
     window.addEventListener("medimade-session-changed", sync);
     return () => window.removeEventListener("medimade-session-changed", sync);
+  }, []);
+
+  useEffect(() => {
+    const readInset = () => {
+      const root = document.documentElement;
+      const open = root.dataset.focusTasks === "open";
+      const raw = getComputedStyle(root)
+        .getPropertyValue("--focus-tasks-w")
+        .trim();
+      const fromVar = Number.parseFloat(raw);
+      setFocusTasksInsetPx(
+        open ? (Number.isFinite(fromVar) && fromVar > 0 ? fromVar : 320) : 0,
+      );
+    };
+    readInset();
+    const mo = new MutationObserver(readInset);
+    mo.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-focus-tasks", "style"],
+    });
+    return () => mo.disconnect();
   }, []);
 
   const reportTime = useCallback(
@@ -222,8 +326,27 @@ export function LibraryAudioStrip({
   }
 
   function startOrResumePlayback() {
+    if (!track) return;
+    if (ambientMix) {
+      setPlaying(true);
+      onPlayingChange?.(track.s3Key, true);
+      return;
+    }
     const el = audioRef.current;
-    if (!el || !track) return;
+    if (!el) return;
+    if (ambientSoundscape) {
+      el.volume = SOUNDSCAPE_ELEMENT_VOLUME;
+      clearVoiceIntro();
+      setPlaying(true);
+      onPlayingChange?.(track.s3Key, true);
+      void playWithLeadBuffer(el, { leadSec: 0.5, timeoutMs: 2500 }).catch(
+        () => {
+          setPlaying(false);
+          onPlayingChange?.(track.s3Key, false);
+        },
+      );
+      return;
+    }
     applySpeechElementVolume(el);
     clearVoiceIntro();
     if (shouldDelayVoice(el.currentTime)) {
@@ -241,12 +364,17 @@ export function LibraryAudioStrip({
 
   function pausePlayback() {
     clearVoiceIntro();
-    audioRef.current?.pause();
+    if (!ambientMix) audioRef.current?.pause();
     if (track) onPlayingChange?.(track.s3Key, false);
     setPlaying(false);
   }
 
   function togglePlayback() {
+    if (ambientMix) {
+      if (playing) pausePlayback();
+      else startOrResumePlayback();
+      return;
+    }
     const el = audioRef.current;
     if (!el) return;
     if (playing || voiceIntroTimerRef.current != null) pausePlayback();
@@ -299,16 +427,28 @@ export function LibraryAudioStrip({
     if (!track) return;
     seekingRef.current = false;
     lastReportedTimeRef.current = -Infinity;
+    if (ambientMix) {
+      setCurrent(0);
+      setDuration(0);
+      startOrResumePlayback();
+      return () => {
+        clearVoiceIntro();
+      };
+    }
     const el = audioRef.current;
     if (!el) return;
     el.load();
-    applySpeechElementVolume(el);
+    if (ambientSoundscape) {
+      el.volume = SOUNDSCAPE_ELEMENT_VOLUME;
+    } else {
+      applySpeechElementVolume(el);
+    }
     startOrResumePlayback();
     return () => {
       clearVoiceIntro();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- restart when the stem changes
-  }, [track?.s3Key, track?.url]);
+  }, [track?.s3Key, track?.url, track?.ambientKind]);
 
   useEffect(() => {
     const soundscape = soundscapeActive;
@@ -358,6 +498,14 @@ export function LibraryAudioStrip({
         fallbackUrl: mediaFileUrl(mediaBase, backgroundAudioStreamingKey(bed.key)),
         volume,
         playing,
+        leadSec: ambientMix ? 0.4 : undefined,
+        leadTimeoutMs: ambientMix ? 2000 : undefined,
+        onPlaybackBlocked: ambientMix
+          ? () => {
+              setPlaying(false);
+              if (track) onPlayingChange?.(track.s3Key, false);
+            }
+          : undefined,
       });
     }
   }, [
@@ -370,10 +518,14 @@ export function LibraryAudioStrip({
     track?.musicGain,
     track?.drumsGain,
     track?.noiseGain,
+    track?.s3Key,
     playing,
     mediaBase,
     musicItems,
     soundscapeActive,
+    ambientMix,
+    onPlayingChange,
+    track,
   ]);
 
   useEffect(() => {
@@ -385,7 +537,7 @@ export function LibraryAudioStrip({
 
   useEffect(() => {
     const el = audioRef.current;
-    if (!el || !track) return;
+    if (!el || !track || ambientMix) return;
 
     const onTime = () => {
       if (!seekingRef.current) {
@@ -409,7 +561,8 @@ export function LibraryAudioStrip({
     const onEnded = () => {
       setPlaying(false);
       onPlayingChange?.(track.s3Key, false);
-      onDismiss();
+      // Focus soundscapes keep the strip (seekable piece ended); meditations dismiss.
+      if (!ambientSoundscape) onDismiss();
     };
 
     el.addEventListener("timeupdate", onTime);
@@ -427,7 +580,14 @@ export function LibraryAudioStrip({
       el.removeEventListener("pause", onPause);
       el.removeEventListener("ended", onEnded);
     };
-  }, [track, onPlayingChange, onDismiss, reportTime]);
+  }, [
+    track,
+    ambientMix,
+    ambientSoundscape,
+    onPlayingChange,
+    onDismiss,
+    reportTime,
+  ]);
 
   useLayoutEffect(() => {
     if (!track) {
@@ -446,8 +606,10 @@ export function LibraryAudioStrip({
   if (!track) return null;
 
   const max = Math.max(duration, 0.0001);
+  const hideTransportSeek = ambientMix;
 
   function skipSeconds(delta: number) {
+    if (ambientMix) return;
     const el = audioRef.current;
     if (!el) return;
     const end =
@@ -472,20 +634,25 @@ export function LibraryAudioStrip({
   return (
     <div
       ref={rootRef}
-      className={`fixed bottom-0 right-0 z-50 border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_8%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_35%,transparent)] sm:px-4 ${
+      className={`fixed bottom-0 z-50 border-t border-border bg-card/95 px-3 py-3 shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_8%,transparent)] backdrop-blur-md dark:bg-card/98 dark:shadow-[0_-8px_24px_color-mix(in_srgb,var(--overlay)_35%,transparent)] sm:px-4 ${
         besideSidebar ? "left-0 md:left-[200px]" : "left-0"
       }`}
-      style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}
+      style={{
+        paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))",
+        right: focusTasksInsetPx > 0 ? focusTasksInsetPx : 0,
+      }}
       role="region"
       aria-label="Now playing"
     >
-      <audio
-        key={track.s3Key}
-        ref={audioRef}
-        src={track.url}
-        preload="metadata"
-        className="hidden"
-      />
+      {ambientMix ? null : (
+        <audio
+          key={track.s3Key}
+          ref={audioRef}
+          src={track.url}
+          preload="metadata"
+          className="hidden"
+        />
+      )}
       {/* Looping is scheduled by syncGaplessBed, so these must not set `loop`. */}
       <audio ref={natureRef} className="hidden" playsInline />
       <audio ref={musicRef} className="hidden" playsInline />
@@ -495,22 +662,24 @@ export function LibraryAudioStrip({
       <div className="mx-auto flex w-full max-w-6xl min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           <div className="flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              onClick={() => skipSeconds(-10)}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background text-foreground hover:border-accent/40 sm:h-11 sm:w-11"
-              aria-label="Back 10 seconds"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                width="20"
-                height="20"
-                fill="currentColor"
-                aria-hidden
+            {hideTransportSeek ? null : (
+              <button
+                type="button"
+                onClick={() => skipSeconds(-10)}
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background text-foreground hover:border-accent/40 sm:h-11 sm:w-11"
+                aria-label="Back 10 seconds"
               >
-                <path d="M11 18V6l-8.5 6L11 18zm11 0V6l-8.5 6L22 18z" />
-              </svg>
-            </button>
+                <svg
+                  viewBox="0 0 24 24"
+                  width="20"
+                  height="20"
+                  fill="currentColor"
+                  aria-hidden
+                >
+                  <path d="M11 18V6l-8.5 6L11 18zm11 0V6l-8.5 6L22 18z" />
+                </svg>
+              </button>
+            )}
             <button
               type="button"
                 onClick={() => togglePlayback()}
@@ -527,22 +696,24 @@ export function LibraryAudioStrip({
                 </svg>
               )}
             </button>
-            <button
-              type="button"
-              onClick={() => skipSeconds(10)}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background text-foreground hover:border-accent/40 sm:h-11 sm:w-11"
-              aria-label="Forward 10 seconds"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                width="20"
-                height="20"
-                fill="currentColor"
-                aria-hidden
+            {hideTransportSeek ? null : (
+              <button
+                type="button"
+                onClick={() => skipSeconds(10)}
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-background text-foreground hover:border-accent/40 sm:h-11 sm:w-11"
+                aria-label="Forward 10 seconds"
               >
-                <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
-              </svg>
-            </button>
+                <svg
+                  viewBox="0 0 24 24"
+                  width="20"
+                  height="20"
+                  fill="currentColor"
+                  aria-hidden
+                >
+                  <path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z" />
+                </svg>
+              </button>
+            )}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
@@ -576,78 +747,96 @@ export function LibraryAudioStrip({
             </div>
             <div className="mt-1.5 flex items-center gap-2">
               <span className="w-10 shrink-0 tabular-nums text-xs text-muted">
-                {formatAudioClock(current)}
+                {hideTransportSeek ? "" : formatAudioClock(current)}
               </span>
-              <input
-                type="range"
-                className="h-1.5 w-full min-w-0 flex-1 cursor-pointer accent-accent"
-                min={0}
-                max={max}
-                step={0.05}
-                value={Math.min(current, max)}
-                aria-label="Seek"
-                onMouseDown={() => {
-                  seekingRef.current = true;
-                }}
-                onMouseUp={() => {
-                  seekingRef.current = false;
-                }}
-                onMouseLeave={() => {
-                  seekingRef.current = false;
-                }}
-                onTouchStart={() => {
-                  seekingRef.current = true;
-                }}
-                onTouchEnd={() => {
-                  seekingRef.current = false;
-                }}
-                onChange={(e) => {
-                  const el = audioRef.current;
-                  const v = Number(e.target.value);
-                  if (!el || !Number.isFinite(v)) return;
-                  el.currentTime = v;
-                  setCurrent(v);
-                  reportTime(v);
-                  if (!playing && voiceIntroTimerRef.current == null) return;
-                  clearVoiceIntro();
-                  if (shouldDelayVoice(v)) {
-                    el.pause();
-                    startOrResumePlayback();
-                  } else if (el.paused) {
-                    void el.play().catch(() => {});
-                  }
-                }}
-              />
-              <span className="w-10 shrink-0 text-right tabular-nums text-xs text-muted">
-                {formatAudioClock(duration)}
+              {hideTransportSeek ? (
+                <div
+                  className="relative h-1.5 w-full min-w-0 flex-1 overflow-hidden rounded-full bg-border/70"
+                  aria-hidden
+                >
+                  <div
+                    className={`absolute inset-y-0 left-0 w-1/3 rounded-full bg-gold/80 ${
+                      playing ? "animate-pulse" : ""
+                    }`}
+                  />
+                </div>
+              ) : (
+                <input
+                  type="range"
+                  className="h-1.5 w-full min-w-0 flex-1 cursor-pointer accent-accent"
+                  min={0}
+                  max={max}
+                  step={0.05}
+                  value={Math.min(current, max)}
+                  aria-label="Seek"
+                  onMouseDown={() => {
+                    seekingRef.current = true;
+                  }}
+                  onMouseUp={() => {
+                    seekingRef.current = false;
+                  }}
+                  onMouseLeave={() => {
+                    seekingRef.current = false;
+                  }}
+                  onTouchStart={() => {
+                    seekingRef.current = true;
+                  }}
+                  onTouchEnd={() => {
+                    seekingRef.current = false;
+                  }}
+                  onChange={(e) => {
+                    const el = audioRef.current;
+                    const v = Number(e.target.value);
+                    if (!el || !Number.isFinite(v)) return;
+                    el.currentTime = v;
+                    setCurrent(v);
+                    reportTime(v);
+                    if (!playing && voiceIntroTimerRef.current == null) return;
+                    clearVoiceIntro();
+                    if (shouldDelayVoice(v)) {
+                      el.pause();
+                      startOrResumePlayback();
+                    } else if (el.paused) {
+                      void el.play().catch(() => {});
+                    }
+                  }}
+                />
+              )}
+              <span
+                className="w-10 shrink-0 text-right tabular-nums text-xs text-muted"
+                aria-label={hideTransportSeek ? "Continuous loop" : undefined}
+              >
+                {hideTransportSeek ? "∞" : formatAudioClock(duration)}
               </span>
             </div>
           </div>
         </div>
 
         <div className="hidden shrink-0 items-center justify-end gap-2 sm:flex">
-          <a
-            href={track.url}
-            download={downloadBasename(track.title)}
-            className="rounded-xl border border-border bg-background px-4 py-2.5 text-sm font-semibold text-foreground hover:border-accent/40"
-            aria-label="Download audio"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              width="20"
-              height="20"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden
+          {ambientMix || ambientSoundscape ? null : (
+            <a
+              href={track.url}
+              download={downloadBasename(track.title)}
+              className="rounded-xl border border-border bg-background px-4 py-2.5 text-sm font-semibold text-foreground hover:border-accent/40"
+              aria-label="Download audio"
             >
-              <path d="M12 3v12" />
-              <path d="M7 10l5 5 5-5" />
-              <path d="M21 21H3" />
-            </svg>
-          </a>
+              <svg
+                viewBox="0 0 24 24"
+                width="20"
+                height="20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M12 3v12" />
+                <path d="M7 10l5 5 5-5" />
+                <path d="M21 21H3" />
+              </svg>
+            </a>
+          )}
           <button
             type="button"
             onClick={() => {
